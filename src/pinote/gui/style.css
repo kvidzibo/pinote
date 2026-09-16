@@ -1,0 +1,162 @@
+/* Dunst-inspired defaults, scoped to pinote. No runtime Dunst dependency. */
+.pinote-window {
+    background-color: transparent;
+    color: #f3f5f8;
+    font-family: "Hack Nerd Font Mono", monospace;
+    font-size: 9pt;
+}
+
+.pinote-window .reminder-panel {
+    background-color: #232832;
+    border: 1px solid #4b5563;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+.pinote-window label {
+    color: inherit;
+}
+
+.pinote-window entry {
+    background-image: none;
+    background-color: #1c212a;
+    color: #f3f5f8;
+    caret-color: #f3f5f8;
+    border: 1px solid #4b5563;
+    border-radius: 3px;
+    box-shadow: none;
+    min-height: 18px;
+    padding: 3px 6px;
+}
+
+.pinote-window entry:focus {
+    border-color: #8591a3;
+}
+
+.pinote-window .dim-label {
+    color: #b8c0cc;
+    opacity: 1;
+}
+
+.pinote-window .reminder-list,
+.pinote-window viewport,
+.pinote-window .note-row {
+    background-color: transparent;
+}
+
+.pinote-window .note-row {
+    color: #f3f5f8;
+    border: none;
+    padding: 0;
+    min-height: 0;
+}
+
+.pinote-window .note-content {
+    padding: 2px 0;
+    opacity: 1;
+    transition: none;
+}
+
+.pinote-window .note-row.leaving .note-content {
+    opacity: 0;
+    transition: opacity 200ms ease-out;
+}
+
+.pinote-window .note-row.completed .note-content {
+    background-color: #2b3933;
+    border-radius: 3px;
+}
+
+.pinote-window .note-row.completed label {
+    color: #a8d5b5;
+}
+
+.pinote-window .note-row.completed checkbutton:disabled {
+    opacity: 1;
+}
+
+.pinote-window .note-row.completed checkbutton check:checked {
+    background-color: #40684f;
+    border-color: #8fcfa0;
+    color: #e6f6eb;
+    transition: none;
+}
+
+.pinote-window button,
+.pinote-window checkbutton {
+    background-image: none;
+    background-color: transparent;
+    color: #b8c0cc;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    box-shadow: none;
+    text-shadow: none;
+    min-width: 16px;
+    min-height: 16px;
+    padding: 2px;
+    margin: 0;
+    outline-color: #b8c0cc;
+    outline-offset: -1px;
+    outline-width: 1px;
+    outline-style: dashed;
+}
+
+.pinote-window button:hover,
+.pinote-window checkbutton:hover {
+    background-color: #343c49;
+    color: #f3f5f8;
+}
+
+.pinote-window .remove-button:hover {
+    background-color: #3a1f24;
+    color: #fff0f3;
+}
+
+.pinote-window button:disabled,
+.pinote-window checkbutton:disabled {
+    opacity: 0.45;
+}
+
+.pinote-window checkbutton check {
+    background-image: none;
+    background-color: transparent;
+    border: 1px solid #8591a3;
+    border-radius: 2px;
+    box-shadow: none;
+    min-width: 12px;
+    min-height: 12px;
+    margin: 0;
+    color: #f3f5f8;
+}
+
+.pinote-window checkbutton check:checked {
+    background-color: #4b5563;
+}
+
+.pinote-window infobar {
+    background-color: #3a1f24;
+    color: #fff0f3;
+    border: 1px solid #d65f6f;
+    border-radius: 3px;
+}
+
+.pinote-window infobar > revealer > box {
+    background-color: #3a1f24;
+    color: #fff0f3;
+    padding: 4px;
+}
+
+.pinote-window infobar label {
+    color: #fff0f3;
+}
+
+.pinote-window scrollbar {
+    background-color: transparent;
+}
+
+.pinote-window scrollbar slider {
+    background-color: #4b5563;
+    border: none;
+    min-width: 4px;
+    min-height: 24px;
+}

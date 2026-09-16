@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sqlite3
 import sys
 from contextlib import nullcontext
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from pinote import __version__, markdown, notify
-from pinote.paths import Paths, display_lock, private_directory, private_file
+from pinote.logging_setup import LOGGER, configure_logging
+from pinote.paths import Paths, display_lock
 from pinote.store import NoteError, Store
 
 COMMANDS = {"add", "list", "done", "rm", "restore", "history", "show", "import", "export"}
 MUTATIONS = {"add", "done", "rm", "restore", "import"}
-LOGGER = logging.getLogger("pinote")
 
 
 def positive_id(value: str) -> int:
@@ -83,23 +81,6 @@ def arguments(argv: list[str]) -> argparse.Namespace:
     elif argv[0] not in COMMANDS and argv[0] not in {"-h", "--help", "--version"}:
         argv = ["add", *argv]
     return parser().parse_args([*prefix, *argv])
-
-
-def configure_logging(paths: Paths) -> None:
-    # Repeated main() calls in tests or embedding must not duplicate handlers.
-    for handler in LOGGER.handlers[:]:
-        LOGGER.removeHandler(handler)
-        handler.close()
-    LOGGER.setLevel(logging.INFO)
-    LOGGER.propagate = False
-    stream = logging.StreamHandler(sys.stdout)
-    stream.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-    LOGGER.addHandler(stream)
-    private_directory(paths.state)
-    private_file(paths.log)
-    file_handler = RotatingFileHandler(paths.log, maxBytes=1_000_000, backupCount=3)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    LOGGER.addHandler(file_handler)
 
 
 def execute(args: argparse.Namespace, paths: Paths) -> int:

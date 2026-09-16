@@ -51,13 +51,14 @@ def private_file(path: Path) -> None:
 
 
 @contextmanager
-def display_lock(paths: Paths) -> Iterator[None]:
-    """Serialize mutations + rendering so a late notifier cannot show old state."""
+def display_lock(paths: Paths, *, blocking: bool = True) -> Iterator[None]:
+    """Serialize mutations + rendering; GUI callers can fail fast when busy."""
     private_directory(paths.data)
     lock_path = paths.data / "display.lock"
     private_file(lock_path)
     with lock_path.open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        fcntl.flock(lock, flags)
         try:
             yield
         finally:

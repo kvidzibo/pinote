@@ -67,10 +67,10 @@ COMMIT;
 
 
 class Store:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, timeout: float = 10):
         private_directory(path.parent)
         private_file(path)
-        self.connection = sqlite3.connect(path, timeout=10)
+        self.connection = sqlite3.connect(path, timeout=timeout)
         self.connection.row_factory = sqlite3.Row
         try:
             self.connection.execute("PRAGMA foreign_keys = ON")

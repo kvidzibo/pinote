@@ -28,6 +28,8 @@ jobs:
           /tmp/pinote-smoke/bin/note --no-notify "wheel smoke test"
           /tmp/pinote-smoke/bin/note done 1 --no-notify
           /tmp/pinote-smoke/bin/note history 1
+          /tmp/pinote-smoke/bin/pinote-gui --help
+          /tmp/pinote-smoke/bin/python -c 'from importlib.resources import files; assert files("pinote.gui").joinpath("style.css").is_file()'
 
   desktop:
     runs-on: ubuntu-latest
@@ -38,4 +40,23 @@ jobs:
           version: "0.11.8"
       - run: sudo apt-get update && sudo apt-get install -y dunst dbus-x11 xvfb xauth
       - run: uv sync --locked --python 3.13
-      - run: xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
+      - run: xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
+
+  gtk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.8"
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y
+          python3-gi gir1.2-gtk-3.0 dbus-x11 xvfb xauth xdotool i3-wm
+      - run: uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
+      - run: uv build
+      - run: uv pip install --python .venv-gui/bin/python dist/*.whl --group dev
+      - run: xvfb-run -a -s '-screen 0 2560x1440x24' dbus-run-session -- .venv-gui/bin/python -m pytest -m gtk --run-gui
+      - name: Small-display placement and reopen
+        run: >-
+          xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py
+          -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps or manual_position' --run-gui

@@ -11,7 +11,7 @@ def pytest_addoption(parser):
     parser.addoption(
         "--run-gui",
         action="store_true",
-        help="enable Dunst tests; only under xvfb-run + a private dbus-run-session",
+        help="enable desktop tests; only under xvfb-run + a private dbus-run-session",
     )
 
 
