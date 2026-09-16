@@ -8,6 +8,8 @@ sticky-note window.
 ## Install
 
 Requires **Python 3.11+** and Dunst (`dunstify`) for desktop notifications.
+The notifier uses portable short options and a stack-tag hint to support older
+distribution packages as well as current Dunst releases.
 Terminal commands work without Dunst. Install Dunst using your distribution's
 package manager; a graphical session and session D-Bus are needed to display
 reminders.

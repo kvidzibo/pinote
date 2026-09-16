@@ -37,10 +37,20 @@ def test_subprocess_uses_args_timeout_and_one_persistent_tag(monkeypatch):
 
     monkeypatch.setattr(notify.subprocess, "run", run)
     notify.show(notes("$(touch /tmp/never); --help"))
-    assert captured["args"][0] == "dunstify"
-    assert "--expire-time=0" in captured["args"]
-    assert "--stack-tag=pinote-reminders" in captured["args"]
-    assert captured["args"][-3] == "--"
+    # Dunst 1.9 (Ubuntu 24.04) lacks the newer --app-name/--stack-tag flags.
+    # Keep the same persistent, replacement semantics through portable options.
+    assert captured["args"][:-2] == [
+        "dunstify",
+        "-a",
+        "pinote",
+        "-u",
+        "normal",
+        "-t",
+        "0",
+        "-h",
+        "string:x-dunst-stack-tag:pinote-reminders",
+        "--",
+    ]
     assert not captured["kwargs"].get("shell")
     assert captured["kwargs"]["timeout"] == 5
 

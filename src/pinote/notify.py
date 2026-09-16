@@ -35,10 +35,15 @@ def show(notes: list[Note]) -> None:
         result = subprocess.run(
             [
                 "dunstify",
-                "--app-name=pinote",
-                "--urgency=normal",
-                "--expire-time=0",
-                f"--stack-tag={STACK_TAG}",
+                # Short flags and the hint also work with distro Dunst 1.9.
+                "-a",
+                "pinote",
+                "-u",
+                "normal",
+                "-t",
+                "0",
+                "-h",
+                f"string:x-dunst-stack-tag:{STACK_TAG}",
                 "--",
                 "Reminders",
                 render(notes),
