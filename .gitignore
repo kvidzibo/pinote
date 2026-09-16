@@ -1,0 +1,29 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+dist/
+*.egg-info/
+*.db
+*.db-*
+*.log
+*.log.*
+build/
+
+# Local notes, backups, and agent scratch memory
+/MEMORY.md
+/REMINDER.md
+/exports/
+/backups/
+display.lock
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Local credentials; never commit real values
+.env
+.env.*
+*.pem
+*.key

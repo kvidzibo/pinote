@@ -1,0 +1,41 @@
+name: tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --python ${{ matrix.python }}
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run pytest -m 'not gui'
+      - run: uv build
+      - name: Smoke-test built wheel in a clean environment
+        run: |
+          uv venv /tmp/pinote-smoke --python "${{ matrix.python }}"
+          uv pip install --python /tmp/pinote-smoke/bin/python --no-deps dist/*.whl
+          export XDG_DATA_HOME="$(mktemp -d)" XDG_STATE_HOME="$(mktemp -d)"
+          /tmp/pinote-smoke/bin/note --no-notify "wheel smoke test"
+          /tmp/pinote-smoke/bin/note done 1 --no-notify
+          /tmp/pinote-smoke/bin/note history 1
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.8"
+      - run: sudo apt-get update && sudo apt-get install -y dunst dbus-x11 xvfb xauth
+      - run: uv sync --locked --python 3.13
+      - run: xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
