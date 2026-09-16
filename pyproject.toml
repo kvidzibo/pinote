@@ -14,6 +14,7 @@ Issues = "https://github.com/kvidzibo/pinote/issues"
 
 [project.scripts]
 note = "pinote.cli:main"
+pinote-gui = "pinote.gui:main"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12"]
@@ -24,7 +25,10 @@ dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["gui: isolated Dunst integration (requires xvfb-run and a private D-Bus session)"]
+markers = [
+    "gui: isolated desktop integration (requires xvfb-run and a private D-Bus session)",
+    "gtk: optional GTK frontend integration (requires Debian-Python GUI environment)",
+]
 
 [tool.ruff]
 target-version = "py311"

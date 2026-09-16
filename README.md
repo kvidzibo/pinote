@@ -1,9 +1,10 @@
 # pinote
 
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
-Linux/i3 and Dunst first. No Python runtime dependencies, custom GUI, or background
-Python service. The desktop display is a persistent notification, not a draggable
-sticky-note window.
+Linux/i3 first. The CLI has no Python runtime dependencies or background service.
+Choose a persistent Dunst notification or the optional `pinote-gui` GTK checklist
+with an inline task entry, completion checkboxes, and remove controls. The GUI is
+a separate process, not a daemon.
 
 ## Install
 
@@ -34,8 +35,9 @@ python3 -m venv .venv
 ```
 
 Activate that virtual environment to invoke `note` without its full path.
-The package has no Python runtime dependencies; `uv_build` is a build-time
+The core package has no Python runtime dependencies; `uv_build` is a build-time
 backend that pip installs automatically in an isolated build environment.
+The optional GUI additionally needs GTK 3 and its Python bindings; see below.
 The uv CLI is optional for users and recommended for the development workflow
 below. The package does not change your shell, desktop configuration, or
 existing reminders. After local source changes, reinstall with your chosen
@@ -85,6 +87,107 @@ unavailable, mutations still succeed (exit 0) with a warning. `note show` return
 1 on notification failure. Validation/storage errors return 1; CLI syntax errors
 return 2. Do not repeat an add just because desktop delivery failed.
 
+## Optional GTK checklist
+
+`pinote-gui` is a separate frontend inside the same package. It uses the same
+SQLite database, stable IDs, history, and mutation lock as `note`. The CLI never
+imports GTK, and Dunst does not need to be installed or running for the GUI.
+
+### Debian installation, isolated from the CLI
+
+GTK's Python bindings must match the interpreter. Keep the existing CLI
+installation and create a second virtualenv using **Debian's `/usr/bin/python3`**
+with access to Debian's GTK packages. A uv-managed Python cannot automatically
+use those system bindings.
+
+From this checkout:
+
+```sh
+# If these Debian packages are not already installed:
+sudo apt install python3-gi gir1.2-gtk-3.0
+
+uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
+uv pip install --python .venv-gui/bin/python -e .
+.venv-gui/bin/pinote-gui
+```
+
+Without uv, install Debian's `python3-venv`, then use
+`/usr/bin/python3 -m venv --system-site-packages .venv-gui` and
+`.venv-gui/bin/python -m pip install -e .`. This is still an isolated environment;
+it reads system GTK libraries but installs pinote locally, not into system Python.
+Both environments use the same source code, not separate copies of the project.
+
+Use the **GUI environment's** executable, not a `pinote-gui` installed alongside
+a dependency-free `uv tool`/pipx CLI. `python -m pinote.gui` also works in that
+environment. A graphical session and session D-Bus are required. Help/version
+work without GTK or a desktop. Nothing changes your i3 configuration or startup.
+
+### Behavior
+
+- Compact, borderless dark popup: 420 px wide, 9 pt monospace text, no title/header
+  bar, and one checkbox/text/trash row per note. Its height fits the list; longer
+  lists scroll instead of filling the screen.
+- Add using the bottom **Add a task…** field: press **Enter** or click **+**.
+  Failed saves keep your input. Successful saves clear only the submitted draft;
+  edits made while saving stay in the field. List-refresh errors do not undo a
+  saved task.
+- Shows every active note, with full literal text and wrapping.
+- The **checkbox** completes a note; the **trash icon** archives it. Neither
+  erases history. Hover for the note ID; use `note restore ID` to recover either,
+  and `note history ID` to inspect it. Failed saves reset the checkbox.
+- After a successful click, **Done** holds its green check/highlight for 200 ms,
+  then fades and collapses over 200 ms. **Remove** keeps its 200 ms fade/collapse.
+  Saving happens first, and other rows remain usable during the animation.
+  GTK's disabled-animation preference skips the effect. CLI-only changes refresh
+  without animation. A refresh that restores a row cancels its exit animation.
+- Close with the bottom **×**, **Esc**, or the window manager. This only closes
+  the window; it does not mark notes done. Unsubmitted input is not saved.
+- Notices CLI changes about once per second. Unchanged rows are retained so
+  polling does not reset text selection or scrolling.
+- GUI saves use the existing lock and store off the GTK event thread.
+  Busy/storage errors appear in the window and `app.log`; check `note` before
+  retrying. Stale buttons cannot archive an already-completed note.
+- Launching it again presents the existing window for the same database.
+  Closing the window exits the GUI after any already-submitted operation finishes;
+  closing itself never changes notes.
+- **GUI changes do not send or close Dunst notifications.** CLI notification
+  behavior is unchanged. For GUI-only reminders, add tasks in the window or use
+  `note --no-notify "text"` and `note done ID --no-notify`. An existing Dunst
+  reminder does not follow GUI changes; use `note show` to refresh it, or dismiss
+  it and use the checklist.
+
+The window requests floating/keep-above behavior at absolute desktop coordinates
+**x=25, y=1300** on each fresh launch, independent of the focused monitor. Smaller
+displays clamp the position on-screen; long lists scroll within the remaining
+height. If an error notice needs extra height, the popup shifts up to keep its
+controls visible. Moving the window lasts until it closes; launching an already-open
+instance preserves its position. X11 placement is requested on opening; the
+window manager has the final say (Wayland may ignore positioning).
+
+For i3, put this rule **after** any general floating-window border rules so they
+cannot restore the titlebar:
+
+```i3
+for_window [window_role="^pinote-reminders$"] floating enable, border none
+```
+
+To start the checklist at desktop login after boot, replace the old reminder's
+startup command (`note show` or `login-reminder.sh`) with the absolute checkout
+path, keeping only one reminder launcher:
+
+```i3
+exec --no-startup-id /home/your-user/AI/pinote/.venv-gui/bin/pinote-gui
+```
+
+Use `exec`, not `exec_always`, to avoid relaunching it on i3 restarts. Reload i3
+after editing its configuration; the startup command runs at the next login.
+Setup is manual; installing pinote never edits desktop rules.
+The bundled `src/pinote/gui/style.css` uses a Dunst-inspired palette (`#232832`
+background, `#f3f5f8` text, `#4b5563` frame), 6 px corners, and Hack Nerd Font Mono
+with a monospace fallback. The window requests 96% opacity; transparency needs a
+compositor. These are bundled defaults, not a live import of Dunst configuration.
+Restart the GUI after editing the stylesheet in an editable checkout.
+
 ## Import existing reminders
 
 ```sh
@@ -105,7 +208,8 @@ change pinote. Export is a readable snapshot, **not** a backup of IDs/history.
 
 ## Desktop login
 
-After installation and import, replace any old reminder startup command with:
+For the GTK checklist, use the startup command in **Optional GTK checklist** above.
+For a Dunst notification instead, replace any old reminder startup command with:
 
 ```i3
 exec --no-startup-id /home/your-user/.local/bin/note show
@@ -146,18 +250,33 @@ staged files before publishing. Uninstalling the tool does not delete data.
 uv sync --locked
 uv run ruff check .
 uv run pytest -m 'not gui'
-xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
+xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
 uv build
 ```
 
-GUI tests require `dunst`, `dunstify`, `dunstctl`, `xvfb-run`, `xauth`, and
-`dbus-run-session`. Always run them under `xvfb-run` with a private D-Bus session;
-the tests refuse to use an existing desktop daemon. All tests use temporary
-storage. CI runs unit/CLI tests on Python 3.11 and 3.13 and the isolated Dunst
-tests on Linux.
+Dunst tests require `dunst`, `dunstify`, `dunstctl`, `xvfb-run`, `xauth`, and
+`dbus-run-session`. GTK tests additionally require `xdotool` and the GUI environment
+above. Install `i3-wm` for the optional placement/resize regression; it starts a
+private i3 with its own IPC socket inside Xvfb, never using your desktop's socket
+or configuration. Install development tools into the GUI environment and run its
+interpreter directly (plain `uv run` would select the separate CLI environment):
+
+```sh
+uv pip install --python .venv-gui/bin/python -e . --group dev
+xvfb-run -a -s '-screen 0 2560x1440x24' dbus-run-session -- .venv-gui/bin/python -m pytest -m gtk --run-gui
+# Also cover placement on smaller displays:
+xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps' --run-gui
+```
+
+Always run GUI tests under `xvfb-run` with a private D-Bus session; the tests refuse
+to use the real desktop. All tests use temporary storage. CI runs unit/CLI tests
+on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK job
+against the built wheel (including its bundled stylesheet and isolated i3 placement).
 
 The package uses `src/pinote/` with `python -m pinote` support. Storage, Markdown,
 notification rendering, and CLI parsing are separated for focused testing.
+`gui/` contains the optional presentation and a GTK-free data adapter; GTK is
+loaded only when launching the GUI. No database migration is needed.
 
 ## License
 
