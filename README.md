@@ -39,7 +39,7 @@ backend that pip installs automatically in an isolated build environment.
 The uv CLI is optional for users and recommended for the development workflow
 below. The package does not change your shell, desktop configuration, or
 existing reminders. After local source changes, reinstall with your chosen
-installer (for uv: `uv tool install --force .`).
+installer (for uv: `uv tool install --reinstall .` to rebuild the local source).
 
 ## Use
 
