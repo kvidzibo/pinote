@@ -160,9 +160,10 @@ The window requests floating/keep-above behavior at absolute desktop coordinates
 **x=25, y=1300** on each fresh launch, independent of the focused monitor. Smaller
 displays clamp the position on-screen; long lists scroll within the remaining
 height. If an error notice needs extra height, the popup shifts up to keep its
-controls visible. Moving the window lasts until it closes; launching an already-open
-instance preserves its position. X11 placement is requested on opening; the
-window manager has the final say (Wayland may ignore positioning).
+controls visible. Manual moves survive remapping and reactivation until the window
+closes; launching an already-open instance preserves its position. X11 placement
+is requested on opening; the window manager has the final say (Wayland may ignore
+positioning).
 
 For i3, put this rule **after** any general floating-window border rules so they
 cannot restore the titlebar:
@@ -265,7 +266,7 @@ interpreter directly (plain `uv run` would select the separate CLI environment):
 uv pip install --python .venv-gui/bin/python -e . --group dev
 xvfb-run -a -s '-screen 0 2560x1440x24' dbus-run-session -- .venv-gui/bin/python -m pytest -m gtk --run-gui
 # Also cover placement on smaller displays:
-xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps' --run-gui
+xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps or manual_position' --run-gui
 ```
 
 Always run GUI tests under `xvfb-run` with a private D-Bus session; the tests refuse

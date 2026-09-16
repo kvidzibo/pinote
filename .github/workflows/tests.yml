@@ -59,4 +59,4 @@ jobs:
       - name: Small-display placement and reopen
         run: >-
           xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py
-          -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps' --run-gui
+          -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps or manual_position' --run-gui

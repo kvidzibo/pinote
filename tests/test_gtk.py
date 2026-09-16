@@ -171,6 +171,25 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         assert len(store.history()) == 3
 
 
+def test_manual_position_survives_remap_and_activation(gtk):
+    window = gtk.open()
+    application = window.get_application()
+    window.entry.set_text("Keep this unsaved draft")
+    window.move(160, 220)
+    wait_until(gtk.glib, lambda: tuple(window.get_position()) == (160, 220))
+    maps = []
+    window.connect("map-event", lambda *_args: maps.append(True))
+    window.hide()
+    wait_until(gtk.glib, lambda: not window.get_mapped())
+    # A second launch dispatches this same activation to the existing instance.
+    application.activate()
+    # get_mapped() changes before the X11 map-event handler has run.
+    wait_until(gtk.glib, lambda: bool(maps))
+    assert application.get_windows() == [window]
+    assert tuple(window.get_position()) == (160, 220)
+    assert window.entry.get_text() == "Keep this unsaved draft"
+
+
 def test_compact_window_fits_content_and_shrinks_after_removal(gtk):
     window = gtk.open()
     wait_until(gtk.glib, lambda: window.empty.get_allocated_height() > 1)
@@ -320,6 +339,34 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             window._poll()
             wait_until(gtk.glib, lambda: not window.rows and window.get_size().height < 100)
             assert tuple(window.get_position()) == expected
+            window.move(160, 220)
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == (160, 220))
+
+            def visible():
+                result = subprocess.run(
+                    ["xdotool", "search", "--onlyvisible", "--name", "^pinote — Reminders$"],
+                    env=env,
+                    capture_output=True,
+                    timeout=5,
+                )
+                assert result.returncode in (0, 1), result.stderr
+                return result.returncode == 0
+
+            for workspace, viewable in (("2", False), ("1", True)):
+                subprocess.run(
+                    ["i3-msg", "-s", socket, f"workspace {workspace}"],
+                    env=env,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                wait_until(
+                    gtk.glib,
+                    lambda expected_viewable=viewable: visible() == expected_viewable,
+                )
+            assert tuple(window.get_position()) == (160, 220)
+            window.move(*expected)
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected)
             window._error(
                 "Another note command is busy.\nRun note to check saved state.", action=True
             )

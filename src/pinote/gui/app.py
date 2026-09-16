@@ -181,9 +181,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             max(geometry.y, min(start_y, geometry.y + geometry.height - 140)),
         )
         self.move(*position)
+
         # i3 can initially offset the client for decorations it then removes.
-        # Reassert once mapped, when the WM knows the actual borderless frame.
-        self.connect("map-event", lambda *_args: self.move(*position))
+        # Correct only the first map; later remaps must preserve manual moves.
+        def place_once(window, _event):
+            window.disconnect(placement_handler)
+            window.move(*position)
+
+        placement_handler = self.connect("map-event", place_once)
 
         layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         layout.get_style_context().add_class("reminder-panel")
