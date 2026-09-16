@@ -46,7 +46,9 @@ def show(notes: list[Note]) -> None:
                 f"string:x-dunst-stack-tag:{STACK_TAG}",
                 "--",
                 "Reminders",
-                render(notes),
+                # dunstify decodes C escapes before sending the body. Escape
+                # backslashes so octal text cannot bypass our markup escaping.
+                render(notes).replace("\\", "\\\\"),
             ],
             capture_output=True,
             text=True,

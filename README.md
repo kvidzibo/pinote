@@ -76,8 +76,9 @@ the terminal. `--no-notify` suppresses automatic refresh, not an explicit `show`
 
 The notification previews the first 10 active notes, up to 180 characters each;
 `note` always shows the full text and list. When none remain it says “No active
-reminders.” Dunst's pause, fullscreen, placement, and display policies still
-apply; pinote does not override your desktop preferences.
+reminders.” Note text is rendered literally, including markup and backslash
+escape sequences. Dunst's pause, fullscreen, placement, and display policies
+still apply; pinote does not override your desktop preferences.
 
 Data is committed **before** notification delivery. If Dunst is missing or
 unavailable, mutations still succeed (exit 0) with a warning. `note show` returns

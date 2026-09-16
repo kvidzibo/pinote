@@ -36,7 +36,8 @@ def test_subprocess_uses_args_timeout_and_one_persistent_tag(monkeypatch):
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(notify.subprocess, "run", run)
-    notify.show(notes("$(touch /tmp/never); --help"))
+    text = r"$(touch /tmp/never); --help \074b\076"
+    notify.show(notes(text))
     # Dunst 1.9 (Ubuntu 24.04) lacks the newer --app-name/--stack-tag flags.
     # Keep the same persistent, replacement semantics through portable options.
     assert captured["args"][:-2] == [
@@ -51,6 +52,9 @@ def test_subprocess_uses_args_timeout_and_one_persistent_tag(monkeypatch):
         "string:x-dunst-stack-tag:pinote-reminders",
         "--",
     ]
+    assert captured["args"][-2] == "Reminders"
+    assert captured["args"][-1] == notify.render(notes(text)).replace("\\", "\\\\")
+    assert r"\\074b\\076" in captured["args"][-1]
     assert not captured["kwargs"].get("shell")
     assert captured["kwargs"]["timeout"] == 5
 

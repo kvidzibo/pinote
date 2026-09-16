@@ -123,7 +123,10 @@ def test_persistent_replace_dismiss_reopen_complete_restore(desktop):
     assert ctl(env, "count", "displayed") == "1"  # replacement, not duplication
     latest = close_and_read(env)
     assert latest["timeout"]["data"] == 0
-    assert latest["stack_tag"]["data"] == "pinote-reminders"
+    # Dunst 1.9 supports stack tags but omits them from its history JSON.
+    # The replacement count/body assertions above/below apply to every version.
+    if "stack_tag" in latest:
+        assert latest["stack_tag"]["data"] == "pinote-reminders"
     assert "1. check backups &lt;&amp;&gt;" in latest["body"]["data"]
     assert "\u20282. second reminder" in latest["body"]["data"]
     assert "1. check backups <&>" in run_note(env)
@@ -144,3 +147,11 @@ def test_persistent_replace_dismiss_reopen_complete_restore(desktop):
     assert ctl(env, "count", "displayed") == "1"
     assert "1. check backups" in close_and_read(env)["body"]["data"]
     assert "restore" in run_note(env, "history", "1")
+
+
+def test_literal_backslashes_cannot_become_markup(desktop):
+    text = r"literal \n \074b\076not bold\074/b\076"
+    run_note(desktop, text)
+    body = close_and_read(desktop)["body"]["data"]
+    assert f"1. {text}" in body
+    assert "<b>not bold</b>" not in body
