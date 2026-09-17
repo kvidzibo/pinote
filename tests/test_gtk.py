@@ -119,11 +119,12 @@ def gtk(request, tmp_path, monkeypatch):
     applications = []
     windows = []
 
-    def open_window():
-        application = ReminderApplication(paths)
-        assert application.register(None)
-        assert not application.get_is_remote()
-        applications.append(application)
+    def open_window(application=None):
+        if application is None:
+            application = ReminderApplication(paths)
+            assert application.register(None)
+            assert not application.get_is_remote()
+            applications.append(application)
         application.activate()
         assert not application.failed
         window = application.get_windows()[0]
@@ -208,11 +209,219 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert x == 25
     assert y + window.get_size().height == monitor.y + monitor.height - 25
     assert window.get_type_hint() == Gdk.WindowTypeHint.DIALOG
-    window.close_menu_button.clicked()
+    window.close_menu_button.activate()
     wait_until(gtk.glib, lambda: window.closed)
     with Store(gtk.paths.database) as store:
         assert len(store.notes()) == 3
         assert len(store.history()) == 3
+
+
+def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Original\nFull details")
+        store.add("Existing work", tag="Work")
+        store.add("Archived task", tag="Archived")
+        store.transition(2, "start")
+        store.transition(3, "done")
+    window = gtk.open()
+    assert window.tag_filter == "" and set(window.rows) == {1}
+    window._prepare_filters()
+    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+        "Untagged (1)",
+        "All (2)",
+        "#Archived (0)",
+        "#Work (1)",
+    ]
+    window.entry.set_text("Unfinished new task")
+
+    def select(menu, label):
+        item = next(item for item in menu.get_children() if item.get_label() == label)
+        # GTK ignores pointer activation during its submenu-opening grace period.
+        ready = time.monotonic() + 0.6
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+        click_button(gtk, item.get_toplevel(), item)
+
+    def context(note_id):
+        # Switching filters resizes and moves the bottom-anchored window.
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.geometry_source
+                and window.scroll.get_allocated_height() == window.scroll.get_preferred_height()[1]
+                and window.get_position()[1] + window.get_size().height == window.anchor_bottom
+            ),
+        )
+        pointer_at(gtk, window, window.rows[note_id].body, 12, 8, "click", "3")
+        wait_until(
+            gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
+        )
+        assert window.rows[note_id].get_style_context().has_class("context-target")
+        return window.context_menu
+
+    def tag_menu(note_id):
+        menu = context(note_id)
+        tag = next(item for item in menu.get_children() if item.get_label() == "Tag")
+        subprocess.run(["xdotool", "key", "End", "Right"], env=gtk.env, check=True, timeout=5)
+        wait_until(gtk.glib, lambda: tag.get_submenu().get_mapped())
+        assert window.rows[note_id].get_style_context().has_class("context-target")
+        return tag.get_submenu()
+
+    def filter_by(label):
+        click_button(gtk, window, window.menu_button)
+        wait_until(gtk.glib, lambda: window.menu.get_mapped())
+        subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
+        wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
+        select(window.filter_menu, label)
+        wait_until(gtk.glib, lambda: not window.menu.get_mapped())
+
+    for save in (False, True):
+        menu = context(1)
+        assert isinstance(menu, Gtk.Menu)
+        select(menu, "Edit…")
+        wait_until(gtk.glib, lambda: window.editor is not None)
+        assert not window.rows[1].get_style_context().has_class("context-target")
+        editor = window.editor
+        buffer = editor.entry.get_buffer()
+        assert buffer.get_text(*buffer.get_bounds(), True) == "Original\nFull details"
+        buffer.set_text("<b>Edited 🐦</b>\n\nFull changed details")
+        click_button(gtk, editor, editor.save_button if save else editor.cancel_button)
+        wait_until(gtk.glib, lambda: window.editor is None and not window.pending)
+        assert window.rows[1].body.get_text() == ("<b>Edited 🐦</b>" if save else "Original")
+        assert not window.rows[1].body.get_use_markup()
+        assert window.entry.get_text() == "Unfinished new task"
+    select(tag_menu(1), "New tag…")
+    wait_until(gtk.glib, lambda: window.editor is not None)
+    editor = window.editor
+    editor.entry.set_text("Personal 🐦")
+    click_button(gtk, editor, editor.save_button)
+    wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
+    assert window.empty.get_text() == "No untagged reminders."
+    filter_by("#Personal 🐦 (1)")
+    assert set(window.rows) == {1}
+    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+        "Untagged (0)",
+        "All (2)",
+        "#Archived (0)",
+        "#Personal 🐦 (1)",
+        "#Work (1)",
+    ]
+    window.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {1, 4})
+    assert window.rows[4].note.tag == "Personal 🐦"
+    tags = tag_menu(1)
+    assert [item.get_label() for item in tags.get_children()][:4] == [
+        "Untagged (0)",
+        "#Archived (0)",
+        "#Personal 🐦 (2)",
+        "#Work (1)",
+    ]
+    select(tags, "#Work (1)")
+    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {4})
+    filter_by("All (3)")
+    assert set(window.rows) == {1, 2, 4}
+    select(tag_menu(1), "Untagged (0)")
+    wait_until(gtk.glib, lambda: not window.pending and window.rows[1].note.tag is None)
+    filter_by("Untagged (1)")
+    assert set(window.rows) == {1}
+    filter_by("All (3)")
+    context(2)
+    target = window.rows[2]
+    assert target.get_style_context().has_class("in-progress")
+    subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.context_menu is None)
+    assert not target.get_style_context().has_class("context-target")
+    assert target.get_style_context().has_class("in-progress")
+    context(2)
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "done")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and 2 not in window.rows)
+    assert window.context_menu is None
+    assert not target.get_style_context().has_class("context-target")
+    window._prepare_filters()
+    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+        "Untagged (1)",
+        "All (2)",
+        "#Archived (0)",
+        "#Personal 🐦 (1)",
+        "#Work (0)",
+    ]
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    window = gtk.open(application)
+    assert window.tag_filter == "" and set(window.rows) == {1}
+    with Store(gtk.paths.database) as store:
+        assert [event["action"] for event in store.history(1)] == [
+            "add",
+            "edit",
+            "tag",
+            "tag",
+            "tag",
+        ]
+        assert store.history(1)[0]["text"] == "Original\nFull details"
+        assert store.notes()[-1].tag == "Personal 🐦"
+
+
+@pytest.mark.parametrize("tag_only", [False, True])
+def test_edit_and_new_tag_errors_keep_input_and_reject_stale_revision(gtk, tag_only):
+    with Store(gtk.paths.database) as store:
+        store.add("Keep original")
+    window = gtk.open()
+    window._open_editor(window.rows[1].note, tag_only=tag_only)
+    editor = window.editor
+    if tag_only:
+        editor.entry.set_text("Changed tag")
+    else:
+        editor.entry.get_buffer().set_text("Changed text\nKeep this input")
+    with display_lock(gtk.paths):
+        click_button(gtk, editor, editor.save_button)
+        wait_until(gtk.glib, lambda: not editor.saving and editor.error_text.get_visible())
+    assert "busy" in editor.error_text.get_text()
+    assert editor.save_button.get_sensitive()
+    # A menu/editor may outlive its task. The stored revision, not the latest
+    # polling snapshot, must decide whether this save can overwrite it.
+    with Store(gtk.paths.database) as store:
+        store.transition(1, "done")
+    click_button(gtk, editor, editor.save_button)
+    wait_until(
+        gtk.glib, lambda: not editor.saving and "changed elsewhere" in editor.error_text.get_text()
+    )
+    if tag_only:
+        assert editor.entry.get_text() == "Changed tag"
+    else:
+        buffer = editor.entry.get_buffer()
+        assert buffer.get_text(*buffer.get_bounds(), True) == "Changed text\nKeep this input"
+    with Store(gtk.paths.database) as store:
+        assert [event["action"] for event in store.history()] == ["add", "done"]
+        assert store.archived_notes()[0].text == "Keep original"
+    click_button(gtk, editor, editor.cancel_button)
+    wait_until(gtk.glib, lambda: window.editor is None)
+
+
+def test_committed_edit_closes_editor_even_if_list_refresh_fails(gtk, monkeypatch):
+    with Store(gtk.paths.database) as store:
+        store.add("Original")
+    window = gtk.open()
+    window._open_editor(window.rows[1].note)
+    editor = window.editor
+    editor.entry.get_buffer().set_text("Saved only once")
+
+    def failed_read():
+        raise sqlite3.OperationalError("refresh failed after edit")
+
+    monkeypatch.setattr(window.model, "notes", failed_read)
+    click_button(gtk, editor, editor.save_button)
+    wait_until(gtk.glib, lambda: window.editor is None and not window.pending)
+    assert (
+        window.notice.get_visible() and "refresh failed after edit" in window.error_text.get_text()
+    )
+    with Store(gtk.paths.database) as store:
+        assert store.notes()[0].text == "Saved only once"
+        assert [event["action"] for event in store.history()] == ["add", "edit"]
 
 
 def test_checkbox_starts_and_completes_with_real_clicks(gtk):
@@ -798,7 +1007,7 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
         rules = (
             "default_floating_border normal\n"
             "for_window [floating] border normal 0\n"
-            'for_window [window_role="^pinote-reminders$"] floating enable, border none\n'
+            'for_window [window_role="^pinote-"] floating enable, border none\n'
         )
     config.write_text(f"font pango:monospace 9\nipc-socket {socket}\n{rules}")
     window = None
@@ -863,6 +1072,30 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             subprocess.run(["xdotool", "key", "Escape"], env=env, check=True, timeout=5)
             wait_until(gtk.glib, lambda: window.preview is None)
             assert not window.closed and tuple(window.get_position()) == expected_position()
+            for kind in ("edit", "tag", "archive"):
+                if kind == "archive":
+                    window._open_archive()
+                    child = window.archive_window
+                else:
+                    window._open_editor(window.rows[1].note, tag_only=kind == "tag")
+                    child = window.editor
+                assert not child.get_decorated() and child.get_titlebar() is None
+
+                def managed_child(child=child):
+                    nodes = [tree()]
+                    while nodes:
+                        node = nodes.pop()
+                        if node.get("name") == child.get_title():
+                            return node
+                        nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
+                    return None
+
+                wait_until(gtk.glib, lambda: managed_child() is not None)
+                node = managed_child()
+                assert node["border"] == "none", f"{kind} has an i3 titlebar"
+                assert node["deco_rect"]["height"] == 0
+                child.close()
+                wait_until(gtk.glib, lambda child=child: child.closed)
             with Store(gtk.paths.database) as store:
                 for index in range(30):
                     store.add(f"Extra reminder {index}")
@@ -1103,7 +1336,17 @@ def test_multiline_entry_and_read_only_preview(gtk):
     assert row.preview_button.get_accessible().get_name() == "Preview note 2"
     assert not window.rows[1].preview_button.get_visible()
     assert window.entry.get_text() == "" and window.placeholder.get_visible()
-    wait_until(gtk.glib, lambda: window.entry_scroll.get_allocated_height() < 40)
+    wait_until(
+        gtk.glib,
+        lambda: (
+            window.entry_scroll.get_allocated_height() < 40
+            and window.reveal_note_id is None
+            and not window.geometry_source
+            and window.scroll.get_allocated_height() == window.scroll.get_preferred_height()[1]
+        ),
+    )
+    # The entry can collapse one allocation before the new row grows the list.
+    # Measure only after both have settled, so preview alone is tested for resizing.
     height = window.get_size().height
     click_button(gtk, window, row.preview_button)
     wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
@@ -1374,7 +1617,7 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
     wait_until(gtk.glib, lambda: not window.menu.get_visible())
     assert not window.closed
     click_button(gtk, window, window.menu_button)
-    click_button(gtk, window, window.archive_button)
+    click_button(gtk, window.archive_button.get_toplevel(), window.archive_button)
     wait_until(gtk.glib, lambda: window.archive_window is not None)
     archive = window.archive_window
     wait_until(
@@ -1422,7 +1665,7 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
     wait_until(gtk.glib, lambda: tuple(reopened.get_position()) == (600, 100))
     click_button(gtk, window, window.menu_button)
     wait_until(gtk.glib, lambda: window.menu.get_mapped())
-    click_button(gtk, window, window.close_menu_button)
+    click_button(gtk, window.close_menu_button.get_toplevel(), window.close_menu_button)
     wait_until(gtk.glib, lambda: window.closed and reopened.closed)
     with Store(gtk.paths.database) as store:
         assert [event["action"] for event in store.history(2)] == ["add", "rm", "restore", "done"]
@@ -2135,7 +2378,7 @@ def test_restart_helper_preserves_hidden_workspace_and_environment(gtk, tmp_path
     config = tmp_path / "i3.conf"
     config.write_text(
         f"font pango:monospace 9\nipc-socket {socket}\n"
-        'for_window [window_role="^pinote-reminders$"] floating enable, border none\n'
+        'for_window [window_role="^pinote-"] floating enable, border none\n'
     )
 
     def wm(*args):

@@ -19,6 +19,17 @@ def timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
+def validate_tag(tag: str | None) -> str | None:
+    if tag is None:
+        return None
+    if any(unicodedata.category(c) in {"Cc", "Cs", "Zl", "Zp"} for c in tag):
+        raise NoteError("Tag names must be a single line without control characters.")
+    tag = unicodedata.normalize("NFC", tag.strip())
+    if len(tag) > 64:
+        raise NoteError("Tag names cannot exceed 64 characters.")
+    return tag or None
+
+
 def validate_text(text: str) -> str:
     text = text.replace("\r\n", "\n").strip()
     if not text:
@@ -37,6 +48,7 @@ class Note:
     state: str
     created_at: str
     updated_at: str
+    tag: str | None = None
 
 
 # Table names below are fixed internal identifiers, never user input.
@@ -57,6 +69,21 @@ EVENTS_TABLE = """CREATE TABLE {name} (
     state TEXT NOT NULL,
     occurred_at TEXT NOT NULL
 )"""
+EVENTS_TABLE_V3 = """CREATE TABLE events_v3 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL REFERENCES notes(id),
+    action TEXT NOT NULL CHECK (
+        action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import', 'edit', 'tag')
+    ),
+    previous_state TEXT,
+    state TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    text TEXT NOT NULL,
+    previous_text TEXT,
+    tag TEXT,
+    previous_tag TEXT
+)"""
+# Start with the v2 base schema, then apply the same v3 migration on every path.
 SCHEMA = (
     NOTES_TABLE.format(name="notes"),
     EVENTS_TABLE.format(name="events", notes="notes"),
@@ -79,6 +106,20 @@ MIGRATION_2 = (
     "ALTER TABLE notes_v2 RENAME TO notes",
     "ALTER TABLE events_v2 RENAME TO events",
 )
+MIGRATION_3 = (
+    "ALTER TABLE notes ADD COLUMN tag TEXT",
+    EVENTS_TABLE_V3,
+    # Rebuild the action CHECK as well as adding snapshots. Before v3, note text
+    # was immutable, so it is also the correct text for every legacy event.
+    "INSERT INTO events_v3(id, note_id, action, previous_state, state, occurred_at, text) "
+    "SELECT e.id, e.note_id, e.action, e.previous_state, e.state, e.occurred_at, n.text "
+    "FROM events e JOIN notes n ON n.id = e.note_id",
+    "UPDATE sqlite_sequence SET seq = MAX(seq, "
+    "COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)) "
+    "WHERE name = 'events_v3'",
+    "DROP TABLE events",
+    "ALTER TABLE events_v3 RENAME TO events",
+)
 
 
 class Store:
@@ -96,19 +137,25 @@ class Store:
 
     def _initialize(self) -> None:
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 2:
+        if version == 3:
             return  # Ordinary reads must not take a write lock.
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             # Another process may have upgraded while this connection waited.
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            if version == 2:
+            if version == 3:
                 return
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise NoteError(f"Unsupported database version {version}; update pinote.")
-            for statement in SCHEMA if version == 0 else MIGRATION_2:
+            if version == 0:
+                for statement in SCHEMA:
+                    self.connection.execute(statement)
+            elif version == 1:
+                for statement in MIGRATION_2:
+                    self.connection.execute(statement)
+            for statement in MIGRATION_3:
                 self.connection.execute(statement)
-            self.connection.execute("PRAGMA user_version = 2")
+            self.connection.execute("PRAGMA user_version = 3")
 
     def __enter__(self) -> Store:
         return self
@@ -116,35 +163,88 @@ class Store:
     def __exit__(self, *args: object) -> None:
         self.connection.close()
 
-    def _insert(self, text: str, state: str, action: str, when: str) -> int:
+    def _insert(self, text: str, state: str, action: str, when: str, tag: str | None = None) -> int:
         cursor = self.connection.execute(
-            "INSERT INTO notes(text, state, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (text, state, when, when),
+            "INSERT INTO notes(text, state, created_at, updated_at, tag) VALUES (?, ?, ?, ?, ?)",
+            (text, state, when, when, tag),
         )
         note_id = cursor.lastrowid
         assert note_id is not None
         self.connection.execute(
-            "INSERT INTO events(note_id, action, previous_state, state, occurred_at) "
-            "VALUES (?, ?, NULL, ?, ?)",
-            (note_id, action, state, when),
+            "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, tag) "
+            "VALUES (?, ?, NULL, ?, ?, ?, ?)",
+            (note_id, action, state, when, text, tag),
         )
         return note_id
 
-    def add(self, text: str) -> int:
+    def add(self, text: str, *, tag: str | None = None) -> int:
         text = validate_text(text)
+        tag = validate_tag(tag)
         with self.connection:
-            return self._insert(text, "active", "add", timestamp())
+            return self._insert(text, "active", "add", timestamp(), tag)
+
+    def tags(self) -> list[str]:
+        rows = self.connection.execute("SELECT DISTINCT tag FROM notes WHERE tag IS NOT NULL")
+        return sorted((r[0] for r in rows), key=lambda x: (x.casefold(), x))
+
+    def edit(self, note_id: int, text: str, *, expected_updated_at: str) -> bool:
+        return self._update(note_id, "edit", validate_text(text), expected_updated_at)
+
+    def set_tag(self, note_id: int, tag: str | None, *, expected_updated_at: str) -> bool:
+        return self._update(note_id, "tag", validate_tag(tag), expected_updated_at)
+
+    def _update(self, note_id: int, action: str, value: str | None, expected: str) -> bool:
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            row = self.connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+            if (
+                row is None
+                or row["state"] not in {"active", "in_progress"}
+                or row["updated_at"] != expected
+            ):
+                raise NoteError(
+                    "This task changed elsewhere. Close and reopen the editor or tag menu, "
+                    "then try again."
+                )
+            new_text = value if action == "edit" else row["text"]
+            new_tag = value if action == "tag" else row["tag"]
+            if new_text == row["text"] and new_tag == row["tag"]:
+                return False
+            when = timestamp()
+            self.connection.execute(
+                "UPDATE notes SET text = ?, tag = ?, updated_at = ? WHERE id = ?",
+                (new_text, new_tag, when, note_id),
+            )
+            self.connection.execute(
+                "INSERT INTO events(note_id, action, previous_state, state, occurred_at, "
+                "text, previous_text, tag, previous_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    note_id,
+                    action,
+                    row["state"],
+                    row["state"],
+                    when,
+                    new_text,
+                    row["text"],
+                    new_tag,
+                    row["tag"],
+                ),
+            )
+        return True
 
     def _change_state(self, note_id: int, action: str, previous: str, target: str) -> None:
         """Append a transition inside the caller's write transaction."""
         when = timestamp()
+        row = self.connection.execute(
+            "SELECT text, tag FROM notes WHERE id = ?", (note_id,)
+        ).fetchone()
         self.connection.execute(
             "UPDATE notes SET state = ?, updated_at = ? WHERE id = ?", (target, when, note_id)
         )
         self.connection.execute(
-            "INSERT INTO events(note_id, action, previous_state, state, occurred_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (note_id, action, previous, target, when),
+            "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, tag) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (note_id, action, previous, target, when, row["text"], row["tag"]),
         )
 
     def transition(
@@ -209,12 +309,12 @@ class Store:
             ).fetchone()
         ):
             raise NoteError(f"No note with ID {note_id}.")
-        query = "SELECT events.*, notes.text FROM events JOIN notes ON notes.id = events.note_id"
+        query = "SELECT * FROM events"
         params: tuple[int, ...] = ()
         if note_id is not None:
             query += " WHERE note_id = ?"
             params = (note_id,)
-        return list(self.connection.execute(query + " ORDER BY events.id", params))
+        return list(self.connection.execute(query + " ORDER BY id", params))
 
     def import_notes(self, source: str, entries: list[tuple[str, str]]) -> int | None:
         """Import a canonical source path once; None means already imported."""

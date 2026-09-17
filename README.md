@@ -3,7 +3,8 @@
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first. The CLI has no Python runtime dependencies or background service.
 Choose a persistent Dunst notification or the optional `pinote-gui` GTK checklist
-with a multiline task entry, start/complete/delete checkboxes, and an archive.
+with multiline editing, one optional tag per task, tag filtering,
+start/complete/delete checkboxes, and an archive.
 The GUI is a separate process, not a daemon.
 
 ## Install
@@ -142,13 +143,16 @@ Startup diagnostics go to the private `/tmp/pinote-gui-restart-*.log` path print
 by the script; normal application logging to `app.log` is unchanged. The helper
 does not reinstall packages or change desktop configuration.
 
-### Upgrading for progress support
+### Upgrading for editing and tags
 
 Update **both** the CLI and GUI installations before reopening the GUI. For the
 editable setup above, update the checkout and run `uv tool install --reinstall .`
 for the separately installed CLI. Back up `notes.db` first (see below).
-The first database open upgrades schema 1 to 2 atomically, retaining note IDs,
-timestamps, history, and import markers. Older pinote versions cannot read schema 2.
+The first database open upgrades schema 1 or 2 to **3** atomically, retaining note IDs,
+timestamps, history, and import markers. Existing tasks start untagged. Older pinote
+versions cannot read schema 3. Edits and tag changes retain the task ID and record
+old/new values in history; `note history ID` shows them. Historical text is preserved,
+not replaced when a task is edited.
 
 ### Behavior
 
@@ -168,12 +172,33 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   Failed saves keep your input. Successful saves clear only the submitted draft;
   edits made while saving stay in the field. The list scrolls to the newly saved
   task once it loads. List-refresh errors do not undo a saved task.
-- Shows every active note's **first line**, with literal text and wrapping for
+- Shows each matching active note's **first line**, with literal text and wrapping for
   long first lines. Multiline notes have an **eye/preview button** on the right;
   single-line notes do not. Preview opens a scrollable, read-only popup with the
   full text, including blank lines. Select text and press **Ctrl+C** to copy it.
   **Esc** or clicking outside dismisses the preview without closing the checklist.
   Preview never changes the task or its history; it closes if the task leaves the list.
+- Right-clicking note text outlines that row while its context menu or tag submenu
+  is open. Dismissing the menu clears the outline without changing the task's state.
+- **Right-click note text → Edit…** opens a full multiline editor. Click **Save**
+  or press **Ctrl+Enter** to save; **Enter** inserts a newline. **Cancel** or **Esc**
+  discards unsaved edits. Editing keeps the task's ID, tag, and progress state.
+  Failed saves keep the editor's input; a task changed elsewhere cannot be overwritten
+  by a stale editor. Unsaved edits are not cached like the new-task draft.
+- **Right-click note text → Tag →** choose a tag, **New tag…**, or **Untagged** to
+  clear it. Each task has at most one tag. Names are case-sensitive, trimmed, Unicode
+  normalized, and limited to 64 characters on one line. Tags in use on active or
+  archived tasks are available for reuse; there is no separate tag registry.
+  Both tag menus show active-note counts, including in-progress tasks, for example
+  **#Work (3)**. Counts cover all active tasks regardless of the current filter;
+  archived-only tags show **(0)**. They use the latest loaded list when the menu opens.
+- **Bottom menu → Filter by tag →** selects **Untagged**, **All**, or a named tag.
+  **Untagged is the default every time the checklist reopens.** Filtering only hides
+  rows; it never archives or changes tasks. Assigning a different tag can immediately
+  hide a task from the current view. New tasks added under a named filter inherit that
+  tag; under All/Untagged they are untagged. The new-task draft is kept when switching
+  filters. Archive and CLI/Dunst listings remain unfiltered, and restored tasks retain
+  their tags, so they may be hidden by the checklist's current filter.
 - Left-click note text or empty space in the checklist to focus **Add a task…**.
   Drag to select text: releasing the mouse copies the selection to the clipboard,
   then focuses the input. A plain click leaves the clipboard unchanged. Buttons,
@@ -197,8 +222,9 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   a task or clear progress, and `note history ID` to inspect its events. Failed
   start/reset/complete saves restore the last saved checkbox state. Screen-reader names
   and descriptions identify the checkbox's actions and note ID.
-- The bottom **menu** beside **+** contains **Archive…** and **Close**. There is
-  no Undo button. **Archive…** opens a separate, resizable, titlebar-free window.
+- The bottom **menu** beside **+** contains **Filter by tag**, **Archive…**, and
+  **Close**. There is no Undo button. **Archive…** opens a separate, resizable,
+  titlebar-free window.
   It lists all currently completed/deleted tasks, newest first, including previous
   sessions and CLI changes. Each row shows its full text, **Completed** or **Deleted**,
   the recorded date/time in your local timezone, and a **Restore** button.
@@ -255,19 +281,20 @@ Read from `$XDG_CONFIG_HOME/pinote/config.toml` (default
 max_visible_notes = 10
 ```
 
-The limit must be a positive integer. The viewport fits the first N note rows
-(wrapping their first lines), capped by available screen space; all remaining notes
-stay accessible by scrolling. An empty list stays compact. Missing configuration uses the defaults;
+The limit must be a positive integer. The viewport fits the first N matching note rows
+(wrapping their first lines), capped by available screen space; all remaining matching
+notes stay accessible by scrolling. An empty view stays compact. Missing configuration uses the defaults;
 invalid configuration reports an error without changing notes. The GUI never
 creates or overwrites this file. **Close and reopen the GUI** after changing it.
 
 ### i3 setup
 
 For i3, put this rule **after** any general floating-window border rules so they
-cannot restore the titlebar:
+cannot restore the titlebar. It covers the checklist, Edit, New tag, and Archive
+windows; replace any older rule matching only `^pinote-reminders$`.
 
 ```i3
-for_window [window_role="^pinote-reminders$"] floating enable, border none
+for_window [window_role="^pinote-"] floating enable, border none
 ```
 
 To start the checklist at desktop login after boot, replace the old reminder's
@@ -304,7 +331,8 @@ Each canonical source path is imported at most once, atomically. Re-running the
 import does not duplicate notes, even if the file changes. An empty import does
 not mark the source as imported. A copy at another path is a separate source.
 SQLite becomes the source of truth; editing the old Markdown file does not
-change pinote. Export is a readable snapshot, **not** a backup of IDs/history.
+change pinote. Import creates untagged tasks; export omits tag metadata.
+Export is a readable snapshot, **not** a backup of IDs, tags, or history.
 
 ## Desktop login
 
