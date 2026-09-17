@@ -35,17 +35,30 @@ def wait_until(glib, condition, *, timeout=5):
         time.sleep(0.01)
 
 
-def click_button(gtk, window, button):
-    wait_until(gtk.glib, lambda: button.get_allocated_width() > 1)
-    x, y = button.translate_coordinates(
-        window, button.get_allocated_width() // 2, button.get_allocated_height() // 2
+def pointer_at(gtk, window, widget, x, y, *actions):
+    wait_until(
+        gtk.glib, lambda: widget.get_allocated_width() > 1 and widget.get_allocated_height() > 1
     )
+    x, y = widget.translate_coordinates(window, x, y)
     _success, origin_x, origin_y = window.get_window().get_origin()
     subprocess.run(
-        ["xdotool", "mousemove", "--sync", str(origin_x + x), str(origin_y + y), "click", "1"],
+        ["xdotool", "mousemove", str(origin_x + x), str(origin_y + y), *actions],
         env=gtk.env,
         check=True,
         timeout=5,
+    )
+
+
+def click_button(gtk, window, button):
+    wait_until(gtk.glib, lambda: button.get_allocated_width() > 1)
+    pointer_at(
+        gtk,
+        window,
+        button,
+        button.get_allocated_width() // 2,
+        button.get_allocated_height() // 2,
+        "click",
+        "1",
     )
 
 
@@ -102,7 +115,15 @@ def gtk(request, tmp_path, monkeypatch):
         assert not application.failed
         window = application.get_windows()[0]
         windows.append(window)
-        wait_until(GLib, lambda: not window.pending)
+        wait_until(
+            GLib,
+            lambda: (
+                not window.pending
+                and not window.geometry_source
+                and window.scroll.get_allocated_height() == window.scroll.get_preferred_height()[1]
+                and window.get_position()[1] + window.get_size().height == window.anchor_bottom
+            ),
+        )
         return window
 
     yield SimpleNamespace(paths=paths, glib=GLib, open=open_window, env=dict(os.environ))
@@ -144,13 +165,17 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert window.entry.get_parent() is window.composer
     assert window.entry.get_accessible().get_name() == "New task"
     assert window.add_button.get_accessible().get_name() == "Add task"
+    assert window.menu_button.get_accessible().get_name() == "Reminders menu"
+    assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
+    assert not window.menu.get_visible()
+    assert window.composer.get_children() == [window.entry, window.add_button, window.menu_button]
     assert not window.get_resizable()
     assert window.get_size().width == 420
     assert window.get_size().height < 140
     assert row.get_allocated_height() <= 30
     assert isinstance(row.done, Gtk.CheckButton)
     assert not row.done.get_active()
-    assert row.done.get_accessible().get_name() == "Done note 1"
+    assert row.done.get_accessible().get_name() == "Start note 1"
     assert row.remove.get_accessible().get_name() == "Remove note 1"
     assert row.remove.get_image() is not None
     assert row.body.get_line_wrap()
@@ -159,16 +184,370 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert font.get_size() == 9 * 1024
     color = row.body.get_style_context().get_color(Gtk.StateFlags.NORMAL)
     assert (color.red, color.green, color.blue) == pytest.approx((243 / 255, 245 / 255, 248 / 255))
-    monitor = window.get_display().get_monitor_at_window(window.get_window()).get_geometry()
+    monitor = window.get_display().get_monitor_at_window(window.get_window()).get_workarea()
     x, y = window.get_position()
     assert x == 25
-    assert y == min(1300, monitor.y + monitor.height - 140)
+    assert y + window.get_size().height == monitor.y + monitor.height - 25
     assert window.get_type_hint() == Gdk.WindowTypeHint.DIALOG
-    window.close_button.clicked()
+    window.close_menu_button.clicked()
     wait_until(gtk.glib, lambda: window.closed)
     with Store(gtk.paths.database) as store:
         assert len(store.notes()) == 3
         assert len(store.history()) == 3
+
+
+def test_checkbox_starts_resets_and_completes_with_real_clicks(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Work on this task")
+    window = gtk.open()
+    row = window.rows[1]
+    click_button(gtk, window, row.done)
+    wait_until(gtk.glib, lambda: not window.pending and row.note.state == "in_progress")
+    assert row.done.get_active() and row.done.get_inconsistent()
+    assert row.get_style_context().has_class("in-progress")
+    assert row.done.get_accessible().get_name() == "Complete note 1 (in progress)"
+    assert not row.exiting
+    # Text clicks must still focus the composer, not finish a progressing task.
+    click_button(gtk, window, row.body)
+    wait_until(gtk.glib, lambda: window.get_focus() is window.entry)
+    assert row.note.state == "in_progress"
+    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+    wait_until(gtk.glib, lambda: not window.pending and row.note.state == "active")
+    assert not row.done.get_active() and not row.done.get_inconsistent()
+    assert not row.get_style_context().has_class("in-progress")
+    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+    wait_until(gtk.glib, lambda: not window.pending)
+    with Store(gtk.paths.database) as store:
+        assert [e["action"] for e in store.history()] == ["add", "start", "reset"]
+    click_button(gtk, window, row.done)
+    wait_until(gtk.glib, lambda: not window.pending and row.note.state == "in_progress")
+    click_button(gtk, window, row.done)
+    wait_until(gtk.glib, lambda: not window.pending and not window.rows)
+    with Store(gtk.paths.database) as store:
+        assert store.notes(all_states=True)[0].state == "done"
+        assert [e["action"] for e in store.history()] == ["add", "start", "reset", "start", "done"]
+
+
+def test_saved_progress_is_loaded_and_unchecked_polling_never_completes_it(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Saved progress")
+        store.transition(1, "start")
+    window = gtk.open()
+    row = window.rows[1]
+    assert row.done.get_active() and row.done.get_inconsistent()
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.rows[1] is row and row.note.state == "in_progress"
+    assert not row.exiting
+    with Store(gtk.paths.database) as store:
+        assert [e["action"] for e in store.history()] == ["add", "start"]
+
+
+@pytest.mark.parametrize("action", ["start", "reset", "done"])
+def test_failed_progress_action_restores_saved_checkbox_state(gtk, action):
+    with Store(gtk.paths.database) as store:
+        store.add("Busy progress")
+        if action != "start":
+            store.transition(1, "start")
+    window = gtk.open()
+    row = window.rows[1]
+    with display_lock(gtk.paths):
+        pointer_at(gtk, window, row.done, 10, 10, "click", "3" if action == "reset" else "1")
+        wait_until(gtk.glib, lambda: not window.pending and window.notice.get_visible())
+    assert row.done.get_active() == (action != "start")
+    assert row.done.get_inconsistent() == (action != "start")
+    assert row.get_style_context().has_class("in-progress") == (action != "start")
+    assert not row.exiting
+    with Store(gtk.paths.database) as store:
+        assert len(store.history()) == (1 if action == "start" else 2)
+
+
+def test_pending_start_cannot_turn_a_second_click_into_completion(gtk, monkeypatch):
+    with Store(gtk.paths.database) as store:
+        store.add("Start just once")
+    window = gtk.open()
+    row = window.rows[1]
+    started, release = threading.Event(), threading.Event()
+    original = window.model.transition
+    calls = []
+
+    def slow_transition(note_id, action):
+        calls.append(action)
+        started.set()
+        assert release.wait(timeout=5)
+        return original(note_id, action)
+
+    monkeypatch.setattr(window.model, "transition", slow_transition)
+    try:
+        row.done.clicked()
+        assert started.wait(timeout=2)
+        assert row.note.state == "active" and not row.exiting
+        assert not row.done.get_sensitive()
+        row.done.clicked()
+        window._act(1, "reset")
+        assert calls == ["start"]
+    finally:
+        release.set()
+    wait_until(gtk.glib, lambda: not window.pending and row.note.state == "in_progress")
+    assert row.done.get_active() and row.done.get_inconsistent() and not row.exiting
+    with Store(gtk.paths.database) as store:
+        assert [e["action"] for e in store.history()] == ["add", "start"]
+
+
+@pytest.mark.parametrize("click_action", ["done", "reset"])
+@pytest.mark.parametrize("external_action", ["restore", "done", "rm"])
+def test_stale_progress_click_never_overrides_external_change(
+    gtk, cli, click_action, external_action
+):
+    with Store(gtk.paths.database) as store:
+        store.add("Another frontend changed this")
+        store.transition(1, "start")
+    window = gtk.open()
+    row = window.rows[1]
+    cli(external_action, "1", "--no-notify")
+    assert row.note.state == "in_progress"
+    pointer_at(gtk, window, row.done, 10, 10, "click", "1" if click_action == "done" else "3")
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert not row.exiting
+    if external_action == "restore":
+        assert window.rows[1].note.state == "active"
+        assert not row.done.get_active() and not row.done.get_inconsistent()
+    else:
+        assert not window.rows
+    with Store(gtk.paths.database) as store:
+        assert [e["action"] for e in store.history()] == ["add", "start", external_action]
+
+
+def test_no_tooltips_keep_accessible_names(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("No hover popup")
+    window = gtk.open()
+    widgets = [window]
+    while widgets:
+        widget = widgets.pop()
+        assert not widget.get_has_tooltip()
+        if hasattr(widget, "get_children"):
+            widgets.extend(widget.get_children())
+    assert window.rows[1].remove.get_accessible().get_name() == "Remove note 1"
+
+
+@pytest.mark.parametrize("limit", [1, 3])
+def test_configured_note_limit_grows_up_then_scrolls(gtk, limit):
+    config = Path(gtk.env["XDG_CONFIG_HOME"]) / "pinote/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"[gui]\nmax_visible_notes = {limit}\n")
+    window = gtk.open()
+    monitor = window.get_display().get_monitor_at_window(window.get_window()).get_workarea()
+    bottom = monitor.y + monitor.height - 25
+    wait_until(gtk.glib, lambda: window.get_position()[1] + window.get_size().height == bottom)
+    empty_height = window.get_size().height
+    heights = []
+    for count in range(1, limit + 3):
+        with Store(gtk.paths.database) as store:
+            store.add(f"Reminder {count}\nSecond line")
+        window._poll()
+        wait_until(gtk.glib, lambda count=count: len(window.rows) == count and not window.pending)
+        expected_height = sum(
+            row.get_preferred_height_for_width(window.list_box.get_allocated_width())[1]
+            for row in window.list_box.get_children()[:limit]
+        )
+        wait_until(
+            gtk.glib,
+            lambda expected_height=expected_height: (
+                window.scroll.get_allocated_height() == expected_height
+                and window.get_position()[1] + window.get_size().height == bottom
+            ),
+        )
+        heights.append(window.get_size().height)
+    assert all(
+        left < right for left, right in zip(heights[: limit - 1], heights[1:limit], strict=True)
+    )
+    assert heights[-1] == heights[-2] == heights[limit - 1]
+    adjustment = window.scroll.get_vadjustment()
+    wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
+    with Store(gtk.paths.database) as store:
+        for note in store.notes():
+            store.transition(note.id, "rm")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.rows and window.get_size().height == empty_height)
+    wait_until(gtk.glib, lambda: window.get_position()[1] + window.get_size().height == bottom)
+
+
+@pytest.mark.parametrize("target", ["text", "row_gap", "panel", "empty", "composer"])
+def test_non_button_click_focuses_entry_without_copying(gtk, target):
+    from pinote.gui.app import Gdk, Gtk
+
+    if target != "empty":
+        with Store(gtk.paths.database) as store:
+            store.add("Click here to type another task")
+    window = gtk.open()
+    wait_until(gtk.glib, lambda: window.scroll.get_allocated_height() > 1)
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text("Leave clipboard alone", -1)
+    window.menu_button.grab_focus()
+    if target == "text":
+        click_button(gtk, window, window.rows[1].body)
+    elif target == "empty":
+        click_button(gtk, window, window.empty)
+    else:
+        widget, x, y = {
+            "row_gap": (window.rows.get(1), 29, 1),
+            "panel": (window, 3, 3),
+            "composer": (window.composer, window.entry.get_allocated_width() + 3, 8),
+        }[target]
+        pointer_at(gtk, window, widget, x, y, "click", "1")
+    wait_until(gtk.glib, lambda: window.get_focus() is window.entry)
+    assert clipboard.wait_for_text() == "Leave clipboard alone"
+    with Store(gtk.paths.database) as store:
+        assert all(event["action"] == "add" for event in store.history())
+
+
+@pytest.mark.parametrize("first,last", [(0, 16), (16, 0), (0, 35)])
+def test_drag_selection_copies_literal_unicode_on_release_then_focuses_entry(gtk, first, last):
+    from pinote.gui.app import Gdk, Gtk, Pango
+
+    text = "Copy 🐦 <literal>\nsecond line & more text"
+    with Store(gtk.paths.database) as store:
+        store.add(text)
+    window = gtk.open()
+    label = window.rows[1].body
+    wait_until(gtk.glib, lambda: label.get_allocated_height() > 1)
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text("Unchanged during drag", -1)
+    window.entry.set_text("Keep this draft")
+
+    def move_to_index(index, *action):
+        rect = label.get_layout().index_to_pos(len(text[:index].encode("utf-8")))
+        layout_x, layout_y = label.get_layout_offsets()
+        pointer_at(
+            gtk,
+            window,
+            label,
+            layout_x + rect.x // Pango.SCALE,
+            layout_y + (rect.y + rect.height // 2) // Pango.SCALE,
+            *action,
+        )
+        wait_until(gtk.glib, lambda: True)
+
+    move_to_index(first, "mousedown", "1")
+    move_to_index(last)
+    wait_until(gtk.glib, lambda: label.get_selection_bounds()[0])
+    assert window.get_focus() is not window.entry
+    assert clipboard.wait_for_text() == "Unchanged during drag"
+    _selected, start, end = label.get_selection_bounds()
+    assert "🐦 <literal>" in text[start:end]
+    move_to_index(last, "mouseup", "1")
+    wait_until(gtk.glib, lambda: window.get_focus() is window.entry)
+    assert clipboard.wait_for_text() == text[start:end]
+    assert window.entry.get_text() == "Keep this draft"
+    with Store(gtk.paths.database) as store:
+        assert store.notes()[0].text == text
+        assert len(store.history()) == 1
+
+
+@pytest.mark.parametrize("action", ["done", "rm"])
+def test_note_buttons_do_not_copy_or_redirect_focus(gtk, monkeypatch, action):
+    from pinote.gui.app import Gdk, Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Selected text must not be copied by a button click")
+        if action == "done":
+            store.transition(1, "start")
+    window = gtk.open()
+    row = window.rows[1]
+    row.body.select_region(0, -1)
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text("Keep clipboard", -1)
+    redirected = []
+    monkeypatch.setattr(window, "_copy_and_focus", lambda label: redirected.append(label))
+    click_button(gtk, window, row.done if action == "done" else row.remove)
+    wait_until(gtk.glib, lambda: not window.pending and not window.rows)
+    assert redirected == []
+    assert clipboard.wait_for_text() == "Keep clipboard"
+    with Store(gtk.paths.database) as store:
+        expected = ["add", "start", "done"] if action == "done" else ["add", "rm"]
+        assert [event["action"] for event in store.history()] == expected
+
+
+def test_entry_selection_and_scrollbar_keep_native_behavior(gtk, monkeypatch):
+    from pinote.gui.app import Gdk, Gtk
+
+    with Store(gtk.paths.database) as store:
+        for index in range(30):
+            store.add(f"Reminder {index}")
+    window = gtk.open()
+    redirected = []
+    monkeypatch.setattr(window, "_copy_and_focus", lambda label: redirected.append(label))
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text("Keep clipboard", -1)
+    window.entry.set_text("A draft to edit")
+    pointer_at(gtk, window, window.entry, 8, 10, "mousedown", "1")
+    wait_until(gtk.glib, lambda: True)
+    pointer_at(gtk, window, window.entry, 55, 10, "mouseup", "1")
+    wait_until(gtk.glib, lambda: bool(window.entry.get_selection_bounds()))
+    assert clipboard.wait_for_text() == "Keep clipboard"
+    assert redirected == []
+    window.scroll.set_overlay_scrolling(False)
+    scrollbar = window.scroll.get_vscrollbar()
+    wait_until(gtk.glib, lambda: scrollbar.get_allocated_width() > 1)
+    pointer_at(gtk, window, scrollbar, scrollbar.get_allocated_width() // 2, 15, "mousedown", "1")
+    wait_until(gtk.glib, lambda: True)
+    pointer_at(gtk, window, scrollbar, scrollbar.get_allocated_width() // 2, 80, "mouseup", "1")
+    wait_until(gtk.glib, lambda: window.scroll.get_vadjustment().get_value() > 0)
+    assert redirected == []
+    assert clipboard.wait_for_text() == "Keep clipboard"
+
+
+@pytest.mark.parametrize("concurrent_resize", [False, True])
+def test_manual_move_becomes_new_bottom_anchor_for_growth(gtk, concurrent_resize):
+    window = gtk.open()
+    initial_height = window.get_size().height
+    if concurrent_resize:
+        # Reproduce a configure event coalescing a move with a size change:
+        # GTK's previous configure record still has the earlier height.
+        window._configured_geometry = (
+            tuple(window.get_position()),
+            (window.get_size().width, initial_height - 1),
+        )
+    window.move(160, 220)
+    wait_until(gtk.glib, lambda: tuple(window.get_position()) == (160, 220))
+    bottom = 220 + initial_height
+    with Store(gtk.paths.database) as store:
+        for index in range(5):
+            store.add(f"Reminder {index}")
+    window._poll()
+    wait_until(
+        gtk.glib,
+        lambda: (
+            len(window.rows) == 5
+            and window.get_size().height > initial_height
+            and tuple(window.get_position()) == (160, bottom - window.get_size().height)
+        ),
+    )
+    assert window.anchor_bottom == bottom
+
+
+def test_notice_grows_up_and_shrinks_without_moving_bottom(gtk):
+    with Store(gtk.paths.database) as store:
+        for index in range(35):
+            store.add(f"Reminder {index}: " + "wrapped " * 80)
+    window = gtk.open()
+    initial_height = window.get_size().height
+    initial_scroll = window.scroll.get_allocated_height()
+    bottom = window.get_position()[1] + initial_height
+    window._error("Busy.\nTry again.\nRun note to check saved state.", action=True)
+    wait_until(
+        gtk.glib,
+        lambda: (
+            window.notice.get_allocated_height() > 1
+            and window.scroll.get_allocated_height() < initial_scroll
+        ),
+    )
+    wait_until(gtk.glib, lambda: window.get_position()[1] + window.get_size().height == bottom)
+    window.notice.hide()
+    wait_until(gtk.glib, lambda: window.scroll.get_allocated_height() == initial_scroll)
+    assert window.get_size().height == initial_height
+    wait_until(gtk.glib, lambda: window.get_position()[1] + window.get_size().height == bottom)
 
 
 def test_manual_position_survives_remap_and_activation(gtk):
@@ -203,9 +582,16 @@ def test_compact_window_fits_content_and_shrinks_after_removal(gtk):
     adjustment = window.scroll.get_vadjustment()
     wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
     assert window.get_size().width == 420
-    assert empty_height < window.get_size().height <= 480
-    monitor = window.get_display().get_monitor_at_window(window.get_window()).get_geometry()
-    assert window.get_position()[1] + window.get_size().height <= monitor.y + monitor.height
+    monitor = window.get_display().get_monitor_at_window(window.get_window()).get_workarea()
+    wait_until(gtk.glib, lambda: window.get_size().height > empty_height)
+    assert window.get_size().height <= monitor.height - 50
+    wait_until(
+        gtk.glib,
+        lambda: (
+            window.get_position()[1] + window.get_size().height == monitor.y + monitor.height - 25
+        ),
+    )
+    assert window.get_position()[1] >= monitor.y + 25
     with Store(gtk.paths.database) as store:
         for note in store.notes():
             store.transition(note.id, "rm")
@@ -301,10 +687,13 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                     store.add(f"Reminder {index}")
             window = gtk.open()
             monitor = window.get_display().get_monitor_at_window(window.get_window())
-            geometry = monitor.get_geometry()
+            geometry = monitor.get_workarea()
             screen_bottom = geometry.y + geometry.height
-            expected = (25, min(1300, screen_bottom - 140))
-            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected)
+
+            def expected_position():
+                return (25, screen_bottom - 25 - window.get_size().height)
+
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
             assert window.get_size().width == 420
             assert window.get_size().height < 140
             nodes = [tree()]
@@ -314,7 +703,7 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                     assert node["floating"] == "auto_on"
                     assert node["border"] == "none"
                     assert node["deco_rect"]["height"] == 0
-                    assert (node["rect"]["x"], node["rect"]["y"]) == expected
+                    assert (node["rect"]["x"], node["rect"]["y"]) == expected_position()
                     break
                 nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
             else:
@@ -330,15 +719,25 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                     len(window.rows) == 33 and adjustment.get_upper() > adjustment.get_page_size()
                 ),
             )
-            assert window.get_size().height <= 480
-            bottom = window.get_position()[1] + window.get_size().height
-            assert bottom <= screen_bottom
+            assert window.get_size().height < geometry.height - 50
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
+            wait_until(
+                gtk.glib,
+                lambda: (
+                    window.scroll.get_allocated_height()
+                    == sum(
+                        row.get_allocated_height()
+                        for row in window.list_box.get_children()[: window.config.max_visible_notes]
+                    )
+                ),
+            )
             with Store(gtk.paths.database) as store:
                 for note in store.notes():
                     store.transition(note.id, "rm")
             window._poll()
             wait_until(gtk.glib, lambda: not window.rows and window.get_size().height < 100)
-            assert tuple(window.get_position()) == expected
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
+            expected = expected_position()
             window.move(160, 220)
             wait_until(gtk.glib, lambda: tuple(window.get_position()) == (160, 220))
 
@@ -540,6 +939,7 @@ def test_add_during_a_departing_row_preserves_animation_and_order(gtk, animation
     with Store(gtk.paths.database) as store:
         store.add("Finish this")
         store.add("Keep this")
+        store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
     row.done.clicked()
@@ -551,7 +951,230 @@ def test_add_during_a_departing_row_preserves_animation_and_order(gtk, animation
     assert window.rows[1] is row and row.exiting
     assert [child.note.id for child in window.list_box.get_children()] == [1, 2, 3]
     with Store(gtk.paths.database) as store:
-        assert [event["action"] for event in store.history()] == ["add", "add", "done", "add"]
+        assert [event["action"] for event in store.history()] == [
+            "add",
+            "add",
+            "start",
+            "done",
+            "add",
+        ]
+
+
+def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, monkeypatch):
+    from datetime import datetime
+
+    from pinote import notify
+
+    notifications = []
+    monkeypatch.setattr(notify, "show", lambda notes: notifications.append(notes))
+    text = "<b>Completed & literal</b> 🐦\nSecond line"
+    cli("--no-notify", text)
+    cli("--no-notify", "Deleted task")
+    cli("done", "1", "--no-notify")
+    cli("rm", "2", "--no-notify")
+    window = gtk.open()
+    height = window.get_size().height
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    assert window.get_size().height == height
+    subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: not window.menu.get_visible())
+    assert not window.closed
+    click_button(gtk, window, window.menu_button)
+    click_button(gtk, window, window.archive_button)
+    wait_until(gtk.glib, lambda: window.archive_window is not None)
+    archive = window.archive_window
+    wait_until(
+        gtk.glib,
+        lambda: not archive.pending and len(archive.rows) == 2 and not window.menu.get_visible(),
+    )
+    assert archive.get_transient_for() is window and archive.get_resizable()
+    assert not archive.get_decorated() and archive.get_titlebar() is None
+    assert archive.get_role() == "pinote-archive"
+    assert [row.note.id for row in archive.list_box.get_children()] == [2, 1]
+    assert archive.rows[1].body.get_text() == text
+    assert not archive.rows[1].body.get_use_markup()
+    for note_id, status in ((1, "Completed"), (2, "Deleted")):
+        row = archive.rows[note_id]
+        date = datetime.fromisoformat(row.note.updated_at).astimezone()
+        assert row.date.get_text() == f"{status} · {date:%Y-%m-%d %H:%M:%S %Z}"
+        assert row.restore.get_accessible().get_name() == f"Restore note {note_id}"
+    retained = archive.rows[1]
+    retained.body.select_region(0, 10)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert archive.rows[1] is retained and retained.body.get_selection_bounds()[0]
+    click_button(gtk, archive, archive.rows[2].restore)
+    wait_until(gtk.glib, lambda: not archive.pending and 2 not in archive.rows and 2 in window.rows)
+    assert window.rows[2].note.state == "active" and not window.rows[2].done.get_active()
+    assert notifications == []
+    window._open_archive()
+    assert window.archive_window is archive and len(window.get_application().get_windows()) == 2
+    presented = []
+    with monkeypatch.context() as patch:
+        patch.setattr(window, "present", lambda: presented.append(window))
+        window.get_application().activate()
+    assert presented == [window]  # Relaunch presents the checklist, not the archive.
+    click_button(gtk, archive, archive.close_button)
+    wait_until(gtk.glib, lambda: archive.closed)
+    assert not window.closed
+    window._open_archive()
+    reopened = window.archive_window
+    wait_until(gtk.glib, lambda: not reopened.pending and 1 in reopened.rows)
+    assert reopened is not archive
+    cli("done", "2", "--no-notify")
+    wait_until(gtk.glib, lambda: 2 in reopened.rows and 2 not in window.rows)
+    # The transient archive can cover its parent; expose the actual menu before clicking it.
+    reopened.move(600, 100)
+    wait_until(gtk.glib, lambda: tuple(reopened.get_position()) == (600, 100))
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    click_button(gtk, window, window.close_menu_button)
+    wait_until(gtk.glib, lambda: window.closed and reopened.closed)
+    with Store(gtk.paths.database) as store:
+        assert [event["action"] for event in store.history(2)] == ["add", "rm", "restore", "done"]
+
+
+@pytest.mark.parametrize("action", ["done", "rm"])
+def test_archive_restore_during_exit_is_retryable_and_preserves_draft(
+    gtk, animations, monkeypatch, action
+):
+    from pinote.gui.app import NoteRow
+
+    monkeypatch.setattr(NoteRow, "DONE_HOLD_MS", 10000)
+    monkeypatch.setattr(NoteRow, "EXIT_MS", 10000)
+    with Store(gtk.paths.database) as store:
+        store.add("Bring this task back")
+        store.transition(1, "start")
+    window = gtk.open()
+    row = window.rows[1]
+    click_button(gtk, window, row.done if action == "done" else row.remove)
+    wait_until(gtk.glib, lambda: not window.pending and row.exiting)
+    window.entry.set_text("Keep this unsubmitted draft")
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and 1 in archive.rows)
+    restore = archive.rows[1].restore
+    with display_lock(gtk.paths):
+        click_button(gtk, archive, restore)
+        wait_until(gtk.glib, lambda: not archive.pending and archive.notice.get_visible())
+    assert "busy" in archive.error_text.get_text()
+    assert restore.get_sensitive() and row.exiting
+    original = window.model.restore
+    started, release = threading.Event(), threading.Event()
+    main_thread = threading.get_ident()
+
+    def slow_restore(note):
+        assert threading.get_ident() != main_thread
+        started.set()
+        assert release.wait(timeout=5)
+        return original(note)
+
+    monkeypatch.setattr(window.model, "restore", slow_restore)
+    try:
+        click_button(gtk, archive, restore)
+        wait_until(gtk.glib, started.is_set)
+        assert archive.action_pending and not restore.get_sensitive()
+        restore.clicked()
+        assert archive.pending == 1
+    finally:
+        release.set()
+    wait_until(gtk.glib, lambda: not archive.pending and not archive.rows and not row.exiting)
+    assert window.rows[1] is row and row.note.state == "active"
+    assert row.done.get_sensitive()
+    assert not row.done.get_active() and not row.done.get_inconsistent()
+    assert not row.get_style_context().has_class("completed")
+    assert not row.get_style_context().has_class("leaving")
+    assert not row.pause_source and not row.settings_handler
+    row.revealer.notify("child-revealed")
+    assert window.rows[1] is row
+    assert window.entry.get_text() == "Keep this unsubmitted draft"
+    assert archive.empty.get_visible() and not archive.notice.get_visible()
+    with Store(gtk.paths.database) as store:
+        assert [event["action"] for event in store.history()] == ["add", "start", action, "restore"]
+
+
+def test_stale_archive_restore_reports_conflict_without_resetting_progress(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Changed elsewhere")
+        store.transition(1, "rm")
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and 1 in archive.rows)
+    with Store(gtk.paths.database) as store:
+        store.transition(1, "restore")
+        store.transition(1, "start")
+    archive.rows[1].restore.clicked()  # Click the stale row before the next poll.
+    wait_until(gtk.glib, lambda: not archive.pending and not archive.rows)
+    assert archive.notice.get_visible() and "changed elsewhere" in archive.error_text.get_text()
+    wait_until(gtk.glib, lambda: 1 in window.rows and window.rows[1].note.state == "in_progress")
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert archive.notice.get_visible()
+    with Store(gtk.paths.database) as store:
+        assert [event["action"] for event in store.history()] == ["add", "rm", "restore", "start"]
+
+
+def test_saved_archive_restore_is_not_retryable_when_refresh_fails(gtk, monkeypatch):
+    with Store(gtk.paths.database) as store:
+        store.add("Restore once")
+        store.transition(1, "rm")
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and 1 in archive.rows)
+
+    def broken_snapshot():
+        raise sqlite3.OperationalError("archive refresh failed")
+
+    monkeypatch.setattr(window.model, "archive", broken_snapshot)
+    archive.rows[1].restore.clicked()
+    wait_until(gtk.glib, lambda: not archive.pending and archive.notice.get_visible())
+    assert not archive.rows and "archive refresh failed" in archive.error_text.get_text()
+    wait_until(gtk.glib, lambda: 1 in window.rows)
+    with Store(gtk.paths.database) as store:
+        assert [event["action"] for event in store.history()] == ["add", "rm", "restore"]
+
+
+@pytest.mark.parametrize("close_parent", [False, True])
+def test_closing_archive_or_checklist_drains_accepted_restore(gtk, monkeypatch, close_parent):
+    with Store(gtk.paths.database) as store:
+        store.add("Finish this restore even while closing")
+        store.transition(1, "rm")
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and 1 in archive.rows)
+    started, release, saved = threading.Event(), threading.Event(), threading.Event()
+    original_read, original_restore = window.model.archive, window.model.restore
+
+    def slow_read():
+        started.set()
+        assert release.wait(timeout=5)
+        return original_read()
+
+    def restore(note):
+        result = original_restore(note)
+        saved.set()
+        return result
+
+    monkeypatch.setattr(window.model, "archive", slow_read)
+    monkeypatch.setattr(window.model, "restore", restore)
+    try:
+        archive._poll()
+        assert started.wait(timeout=2)
+        archive.rows[1].restore.clicked()
+        (window if close_parent else archive).close()
+        wait_until(gtk.glib, lambda: archive.closed)
+        assert window.closed == close_parent
+        assert gtk.glib.MainContext.default().find_source_by_id(archive.refresh_source) is None
+    finally:
+        release.set()
+    assert saved.wait(timeout=3)
+    with Store(gtk.paths.database) as store:
+        assert store.notes()[0].state == "active"
+        assert [event["action"] for event in store.history()] == ["add", "rm", "restore"]
 
 
 @pytest.mark.parametrize("action", ["done", "rm"])
@@ -564,6 +1187,8 @@ def test_click_animates_after_save_with_real_fade_and_collapse(
     with Store(gtk.paths.database) as store:
         store.add("Animate this reminder\nwith a second line")
         store.add("Keep this one")
+        if action == "done":
+            store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
     wait_until(gtk.glib, lambda: row.get_allocated_height() > 1)
@@ -602,7 +1227,8 @@ def test_click_animates_after_save_with_real_fade_and_collapse(
     assert window.list_box.get_accessible().get_name() == "Reminders, 1 active note"
     with Store(gtk.paths.database) as store:
         assert store.notes(all_states=True)[0].state == ("done" if action == "done" else "removed")
-        assert [event["action"] for event in store.history(1)] == ["add", action]
+        expected = ["add", "start", "done"] if action == "done" else ["add", "rm"]
+        assert [event["action"] for event in store.history(1)] == expected
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending)
     assert window.rows[1] is row and row.exiting  # polling must not destroy/restart it
@@ -625,6 +1251,7 @@ def test_restore_and_insert_during_animation_preserve_rows_and_order(
         for index in range(4):
             store.add(f"Reminder {index}")
         store.transition(1, "rm")
+        store.transition(3, "start")
     window = gtk.open()
     row, unchanged = window.rows[3], window.rows[2]
     row.done.clicked()
@@ -659,11 +1286,14 @@ def test_restore_and_insert_during_animation_preserve_rows_and_order(
 
 
 @pytest.mark.parametrize("external_action", ["done", "rm"])
-@pytest.mark.parametrize("click_action", ["done", "rm"])
+@pytest.mark.parametrize("click_action", ["start", "done", "rm"])
 def test_stale_click_does_not_animate_or_write(
     gtk, animations, cli, monkeypatch, external_action, click_action
 ):
     cli("--no-notify", "Changed before the next poll")
+    if click_action == "done":
+        with Store(gtk.paths.database) as store:
+            store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
     dismissed = []
@@ -676,12 +1306,13 @@ def test_stale_click_does_not_animate_or_write(
     monkeypatch.setattr(row, "dismiss", record_dismissal)
     cli(external_action, "1", "--no-notify")
     assert window.rows[1] is row  # the CLI change has not been rendered yet
-    (row.done if click_action == "done" else row.remove).clicked()
+    (row.remove if click_action == "rm" else row.done).clicked()
     wait_until(gtk.glib, lambda: not window.pending)
     assert dismissed == []
     assert not window.rows and not window.list_box.get_children()
     with Store(gtk.paths.database) as store:
-        assert [event["action"] for event in store.history()] == ["add", external_action]
+        expected = ["add", "start"] if click_action == "done" else ["add"]
+        assert [event["action"] for event in store.history()] == [*expected, external_action]
 
 
 @pytest.mark.parametrize("action", ["done", "rm"])
@@ -689,6 +1320,8 @@ def test_disabled_animations_remove_immediately(gtk, animations, action):
     animations.set_property("gtk-enable-animations", False)
     with Store(gtk.paths.database) as store:
         store.add("No motion")
+        if action == "done":
+            store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
     (row.done if action == "done" else row.remove).clicked()
@@ -699,7 +1332,8 @@ def test_disabled_animations_remove_immediately(gtk, animations, action):
     assert not row.get_style_context().has_class("leaving")
     assert window.empty.get_visible()
     with Store(gtk.paths.database) as store:
-        assert [event["action"] for event in store.history()] == ["add", action]
+        expected = ["add", "start", "done"] if action == "done" else ["add", "rm"]
+        assert [event["action"] for event in store.history()] == expected
 
 
 @pytest.mark.parametrize("action", ["done", "rm"])
@@ -711,6 +1345,8 @@ def test_close_or_disable_during_animation_cleans_up(gtk, animations, monkeypatc
     monkeypatch.setattr(NoteRow, "EXIT_MS", 10000)
     with Store(gtk.paths.database) as store:
         store.add("Already saved")
+        if action == "done":
+            store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
     (row.done if action == "done" else row.remove).clicked()
@@ -730,7 +1366,8 @@ def test_close_or_disable_during_animation_cleans_up(gtk, animations, monkeypatc
         assert gtk.glib.MainContext.default().find_source_by_id(pause_source) is None
     with Store(gtk.paths.database) as store:
         assert store.notes() == []
-        assert [event["action"] for event in store.history()] == ["add", action]
+        expected = ["add", "start", "done"] if action == "done" else ["add", "rm"]
+        assert [event["action"] for event in store.history()] == expected
 
 
 def test_multiple_clicks_do_not_resubmit_departing_rows(gtk, animations, monkeypatch):
@@ -740,6 +1377,7 @@ def test_multiple_clicks_do_not_resubmit_departing_rows(gtk, animations, monkeyp
     with Store(gtk.paths.database) as store:
         store.add("Complete")
         store.add("Archive")
+        store.transition(1, "start")
     window = gtk.open()
     window.rows[1].done.clicked()
     wait_until(gtk.glib, lambda: not window.pending)
@@ -750,7 +1388,13 @@ def test_multiple_clicks_do_not_resubmit_departing_rows(gtk, animations, monkeyp
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
     assert window.empty.get_visible()
     with Store(gtk.paths.database) as store:
-        assert [event["action"] for event in store.history()] == ["add", "add", "done", "rm"]
+        assert [event["action"] for event in store.history()] == [
+            "add",
+            "add",
+            "start",
+            "done",
+            "rm",
+        ]
 
 
 def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
@@ -761,7 +1405,9 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     assert list(window.rows) == [1, 2]
     assert window.rows[1].body.get_text() == text
     assert not window.rows[1].body.get_use_markup()
-    # Drive a real X11 pointer click, not just a Python callback.
+    # Drive both stages with real X11 pointer clicks, not Python callbacks.
+    click_button(gtk, window, window.rows[1].done)
+    wait_until(gtk.glib, lambda: not window.pending and window.rows[1].note.state == "in_progress")
     click_button(gtk, window, window.rows[1].done)
     wait_until(gtk.glib, lambda: not window.pending and 1 not in window.rows)
     window.rows[2].remove.clicked()
@@ -770,7 +1416,13 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     assert window.empty.get_text() == "No active reminders."
     with Store(gtk.paths.database) as store:
         assert [note.state for note in store.notes(all_states=True)] == ["done", "removed"]
-        assert [event["action"] for event in store.history()] == ["add", "add", "done", "rm"]
+        assert [event["action"] for event in store.history()] == [
+            "add",
+            "add",
+            "start",
+            "done",
+            "rm",
+        ]
     cli("restore", "1", "--no-notify")
     # No explicit UI refresh: the timer must notice external changes.
     wait_until(gtk.glib, lambda: 1 in window.rows)
@@ -826,8 +1478,10 @@ def test_busy_mutation_is_visible_retryable_and_does_not_freeze(gtk, cli):
     wait_until(gtk.glib, lambda: not window.pending)
     assert window.notice.get_visible()  # a successful poll doesn't hide a failed click
     window.rows[1].done.clicked()
-    wait_until(gtk.glib, lambda: not window.pending and not window.rows)
+    wait_until(gtk.glib, lambda: not window.pending and window.rows[1].note.state == "in_progress")
     assert not window.notice.get_visible()
+    window.rows[1].done.clicked()
+    wait_until(gtk.glib, lambda: not window.pending and not window.rows)
 
 
 def test_read_failure_keeps_rows_and_recovers(gtk, cli, monkeypatch):
@@ -877,6 +1531,8 @@ def test_close_cancels_timer_and_ignores_late_worker_results(gtk, monkeypatch):
 
 def test_close_finishes_an_already_clicked_mutation(gtk, cli, monkeypatch):
     cli("--no-notify", "save even if the window closes")
+    with Store(gtk.paths.database) as store:
+        store.transition(1, "start")
     window = gtk.open()
     started = threading.Event()
     release = threading.Event()
@@ -899,14 +1555,14 @@ def test_close_finishes_an_already_clicked_mutation(gtk, cli, monkeypatch):
     window.worker.shutdown(wait=True)
     with Store(gtk.paths.database) as store:
         assert store.notes() == []
-        assert [event["action"] for event in store.history()] == ["add", "done"]
+        assert [event["action"] for event in store.history()] == ["add", "start", "done"]
 
 
 def test_single_instance_reopen_and_real_window_close(gtk, tmp_path):
     from pinote.gui.app import Gdk
 
-    geometry = Gdk.Display.get_default().get_monitor_at_point(25, 1300).get_geometry()
-    expected_y = min(1300, geometry.y + geometry.height - 140)
+    geometry = Gdk.Display.get_default().get_monitor_at_point(25, 1300).get_workarea()
+    expected_bottom = geometry.y + geometry.height - 25
     assert shutil.which("xdotool"), "GTK process tests require xdotool"
     executable = str(Path(sys.executable).parent / "pinote-gui")
     with Store(gtk.paths.database) as store:
@@ -931,7 +1587,7 @@ def test_single_instance_reopen_and_real_window_close(gtk, tmp_path):
                 windows = visible_windows()
                 assert len(windows) == 1
 
-                def position(window_id=windows[0]):
+                def position(window_id=windows[0], *, bottom=False):
                     result = subprocess.run(
                         ["xdotool", "getwindowgeometry", "--shell", window_id],
                         env=gtk.env,
@@ -941,9 +1597,10 @@ def test_single_instance_reopen_and_real_window_close(gtk, tmp_path):
                         timeout=5,
                     )
                     values = dict(line.split("=", 1) for line in result.stdout.splitlines())
-                    return int(values["X"]), int(values["Y"])
+                    y = int(values["Y"]) + (int(values["HEIGHT"]) if bottom else 0)
+                    return int(values["X"]), y
 
-                wait_until(gtk.glib, lambda: position() == (25, expected_y))
+                wait_until(gtk.glib, lambda: position(bottom=True) == (25, expected_bottom))
                 # A manual move lasts for this instance only; reopening starts
                 # at the default rather than restoring the last dragged position.
                 subprocess.run(
@@ -983,9 +1640,130 @@ def test_single_instance_reopen_and_real_window_close(gtk, tmp_path):
         assert len(store.history()) == 1
 
 
-@pytest.mark.parametrize("operation", ["done", "add"])
+def test_restart_helper_preserves_hidden_workspace_and_environment(gtk, tmp_path):
+    if not shutil.which("i3") or not shutil.which("i3-msg"):
+        pytest.skip("install i3 for restart-helper coverage")
+    root = Path(__file__).resolve().parents[1]
+    helper = root / "scripts/restart-pinote.sh"
+    executable = root / ".venv-gui/bin/pinote-gui"
+    assert executable.is_file(), "restart-helper tests require the checkout's .venv-gui"
+    socket = str(tmp_path / "i3.sock")
+    env = {**gtk.env, "I3SOCK": socket}
+    config = tmp_path / "i3.conf"
+    config.write_text(
+        f"font pango:monospace 9\nipc-socket {socket}\n"
+        'for_window [window_role="^pinote-reminders$"] floating enable, border none\n'
+    )
+
+    def wm(*args):
+        result = subprocess.run(
+            ["i3-msg", "-s", socket, *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        reply = json.loads(result.stdout)
+        if isinstance(reply, list):
+            assert all(item["success"] for item in reply), reply
+        return reply
+
+    def windows():
+        def collect(node, workspace=None):
+            if node.get("type") == "workspace":
+                workspace = node["name"]
+            if node.get("window_properties", {}).get("window_role") == "pinote-reminders":
+                yield node["window"], workspace
+            for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                yield from collect(child, workspace)
+
+        return list(collect(wm("-t", "get_tree")))
+
+    def restart():
+        result = subprocess.run(
+            [str(helper)],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    process = None
+    with (tmp_path / "restart.log").open("w") as output:
+        manager = subprocess.Popen(
+            ["i3", "-a", "-c", str(config)], env=env, stdout=output, stderr=output
+        )
+        try:
+            wait_until(gtk.glib, lambda: Path(socket).exists() or manager.poll() is not None)
+            assert manager.poll() is None, (tmp_path / "restart.log").read_text()
+            wm("workspace original")
+            assert "left stopped" in restart()
+            assert not windows()
+            with Store(gtk.paths.database) as store:
+                store.add("Preserve the saved task")
+            process = subprocess.Popen(
+                [str(executable)],
+                env={**env, "PINOTE_RESTART_TEST": "original"},
+                stdout=output,
+                stderr=output,
+            )
+            wait_until(gtk.glib, lambda: len(windows()) == 1)
+            _, workspace = windows()[0]
+            assert workspace == "original"
+            wm("workspace elsewhere")
+            visible = subprocess.run(
+                ["xdotool", "search", "--onlyvisible", "--name", "^pinote — Reminders$"],
+                env=env,
+                capture_output=True,
+                timeout=5,
+            )
+            assert visible.returncode == 1
+            # Do not poll/wait the old process until restart returns: it becomes
+            # an unreaped zombie, which the helper must recognize as stopped.
+            result = restart()
+            assert f"PID {process.pid} -> " in result
+            assert process.wait(timeout=5) == 0, (tmp_path / "restart.log").read_text()
+            [(new_window, new_workspace)] = windows()
+            assert new_workspace == workspace
+            # X11 may reuse the old window ID; process identity proves a restart.
+            pid = subprocess.run(
+                ["xdotool", "getwindowpid", str(new_window)],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            ).stdout.strip()
+            assert int(pid) != process.pid
+            assert b"PINOTE_RESTART_TEST=original" in Path(
+                f"/proc/{pid}/environ"
+            ).read_bytes().split(b"\0")
+            with Store(gtk.paths.database) as store:
+                assert [note.text for note in store.notes()] == ["Preserve the saved task"]
+                assert len(store.history()) == 1
+            wm(f'[id="{new_window}"] kill')
+            wait_until(gtk.glib, lambda: not windows())
+            assert "left stopped" in restart()
+        finally:
+            if manager.poll() is None and windows():
+                wm('[window_role="^pinote-reminders$"] kill')
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            manager.terminate()
+            manager.wait(timeout=5)
+
+
+@pytest.mark.parametrize("operation", ["start", "reset", "done", "add"])
 def test_process_exit_drains_accepted_click_without_an_explicit_join(gtk, cli, operation):
     cli("--no-notify", "accepted before closing")
+    if operation in {"done", "reset"}:
+        with Store(gtk.paths.database) as store:
+            store.transition(1, "start")
     script = textwrap.dedent("""
         import sys
         import threading
@@ -1014,6 +1792,8 @@ def test_process_exit_drains_accepted_click_without_an_explicit_join(gtk, cli, o
             if sys.argv[1] == "add":
                 window.entry.set_text("Add accepted before closing")
                 window.entry.emit("activate")
+            elif sys.argv[1] == "reset":
+                window._act(1, "reset")
             else:
                 window.rows[1].done.clicked()
             clicked = True
@@ -1043,8 +1823,28 @@ def test_process_exit_drains_accepted_click_without_an_explicit_join(gtk, cli, o
             ]
             assert [event["action"] for event in store.history()] == ["add", "add"]
         else:
-            assert store.notes() == []
-            assert [event["action"] for event in store.history()] == ["add", "done"]
+            states = {"start": ["in_progress"], "reset": ["active"], "done": []}
+            assert [note.state for note in store.notes()] == states[operation]
+            expected = ["add"] if operation == "start" else ["add", "start"]
+            assert [event["action"] for event in store.history()] == [*expected, operation]
+
+
+def test_invalid_config_is_reported_without_creating_database(gtk):
+    path = Path(gtk.env["XDG_CONFIG_HOME"]) / "pinote/config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text("[gui]\nmax_visible_notes = 0\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "pinote.gui"],
+        env=gtk.env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 1
+    assert "max_visible_notes must be a positive integer" in result.stdout
+    assert str(path) in gtk.paths.log.read_text()
+    assert "Traceback" not in result.stdout + result.stderr
+    assert not gtk.paths.database.exists()
 
 
 @pytest.mark.parametrize("missing", ["display", "bus"])

@@ -3,8 +3,8 @@
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first. The CLI has no Python runtime dependencies or background service.
 Choose a persistent Dunst notification or the optional `pinote-gui` GTK checklist
-with an inline task entry, completion checkboxes, and remove controls. The GUI is
-a separate process, not a daemon.
+with an inline task entry, completion checkboxes, remove controls, and an archive.
+The GUI is a separate process, not a daemon.
 
 ## Install
 
@@ -50,7 +50,7 @@ note "check backups"     # Add, save, then refresh/reopen the desktop reminder
 note                     # List active notes in the terminal
 note done 2              # Complete note 2
 note rm 3                # Archive note 3; never erase it
-note restore 3           # Make a done/removed note active again
+note restore 3           # Reactivate a note, or clear its in-progress status
 note history             # All timestamped events, oldest first (UTC)
 note history 3           # Activity for one note
 note list --all          # Include done and removed notes
@@ -63,6 +63,9 @@ note export --all        # Active and done notes; removed notes remain in the DB
 IDs are permanent, never renumbered or reused. Repeating a transition to the
 current state is a harmless no-op, not another history event. Restore a removed
 note before marking it done. Removing a completed note is allowed.
+In-progress tasks remain in the active list, marked **[in progress]** in terminal
+and notification output. `note done ID` still completes a task directly;
+`note restore ID` also clears progress without completing it.
 
 Command names are reserved: use `note add "done"` to add the literal text `done`,
 or `note add -- "--starts-with-a-dash"` for leading dashes. Quote shell
@@ -122,31 +125,84 @@ a dependency-free `uv tool`/pipx CLI. `python -m pinote.gui` also works in that
 environment. A graphical session and session D-Bus are required. Help/version
 work without GTK or a desktop. Nothing changes your i3 configuration or startup.
 
+### Restart after local changes (i3/X11)
+
+```sh
+./scripts/restart-pinote.sh
+```
+
+Use this helper after changing the GUI instead of writing a one-off restart command.
+It works from any directory when invoked by its full path, uses this checkout's
+`.venv-gui`, and requires `i3-msg` and `xdotool`. It gracefully closes a matching
+running GUI, waits for submitted saves, then reopens it with its original environment
+and workspace—even on a hidden workspace. If the GUI is stopped, it stays stopped.
+Ambiguous instances and concurrent restarts are refused; it never force-kills a GUI.
+As with a normal close, unsubmitted input is lost and the archive window closes.
+Startup diagnostics go to the private `/tmp/pinote-gui-restart-*.log` path printed
+by the script; normal application logging to `app.log` is unchanged. The helper
+does not reinstall packages or change desktop configuration.
+
+### Upgrading for progress support
+
+Update **both** the CLI and GUI installations before reopening the GUI. For the
+editable setup above, update the checkout and run `uv tool install --reinstall .`
+for the separately installed CLI. Back up `notes.db` first (see below).
+The first database open upgrades schema 1 to 2 atomically, retaining note IDs,
+timestamps, history, and import markers. Older pinote versions cannot read schema 2.
+
 ### Behavior
 
 - Compact, borderless dark popup: 420 px wide, 9 pt monospace text, no title/header
-  bar, and one checkbox/text/trash row per note. Its height fits the list; longer
-  lists scroll instead of filling the screen.
+  bar, no tooltips, and one checkbox/text/trash row per note. Its bottom edge stays
+  fixed while it grows upward as notes are added and shrinks as they are removed.
+  The visible-note limit is configurable (default **10**); extra notes scroll.
 - Add using the bottom **Add a task…** field: press **Enter** or click **+**.
   Failed saves keep your input. Successful saves clear only the submitted draft;
   edits made while saving stay in the field. List-refresh errors do not undo a
   saved task.
 - Shows every active note, with full literal text and wrapping.
-- The **checkbox** completes a note; the **trash icon** archives it. Neither
-  erases history. Hover for the note ID; use `note restore ID` to recover either,
-  and `note history ID` to inspect it. Failed saves reset the checkbox.
+- Left-click note text or empty space in the popup to focus **Add a task…**.
+  Drag to select text: releasing the mouse copies the selection to the clipboard,
+  then focuses the input. A plain click leaves the clipboard unchanged. Buttons,
+  scrollbars, and editing/selecting text inside the input keep their normal behavior.
+- **Left-click the checkbox** to start a task: an amber row and a dash in the
+  checkbox mean **In progress**. Left-click that checkbox again to **complete** it.
+  **Right-click the checkbox** to clear progress without completing or removing it;
+  right-clicking a task that has not started does nothing. Progress survives restarts.
+  Clicking task text still focuses the input, even on an in-progress task.
+- The **trash icon** archives a task, including one in progress. Neither completion
+  nor removal erases history. Find IDs with `note list --all`; use `note restore ID`
+  to recover a task or clear progress, and `note history ID` to inspect its
+  `start`/`reset`/completion events. Failed saves restore the last saved checkbox
+  state. Screen-reader names identify the checkbox's next action and note ID.
+- The bottom **menu** beside **+** contains **Archive…** and **Close**. There is
+  no Undo button. **Archive…** opens a separate, resizable, titlebar-free window.
+  It lists all currently completed/deleted tasks, newest first, including previous
+  sessions and CLI changes. Each row shows its full text, **Completed** or **Deleted**,
+  the recorded date/time in your local timezone, and a **Restore** button.
+  Imported completed tasks use their import date because the original completion
+  date is unknown. Opening Archive again presents the same archive window.
+  Its in-window **Close** button and **Esc** still close it.
+- **Restore** returns that task to the active list, unchecked, just like
+  `note restore ID`. It preserves the ID and history and removes the task from the
+  archive. Failed saves can be retried; stale restore buttons cannot overwrite
+  a task changed elsewhere. Both windows refresh CLI changes about once per second.
+  Closing the archive leaves the checklist open; closing the checklist closes both
+  windows, after finishing any already-submitted save.
 - After a successful click, **Done** holds its green check/highlight for 200 ms,
   then fades and collapses over 200 ms. **Remove** keeps its 200 ms fade/collapse.
   Saving happens first, and other rows remain usable during the animation.
   GTK's disabled-animation preference skips the effect. CLI-only changes refresh
   without animation. A refresh that restores a row cancels its exit animation.
-- Close with the bottom **×**, **Esc**, or the window manager. This only closes
+- Close with **menu → Close**, **Esc**, or the window manager. This only closes
   the window; it does not mark notes done. Unsubmitted input is not saved.
+  With the menu open, **Esc** dismisses the menu instead of closing the checklist.
 - Notices CLI changes about once per second. Unchanged rows are retained so
   polling does not reset text selection or scrolling.
 - GUI saves use the existing lock and store off the GTK event thread.
   Busy/storage errors appear in the window and `app.log`; check `note` before
-  retrying. Stale buttons cannot archive an already-completed note.
+  retrying. Stale buttons cannot archive an already-completed note, complete a task
+  whose progress was cleared, or restart a completed task.
 - Launching it again presents the existing window for the same database.
   Closing the window exits the GUI after any already-submitted operation finishes;
   closing itself never changes notes.
@@ -156,14 +212,32 @@ work without GTK or a desktop. Nothing changes your i3 configuration or startup.
   reminder does not follow GUI changes; use `note show` to refresh it, or dismiss
   it and use the checklist.
 
-The window requests floating/keep-above behavior at absolute desktop coordinates
-**x=25, y=1300** on each fresh launch, independent of the focused monitor. Smaller
-displays clamp the position on-screen; long lists scroll within the remaining
-height. If an error notice needs extra height, the popup shifts up to keep its
-controls visible. Manual moves survive remapping and reactivation until the window
-closes; launching an already-open instance preserves its position. X11 placement
-is requested on opening; the window manager has the final say (Wayland may ignore
-positioning).
+The window requests floating/keep-above behavior at **x=25**, with its bottom edge
+**25 px above the monitor's usable bottom edge**. It keeps the original monitor
+choice: the monitor containing (or nearest to) desktop point `(25, 1300)`, independent
+of keyboard focus. Wrapped notes and error notices grow upward; the list scrolls
+earlier if needed to keep the input and controls on-screen. Manual moves establish
+a new bottom anchor for that instance and survive remapping/reactivation. Reopening
+after closing restores the default placement. The window manager has the final say
+(Wayland may ignore positioning).
+
+### GUI configuration
+
+Read from `$XDG_CONFIG_HOME/pinote/config.toml` (default
+`~/.config/pinote/config.toml`):
+
+```toml
+[gui]
+max_visible_notes = 10
+```
+
+The limit must be a positive integer. The viewport fits the first N wrapped note
+rows, capped by available screen space; all remaining notes stay accessible by
+scrolling. An empty list stays compact. Missing configuration uses the defaults;
+invalid configuration reports an error without changing notes. The GUI never
+creates or overwrites this file. **Close and reopen the GUI** after changing it.
+
+### i3 setup
 
 For i3, put this rule **after** any general floating-window border rules so they
 cannot restore the titlebar:
@@ -197,7 +271,8 @@ note import ~/Documents/reminders.md
 
 This is explicit and never runs during installation. The source file is read
 only; headings/blank lines are ignored, bullets and plain lines become notes,
-and `- [x]` entries import as done. Four-space-indented continuation lines belong
+`- [x]` entries import as done, and `- [~]` entries import as in progress.
+Export uses the same markers to preserve progress. Four-space-indented continuation lines belong
 to the preceding note. This is a small reminder format, not a full Markdown
 parser (nested lists and code blocks are not supported).
 
@@ -249,7 +324,7 @@ staged files before publishing. Uninstalling the tool does not delete data.
 
 ```sh
 uv sync --locked
-uv run ruff check .
+uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
 xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
 uv build
@@ -259,7 +334,9 @@ Dunst tests require `dunst`, `dunstify`, `dunstctl`, `xvfb-run`, `xauth`, and
 `dbus-run-session`. GTK tests additionally require `xdotool` and the GUI environment
 above. Install `i3-wm` for the optional placement/resize regression; it starts a
 private i3 with its own IPC socket inside Xvfb, never using your desktop's socket
-or configuration. Install development tools into the GUI environment and run its
+or configuration. The restart-helper regression also uses that isolated setup to
+check hidden-workspace recovery, environment preservation, and stopped GUIs.
+Install development tools into the GUI environment and run its
 interpreter directly (plain `uv run` would select the separate CLI environment):
 
 ```sh
@@ -277,7 +354,8 @@ against the built wheel (including its bundled stylesheet and isolated i3 placem
 The package uses `src/pinote/` with `python -m pinote` support. Storage, Markdown,
 notification rendering, and CLI parsing are separated for focused testing.
 `gui/` contains the optional presentation and a GTK-free data adapter; GTK is
-loaded only when launching the GUI. No database migration is needed.
+loaded only when launching the GUI. Schema upgrades run transactionally in the
+shared store, so both frontends use the same progress states and history.
 
 ## License
 

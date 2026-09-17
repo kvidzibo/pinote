@@ -7,6 +7,7 @@ import sqlite3
 import sys
 
 from pinote import __version__
+from pinote.gui.config import ConfigError
 from pinote.logging_setup import LOGGER, configure_logging
 from pinote.paths import Paths
 from pinote.store import NoteError
@@ -51,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         frontend = _load_frontend()
         sys.excepthook = _log_uncaught
         return frontend(paths)
-    except (GuiUnavailable, NoteError, OSError, sqlite3.Error) as exc:
+    except (ConfigError, GuiUnavailable, NoteError, OSError, sqlite3.Error) as exc:
         LOGGER.error("%s", exc)
         return 1
     except KeyboardInterrupt:

@@ -13,6 +13,26 @@
     padding: 6px 10px;
 }
 
+.pinote-window.reminder-menu {
+    background-color: #232832;
+    border: 1px solid #4b5563;
+}
+
+.pinote-window.reminder-menu button {
+    min-width: 100px;
+    padding: 6px 10px;
+}
+
+.pinote-window .archive-content {
+    padding: 8px 0;
+    border-bottom: 1px solid #4b5563;
+}
+
+.pinote-window button.restore-button {
+    border-color: #4b5563;
+    padding: 4px 8px;
+}
+
 .pinote-window label {
     color: inherit;
 }
@@ -60,6 +80,21 @@
 .pinote-window .note-row.leaving .note-content {
     opacity: 0;
     transition: opacity 200ms ease-out;
+}
+
+.pinote-window .note-row.in-progress .note-content {
+    background-color: #343126;
+    border-radius: 3px;
+}
+
+.pinote-window .note-row.in-progress label {
+    color: #e4c78c;
+}
+
+.pinote-window .note-row.in-progress checkbutton check {
+    background-color: #665630;
+    border-color: #cfb574;
+    color: #f5e2b6;
 }
 
 .pinote-window .note-row.completed .note-content {

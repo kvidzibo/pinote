@@ -6,7 +6,7 @@ import re
 
 from pinote.store import Note
 
-BULLET = re.compile(r"^\s*[-*+]\s+(?:\[([ xX])\]\s*)?(.*)$")
+BULLET = re.compile(r"^\s*[-*+]\s+(?:\[([ xX~])\]\s*)?(.*)$")
 HEADING = re.compile(r"^\s*#{1,6}\s+")
 
 
@@ -24,7 +24,8 @@ def parse(text: str) -> list[tuple[str, str]]:
         match = BULLET.match(line)
         if match:
             checked, body = match.groups()
-            entries.append((body, "done" if checked in {"x", "X"} else "active"))
+            state = {"x": "done", "X": "done", "~": "in_progress"}.get(checked, "active")
+            entries.append((body, state))
         else:
             entries.append((line.strip(), "active"))
     return entries
@@ -35,7 +36,7 @@ def export(notes: list[Note]) -> str:
     for note in notes:
         if note.state == "removed":
             continue
-        mark = "x" if note.state == "done" else " "
+        mark = {"done": "x", "in_progress": "~"}.get(note.state, " ")
         parts = note.text.split("\n")
         lines.append(f"- [{mark}] {parts[0]}")
         lines.extend("    " + line for line in parts[1:])

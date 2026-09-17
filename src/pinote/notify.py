@@ -20,7 +20,8 @@ def render(notes: list[Note]) -> str:
         text = " ".join(note.text.split())
         if len(text) > 180:
             text = text[:179] + "…"
-        lines.append(f"{note.id}. {html.escape(text, quote=False)}")
+        progress = "[in progress] " if note.state == "in_progress" else ""
+        lines.append(f"{note.id}. {progress}{html.escape(text, quote=False)}")
     if len(notes) > 10:
         lines.append(f"… {len(notes) - 10} more; run note for the full list.")
     if not notes:
