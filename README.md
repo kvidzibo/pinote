@@ -3,7 +3,7 @@
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first. The CLI has no Python runtime dependencies or background service.
 Choose a persistent Dunst notification or the optional `pinote-gui` GTK checklist
-with an inline task entry, start/complete/delete checkboxes, and an archive.
+with a multiline task entry, start/complete/delete checkboxes, and an archive.
 The GUI is a separate process, not a daemon.
 
 ## Install
@@ -157,11 +157,21 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   edge stays fixed while it grows upward as notes are added and shrinks as they are removed.
   The visible-note limit is configurable (default **10**); extra notes scroll.
 - Add using the bottom **Add a task…** field: press **Enter** or click **+**.
+  **Shift+Enter** inserts a newline; pasting preserves newlines. The editor grows
+  to a few lines, then scrolls. It keeps its expanded height while you edit, including
+  when you shorten or replace text, and collapses when the draft is cleared (including
+  after a successful save).
+  **Tab** moves focus to the controls.
   Failed saves keep your input. Successful saves clear only the submitted draft;
-  edits made while saving stay in the field. List-refresh errors do not undo a
-  saved task.
-- Shows every active note, with full literal text and wrapping.
-- Left-click note text or empty space in the popup to focus **Add a task…**.
+  edits made while saving stay in the field. The list scrolls to the newly saved
+  task once it loads. List-refresh errors do not undo a saved task.
+- Shows every active note's **first line**, with literal text and wrapping for
+  long first lines. Multiline notes have an **eye/preview button** on the right;
+  single-line notes do not. Preview opens a scrollable, read-only popup with the
+  full text, including blank lines. Select text and press **Ctrl+C** to copy it.
+  **Esc** or clicking outside dismisses the preview without closing the checklist.
+  Preview never changes the task or its history; it closes if the task leaves the list.
+- Left-click note text or empty space in the checklist to focus **Add a task…**.
   Drag to select text: releasing the mouse copies the selection to the clipboard,
   then focuses the input. A plain click leaves the clipboard unchanged. Buttons,
   scrollbars, and editing/selecting text inside the input keep their normal behavior.
@@ -205,9 +215,10 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   without animation. A refresh that restores a row cancels its exit animation.
 - Close with **menu → Close**, **Esc**, or the window manager. This only closes
   the window; it does not mark notes done. Unsubmitted input is not saved.
-  With the menu open, **Esc** dismisses the menu instead of closing the checklist.
+  With the menu or a preview open, **Esc** dismisses it instead of closing the checklist.
 - Notices CLI changes about once per second. Unchanged rows are retained so
-  polling does not reset text selection or scrolling.
+  polling does not reset text selection or scrolling. Background additions do not
+  scroll the list; only a successful add from the GUI does.
 - GUI saves use the existing lock and store off the GTK event thread.
   Busy/storage errors appear in the window and `app.log`; check `note` before
   retrying. Stale buttons cannot archive an already-completed note, complete a task
@@ -224,8 +235,8 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
 The window requests floating/keep-above behavior at **x=25**, with its bottom edge
 **25 px above the monitor's usable bottom edge**. It keeps the original monitor
 choice: the monitor containing (or nearest to) desktop point `(25, 1300)`, independent
-of keyboard focus. Wrapped notes and error notices grow upward; the list scrolls
-earlier if needed to keep the input and controls on-screen. Manual moves establish
+of keyboard focus. Wrapped first lines, multiline input, and error notices grow
+upward; the list scrolls earlier if needed to keep the input and controls on-screen. Manual moves establish
 a new bottom anchor for that instance and survive remapping/reactivation. Reopening
 after closing restores the default placement. The window manager has the final say
 (Wayland may ignore positioning).
@@ -240,9 +251,9 @@ Read from `$XDG_CONFIG_HOME/pinote/config.toml` (default
 max_visible_notes = 10
 ```
 
-The limit must be a positive integer. The viewport fits the first N wrapped note
-rows, capped by available screen space; all remaining notes stay accessible by
-scrolling. An empty list stays compact. Missing configuration uses the defaults;
+The limit must be a positive integer. The viewport fits the first N note rows
+(wrapping their first lines), capped by available screen space; all remaining notes
+stay accessible by scrolling. An empty list stays compact. Missing configuration uses the defaults;
 invalid configuration reports an error without changing notes. The GUI never
 creates or overwrites this file. **Close and reopen the GUI** after changing it.
 
@@ -359,6 +370,7 @@ Always run GUI tests under `xvfb-run` with a private D-Bus session; the tests re
 to use the real desktop. All tests use temporary storage. CI runs unit/CLI tests
 on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK job
 against the built wheel (including its bundled stylesheet and isolated i3 placement).
+GTK regressions also exercise manual window moves during geometry synchronization.
 
 The package uses `src/pinote/` with `python -m pinote` support. Storage, Markdown,
 notification rendering, and CLI parsing are separated for focused testing.

@@ -175,13 +175,18 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert not window.get_decorated()
     assert window.get_titlebar() is None
     assert window.get_child().get_children() == [window.notice, window.scroll, window.composer]
-    assert window.entry.get_parent() is window.composer
+    assert window.entry.get_parent() is window.entry_scroll
+    assert window.entry_box.get_parent() is window.composer
     assert window.entry.get_accessible().get_name() == "New task"
     assert window.add_button.get_accessible().get_name() == "Add task"
     assert window.menu_button.get_accessible().get_name() == "Reminders menu"
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
-    assert window.composer.get_children() == [window.entry, window.add_button, window.menu_button]
+    assert window.composer.get_children() == [
+        window.entry_box,
+        window.add_button,
+        window.menu_button,
+    ]
     assert not window.get_resizable()
     assert window.get_size().width == 420
     assert window.get_size().height < 140
@@ -189,7 +194,8 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert isinstance(row.done, Gtk.CheckButton)
     assert not row.done.get_active()
     assert row.done.get_accessible().get_name() == "Start note 1"
-    assert row.content.get_children() == [row.done, row.body]
+    assert row.content.get_children() == [row.done, row.body, row.preview_button]
+    assert not row.preview_button.get_visible()
     assert "right-click to mark for deletion" in row.done.get_accessible().get_description()
     assert row.body.get_line_wrap()
     font = row.body.get_pango_context().get_font_description()
@@ -465,7 +471,7 @@ def test_non_button_click_focuses_entry_without_copying(gtk, target):
         widget, x, y = {
             "row_gap": (window.rows.get(1), 29, 1),
             "panel": (window, 3, 3),
-            "composer": (window.composer, window.entry.get_allocated_width() + 3, 8),
+            "composer": (window.composer, window.entry_box.get_allocated_width() + 3, 8),
         }[target]
         pointer_at(gtk, window, widget, x, y, "click", "1")
     wait_until(gtk.glib, lambda: window.get_focus() is window.entry)
@@ -474,11 +480,12 @@ def test_non_button_click_focuses_entry_without_copying(gtk, target):
         assert all(event["action"] == "add" for event in store.history())
 
 
-@pytest.mark.parametrize("first,last", [(0, 16), (16, 0), (0, 35)])
+@pytest.mark.parametrize("first,last", [(0, 16), (16, 0), (0, 45)])
 def test_drag_selection_copies_literal_unicode_on_release_then_focuses_entry(gtk, first, last):
     from pinote.gui.app import Gdk, Gtk, Pango
 
-    text = "Copy 🐦 <literal>\nsecond line & more text"
+    # First logical lines still wrap; dragging across that wrap must copy literally.
+    text = "Copy 🐦 <literal> " + "wrapped text " * 3 + "\nhidden details"
     with Store(gtk.paths.database) as store:
         store.add(text)
     window = gtk.open()
@@ -559,7 +566,7 @@ def test_entry_selection_and_scrollbar_keep_native_behavior(gtk, monkeypatch):
     pointer_at(gtk, window, window.entry, 8, 10, "mousedown", "1")
     wait_until(gtk.glib, lambda: True)
     pointer_at(gtk, window, window.entry, 55, 10, "mouseup", "1")
-    wait_until(gtk.glib, lambda: bool(window.entry.get_selection_bounds()))
+    wait_until(gtk.glib, lambda: bool(window.entry.get_buffer().get_selection_bounds()))
     assert clipboard.wait_for_text() == "Keep clipboard"
     assert redirected == []
     window.scroll.set_overlay_scrolling(False)
@@ -585,6 +592,9 @@ def test_manual_move_becomes_new_bottom_anchor_for_growth(gtk, concurrent_resize
             (window.get_size().width, initial_height - 1),
         )
     window.move(160, 220)
+    window.get_display().sync()
+    # An already-queued idle resize can run before the move's configure-event.
+    window._sync_geometry()
     wait_until(gtk.glib, lambda: tuple(window.get_position()) == (160, 220))
     bottom = 220 + initial_height
     with Store(gtk.paths.database) as store:
@@ -600,6 +610,61 @@ def test_manual_move_becomes_new_bottom_anchor_for_growth(gtk, concurrent_resize
         ),
     )
     assert window.anchor_bottom == bottom
+
+
+def test_manual_move_during_geometry_sync_is_not_undone(gtk, monkeypatch):
+    window = gtk.open()
+    position = window.get_position
+    moved = False
+
+    def move_after_read():
+        nonlocal moved
+        current = position()
+        if not moved:
+            moved = True
+            # The X server can receive a drag after the idle callback reads
+            # geometry, but before GTK dispatches its configure-event.
+            window.move(160, 220)
+            window.get_display().sync()
+        return current
+
+    with monkeypatch.context() as patch:
+        patch.setattr(window, "get_position", move_after_read)
+        window._sync_geometry()
+    window.get_display().sync()
+    wait_until(
+        gtk.glib,
+        lambda: (
+            tuple(window.get_position()) == (160, 220)
+            and window.anchor_x == 160
+            and window.anchor_bottom == 220 + window.get_size().height
+        ),
+    )
+
+
+def test_manual_move_before_initial_placement_ack_is_preserved(gtk, monkeypatch):
+    from pinote.gui.app import ReminderWindow
+
+    move = ReminderWindow.move
+    manual_bottom = None
+
+    def move_before_ack(window, x, y):
+        nonlocal manual_bottom
+        move(window, x, y)
+        if window.get_mapped() and manual_bottom is None:
+            # The requested placement is already visible to another X client,
+            # which can move it before GTK receives the placement acknowledgement.
+            window.get_display().sync()
+            manual_bottom = 220 + window.get_size().height
+            move(window, 160, 220)
+            window.get_display().sync()
+
+    monkeypatch.setattr(ReminderWindow, "move", move_before_ack)
+    window = gtk.open()
+    assert manual_bottom is not None
+    assert window.anchor_x == 160
+    assert window.anchor_bottom == manual_bottom
+    assert window.get_position()[0] == 160
 
 
 def test_notice_grows_up_and_shrinks_without_moving_bottom(gtk):
@@ -759,7 +824,9 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             tree()  # ensure this private WM is ready before mapping the popup
             with Store(gtk.paths.database) as store:
                 for index in range(3):
-                    store.add(f"Reminder {index}")
+                    store.add(
+                        f"Reminder {index}" + ("\nPreview details\n" * 20 if index == 0 else "")
+                    )
             window = gtk.open()
             monitor = window.get_display().get_monitor_at_window(window.get_window())
             geometry = monitor.get_workarea()
@@ -783,6 +850,19 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                 nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
             else:
                 pytest.fail("private i3 did not manage the popup")
+            height = window.get_size().height
+            click_button(gtk, window, window.rows[1].preview_button)
+            wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+            preview = window.preview
+            area = preview.area
+            x, y = preview.get_position()
+            size = preview.get_size()
+            assert area.x <= x and x + size.width <= area.x + area.width
+            assert area.y <= y and y + size.height <= area.y + area.height
+            assert size.height > height and window.get_size().height == height
+            subprocess.run(["xdotool", "key", "Escape"], env=env, check=True, timeout=5)
+            wait_until(gtk.glib, lambda: window.preview is None)
+            assert not window.closed and tuple(window.get_position()) == expected_position()
             with Store(gtk.paths.database) as store:
                 for index in range(30):
                     store.add(f"Extra reminder {index}")
@@ -903,14 +983,251 @@ def test_add_task_from_entry_saves_literal_text_and_refreshes(gtk, cli, monkeypa
     assert text in cli("list").stdout
 
 
+def test_editor_keeps_expanded_height_until_draft_is_cleared(gtk):
+    window = gtk.open()
+    single_height = window.entry_scroll.get_allocated_height()
+    bottom = window.anchor_bottom
+
+    def settled():
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.geometry_source
+                and window.entry_scroll.get_allocated_height()
+                == window.entry_scroll.get_preferred_height()[1]
+                and window.get_position()[1] + window.get_size().height == bottom
+            ),
+        )
+
+    subprocess.run(
+        ["xdotool", "search", "--name", "^pinote — Reminders$", "windowfocus", "--sync"],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    window.entry.set_text("First line")
+    buffer = window.entry.get_buffer()
+    buffer.place_cursor(buffer.get_end_iter())
+    subprocess.run(["xdotool", "key", "shift+Return"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.entry.get_text() == "First line\n")
+    settled()
+    expanded_height = window.entry_scroll.get_allocated_height()
+    assert expanded_height > single_height
+    heights = [expanded_height]
+
+    def record_height(_scroll, allocation):
+        if window.entry.get_text():
+            heights.append(allocation.height)
+
+    window.entry_scroll.connect("size-allocate", record_height)
+    for key, expected in (
+        ("a", "First line\na"),
+        ("BackSpace", "First line\n"),
+        ("BackSpace", "First line"),
+    ):
+        subprocess.run(["xdotool", "key", key], env=gtk.env, check=True, timeout=5)
+        wait_until(gtk.glib, lambda expected=expected: window.entry.get_text() == expected)
+        settled()
+        assert window.entry_scroll.get_allocated_height() == expanded_height
+    # Wrapped/pasted content can grow further, but stays bounded and never
+    # collapses just because a selection was replaced with shorter text.
+    buffer.insert_at_cursor("\n" + "wrapped content " * 100)
+    settled()
+    assert window.entry_scroll.get_allocated_height() == 82
+    window.entry.set_text("Short replacement")
+    settled()
+    assert window.entry_scroll.get_allocated_height() == 82
+    subprocess.run(["xdotool", "key", "ctrl+a", "BackSpace"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.entry.get_text() == "")
+    settled()
+    assert window.entry_scroll.get_allocated_height() == single_height
+    assert all(left <= right for left, right in zip(heights[:-1], heights[1:], strict=True))
+    with Store(gtk.paths.database) as store:
+        assert store.notes() == [] and store.history() == []
+
+
+def test_multiline_entry_and_read_only_preview(gtk):
+    from pinote.gui.app import Gdk, Gtk, Pango
+
+    with Store(gtk.paths.database) as store:
+        store.add("Single line without a preview")
+    window = gtk.open()
+    bottom = window.anchor_bottom
+    initial_height = window.get_size().height
+    title = "<b>Literal title</b> 🐦"
+    details = "\n" + "Details & more text\n" * 30 + "Last line\twith a tab"
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    window.entry.set_text(title)
+    buffer = window.entry.get_buffer()
+    buffer.place_cursor(buffer.get_end_iter())
+    subprocess.run(
+        [
+            "xdotool",
+            "search",
+            "--name",
+            "^pinote — Reminders$",
+            "windowfocus",
+            "--sync",
+            "key",
+            "shift+Return",
+        ],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    wait_until(gtk.glib, lambda: window.entry.get_text() == title + "\n")
+    assert not window.pending and len(window.rows) == 1
+    subprocess.run(["xdotool", "key", "Tab"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.get_focus() is window.add_button)
+    subprocess.run(["xdotool", "key", "shift+Tab"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.get_focus() is window.entry)
+    clipboard.set_text(details, -1)
+    subprocess.run(["xdotool", "key", "ctrl+v"], env=gtk.env, check=True, timeout=5)
+    text = title + "\n" + details
+    wait_until(gtk.glib, lambda: window.entry.get_text() == text)
+    adjustment = window.entry_scroll.get_vadjustment()
+    wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
+    wait_until(
+        gtk.glib,
+        lambda: (
+            window.get_size().height > initial_height
+            and window.get_position()[1] + window.get_size().height == bottom
+        ),
+    )
+    assert window.entry_scroll.get_allocated_height() <= 82  # 80 px viewport + border
+    subprocess.run(["xdotool", "key", "Return"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: not window.pending and 2 in window.rows)
+    row = window.rows[2]
+    assert row.body.get_text() == title and not row.body.get_use_markup()
+    assert row.preview_button.get_visible()
+    assert row.preview_button.get_accessible().get_name() == "Preview note 2"
+    assert not window.rows[1].preview_button.get_visible()
+    assert window.entry.get_text() == "" and window.placeholder.get_visible()
+    wait_until(gtk.glib, lambda: window.entry_scroll.get_allocated_height() < 40)
+    height = window.get_size().height
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    preview = window.preview
+    assert preview.body.get_text() == text
+    assert preview.body.get_selectable() and not preview.body.get_use_markup()
+    adjustment = preview.scroll.get_vadjustment()
+    wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
+    assert preview.scroll.get_allocated_height() == 300
+    assert preview.scroll.get_allocated_width() >= 340
+    assert isinstance(preview, Gtk.Window) and preview.get_window() != window.get_window()
+    assert preview.get_size().height > height  # Not clipped to the short checklist's surface.
+    assert window.get_size().height == height
+    clipboard.set_text("Unchanged until copied", -1)
+    for index, action in ((0, "mousedown"), (len(title) + 12, "mouseup")):
+        rect = preview.body.get_layout().index_to_pos(len(text[:index].encode("utf-8")))
+        layout_x, layout_y = preview.body.get_layout_offsets()
+        pointer_at(
+            gtk,
+            preview,
+            preview.body,
+            layout_x + rect.x // Pango.SCALE,
+            layout_y + (rect.y + rect.height // 2) // Pango.SCALE,
+            action,
+            "1",
+        )
+        wait_until(gtk.glib, lambda: True)
+    assert preview.get_focus() is preview.body
+    assert preview.body.get_selection_bounds()[0]
+    assert clipboard.wait_for_text() == "Unchanged until copied"
+    subprocess.run(["xdotool", "key", "ctrl+a"], env=gtk.env, check=True, timeout=5)
+    subprocess.run(["xdotool", "key", "ctrl+c"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: clipboard.wait_for_text() == text)
+    adjustment.set_value(80)
+    before = adjustment.get_value()
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.preview is preview and preview.body.get_selection_bounds()[0]
+    assert adjustment.get_value() == before
+    subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.preview is None)
+    assert not window.closed and window.get_focus() is window.entry
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    pointer_at(gtk, window, window, 3, 3, "click", "1")
+    wait_until(gtk.glib, lambda: window.preview is None)
+    assert not window.closed
+    with Store(gtk.paths.database) as store:
+        assert store.notes()[1].text == text
+        assert [event["action"] for event in store.history(2)] == ["add"]
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "rm")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and 2 not in window.rows)
+    assert window.preview is None and not window.closed
+    assert Gtk.grab_get_current() is None
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "restore")
+    window._poll()
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not window.pending
+            and 2 in window.rows
+            and not window.geometry_source
+            and window.scroll.get_allocated_height()
+            == sum(
+                row.get_preferred_height_for_width(window.list_box.get_allocated_width())[1]
+                for row in window.rows.values()
+            )
+            and window.get_position()[1] + window.get_size().height == bottom
+        ),
+    )
+    click_button(gtk, window, window.rows[2].preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    preview = window.preview
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    assert window.preview is None and not preview.get_visible()
+    assert not preview.grabbed and Gtk.grab_get_current() is None
+
+
+@pytest.mark.parametrize("limit", [1, 10])
+def test_saved_add_scrolls_to_new_row_but_background_changes_preserve_scroll(gtk, cli, limit):
+    config = Path(gtk.env["XDG_CONFIG_HOME"]) / "pinote/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"[gui]\nmax_visible_notes = {limit}\n")
+    with Store(gtk.paths.database) as store:
+        for index in range(25):
+            store.add(f"Reminder {index}")
+    window = gtk.open()
+    adjustment = window.scroll.get_vadjustment()
+    wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
+    assert adjustment.get_value() == 0
+    window.entry.set_text("Show the newly saved note\nFull details")
+    click_button(gtk, window, window.add_button)
+    wait_until(
+        gtk.glib,
+        lambda: not window.pending and 26 in window.rows and window.reveal_note_id is None,
+    )
+    allocation = window.rows[26].get_allocation()
+    assert adjustment.get_value() > 0
+    assert allocation.y >= adjustment.get_value()
+    assert allocation.y + allocation.height <= adjustment.get_value() + adjustment.get_page_size()
+    before = adjustment.get_value()
+    cli("--no-notify", "Added in the background")
+    wait_until(gtk.glib, lambda: 27 in window.rows)
+    assert adjustment.get_value() == before
+    adjustment.set_value(0)
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert adjustment.get_value() == 0
+
+
 def test_blank_and_invalid_add_keep_input_without_saving(gtk):
     window = gtk.open()
     window.entry.set_text("   ")
     window.entry.emit("activate")
     assert not window.add_button.get_sensitive() and not window.pending
-    assert window.entry.get_max_length() == 0  # never silently truncate a long paste
     text = "x" * 4097
     window.entry.set_text(text)
+    assert window.entry.get_text() == text  # never silently truncate a long paste
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending)
     assert window.entry.get_text() == text
@@ -922,18 +1239,19 @@ def test_blank_and_invalid_add_keep_input_without_saving(gtk):
 
 def test_busy_add_keeps_draft_and_can_be_retried(gtk):
     window = gtk.open()
-    window.entry.set_text("Keep this draft")
+    draft = "Keep this draft\nIncluding its details"
+    window.entry.set_text(draft)
     with display_lock(gtk.paths):
         window.entry.emit("activate")
         wait_until(gtk.glib, lambda: not window.pending)
         assert window.notice.get_visible() and "busy" in window.error_text.get_text()
-        assert window.entry.get_text() == "Keep this draft"
+        assert window.entry.get_text() == draft
         assert window.add_button.get_sensitive()
     with Store(gtk.paths.database) as store:
         assert store.notes() == [] and store.history() == []
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending)
-    assert window.notice.get_visible() and window.entry.get_text() == "Keep this draft"
+    assert window.notice.get_visible() and window.entry.get_text() == draft
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and 1 in window.rows)
     assert window.entry.get_text() == "" and not window.notice.get_visible()
@@ -966,7 +1284,7 @@ def test_saved_add_clears_draft_even_when_refresh_fails(gtk, monkeypatch):
     assert not window.notice.get_visible()
 
 
-@pytest.mark.parametrize("next_text", ["A second draft", "First draft"])
+@pytest.mark.parametrize("next_text", ["A second draft\nMore details", "First draft"])
 def test_pending_add_blocks_duplicates_and_preserves_new_edits(gtk, monkeypatch, next_text):
     window = gtk.open()
     started, release = threading.Event(), threading.Event()
@@ -1486,7 +1804,8 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     cli("--no-notify", "archive me")
     window = gtk.open()
     assert list(window.rows) == [1, 2]
-    assert window.rows[1].body.get_text() == text
+    assert window.rows[1].body.get_text() == text.split("\n", 1)[0]
+    assert window.rows[1].note.text == text
     assert not window.rows[1].body.get_use_markup()
     # Drive both stages with real X11 pointer clicks, not Python callbacks.
     click_button(gtk, window, window.rows[1].done)
@@ -1509,7 +1828,8 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     cli("restore", "1", "--no-notify")
     # No explicit UI refresh: the timer must notice external changes.
     wait_until(gtk.glib, lambda: 1 in window.rows)
-    assert window.rows[1].body.get_text() == text
+    assert window.rows[1].body.get_text() == text.split("\n", 1)[0]
+    assert window.rows[1].note.text == text
     assert window.list_box.get_accessible().get_name() == "Reminders, 1 active note"
     assert not window.notice.get_visible()
 
