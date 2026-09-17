@@ -32,17 +32,40 @@ class ReminderModel:
                 return store.add(text)
 
     def transition(self, note_id: int, action: str) -> TransitionResult:
-        if action not in {"done", "rm"}:
-            raise NoteError("The checklist only supports Done and Remove.")
+        expected_states = {
+            "start": {"active"},
+            "reset": {"in_progress"},
+            "done": {"in_progress"},
+            "rm": {"active", "in_progress"},
+        }
+        if action not in expected_states:
+            raise NoteError("The checklist only supports Start, Reset, Done, and Remove.")
         with display_lock(self.paths, blocking=False):
             with Store(self.paths.database, timeout=0.1) as store:
-                # A CLI mutation may have made this row stale since the last poll.
-                # Do not archive an already-completed note from an obsolete row.
-                changed = False
-                if any(note.id == note_id for note in store.notes()):
-                    changed = store.transition(note_id, action)
+                # A stale click must not complete a reset task, restart a done
+                # task, or archive a task already completed by another frontend.
+                changed = store.transition(note_id, action, expected_states=expected_states[action])
                 # A stale no-op must refresh the UI without a success animation.
                 return TransitionResult(store.notes(), changed)
+
+    def archive(self) -> list[Note]:
+        with Store(self.paths.database, timeout=0.1) as store:
+            return store.archived_notes()
+
+    def restore(self, note: Note) -> bool:
+        if note.state not in {"done", "removed"}:
+            raise NoteError("Only completed or removed tasks can be restored from the archive.")
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                # Compare the displayed revision inside the write transaction.
+                # A stale restore must not reset a newly restarted/re-archived task.
+                # Refresh separately so read failures cannot disguise a saved restore.
+                return store.transition(
+                    note.id,
+                    "restore",
+                    expected_states={note.state},
+                    expected_updated_at=note.updated_at,
+                )
 
 
 def application_id(paths: Paths) -> str:

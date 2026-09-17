@@ -42,7 +42,7 @@ def parser() -> argparse.ArgumentParser:
         ("list", "list active notes"),
         ("done", "mark a note done"),
         ("rm", "archive a note without erasing history"),
-        ("restore", "return a done/removed note to active"),
+        ("restore", "return a done/removed note to active, or clear progress"),
         ("history", "show timestamped activity, optionally for one note"),
         ("show", "show or reopen the desktop reminder"),
         ("import", "import a Markdown file once, without changing it"),
@@ -97,7 +97,11 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         elif args.command == "list":
             notes = store.notes(all_states=args.all)
             for note in notes:
-                state = f"[{note.state}] " if args.all else ""
+                state = (
+                    f"[{note.state.replace('_', ' ')}] "
+                    if args.all or note.state == "in_progress"
+                    else ""
+                )
                 text = note.text.replace("\n", "\n    ")
                 print(f"{note.id}. {state}{text}")
             if not notes:
