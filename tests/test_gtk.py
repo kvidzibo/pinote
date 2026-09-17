@@ -762,7 +762,7 @@ def test_error_notice_keeps_task_entry_on_screen(gtk):
 def test_escape_closes_without_changing_notes(gtk, cli):
     cli("--no-notify", "Escape only hides the window")
     window = gtk.open()
-    window.entry.set_text("Unsubmitted text must not be saved on close")
+    window.entry.set_text("Unsubmitted text must not become a task on close")
     result = subprocess.run(
         ["xdotool", "search", "--onlyvisible", "--name", "^pinote — Reminders$"],
         env=gtk.env,
@@ -1959,6 +1959,86 @@ def test_close_finishes_an_already_clicked_mutation(gtk, cli, monkeypatch):
     with Store(gtk.paths.database) as store:
         assert store.notes() == []
         assert [event["action"] for event in store.history()] == ["add", "start", "done"]
+
+
+@pytest.mark.parametrize("finish", ["close", "crash", "clear", "submit", "edit", "failed-submit"])
+def test_input_draft_survives_process_restart_without_resurrecting_submissions(gtk, finish):
+    draft = "  Unfinished <task> café ☕\n\nDetails\twith whitespace  \n"
+    script = textwrap.dedent("""
+        import os
+        import sys
+        import threading
+        from pinote.gui import main
+        from pinote.gui.app import Gio, GLib
+
+        finish, draft = sys.argv[1:]
+        started = False
+
+        def edit_and_close():
+            global started
+            app = Gio.Application.get_default()
+            window = app.get_active_window()
+            if window is None or window.pending:
+                return True
+            if not started:
+                assert window.entry.get_text() == ""
+                window.entry.set_text(draft)
+                started = True
+            if finish != "close":
+                if not window.draft.path.exists() or window.draft.path.read_text() != draft:
+                    return True
+            if finish == "crash":
+                os._exit(0)  # Verify autosave without running the close handler.
+            if finish == "clear":
+                window.entry.set_text("")
+            elif finish in {"submit", "edit", "failed-submit"}:
+                entered, release = threading.Event(), threading.Event()
+                original = window.model.add
+
+                def slow_add(text):
+                    entered.set()
+                    assert release.wait(timeout=3)
+                    if finish == "failed-submit":
+                        raise OSError("test add failure")
+                    return original(text)
+
+                window.model.add = slow_add
+                window.entry.emit("activate")
+                assert entered.wait(timeout=2)
+                if finish == "edit":
+                    window.entry.set_text("A newer draft")
+                    window.entry.set_text(draft)  # Same text, but a newer revision.
+                threading.Timer(0.2, release.set).start()
+            window.close()  # Before the autosave timer or pending add completes.
+            return False
+
+        GLib.timeout_add(20, edit_and_close)
+        status = main([])
+        assert started
+        raise SystemExit(status)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script, finish, draft],
+        env=gtk.env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = "" if finish in {"clear", "submit"} else draft
+    window = gtk.open()
+    assert window.entry.get_text() == expected
+    assert window.placeholder.get_visible() == (not expected)
+    assert window.add_button.get_sensitive() == bool(expected)
+    if expected:
+        assert window.draft.path.read_text() == expected
+        assert window.draft.path.stat().st_mode & 0o777 == 0o600
+    else:
+        assert not window.draft.path.exists()
+    with Store(gtk.paths.database) as store:
+        saved = [draft.strip()] if finish in {"submit", "edit"} else []
+        assert [note.text for note in store.notes()] == saved
+        assert [event["action"] for event in store.history()] == ["add"] * len(saved)
 
 
 def test_single_instance_reopen_and_real_window_close(gtk, tmp_path):
