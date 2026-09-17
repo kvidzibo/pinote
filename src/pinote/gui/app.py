@@ -19,6 +19,7 @@ from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
+from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.paths import Paths  # noqa: E402
@@ -228,6 +229,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.model = model
         self.config = config
         self.archive_window: ArchiveWindow | None = None
+        self.scheduled_window: ScheduledWindow | None = None
         self.editor: NoteEditor | None = None
         self.preview: NotePreview | None = None
         self.context_menu: Gtk.Menu | None = None
@@ -348,10 +350,16 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.menu.get_style_context().add_class("pinote-window")
         self.menu.get_style_context().add_class("reminder-menu")
         self.filter_item = Gtk.MenuItem()
+        self.reminders_button = Gtk.MenuItem(label="Reminders…")
         self.archive_button = Gtk.MenuItem(label="Archive…")
         self.close_menu_button = Gtk.MenuItem(label="Close")
         self.close_menu_button.get_accessible().set_name("Close reminders (Esc)")
-        for item in (self.filter_item, self.archive_button, self.close_menu_button):
+        for item in (
+            self.filter_item,
+            self.reminders_button,
+            self.archive_button,
+            self.close_menu_button,
+        ):
             self.menu.append(item)
             item.show()
         self.menu.connect("show", self._prepare_filters)
@@ -367,6 +375,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.entry.get_buffer().connect("changed", self._draft_changed)
         self.entry.connect("activate", lambda _entry: self._add())
         self.add_button.connect("clicked", lambda _button: self._add())
+        self.reminders_button.connect("activate", lambda _item: self._open_reminders())
         self.archive_button.connect("activate", lambda _item: self._open_archive())
         self.close_menu_button.connect("activate", lambda _item: self.close())
         self.composer.pack_start(self.entry_box, True, True, 0)
@@ -625,6 +634,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         separator = Gtk.SeparatorMenuItem()
         edit = Gtk.MenuItem(label="Edit…")
         edit.connect("activate", lambda _item: self._open_editor(note))
+        schedule = Gtk.MenuItem(label="Set reminder…")
+        schedule.connect("activate", lambda _item: self._open_schedule(note))
         tag_item = Gtk.MenuItem(label="Tag")
         tag_menu = Gtk.Menu()
         tag_menu.get_style_context().add_class("pinote-window")
@@ -638,10 +649,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
         tag_menu.append(new_tag)
         tag_menu.show_all()
         tag_item.set_submenu(tag_menu)
-        for item in (separator, edit, tag_item):
+        for item in (separator, edit, schedule, tag_item):
             menu.append(item)
             item.show()
         edit.set_sensitive(not self.action_pending)
+        schedule.set_sensitive(not self.action_pending)
         tag_item.set_sensitive(not self.action_pending)
 
     def _context_closed(self, menu) -> None:
@@ -660,6 +672,23 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.editor is None:
             self.editor = NoteEditor(self, note, tag_only=tag_only)
         self.editor.present()
+
+    def _open_schedule(self, note: Note) -> None:
+        if self.closed or self.action_pending:
+            return
+        if self.context_menu is not None:
+            self.context_menu.popdown()
+        if self.editor is None:
+            self.editor = NoteEditor(self, note, schedule_only=True)
+        self.editor.present()
+
+    def _open_reminders(self) -> None:
+        if self.closed:
+            return
+        self.menu.popdown()
+        if self.scheduled_window is None or self.scheduled_window.closed:
+            self.scheduled_window = ScheduledWindow(self)
+        self.scheduled_window.present()
 
     def _set_tag(self, note: Note, tag: str | None) -> None:
         if self.closed or self.action_pending or note.id not in self.rows:
@@ -929,6 +958,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self._close_preview(self.preview)
         if self.archive_window is not None and not self.archive_window.closed:
             self.archive_window.destroy()
+        if self.scheduled_window is not None and not self.scheduled_window.closed:
+            self.scheduled_window.destroy()
         if self.editor is not None:
             self.editor.destroy()
         if self.context_menu is not None:

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import Future
+from datetime import UTC, datetime, timedelta
 
 import gi
 
 from pinote.logging_setup import LOGGER
+from pinote.reminders import parse_reminder_time
 from pinote.store import Note, NoteError
 
 gi.require_version("Gtk", "3.0")
@@ -16,8 +18,8 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 
 class NoteEditor(Gtk.ApplicationWindow):
-    def __init__(self, owner, note: Note, *, tag_only: bool = False):
-        title = "New tag" if tag_only else "Edit task"
+    def __init__(self, owner, note: Note, *, tag_only: bool = False, schedule_only: bool = False):
+        title = "Set reminder" if schedule_only else "New tag" if tag_only else "Edit task"
         super().__init__(
             application=owner.get_application(),
             title=f"pinote — {title}",
@@ -28,6 +30,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.owner = owner
         self.note = note  # Keep the displayed revision, even if the checklist polls.
         self.tag_only = tag_only
+        self.schedule_only = schedule_only
         self.closed = False
         self.saving = False
         self.set_role("pinote-editor")
@@ -35,7 +38,9 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
         area = self.get_display().get_monitor_at_window(owner.get_window()).get_workarea()
-        self.set_default_size(min(480, max(1, area.width - 50)), -1 if tag_only else 240)
+        self.set_default_size(
+            min(480, max(1, area.width - 50)), -1 if tag_only or schedule_only else 240
+        )
         self.get_style_context().add_class("pinote-window")
         layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         layout.get_style_context().add_class("reminder-panel")
@@ -46,7 +51,38 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.error_text.set_max_width_chars(45)
         self.error_text.set_no_show_all(True)
         layout.pack_start(self.error_text, False, False, 0)
-        if tag_only:
+        if schedule_only:
+            when = (
+                datetime.fromisoformat(note.remind_at).astimezone()
+                if note.remind_at
+                else (datetime.now(UTC) + timedelta(hours=1)).astimezone()
+            )
+            layout.pack_start(
+                Gtk.Label(label="Local date and time (24-hour clock)", xalign=0), False, False, 0
+            )
+            self.entry = Gtk.Calendar()
+            self.entry.get_accessible().set_name("Reminder date")
+            self.entry.select_month(when.month - 1, when.year)
+            self.entry.select_day(when.day)
+            layout.pack_start(self.entry, False, False, 0)
+            time = Gtk.Box(spacing=6)
+            time.pack_start(Gtk.Label(label="Time"), False, False, 0)
+            self.hour = Gtk.SpinButton.new_with_range(0, 23, 1)
+            self.minute = Gtk.SpinButton.new_with_range(0, 59, 1)
+            for spin, value, name in (
+                (self.hour, when.hour, "Hour"),
+                (self.minute, when.minute, "Minute"),
+            ):
+                spin.set_numeric(True)
+                spin.set_width_chars(2)
+                spin.get_accessible().set_name(name)
+                spin.connect("output", self._format_time)
+                spin.set_value(value)
+            time.pack_start(self.hour, False, False, 0)
+            time.pack_start(Gtk.Label(label=":"), False, False, 0)
+            time.pack_start(self.minute, False, False, 0)
+            layout.pack_start(time, False, False, 0)
+        elif tag_only:
             self.entry = Gtk.Entry()
             self.entry.set_placeholder_text("Tag name (up to 64 characters)")
             self.entry.get_accessible().set_name("Tag name")
@@ -73,7 +109,7 @@ class NoteEditor(Gtk.ApplicationWindow):
             layout.pack_start(scroll, True, True, 0)
         controls = Gtk.Box(spacing=8, halign=Gtk.Align.END)
         self.cancel_button = Gtk.Button(label="Cancel")
-        self.save_button = Gtk.Button(label="Save")
+        self.save_button = Gtk.Button(label="Set reminder" if schedule_only else "Save")
         self.cancel_button.connect("clicked", lambda _button: self.close())
         self.save_button.connect("clicked", lambda _button: self._save())
         controls.add(self.cancel_button)
@@ -97,10 +133,33 @@ class NoteEditor(Gtk.ApplicationWindow):
             return True
         return False
 
+    @staticmethod
+    def _format_time(spin) -> bool:
+        spin.set_text(f"{spin.get_value_as_int():02d}")
+        return True
+
+    def _controls(self):
+        controls = [self.entry, self.save_button, self.cancel_button]
+        if self.schedule_only:
+            controls.extend((self.hour, self.minute))
+        return controls
+
     def _save(self) -> None:
         if self.closed or self.saving:
             return
-        if self.tag_only:
+        if self.schedule_only:
+            self.hour.update()
+            self.minute.update()
+            year, month, day = self.entry.get_date()
+            try:
+                value = parse_reminder_time(
+                    f"{year:04d}-{month + 1:02d}-{day:02d} "
+                    f"{self.hour.get_value_as_int():02d}:{self.minute.get_value_as_int():02d}"
+                )
+            except NoteError as exc:
+                self._error(str(exc))
+                return
+        elif self.tag_only:
             value = self.entry.get_text()
             if not value.strip():
                 self._error("Enter a tag name, or Cancel to keep the current tag.")
@@ -110,12 +169,14 @@ class NoteEditor(Gtk.ApplicationWindow):
             value = buffer.get_text(*buffer.get_bounds(), True)
 
         def operation():
+            if self.schedule_only:
+                return self.owner.model.schedule(self.note, value)
             if self.tag_only:
                 return self.owner.model.set_tag(self.note, value)
             return self.owner.model.edit(self.note, value)
 
         self.saving = True
-        for control in (self.entry, self.save_button, self.cancel_button):
+        for control in self._controls():
             control.set_sensitive(False)
         future = self.owner.worker.submit(operation)
 
@@ -143,9 +204,11 @@ class NoteEditor(Gtk.ApplicationWindow):
             self._error("Unexpected failure. Run note to check the saved state.")
         else:
             self.owner._poll()
+            if self.owner.scheduled_window is not None:
+                self.owner.scheduled_window._poll()
             self.destroy()
         if not self.closed:
-            for control in (self.entry, self.save_button, self.cancel_button):
+            for control in self._controls():
                 control.set_sensitive(True)
             self.entry.grab_focus()
         return GLib.SOURCE_REMOVE

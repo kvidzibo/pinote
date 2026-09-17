@@ -11,10 +11,23 @@ from pathlib import Path
 from pinote import __version__, markdown, notify
 from pinote.logging_setup import LOGGER, configure_logging
 from pinote.paths import Paths, display_lock
+from pinote.reminders import local_reminder_time, parse_reminder_time
 from pinote.store import NoteError, Store
 
-COMMANDS = {"add", "list", "done", "rm", "restore", "history", "show", "import", "export"}
-MUTATIONS = {"add", "done", "rm", "restore", "import"}
+COMMANDS = {
+    "add",
+    "list",
+    "done",
+    "rm",
+    "restore",
+    "history",
+    "show",
+    "import",
+    "export",
+    "schedule",
+    "reminders",
+}
+MUTATIONS = {"add", "done", "rm", "restore", "import", "schedule"}
 
 
 def positive_id(value: str) -> int:
@@ -42,11 +55,13 @@ def parser() -> argparse.ArgumentParser:
         ("list", "list active notes"),
         ("done", "mark a note done"),
         ("rm", "archive a note without erasing history"),
-        ("restore", "return a done/removed note to active, or clear progress"),
+        ("restore", "return an archived/scheduled note to active, or clear progress"),
         ("history", "show timestamped activity, optionally for one note"),
         ("show", "show or reopen the desktop reminder"),
         ("import", "import a Markdown file once, without changing it"),
         ("export", "write active notes as Markdown to stdout"),
+        ("schedule", "schedule a reminder for a note"),
+        ("reminders", "list scheduled reminders"),
     ):
         sub = subs.add_parser(name, help=help_text)
         sub.add_argument(
@@ -60,11 +75,14 @@ def parser() -> argparse.ArgumentParser:
         elif name in {"done", "rm", "restore", "history"}:
             kwargs = {"nargs": "?"} if name == "history" else {}
             sub.add_argument("id", type=positive_id, **kwargs)
+        elif name == "schedule":
+            sub.add_argument("id", type=positive_id)
+            sub.add_argument("when", help='local time or ISO time, e.g. "2030-01-02 09:30"')
         elif name in {"list", "export"}:
             sub.add_argument(
                 "--all",
                 action="store_true",
-                help="include done/removed notes (export excludes removed notes)",
+                help="include all states (export includes only active/in-progress/done notes)",
             )
         elif name == "import":
             sub.add_argument("path", type=Path)
@@ -85,11 +103,31 @@ def arguments(argv: list[str]) -> argparse.Namespace:
 
 def execute(args: argparse.Namespace, paths: Paths) -> int:
     refresh = args.command in MUTATIONS and not args.no_notify
-    lock = display_lock(paths) if args.command in MUTATIONS | {"show"} else nullcontext()
+    scheduled_when = parse_reminder_time(args.when) if args.command == "schedule" else None
+    needs_lock = args.command in MUTATIONS | {"show"}
+    lock = display_lock(paths) if needs_lock else nullcontext()
     with lock, Store(paths.database) as store:
+        # No nested lock, and ordinary reads stay lock-free unless a timer is due.
+        if needs_lock:
+            store.activate_due()
+        elif store.has_due():
+            with display_lock(paths):
+                store.activate_due()
         if args.command == "add":
             note_id = store.add(" ".join(args.text))
             print(f"Added note {note_id}.")
+        elif args.command == "schedule":
+            changed = store.schedule(args.id, scheduled_when)
+            when = local_reminder_time(scheduled_when.isoformat())
+            status = "scheduled" if changed else "already scheduled"
+            print(f"Note {args.id} {status} for {when}.")
+        elif args.command == "reminders":
+            notes = store.scheduled_notes()
+            for note in notes:
+                text = note.text.replace("\n", "\n    ")
+                print(f"{note.id}. {local_reminder_time(note.remind_at)} {text}")
+            if not notes:
+                print("No scheduled reminders.")
         elif args.command in {"done", "rm", "restore"}:
             changed = store.transition(args.id, args.command)
             state = {"done": "done", "rm": "removed", "restore": "active"}[args.command]
@@ -103,7 +141,8 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                     else ""
                 )
                 text = note.text.replace("\n", "\n    ")
-                print(f"{note.id}. {state}{text}")
+                scheduled = f" ({local_reminder_time(note.remind_at)})" if note.remind_at else ""
+                print(f"{note.id}. {state}{text}{scheduled}")
             if not notes:
                 print("No notes." if args.all else "No active notes.")
         elif args.command == "history":
@@ -111,7 +150,13 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
             for event in events:
                 previous = event["previous_state"] or "new"
                 text = event["text"].replace("\n", "\\n")
-                if event["action"] == "edit":
+                if event["remind_at"] or event["previous_remind_at"]:
+                    old, new = (
+                        local_reminder_time(value) if value else "none"
+                        for value in (event["previous_remind_at"], event["remind_at"])
+                    )
+                    text = f"reminder {old} -> {new}  {text}"
+                elif event["action"] == "edit":
                     text = f"{event['previous_text']!r} -> {event['text']!r}"
                 elif event["action"] == "tag":
                     old = repr(event["previous_tag"]) if event["previous_tag"] else "Untagged"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass
+from datetime import datetime
 
 from pinote.paths import Paths, display_lock
 from pinote.store import Note, NoteError, Store
@@ -22,7 +23,31 @@ class ReminderModel:
 
     def notes(self) -> list[Note]:
         with Store(self.paths.database, timeout=0.1) as store:
+            if store.has_due():
+                with display_lock(self.paths, blocking=False):
+                    store.activate_due()
             return store.notes()
+
+    def reminders(self) -> list[Note]:
+        with Store(self.paths.database, timeout=0.1) as store:
+            return store.scheduled_notes()
+
+    def schedule(self, note: Note, when: datetime) -> bool:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.schedule(note.id, when, expected_updated_at=note.updated_at)
+
+    def release(self, note: Note) -> bool:
+        if note.state != "scheduled":
+            raise NoteError("Only scheduled reminders can be moved back early.")
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.transition(
+                    note.id,
+                    "restore",
+                    expected_states={"scheduled"},
+                    expected_updated_at=note.updated_at,
+                )
 
     def tags(self) -> list[str]:
         with Store(self.paths.database, timeout=0.1) as store:

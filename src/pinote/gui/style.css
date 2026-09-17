@@ -41,6 +41,28 @@
     caret-color: #f3f5f8;
 }
 
+.pinote-window calendar,
+.pinote-window spinbutton {
+    background-image: none;
+    background-color: #1c212a;
+    border: 1px solid #4b5563;
+    color: #f3f5f8;
+}
+
+.pinote-window calendar.header {
+    background-color: #232832;
+    color: #f3f5f8;
+}
+
+.pinote-window calendar:selected {
+    background-color: #4b5563;
+    color: #f3f5f8;
+}
+
+.pinote-window calendar:indeterminate {
+    color: #8591a3;
+}
+
 .pinote-window entry selection {
     background-color: #4b5563;
     color: #f3f5f8;
