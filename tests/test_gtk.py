@@ -612,6 +612,61 @@ def test_manual_move_becomes_new_bottom_anchor_for_growth(gtk, concurrent_resize
     assert window.anchor_bottom == bottom
 
 
+def test_manual_move_during_geometry_sync_is_not_undone(gtk, monkeypatch):
+    window = gtk.open()
+    position = window.get_position
+    moved = False
+
+    def move_after_read():
+        nonlocal moved
+        current = position()
+        if not moved:
+            moved = True
+            # The X server can receive a drag after the idle callback reads
+            # geometry, but before GTK dispatches its configure-event.
+            window.move(160, 220)
+            window.get_display().sync()
+        return current
+
+    with monkeypatch.context() as patch:
+        patch.setattr(window, "get_position", move_after_read)
+        window._sync_geometry()
+    window.get_display().sync()
+    wait_until(
+        gtk.glib,
+        lambda: (
+            tuple(window.get_position()) == (160, 220)
+            and window.anchor_x == 160
+            and window.anchor_bottom == 220 + window.get_size().height
+        ),
+    )
+
+
+def test_manual_move_before_initial_placement_ack_is_preserved(gtk, monkeypatch):
+    from pinote.gui.app import ReminderWindow
+
+    move = ReminderWindow.move
+    manual_bottom = None
+
+    def move_before_ack(window, x, y):
+        nonlocal manual_bottom
+        move(window, x, y)
+        if window.get_mapped() and manual_bottom is None:
+            # The requested placement is already visible to another X client,
+            # which can move it before GTK receives the placement acknowledgement.
+            window.get_display().sync()
+            manual_bottom = 220 + window.get_size().height
+            move(window, 160, 220)
+            window.get_display().sync()
+
+    monkeypatch.setattr(ReminderWindow, "move", move_before_ack)
+    window = gtk.open()
+    assert manual_bottom is not None
+    assert window.anchor_x == 160
+    assert window.anchor_bottom == manual_bottom
+    assert window.get_position()[0] == 160
+
+
 def test_notice_grows_up_and_shrinks_without_moving_bottom(gtk):
     with Store(gtk.paths.database) as store:
         for index in range(35):

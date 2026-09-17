@@ -407,11 +407,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.scroll.get_max_content_height() != limit:
             self.scroll.set_max_content_height(limit)
         position = (self.anchor_x, max(area.y, self.anchor_bottom - height))
-        if tuple(self.get_position()) != position:
+        # Compare with the same snapshot used to update the anchor. A fresh
+        # query can see a later manual move and undo it before its event arrives.
+        if current != position:
             self._placement_requests.add(position)
             self.move(*position)
-        else:
-            self._initial_placement = False
+        # The first mapped pass has applied the WM correction. Its configure
+        # acknowledgement can be coalesced with a drag; accept manual moves now.
+        self._initial_placement = False
         if self.reveal_note_id is not None:
             row = self.rows.get(self.reveal_note_id)
             if row is not None:
@@ -437,9 +440,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
     def _on_configure(self, _window, event) -> bool:
         position = (event.x, event.y)
         size = (event.width, event.height)
-        previous = self._configured_geometry
         requested = position in self._placement_requests
         self._placement_requests.discard(position)
+        # Old WM offsets can arrive after a placement acknowledgement. Ignore
+        # events already superseded on X11 rather than moving the anchor back.
+        if position != tuple(self.get_position()):
+            return False
+        previous = self._configured_geometry
         self._configured_geometry = (position, size)
         if requested:
             self._initial_placement = False

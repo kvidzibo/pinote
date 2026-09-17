@@ -370,6 +370,7 @@ Always run GUI tests under `xvfb-run` with a private D-Bus session; the tests re
 to use the real desktop. All tests use temporary storage. CI runs unit/CLI tests
 on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK job
 against the built wheel (including its bundled stylesheet and isolated i3 placement).
+GTK regressions also exercise manual window moves during geometry synchronization.
 
 The package uses `src/pinote/` with `python -m pinote` support. Storage, Markdown,
 notification rendering, and CLI parsing are separated for focused testing.
