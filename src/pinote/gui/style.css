@@ -24,9 +24,26 @@
     border: 1px solid #4b5563;
 }
 
-.pinote-window.reminder-menu button {
+.pinote-window.reminder-menu menuitem {
     min-width: 100px;
     padding: 6px 10px;
+}
+
+.pinote-window.reminder-menu menuitem:hover {
+    background-color: #343c49;
+}
+
+.pinote-window entry {
+    background-image: none;
+    background-color: #1c212a;
+    border: 1px solid #4b5563;
+    color: #f3f5f8;
+    caret-color: #f3f5f8;
+}
+
+.pinote-window entry selection {
+    background-color: #4b5563;
+    color: #f3f5f8;
 }
 
 .pinote-window .archive-content {
@@ -87,6 +104,11 @@
     padding: 3px 0;
     opacity: 1;
     transition: none;
+}
+
+.pinote-window .note-row.context-target .note-content {
+    box-shadow: inset 0 0 0 1px #8591a3;
+    border-radius: 3px;
 }
 
 .pinote-window .note-row.leaving .note-content {

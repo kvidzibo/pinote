@@ -120,9 +120,17 @@ def test_v1_upgrade_preserves_all_data_ids_and_import_markers(legacy):
             for table in ("notes", "events", "imports")
         }
     with Store(legacy) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        columns = {
+            "notes": "id, text, state, created_at, updated_at",
+            "events": "id, note_id, action, previous_state, state, occurred_at",
+            "imports": "source, imported_at, note_count",
+        }
         for table, rows in before.items():
-            actual = [tuple(row) for row in store.connection.execute(f"SELECT * FROM {table}")]
+            actual = [
+                tuple(row)
+                for row in store.connection.execute(f"SELECT {columns[table]} FROM {table}")
+            ]
             assert actual == rows
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

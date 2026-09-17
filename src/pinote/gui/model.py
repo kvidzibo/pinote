@@ -24,12 +24,26 @@ class ReminderModel:
         with Store(self.paths.database, timeout=0.1) as store:
             return store.notes()
 
-    def add(self, text: str) -> int:
+    def tags(self) -> list[str]:
+        with Store(self.paths.database, timeout=0.1) as store:
+            return store.tags()
+
+    def add(self, text: str, *, tag: str | None = None) -> int:
         with display_lock(self.paths, blocking=False):
             with Store(self.paths.database, timeout=0.1) as store:
                 # Report the committed ID before any separate list refresh. A
                 # failed read must not make a saved add look retryable.
-                return store.add(text)
+                return store.add(text, tag=tag)
+
+    def edit(self, note: Note, text: str) -> bool:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.edit(note.id, text, expected_updated_at=note.updated_at)
+
+    def set_tag(self, note: Note, tag: str | None) -> bool:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.set_tag(note.id, tag, expected_updated_at=note.updated_at)
 
     def transition(self, note_id: int, action: str) -> TransitionResult:
         expected_states = {
