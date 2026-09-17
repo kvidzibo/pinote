@@ -864,7 +864,10 @@ def test_manual_move_before_initial_placement_ack_is_preserved(gtk, monkeypatch)
             # The requested placement is already visible to another X client,
             # which can move it before GTK receives the placement acknowledgement.
             window.get_display().sync()
-            manual_bottom = 220 + window.get_size().height
+            # Measure as an X client: GTK's cached size can still describe the
+            # previous height until the configure event we are delaying arrives.
+            _, _, _, height = window.get_window().get_geometry()
+            manual_bottom = 220 + height
             move(window, 160, 220)
             window.get_display().sync()
 
