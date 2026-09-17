@@ -15,6 +15,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from pinote.gui import GuiUnavailable  # noqa: E402
 from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
+from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
@@ -233,6 +234,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.pending = 0
         self.action_pending = False
         self.draft_revision = 0
+        self.draft = DraftCache(model.paths.data / "gui-draft.txt")
+        self.draft_source = 0
+        self.draft_error: str | None = None
         self.error_is_action = False
         self.last_error = None
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pinote-gui")
@@ -340,6 +344,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.menu.add(menu_items)
         menu_items.show_all()
         self.menu_button.set_popover(self.menu)
+        try:
+            self.entry.set_text(self.draft.load())
+        except (OSError, UnicodeError) as exc:
+            self.draft_error = f"Cannot restore the input draft: {exc}"
+            self._error(self.draft_error, action=True)
+        self.placeholder.set_visible(not self.entry.get_text())
         self.entry.get_buffer().connect("changed", self._draft_changed)
         self.entry.connect("activate", lambda _entry: self._add())
         self.add_button.connect("clicked", lambda _button: self._add())
@@ -549,10 +559,40 @@ class ReminderWindow(Gtk.ApplicationWindow):
         return False
 
     def _draft_changed(self, _buffer) -> None:
-        self.draft_revision += 1
-        self.placeholder.set_visible(not self.entry.get_text())
+        if self.closed:
+            return
+        text = self.entry.get_text()
+        self.draft_revision = self.draft.update(text)
+        self.placeholder.set_visible(not text)
         self._update_add_button()
         self._queue_geometry()
+        if not self.draft_source:
+            self.draft_source = GLib.timeout_add(250, self._queue_draft_save)
+
+    def _queue_draft_save(self) -> bool:
+        self.draft_source = 0
+        self.worker.submit(self._persist_draft)
+        return GLib.SOURCE_REMOVE
+
+    def _persist_draft(self) -> None:
+        try:
+            self.draft.save()
+        except (OSError, UnicodeError) as exc:
+            message = f"Cannot save the input draft; it may be lost on restart: {exc}"
+            if message != self.draft_error:
+                LOGGER.error("GUI: %s", message)
+            self.draft_error = message
+            if not self.closed:
+                GLib.idle_add(self._show_draft_error)
+        else:
+            self.draft_error = None
+
+    def _show_draft_error(self) -> bool:
+        if not self.closed and self.draft_error:
+            self.error_is_action = True
+            self.error_text.set_text(self.draft_error)
+            self.notice.show()
+        return GLib.SOURCE_REMOVE
 
     def _update_add_button(self) -> None:
         self.add_button.set_sensitive(
@@ -570,7 +610,17 @@ class ReminderWindow(Gtk.ApplicationWindow):
             return
         self.action_pending = True
         self._update_controls()
-        self._submit(lambda: self.model.add(text), action=None, draft_revision=self.draft_revision)
+        revision = self.draft_revision
+
+        def add():
+            note_id = self.model.add(text)
+            # This runs even if the window closed before the add completed.
+            # A cache error must never make a committed task look retryable.
+            self.draft.submitted(revision)
+            self._persist_draft()
+            return note_id
+
+        self._submit(add, action=None, draft_revision=revision)
 
     def _act(self, note_id: int, action: str) -> None:
         row = self.rows.get(note_id)
@@ -645,6 +695,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self.archive_window._poll()
         finally:
             self._update_controls()
+            self._show_draft_error()
         return GLib.SOURCE_REMOVE
 
     def _render(self, notes: list[Note], *, action: tuple[int, str] | None = None) -> None:
@@ -715,14 +766,17 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.archive_window.destroy()
         self.menu.destroy()
         GLib.source_remove(self.refresh_source)
-        for source in (self.geometry_source, self.focus_source):
+        for source in (self.geometry_source, self.focus_source, self.draft_source):
             if source:
                 GLib.source_remove(source)
-        self.geometry_source = self.focus_source = 0
+        self.geometry_source = self.focus_source = self.draft_source = 0
         # GTK may retain child widgets after closing. Stop their callbacks now,
         # rather than waiting for each row's eventual destroy signal.
         for row in self.rows.values():
             row.cancel_dismissal()
+        # Flush after accepted adds have cleared only their own draft. Read the
+        # latest snapshot on the worker, never re-save a stale editor snapshot.
+        self.worker.submit(self._persist_draft)
         # Closing must not silently drop a click queued behind a poll. The
         # bounded worker drains pending operations before the process exits.
         self.worker.shutdown(wait=False)

@@ -18,6 +18,8 @@ build/
 /exports/
 /backups/
 display.lock
+gui-draft.txt
+.gui-draft-*
 *.sqlite
 *.sqlite-*
 *.sqlite3

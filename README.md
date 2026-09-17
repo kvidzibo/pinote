@@ -137,7 +137,7 @@ It works from any directory when invoked by its full path, uses this checkout's
 running GUI, waits for submitted saves, then reopens it with its original environment
 and workspace—even on a hidden workspace. If the GUI is stopped, it stays stopped.
 Ambiguous instances and concurrent restarts are refused; it never force-kills a GUI.
-As with a normal close, unsubmitted input is lost and the archive window closes.
+As with a normal close, unfinished input is saved and restored; the archive window closes.
 Startup diagnostics go to the private `/tmp/pinote-gui-restart-*.log` path printed
 by the script; normal application logging to `app.log` is unchanged. The helper
 does not reinstall packages or change desktop configuration.
@@ -160,7 +160,10 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   **Shift+Enter** inserts a newline; pasting preserves newlines. The editor grows
   to a few lines, then scrolls. It keeps its expanded height while you edit, including
   when you shorten or replace text, and collapses when the draft is cleared (including
-  after a successful save).
+  after a successful save). Unfinished input is cached locally as you type and
+  restored on reopening, including newlines and whitespace. Closing flushes the
+  latest draft after any submitted save finishes. Clearing the field or successfully
+  adding that draft removes its cache; newer edits made while saving are kept.
   **Tab** moves focus to the controls.
   Failed saves keep your input. Successful saves clear only the submitted draft;
   edits made while saving stay in the field. The list scrolls to the newly saved
@@ -214,7 +217,8 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   GTK's disabled-animation preference skips the effect. CLI-only changes refresh
   without animation. A refresh that restores a row cancels its exit animation.
 - Close with **menu → Close**, **Esc**, or the window manager. This only closes
-  the window; it does not mark notes done. Unsubmitted input is not saved.
+  the window; it does not mark notes done. Unsubmitted input returns on reopening
+  without becoming a task.
   With the menu or a preview open, **Esc** dismisses it instead of closing the checklist.
 - Notices CLI changes about once per second. Unchanged rows are retained so
   polling does not reset text selection or scrolling. Background additions do not
@@ -318,6 +322,10 @@ old reminder startup, not both. This package does not edit i3 configuration.
 
 - Notes/history: `$XDG_DATA_HOME/pinote/notes.db`
   (default `~/.local/share/pinote/notes.db`).
+- Unfinished GUI input: `gui-draft.txt` beside `notes.db`, private to the current
+  user and separate from tasks/history. It is saved about every 250 ms while editing
+  and flushed on normal close; an abrupt termination may lose the latest edits.
+  Draft read/write errors appear in the GUI and log. Drafts are plain text, not encrypted.
 - Display lock: the same data directory. Mutations and notifications are
   serialized so an older process cannot overwrite a newer display.
 - Logs/warnings/unexpected failures: stdout and
@@ -332,11 +340,12 @@ Data stays local; pinote has no network calls or telemetry. Notifications are
 sent to your desktop daemon and may also remain in Dunst's own history, so avoid
 secrets in notes. Database and exports are not encrypted.
 
-For a complete backup, stop running `note` commands and copy `notes.db`; restore
-it while no commands are running. Do not copy a live database mid-write. Keep
-personal data and exports out of Git. If storing copies inside a checkout, use
-its ignored `exports/` and `backups/` directories. Databases, logs, local
-`MEMORY.md`/`REMINDER.md`, environment files, and key files are also ignored.
+For a complete backup, close the GUI, stop running `note` commands, and copy
+`notes.db` plus `gui-draft.txt` if present; restore them while pinote is stopped.
+Do not copy a live database mid-write. Keep personal data and exports out of Git.
+If storing copies inside a checkout, use its ignored `exports/` and `backups/`
+directories. Databases, draft caches, logs, local `MEMORY.md`/`REMINDER.md`,
+environment files, and key files are also ignored.
 Arbitrarily named exports elsewhere are not automatically protected; inspect
 staged files before publishing. Uninstalling the tool does not delete data.
 
