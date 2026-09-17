@@ -62,6 +62,19 @@ def click_button(gtk, window, button):
     )
 
 
+def activate_note_action(row, action):
+    """Synchronous input for tests that must act before GTK processes a pending poll."""
+    if action == "rm":
+        from pinote.gui.app import Gdk
+
+        event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
+        event.button = 3
+        row.done.emit("button-press-event", event)
+        row.done.emit("button-press-event", event)
+    else:
+        row.done.clicked()
+
+
 @pytest.fixture
 def gtk(request, tmp_path, monkeypatch):
     if not request.config.getoption("--run-gui"):
@@ -176,8 +189,8 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert isinstance(row.done, Gtk.CheckButton)
     assert not row.done.get_active()
     assert row.done.get_accessible().get_name() == "Start note 1"
-    assert row.remove.get_accessible().get_name() == "Remove note 1"
-    assert row.remove.get_image() is not None
+    assert row.content.get_children() == [row.done, row.body]
+    assert "right-click to mark for deletion" in row.done.get_accessible().get_description()
     assert row.body.get_line_wrap()
     font = row.body.get_pango_context().get_font_description()
     assert "Hack Nerd Font Mono" in font.get_family()
@@ -196,7 +209,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         assert len(store.history()) == 3
 
 
-def test_checkbox_starts_resets_and_completes_with_real_clicks(gtk):
+def test_checkbox_starts_and_completes_with_real_clicks(gtk):
     with Store(gtk.paths.database) as store:
         store.add("Work on this task")
     window = gtk.open()
@@ -211,21 +224,69 @@ def test_checkbox_starts_resets_and_completes_with_real_clicks(gtk):
     click_button(gtk, window, row.body)
     wait_until(gtk.glib, lambda: window.get_focus() is window.entry)
     assert row.note.state == "in_progress"
-    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
-    wait_until(gtk.glib, lambda: not window.pending and row.note.state == "active")
-    assert not row.done.get_active() and not row.done.get_inconsistent()
-    assert not row.get_style_context().has_class("in-progress")
-    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
-    wait_until(gtk.glib, lambda: not window.pending)
-    with Store(gtk.paths.database) as store:
-        assert [e["action"] for e in store.history()] == ["add", "start", "reset"]
-    click_button(gtk, window, row.done)
-    wait_until(gtk.glib, lambda: not window.pending and row.note.state == "in_progress")
     click_button(gtk, window, row.done)
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
     with Store(gtk.paths.database) as store:
         assert store.notes(all_states=True)[0].state == "done"
-        assert [e["action"] for e in store.history()] == ["add", "start", "reset", "start", "done"]
+        assert [e["action"] for e in store.history()] == ["add", "start", "done"]
+
+
+@pytest.mark.parametrize("progress", [False, True])
+def test_checkbox_opposite_clicks_return_to_empty_before_marking_or_starting(gtk, progress):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Delete only after confirmation")
+        if progress:
+            store.transition(1, "start")
+    window = gtk.open()
+    row = window.rows[1]
+    if progress:
+        assert "right-click to clear progress" in row.done.get_accessible().get_description()
+        pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+        wait_until(gtk.glib, lambda: not window.pending and row.note.state == "active")
+        assert not row.deletion_marked
+        assert not row.done.get_active() and not row.done.get_inconsistent()
+        assert not row.get_style_context().has_class("in-progress")
+        assert not row.get_style_context().has_class("deletion-marked")
+    with Store(gtk.paths.database) as store:
+        saved = store.notes()[0]
+        history = store.history()
+        assert saved.state == "active"
+        expected = ["add", "start", "reset"] if progress else ["add"]
+        assert [event["action"] for event in history] == expected
+    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+    wait_until(gtk.glib, lambda: row.deletion_marked)
+    assert not window.action_pending and not row.exiting
+    assert row.done.get_active() and row.done.get_inconsistent()
+    assert row.get_style_context().has_class("deletion-marked")
+    assert row.done.get_accessible().get_name() == "Cancel deletion of note 1"
+    assert "Right-click again to delete" in row.done.get_accessible().get_description()
+    color = row.body.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+    assert (color.red, color.green, color.blue) == pytest.approx((240 / 255, 163 / 255, 174 / 255))
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.rows[1] is row and row.deletion_marked
+    with Store(gtk.paths.database) as store:
+        assert store.notes() == [saved] and store.history() == history
+    click_button(gtk, window, row.done)
+    wait_until(gtk.glib, lambda: not row.deletion_marked)
+    assert not row.get_style_context().has_class("deletion-marked")
+    assert not row.done.get_active() and not row.done.get_inconsistent()
+    assert not row.get_style_context().has_class("in-progress")
+    assert row.note.state == "active"
+    assert row.done.get_accessible().get_name() == "Start note 1"
+    with Store(gtk.paths.database) as store:
+        assert store.notes() == [saved] and store.history() == history
+    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+    wait_until(gtk.glib, lambda: row.deletion_marked)
+    pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+    wait_until(gtk.glib, lambda: not window.pending and not window.rows)
+    with Store(gtk.paths.database) as store:
+        assert store.notes(all_states=True)[0].state == "removed"
+        expected = [event["action"] for event in history] + ["rm"]
+        assert [event["action"] for event in store.history()] == expected
+        assert [note.id for note in store.archived_notes()] == [1]
 
 
 def test_saved_progress_is_loaded_and_unchecked_polling_never_completes_it(gtk):
@@ -243,23 +304,30 @@ def test_saved_progress_is_loaded_and_unchecked_polling_never_completes_it(gtk):
         assert [e["action"] for e in store.history()] == ["add", "start"]
 
 
-@pytest.mark.parametrize("action", ["start", "reset", "done"])
-def test_failed_progress_action_restores_saved_checkbox_state(gtk, action):
+@pytest.mark.parametrize("action", ["start", "reset", "done", "rm"])
+def test_failed_checkbox_action_preserves_task_and_confirmation(gtk, action):
     with Store(gtk.paths.database) as store:
         store.add("Busy progress")
-        if action != "start":
+        if action in {"reset", "done"}:
             store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
     with display_lock(gtk.paths):
-        pointer_at(gtk, window, row.done, 10, 10, "click", "3" if action == "reset" else "1")
+        if action == "reset":
+            pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+        elif action == "rm":
+            pointer_at(gtk, window, row.done, 10, 10, "click", "--repeat", "2", "3")
+        else:
+            click_button(gtk, window, row.done)
         wait_until(gtk.glib, lambda: not window.pending and window.notice.get_visible())
+    assert row.deletion_marked == (action == "rm")
     assert row.done.get_active() == (action != "start")
     assert row.done.get_inconsistent() == (action != "start")
-    assert row.get_style_context().has_class("in-progress") == (action != "start")
+    assert row.get_style_context().has_class("in-progress") == (action in {"reset", "done"})
+    assert row.get_style_context().has_class("deletion-marked") == (action == "rm")
     assert not row.exiting
     with Store(gtk.paths.database) as store:
-        assert len(store.history()) == (1 if action == "start" else 2)
+        assert len(store.history()) == (2 if action in {"reset", "done"} else 1)
 
 
 def test_pending_start_cannot_turn_a_second_click_into_completion(gtk, monkeypatch):
@@ -284,7 +352,8 @@ def test_pending_start_cannot_turn_a_second_click_into_completion(gtk, monkeypat
         assert row.note.state == "active" and not row.exiting
         assert not row.done.get_sensitive()
         row.done.clicked()
-        window._act(1, "reset")
+        activate_note_action(row, "rm")
+        assert not row.deletion_marked
         assert calls == ["start"]
     finally:
         release.set()
@@ -306,7 +375,10 @@ def test_stale_progress_click_never_overrides_external_change(
     row = window.rows[1]
     cli(external_action, "1", "--no-notify")
     assert row.note.state == "in_progress"
-    pointer_at(gtk, window, row.done, 10, 10, "click", "1" if click_action == "done" else "3")
+    if click_action == "reset":
+        pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+    else:
+        click_button(gtk, window, row.done)
     wait_until(gtk.glib, lambda: not window.pending)
     assert not row.exiting
     if external_action == "restore":
@@ -328,7 +400,7 @@ def test_no_tooltips_keep_accessible_names(gtk):
         assert not widget.get_has_tooltip()
         if hasattr(widget, "get_children"):
             widgets.extend(widget.get_children())
-    assert window.rows[1].remove.get_accessible().get_name() == "Remove note 1"
+    assert window.rows[1].done.get_accessible().get_name() == "Start note 1"
 
 
 @pytest.mark.parametrize("limit", [1, 3])
@@ -460,7 +532,10 @@ def test_note_buttons_do_not_copy_or_redirect_focus(gtk, monkeypatch, action):
     clipboard.set_text("Keep clipboard", -1)
     redirected = []
     monkeypatch.setattr(window, "_copy_and_focus", lambda label: redirected.append(label))
-    click_button(gtk, window, row.done if action == "done" else row.remove)
+    if action == "rm":
+        pointer_at(gtk, window, row.done, 10, 10, "click", "--repeat", "2", "3")
+    else:
+        click_button(gtk, window, row.done)
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
     assert redirected == []
     assert clipboard.wait_for_text() == "Keep clipboard"
@@ -1048,7 +1123,12 @@ def test_archive_restore_during_exit_is_retryable_and_preserves_draft(
         store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
-    click_button(gtk, window, row.done if action == "done" else row.remove)
+    if action == "rm":
+        pointer_at(gtk, window, row.done, 10, 10, "click", "3")
+        wait_until(gtk.glib, lambda: not window.pending and row.note.state == "active")
+        pointer_at(gtk, window, row.done, 10, 10, "click", "--repeat", "2", "3")
+    else:
+        click_button(gtk, window, row.done)
     wait_until(gtk.glib, lambda: not window.pending and row.exiting)
     window.entry.set_text("Keep this unsubmitted draft")
     window._open_archive()
@@ -1091,7 +1171,8 @@ def test_archive_restore_during_exit_is_retryable_and_preserves_draft(
     assert window.entry.get_text() == "Keep this unsubmitted draft"
     assert archive.empty.get_visible() and not archive.notice.get_visible()
     with Store(gtk.paths.database) as store:
-        assert [event["action"] for event in store.history()] == ["add", "start", action, "restore"]
+        expected = ["add", "start", "reset"] if action == "rm" else ["add", "start"]
+        assert [event["action"] for event in store.history()] == [*expected, action, "restore"]
 
 
 def test_stale_archive_restore_reports_conflict_without_resetting_progress(gtk):
@@ -1211,7 +1292,7 @@ def test_click_animates_after_save_with_real_fade_and_collapse(
 
     monkeypatch.setattr(window.model, "transition", slow_save)
     try:
-        (row.done if action == "done" else row.remove).clicked()
+        activate_note_action(row, action)
         assert started.wait(timeout=2)
         assert not row.exiting
         assert not row.get_style_context().has_class("completed")
@@ -1220,9 +1301,11 @@ def test_click_animates_after_save_with_real_fade_and_collapse(
         release.set()
     wait_until(gtk.glib, lambda: not window.pending)
     assert row.exiting and window.rows[1] is row
-    assert not row.done.get_sensitive() and not row.remove.get_sensitive()
+    assert not row.done.get_sensitive()
     assert row.get_style_context().has_class("completed") == (action == "done")
-    assert row.done.get_active() == (action == "done")
+    assert row.get_style_context().has_class("deletion-marked") == (action == "rm")
+    assert row.done.get_active()
+    assert row.done.get_inconsistent() == (action == "rm")
     assert window.rows[2].done.get_sensitive()  # animations do not block other notes
     assert window.list_box.get_accessible().get_name() == "Reminders, 1 active note"
     with Store(gtk.paths.database) as store:
@@ -1306,7 +1389,7 @@ def test_stale_click_does_not_animate_or_write(
     monkeypatch.setattr(row, "dismiss", record_dismissal)
     cli(external_action, "1", "--no-notify")
     assert window.rows[1] is row  # the CLI change has not been rendered yet
-    (row.remove if click_action == "rm" else row.done).clicked()
+    activate_note_action(row, click_action)
     wait_until(gtk.glib, lambda: not window.pending)
     assert dismissed == []
     assert not window.rows and not window.list_box.get_children()
@@ -1324,7 +1407,7 @@ def test_disabled_animations_remove_immediately(gtk, animations, action):
             store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
-    (row.done if action == "done" else row.remove).clicked()
+    activate_note_action(row, action)
     wait_until(gtk.glib, lambda: not window.pending)
     assert not window.rows and not window.list_box.get_children()
     assert not row.pause_source and not row.settings_handler
@@ -1349,7 +1432,7 @@ def test_close_or_disable_during_animation_cleans_up(gtk, animations, monkeypatc
             store.transition(1, "start")
     window = gtk.open()
     row = window.rows[1]
-    (row.done if action == "done" else row.remove).clicked()
+    activate_note_action(row, action)
     wait_until(gtk.glib, lambda: not window.pending)
     assert row.exiting
     pause_source, settings_handler = row.pause_source, row.settings_handler
@@ -1384,7 +1467,7 @@ def test_multiple_clicks_do_not_resubmit_departing_rows(gtk, animations, monkeyp
     assert window.rows[1].exiting
     window._act(1, "rm")  # a disappearing Done row must never be re-archived
     assert not window.pending
-    window.rows[2].remove.clicked()
+    activate_note_action(window.rows[2], "rm")
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
     assert window.empty.get_visible()
     with Store(gtk.paths.database) as store:
@@ -1410,7 +1493,7 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     wait_until(gtk.glib, lambda: not window.pending and window.rows[1].note.state == "in_progress")
     click_button(gtk, window, window.rows[1].done)
     wait_until(gtk.glib, lambda: not window.pending and 1 not in window.rows)
-    window.rows[2].remove.clicked()
+    pointer_at(gtk, window, window.rows[2].done, 10, 10, "click", "--repeat", "2", "3")
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
     assert window.empty.get_visible()
     assert window.empty.get_text() == "No active reminders."

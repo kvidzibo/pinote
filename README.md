@@ -3,7 +3,7 @@
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first. The CLI has no Python runtime dependencies or background service.
 Choose a persistent Dunst notification or the optional `pinote-gui` GTK checklist
-with an inline task entry, completion checkboxes, remove controls, and an archive.
+with an inline task entry, start/complete/delete checkboxes, and an archive.
 The GUI is a separate process, not a daemon.
 
 ## Install
@@ -153,8 +153,8 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
 ### Behavior
 
 - Compact, borderless dark popup: 420 px wide, 9 pt monospace text, no title/header
-  bar, no tooltips, and one checkbox/text/trash row per note. Its bottom edge stays
-  fixed while it grows upward as notes are added and shrinks as they are removed.
+  bar, no tooltips, and one checkbox/text row per note—no trash button. Its bottom
+  edge stays fixed while it grows upward as notes are added and shrinks as they are removed.
   The visible-note limit is configurable (default **10**); extra notes scroll.
 - Add using the bottom **Add a task…** field: press **Enter** or click **+**.
   Failed saves keep your input. Successful saves clear only the submitted draft;
@@ -165,16 +165,25 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   Drag to select text: releasing the mouse copies the selection to the clipboard,
   then focuses the input. A plain click leaves the clipboard unchanged. Buttons,
   scrollbars, and editing/selecting text inside the input keep their normal behavior.
-- **Left-click the checkbox** to start a task: an amber row and a dash in the
-  checkbox mean **In progress**. Left-click that checkbox again to **complete** it.
-  **Right-click the checkbox** to clear progress without completing or removing it;
-  right-clicking a task that has not started does nothing. Progress survives restarts.
-  Clicking task text still focuses the input, even on an in-progress task.
-- The **trash icon** archives a task, including one in progress. Neither completion
-  nor removal erases history. Find IDs with `note list --all`; use `note restore ID`
-  to recover a task or clear progress, and `note history ID` to inspect its
-  `start`/`reset`/completion events. Failed saves restore the last saved checkbox
-  state. Screen-reader names identify the checkbox's next action and note ID.
+- The checkbox has three states: **Empty**, **In progress** (amber dash), and
+  **Marked for deletion** (red dash):
+
+  | State | Left-click | Right-click |
+  | --- | --- | --- |
+  | Empty | Start → In progress | Mark for deletion |
+  | In progress | Complete | Reset → Empty |
+  | Marked for deletion | Cancel → Empty | Delete |
+
+  Progress survives restarts. Clicking task text still focuses the input.
+- Marking for deletion alone saves nothing; the mark survives unchanged refreshes
+  but clears when the task changes elsewhere or the checklist closes. Cancelling
+  the mark leaves the checkbox empty, never in progress. Failed deletions keep the
+  mark so you can retry or cancel.
+- Neither completion nor deletion erases history. Deleted tasks remain recoverable
+  in **Archive…**. Find IDs with `note list --all`; use `note restore ID` to recover
+  a task or clear progress, and `note history ID` to inspect its events. Failed
+  start/reset/complete saves restore the last saved checkbox state. Screen-reader names
+  and descriptions identify the checkbox's actions and note ID.
 - The bottom **menu** beside **+** contains **Archive…** and **Close**. There is
   no Undo button. **Archive…** opens a separate, resizable, titlebar-free window.
   It lists all currently completed/deleted tasks, newest first, including previous
@@ -190,7 +199,7 @@ timestamps, history, and import markers. Older pinote versions cannot read schem
   Closing the archive leaves the checklist open; closing the checklist closes both
   windows, after finishing any already-submitted save.
 - After a successful click, **Done** holds its green check/highlight for 200 ms,
-  then fades and collapses over 200 ms. **Remove** keeps its 200 ms fade/collapse.
+  then fades and collapses over 200 ms. Confirmed deletion fades/collapses over 200 ms.
   Saving happens first, and other rows remain usable during the animation.
   GTK's disabled-animation preference skips the effect. CLI-only changes refresh
   without animation. A refresh that restores a row cancels its exit animation.

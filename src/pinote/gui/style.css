@@ -97,6 +97,21 @@
     color: #f5e2b6;
 }
 
+.pinote-window .note-row.deletion-marked .note-content {
+    background-color: #3a252d;
+    border-radius: 3px;
+}
+
+.pinote-window .note-row.deletion-marked label {
+    color: #f0a3ae;
+}
+
+.pinote-window .note-row.deletion-marked checkbutton check {
+    background-color: #6b343f;
+    border-color: #d65f6f;
+    color: #fff0f3;
+}
+
 .pinote-window .note-row.completed .note-content {
     background-color: #2b3933;
     border-radius: 3px;
@@ -140,11 +155,6 @@
 .pinote-window checkbutton:hover {
     background-color: #343c49;
     color: #f3f5f8;
-}
-
-.pinote-window .remove-button:hover {
-    background-color: #3a1f24;
-    color: #fff0f3;
 }
 
 .pinote-window button:disabled,
