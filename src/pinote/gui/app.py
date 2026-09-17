@@ -38,6 +38,7 @@ class NoteRow(Gtk.ListBoxRow):
         super().__init__()
         self.note = note
         self.on_action = on_action
+        self.deletion_marked = False
         self.exiting = False
         self.pause_source = 0
         self.settings_handler = 0
@@ -66,21 +67,31 @@ class NoteRow(Gtk.ListBoxRow):
         self.body.set_hexpand(True)
         self.body.set_margin_top(3)
         content.pack_start(self.body, True, True, 0)
-        self.remove = icon_button("user-trash-symbolic", f"Remove note {note.id}")
-        self.remove.get_style_context().add_class("remove-button")
-        self.remove.connect("clicked", lambda _button: on_action(note.id, "rm"))
-        content.pack_start(self.remove, False, False, 0)
 
     def _check_clicked(self, _button) -> None:
         if self.done.get_sensitive() and not self.exiting:
+            if self.deletion_marked:
+                self.deletion_marked = False
+                self.update(self.note, sensitive=True)
+                return
             action = "done" if self.note.state == "in_progress" else "start"
             self.on_action(self.note.id, action)
 
     def _check_pressed(self, _button, event) -> bool:
         if event.button != 3:
             return False
-        if self.done.get_sensitive() and not self.exiting and self.note.state == "in_progress":
-            self.on_action(self.note.id, "reset")
+        if (
+            event.type == Gdk.EventType.BUTTON_PRESS
+            and self.done.get_sensitive()
+            and not self.exiting
+        ):
+            if self.note.state == "in_progress":
+                self.on_action(self.note.id, "reset")
+            elif self.deletion_marked:
+                self.on_action(self.note.id, "rm")
+            else:
+                self.deletion_marked = True
+                self.update(self.note, sensitive=True)
         return True  # Right-click must not run the normal checkbox activation.
 
     def _set_checkbox(self, *, active: bool, progress: bool) -> None:
@@ -94,6 +105,9 @@ class NoteRow(Gtk.ListBoxRow):
             self.done.handler_unblock(self.check_handler)
 
     def update(self, note: Note, *, sensitive: bool) -> None:
+        if note != self.note or note.state != "active":
+            # Only unchanged empty tasks can keep a deletion confirmation.
+            self.deletion_marked = False
         if note.text != self.note.text:
             self.body.set_text(note.text)
         self.note = note
@@ -101,20 +115,32 @@ class NoteRow(Gtk.ListBoxRow):
         self.done.set_sensitive(sensitive)
         if not self.exiting:
             progress = note.state == "in_progress"
-            self._set_checkbox(active=progress, progress=progress)
+            marked = self.deletion_marked
+            self._set_checkbox(active=progress or marked, progress=progress or marked)
             context = self.get_style_context()
-            if progress:
-                context.add_class("in-progress")
+            for style, enabled in (("in-progress", progress), ("deletion-marked", marked)):
+                if enabled:
+                    context.add_class(style)
+                else:
+                    context.remove_class(style)
+            if marked:
+                name = f"Cancel deletion of note {note.id}"
+                description = (
+                    "Marked for deletion. Right-click again to delete; left-click to cancel."
+                )
             else:
-                context.remove_class("in-progress")
-            name = f"Complete note {note.id} (in progress)" if progress else f"Start note {note.id}"
+                name = (
+                    f"Complete note {note.id} (in progress)"
+                    if progress
+                    else f"Start note {note.id}"
+                )
+                description = (
+                    "Left-click to complete; right-click to clear progress."
+                    if progress
+                    else "Left-click to start; right-click to mark for deletion."
+                )
             self.done.get_accessible().set_name(name)
-            self.done.get_accessible().set_description(
-                "Left-click to complete; right-click to clear progress."
-                if progress
-                else "Left-click to start this task."
-            )
-        self.remove.set_sensitive(sensitive)
+            self.done.get_accessible().set_description(description)
 
     def dismiss(self, action: str, on_dismissed) -> None:
         """Called only after a successful mutation removes this note from the snapshot."""
