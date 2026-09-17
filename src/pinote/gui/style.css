@@ -13,6 +13,12 @@
     padding: 6px 10px;
 }
 
+.pinote-window .note-preview {
+    background-color: #232832;
+    border: 1px solid #4b5563;
+    padding: 8px;
+}
+
 .pinote-window.reminder-menu {
     background-color: #232832;
     border: 1px solid #4b5563;
@@ -37,20 +43,26 @@
     color: inherit;
 }
 
-.pinote-window entry {
-    background-image: none;
+.pinote-window .task-entry {
+    background-color: #1c212a;
+    border: 1px solid #4b5563;
+    border-radius: 3px;
+}
+
+.pinote-window .task-entry.focused {
+    border-color: #8591a3;
+}
+
+.pinote-window textview,
+.pinote-window textview text {
     background-color: #1c212a;
     color: #f3f5f8;
     caret-color: #f3f5f8;
-    border: 1px solid #4b5563;
-    border-radius: 3px;
-    box-shadow: none;
-    min-height: 18px;
-    padding: 3px 6px;
 }
 
-.pinote-window entry:focus {
-    border-color: #8591a3;
+.pinote-window textview text selection {
+    background-color: #4b5563;
+    color: #f3f5f8;
 }
 
 .pinote-window .dim-label {
@@ -72,7 +84,7 @@
 }
 
 .pinote-window .note-content {
-    padding: 2px 0;
+    padding: 3px 0;
     opacity: 1;
     transition: none;
 }

@@ -16,6 +16,7 @@ from pinote.gui import GuiUnavailable  # noqa: E402
 from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
+from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.paths import Paths  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
@@ -34,7 +35,7 @@ class NoteRow(Gtk.ListBoxRow):
     DONE_HOLD_MS = 200
     EXIT_MS = 200  # Keep the CSS opacity transition in sync.
 
-    def __init__(self, note: Note, on_action):
+    def __init__(self, note: Note, on_action, on_preview):
         super().__init__()
         self.note = note
         self.on_action = on_action
@@ -60,13 +61,20 @@ class NoteRow(Gtk.ListBoxRow):
         self.done.connect("button-release-event", lambda _button, event: event.button == 3)
         content.pack_start(self.done, False, False, 0)
         # Never treat stored text as Pango markup, commands, or widget source.
-        self.body = Gtk.Label(label=note.text, xalign=0, yalign=0, selectable=True)
+        self.body = Gtk.Label(
+            label=note.text.split("\n", 1)[0], xalign=0, yalign=0, selectable=True
+        )
         self.body.set_line_wrap(True)
         self.body.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.body.set_max_width_chars(42)
         self.body.set_hexpand(True)
         self.body.set_margin_top(3)
         content.pack_start(self.body, True, True, 0)
+        self.preview_button = icon_button("view-reveal-symbolic", f"Preview note {note.id}")
+        self.preview_button.set_no_show_all(True)
+        self.preview_button.get_accessible().set_description("Show the full multiline task.")
+        self.preview_button.connect("clicked", lambda _button: on_preview(note.id))
+        content.pack_start(self.preview_button, False, False, 0)
 
     def _check_clicked(self, _button) -> None:
         if self.done.get_sensitive() and not self.exiting:
@@ -109,8 +117,10 @@ class NoteRow(Gtk.ListBoxRow):
             # Only unchanged empty tasks can keep a deletion confirmation.
             self.deletion_marked = False
         if note.text != self.note.text:
-            self.body.set_text(note.text)
+            self.body.set_text(note.text.split("\n", 1)[0])
         self.note = note
+        self.preview_button.set_visible("\n" in note.text)
+        self.preview_button.set_sensitive(not self.exiting)
         sensitive = sensitive and not self.exiting
         self.done.set_sensitive(sensitive)
         if not self.exiting:
@@ -211,6 +221,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.model = model
         self.config = config
         self.archive_window: ArchiveWindow | None = None
+        self.preview: NotePreview | None = None
+        self.reveal_note_id: int | None = None
         self.geometry_source = 0
         self.focus_source = 0
         self._configured_geometry = None
@@ -284,9 +296,29 @@ class ReminderWindow(Gtk.ApplicationWindow):
         layout.pack_start(self.scroll, True, True, 0)
 
         self.composer = Gtk.Box(spacing=6)
-        self.entry = Gtk.Entry(placeholder_text="Add a task…", hexpand=True)
-        self.entry.set_width_chars(1)
-        self.entry.get_accessible().set_name("New task")
+        self.entry = TaskEntry()
+        self.entry_scroll = Gtk.ScrolledWindow()
+        self.entry_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.entry_scroll.set_min_content_height(0)
+        self.entry_scroll.set_max_content_height(80)
+        self.entry_scroll.set_propagate_natural_height(True)
+        self.entry_scroll.get_style_context().add_class("task-entry")
+        self.entry_scroll.add(self.entry)
+        self.entry_scroll.connect("size-allocate", self._keep_entry_height)
+        self.entry_box = Gtk.Overlay(hexpand=True)
+        self.entry_box.add(self.entry_scroll)
+        self.placeholder = Gtk.Label(
+            label="Add a task…", halign=Gtk.Align.START, valign=Gtk.Align.START
+        )
+        self.placeholder.set_margin_start(7)
+        self.placeholder.set_margin_top(4)
+        self.placeholder.get_style_context().add_class("dim-label")
+        self.placeholder.set_no_show_all(True)
+        self.placeholder.show()
+        self.entry_box.add_overlay(self.placeholder)
+        self.entry_box.set_overlay_pass_through(self.placeholder, True)
+        self.entry.connect("focus-in-event", self._entry_focus)
+        self.entry.connect("focus-out-event", self._entry_focus)
         self.add_button = icon_button("list-add-symbolic", "Add task")
         self.add_button.set_valign(Gtk.Align.CENTER)
         menu_icon = Gtk.Image.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.MENU)
@@ -308,12 +340,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.menu.add(menu_items)
         menu_items.show_all()
         self.menu_button.set_popover(self.menu)
-        self.entry.connect("changed", self._draft_changed)
+        self.entry.get_buffer().connect("changed", self._draft_changed)
         self.entry.connect("activate", lambda _entry: self._add())
         self.add_button.connect("clicked", lambda _button: self._add())
         self.archive_button.connect("clicked", lambda _button: self._open_archive())
         self.close_menu_button.connect("clicked", lambda _button: self.close())
-        self.composer.pack_start(self.entry, True, True, 0)
+        self.composer.pack_start(self.entry_box, True, True, 0)
         self.composer.pack_start(self.add_button, False, False, 0)
         self.composer.pack_start(self.menu_button, False, False, 0)
         layout.pack_start(self.composer, False, False, 0)
@@ -322,6 +354,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.connect("key-press-event", self._on_key_press)
         self.connect("size-allocate", self._queue_geometry)
         self.list_box.connect("size-allocate", self._queue_geometry)
+        self.scroll.get_vadjustment().connect("changed", self._queue_geometry)
         self.connect("configure-event", self._on_configure)
         for widget in (self, self.list_box, self.scroll):
             widget.add_events(Gdk.EventMask.BUTTON_RELEASE_MASK)
@@ -340,6 +373,25 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.geometry_source = 0
         if self.closed or not self.get_mapped():
             return GLib.SOURCE_REMOVE
+        # Coalesce buffer changes: replacing selected text briefly deletes the
+        # whole draft before inserting its replacement. Only collapse if it stays empty.
+        if (
+            not self.entry.get_buffer().get_char_count()
+            and self.entry_scroll.get_min_content_height()
+        ):
+            self.entry_scroll.set_min_content_height(0)
+        current = tuple(self.get_position())
+        height = self.get_size().height
+        if (
+            not self._initial_placement
+            and self._configured_geometry
+            and current != self._configured_geometry[0]
+            and current not in self._placement_requests
+        ):
+            # X11 can expose a manual move before GTK dispatches configure-event.
+            # Never overwrite that move with an idle resize's old anchor.
+            self.anchor_x = current[0]
+            self.anchor_bottom = current[1] + height
         area = self.get_display().get_monitor_at_window(self.get_window()).get_workarea()
         self.anchor_bottom = min(self.anchor_bottom, area.y + area.height)
         width = self.list_box.get_allocated_width()
@@ -349,7 +401,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
             content_height = self.empty.get_preferred_height_for_width(width)[1]
         # Measure chrome, including any error notice, rather than reserving a
         # fixed pixel budget that clips wrapped rows or the task entry.
-        height = self.get_size().height
         chrome = height - self.scroll.get_allocated_height()
         available = max(1, self.anchor_bottom - area.y - 25 - chrome)
         limit = min(max(1, content_height), available)
@@ -361,6 +412,26 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.move(*position)
         else:
             self._initial_placement = False
+        if self.reveal_note_id is not None:
+            row = self.rows.get(self.reveal_note_id)
+            if row is not None:
+                allocation = row.get_allocation()
+                adjustment = self.scroll.get_vadjustment()
+                top, bottom = allocation.y, allocation.y + allocation.height
+                # Wait for both the new row and the resized viewport to be allocated.
+                if (
+                    allocation.height > 1
+                    and self.scroll.get_allocated_height() == limit
+                    and adjustment.get_upper() >= bottom
+                ):
+                    if (
+                        top < adjustment.get_value()
+                        or allocation.height > adjustment.get_page_size()
+                    ):
+                        adjustment.set_value(top)
+                    elif bottom > adjustment.get_value() + adjustment.get_page_size():
+                        adjustment.set_value(bottom - adjustment.get_page_size())
+                    self.reveal_note_id = None
         return GLib.SOURCE_REMOVE
 
     def _on_configure(self, _window, event) -> bool:
@@ -386,8 +457,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         target = Gtk.get_event_widget(event)
         label = target if isinstance(target, Gtk.Label) and target.get_selectable() else None
         while target is not None:
-            if isinstance(target, (Gtk.Button, Gtk.Entry, Gtk.Range)):
-                return  # Keep button actions, entry editing and scrollbar drags native.
+            if isinstance(target, (Gtk.Button, Gtk.TextView, Gtk.Range, Gtk.Popover)):
+                return  # Keep buttons, editor/preview selection and scrollbar drags native.
             target = target.get_parent()
         if self.focus_source:
             GLib.source_remove(self.focus_source)
@@ -409,12 +480,34 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _on_key_press(self, _window, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:
-            if self.menu.get_visible():
+            if self.preview is not None and self.preview.get_visible():
+                self.preview.popdown()
+            elif self.menu.get_visible():
                 self.menu.popdown()
             else:
                 self.close()
             return True
         return False
+
+    def _open_preview(self, note_id: int) -> None:
+        row = self.rows.get(note_id)
+        if self.closed or row is None or row.exiting or "\n" not in row.note.text:
+            return
+        if self.focus_source:
+            GLib.source_remove(self.focus_source)
+            self.focus_source = 0
+        if self.preview is not None:
+            self._close_preview(self.preview)
+        self.preview = NotePreview(row.preview_button, row.note)
+        self.preview.connect("closed", self._close_preview)
+        self.preview.popup()
+
+    def _close_preview(self, preview: NotePreview) -> None:
+        if self.preview is preview:
+            self.preview = None
+            preview.destroy()
+            if not self.closed:
+                self.entry.grab_focus()
 
     def _open_archive(self) -> None:
         if self.closed:
@@ -432,9 +525,27 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self._submit(self.model.notes, action=None)
         return GLib.SOURCE_CONTINUE
 
-    def _draft_changed(self, _entry) -> None:
+    def _keep_entry_height(self, scroll, _allocation) -> None:
+        if not self.closed and self.entry.get_buffer().get_char_count():
+            # Keep the largest viewport reached by this draft, not GTK's changing
+            # natural-size estimate. The child allocation excludes the scroll border.
+            height = min(scroll.get_max_content_height(), self.entry.get_allocated_height())
+            if height > scroll.get_min_content_height():
+                scroll.set_min_content_height(height)
+
+    def _entry_focus(self, _entry, event) -> bool:
+        context = self.entry_scroll.get_style_context()
+        if event.in_:
+            context.add_class("focused")
+        else:
+            context.remove_class("focused")
+        return False
+
+    def _draft_changed(self, _buffer) -> None:
         self.draft_revision += 1
+        self.placeholder.set_visible(not self.entry.get_text())
         self._update_add_button()
+        self._queue_geometry()
 
     def _update_add_button(self) -> None:
         self.add_button.set_sensitive(
@@ -496,6 +607,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         try:
             result = future.result()
             if draft_revision is not None:
+                self.reveal_note_id = result
                 # The add is committed. Never erase edits made while it was
                 # queued, even when the user edited back to identical text.
                 if self.draft_revision == draft_revision:
@@ -530,6 +642,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _render(self, notes: list[Note], *, action: tuple[int, str] | None = None) -> None:
         wanted = {note.id for note in notes}
+        if self.preview is not None and self.preview.note_id not in wanted:
+            self._close_preview(self.preview)
+        if self.reveal_note_id not in wanted:
+            self.reveal_note_id = None
         for note_id in self.rows.keys() - wanted:
             row = self.rows[note_id]
             if row.exiting:
@@ -540,7 +656,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self._remove_row(row)
         for note in notes:
             if note.id not in self.rows:
-                row = NoteRow(note, self._act)
+                row = NoteRow(note, self._act, self._open_preview)
                 for widget in (row, row.body):
                     widget.connect("event-after", self._after_pointer_event)
                 # Departing rows still occupy a slot until their animation ends.
@@ -552,6 +668,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if row.exiting:
                 row.cancel_dismissal()
             row.update(note, sensitive=not self.action_pending)
+            if self.preview is not None and self.preview.note_id == note.id:
+                if "\n" in note.text:
+                    self.preview.update(note)
+                else:
+                    self._close_preview(self.preview)
         self.empty.set_text("No active reminders.")
         self.list_box.get_accessible().set_name(
             f"Reminders, {len(notes)} active {'note' if len(notes) == 1 else 'notes'}"
@@ -573,8 +694,16 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.error_text.set_text(message)
         self.notice.show()
 
+    def close(self) -> None:
+        # GTK ignores close requests to a window blocked by a popup's grab.
+        if self.preview is not None:
+            self._close_preview(self.preview)
+        Gtk.ApplicationWindow.close(self)
+
     def _on_destroy(self, _window) -> None:
         self.closed = True
+        if self.preview is not None:
+            self._close_preview(self.preview)
         if self.archive_window is not None and not self.archive_window.closed:
             self.archive_window.destroy()
         self.menu.destroy()
