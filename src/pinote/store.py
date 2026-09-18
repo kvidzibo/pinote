@@ -50,6 +50,7 @@ class Note:
     updated_at: str
     tag: str | None = None
     remind_at: str | None = None
+    reminder_due_at: str | None = None  # Delivered reminder's due time, derived from history.
 
 
 # Table names below are fixed internal identifiers, never user input.
@@ -414,10 +415,25 @@ class Store:
         ]
 
     def notes(self, *, all_states: bool = False) -> list[Note]:
-        query = "SELECT * FROM notes"
+        # Keep a delivered reminder marked through progress/edits, but not after
+        # archiving or scheduling it again. History also covers existing reminders
+        # and restarts without a schema upgrade. Group once, not once per note.
+        query = """
+            WITH latest_reminder_event AS (
+                SELECT note_id, MAX(id) AS event_id FROM events
+                WHERE action IN ('schedule', 'remind', 'done', 'rm')
+                GROUP BY note_id
+            )
+            SELECT notes.*,
+                CASE WHEN events.action = 'remind'
+                    THEN events.previous_remind_at END AS reminder_due_at
+            FROM notes
+            LEFT JOIN latest_reminder_event ON latest_reminder_event.note_id = notes.id
+            LEFT JOIN events ON events.id = latest_reminder_event.event_id
+        """
         if not all_states:
-            query += " WHERE state IN ('active', 'in_progress')"
-        return [Note(**dict(row)) for row in self.connection.execute(query + " ORDER BY id")]
+            query += " WHERE notes.state IN ('active', 'in_progress')"
+        return [Note(**dict(row)) for row in self.connection.execute(query + " ORDER BY notes.id")]
 
     def history(self, note_id: int | None = None) -> list[sqlite3.Row]:
         if (

@@ -9,7 +9,7 @@ import pytest
 from pinote import markdown
 from pinote.gui.model import ReminderModel
 from pinote.paths import Paths, display_lock
-from pinote.reminders import parse_reminder_time
+from pinote.reminders import parse_reminder_time, relative_reminder_time
 from pinote.store import MIGRATION_3, SCHEMA, NoteError, Store
 
 
@@ -105,6 +105,72 @@ def test_reminder_lifecycle_survives_v3_upgrade_restart_and_stale_actions(tmp_pa
         assert store.transition(7, "rm")
         assert store.scheduled_notes() == []
         assert store.archived_notes()[0].remind_at is None
+
+
+def test_due_indicator_follows_the_current_reminder_through_edits_progress_and_restart(
+    tmp_path, monkeypatch
+):
+    clock = datetime(2030, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr("pinote.store.timestamp", lambda: clock.isoformat(timespec="microseconds"))
+    paths = Paths(tmp_path / "data", tmp_path / "state")
+    model = ReminderModel(paths)
+    model.add("Ordinary task")
+    model.add("Scheduled task")
+    assert [note.reminder_due_at for note in model.notes()] == [None, None]
+    due = clock + timedelta(hours=1)
+    model.schedule(model.notes()[1], due)
+    clock = due + timedelta(days=1)  # Catch-up must retain the due time, not delivery time.
+    delivered = model.notes()[1]
+    assert delivered.reminder_due_at == due.isoformat(timespec="microseconds")
+    assert model.notes()[0].reminder_due_at is None
+    for action in ("start", "reset"):
+        assert model.transition(2, action).notes[1].reminder_due_at == delivered.reminder_due_at
+    assert model.edit(model.notes()[1], "Edited reminder")
+    assert model.set_tag(model.notes()[1], "Work")
+    with Store(paths.database) as store:
+        # CLI restore also resets progress; that must not forget the reminder.
+        store.transition(2, "start")
+        store.transition(2, "restore")
+        history = [dict(event) for event in store.history()]
+    model = ReminderModel(paths)
+    assert model.notes()[1].reminder_due_at == delivered.reminder_due_at
+    with Store(paths.database) as store:
+        assert [dict(event) for event in store.history()] == history  # Reads add no events.
+
+    # A new timer must not inherit an old bell, including if cancelled early.
+    model.schedule(model.notes()[1], clock + timedelta(hours=1))
+    assert model.release(model.reminders()[0])
+    assert model.notes()[1].reminder_due_at is None
+    model.schedule(model.notes()[1], clock + timedelta(hours=1))
+    clock += timedelta(hours=1)
+    assert model.notes()[1].reminder_due_at == clock.isoformat(timespec="microseconds")
+    assert model.notes()[1].reminder_due_at != delivered.reminder_due_at
+    with Store(paths.database) as store:
+        store.transition(2, "done")
+    assert model.restore(model.archive()[0])
+    assert model.notes()[1].reminder_due_at is None
+    model.schedule(model.notes()[1], clock + timedelta(hours=1))
+    clock += timedelta(hours=1)
+    assert model.notes()[1].reminder_due_at is not None
+    model.transition(2, "rm")
+    assert model.restore(model.archive()[0])
+    assert model.notes()[1].reminder_due_at is None
+
+
+def test_relative_due_time_uses_elapsed_units_and_handles_timezone_offsets():
+    due = "2030-01-01T02:00:00+02:00"
+    now = datetime(2030, 1, 1, tzinfo=UTC)
+    for seconds, expected in (
+        (0, "just now"),
+        (59, "just now"),
+        (60, "1 minute ago"),
+        (120, "2 minutes ago"),
+        (3600, "1 hour ago"),
+        (7200, "2 hours ago"),
+        (86400, "1 day ago"),
+        (172800, "2 days ago"),
+    ):
+        assert relative_reminder_time(due, now=now + timedelta(seconds=seconds)) == expected
 
 
 def test_local_reminder_times_reject_dst_gaps_and_ambiguity(monkeypatch):

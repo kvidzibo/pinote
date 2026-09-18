@@ -196,7 +196,13 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert isinstance(row.done, Gtk.CheckButton)
     assert not row.done.get_active()
     assert row.done.get_accessible().get_name() == "Start note 1"
-    assert row.content.get_children() == [row.done, row.body, row.preview_button]
+    assert row.content.get_children() == [
+        row.done,
+        row.body,
+        row.reminder_icon,
+        row.preview_button,
+    ]
+    assert not row.reminder_icon.get_visible()
     assert not row.preview_button.get_visible()
     assert "right-click to mark for deletion" in row.done.get_accessible().get_description()
     assert row.body.get_line_wrap()
@@ -368,11 +374,14 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
 
 
 def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk, monkeypatch):
+    from pinote.gui.app import Gtk
+
     clock = datetime.now(UTC)
     monkeypatch.setattr("pinote.store.timestamp", lambda: clock.isoformat(timespec="microseconds"))
     with Store(gtk.paths.database) as store:
         store.add("Call <literal> 🐦\nFull details")
     window = gtk.open()
+    assert not window.rows[1].reminder_icon.get_visible()
     window.entry.set_text("Keep my draft")
     pointer_at(gtk, window, window.rows[1].body, 12, 8, "click", "3")
     wait_until(
@@ -435,6 +444,7 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
     click_button(gtk, reminders, reminders.rows[1].restore)
     wait_until(gtk.glib, lambda: not reminders.pending and not reminders.rows and 1 in window.rows)
     assert window.rows[1].note.state == "active"
+    assert not window.rows[1].reminder_icon.get_visible()
     clock += timedelta(seconds=1)
     window._open_schedule(window.rows[1].note)
     set_time(window.editor, due)
@@ -450,6 +460,16 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
     # Only the main window's normal timer is running; the reminders window is closed.
     wait_until(gtk.glib, lambda: 1 in window.rows)
     assert window.rows[1].note.remind_at is None and not window.rows[1].done.get_active()
+    row = window.rows[1]
+    wait_until(gtk.glib, lambda: row.reminder_icon.get_mapped())
+    icon_name, _size = row.reminder_icon.get_icon_name()
+    assert icon_name == "preferences-system-notifications-symbolic"
+    assert Gtk.IconTheme.get_default().has_icon(icon_name)
+    assert row.reminder_icon.get_accessible().get_name() == "Scheduled reminder for note 1"
+    assert "Scheduled reminder." in row.body.get_accessible().get_description()
+    assert row.preview_button.get_visible()  # The bell doesn't replace multiline preview.
+    color = row.reminder_icon.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+    assert (color.red, color.green, color.blue) == pytest.approx((228 / 255, 199 / 255, 140 / 255))
     clock += timedelta(seconds=1)
     window._open_schedule(window.rows[1].note)
     set_time(window.editor, due + timedelta(days=1))
@@ -462,6 +482,7 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
     clock = due + timedelta(days=2)
     window = gtk.open(application)
     assert set(window.rows) == {1} and window.rows[1].note.state == "active"
+    assert window.rows[1].reminder_icon.get_visible()
     with Store(gtk.paths.database) as store:
         assert store.scheduled_notes() == []
         assert [e["action"] for e in store.history(1)] == [
@@ -474,6 +495,64 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
             "schedule",
             "remind",
         ]
+
+
+def test_reminder_bell_clears_scrollbar_and_hover_shows_time_since_original_due(gtk, monkeypatch):
+    from pinote.gui.app import Gdk, Gtk
+    from pinote.reminders import relative_reminder_time
+
+    clock = datetime(2030, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr("pinote.store.timestamp", lambda: clock.isoformat(timespec="microseconds"))
+    monkeypatch.setattr(
+        "pinote.gui.app.relative_reminder_time",
+        lambda value: relative_reminder_time(value, now=clock),
+    )
+    due = clock + timedelta(hours=1)
+    with Store(gtk.paths.database) as store:
+        store.add("Single-line reminder")
+        store.add("Multiline reminder\nDetails")
+        for index in range(12):
+            store.add(f"Ordinary task {index}")
+        store.schedule(1, due)
+        store.schedule(2, due)
+    clock = due + timedelta(days=1)  # As if the GUI had been closed when the timer was due.
+    window = gtk.open()
+    scrollbar = window.scroll.get_vscrollbar()
+    adjustment = window.scroll.get_vadjustment()
+    wait_until(
+        gtk.glib,
+        lambda: scrollbar.get_mapped() and adjustment.get_upper() > adjustment.get_page_size(),
+    )
+    bar_x, _y = scrollbar.translate_coordinates(window, 0, 0)
+    for widget in (window.rows[1].reminder_icon, window.rows[2].preview_button):
+        x, _y = widget.translate_coordinates(window, 0, 0)
+        assert x + widget.get_allocated_width() + 6 <= bar_x
+    icon = window.rows[1].reminder_icon
+    expected = "Due 1 day ago"
+    assert icon.get_tooltip_text() == expected
+    assert icon.get_accessible().get_description() == expected
+
+    def labels(widget):
+        if isinstance(widget, Gtk.Label):
+            yield widget.get_text()
+        elif isinstance(widget, Gtk.Container):
+            for child in widget.get_children():
+                yield from labels(child)
+
+    def tooltip_shows_expected():
+        return any(
+            tooltip.get_mapped() and expected in labels(tooltip)
+            for tooltip in Gtk.Window.list_toplevels()
+            if tooltip.get_type_hint() == Gdk.WindowTypeHint.TOOLTIP
+        )
+
+    pointer_at(gtk, window, icon, icon.get_allocated_width() // 2, 6)
+    wait_until(gtk.glib, tooltip_shows_expected)
+    clock += timedelta(days=1)
+    expected = "Due 2 days ago"
+    # Normal polling updates relative time even while the tooltip stays open.
+    wait_until(gtk.glib, tooltip_shows_expected)
+    assert icon.get_accessible().get_description() == expected
 
 
 @pytest.mark.parametrize("tag_only", [False, True])
@@ -715,7 +794,7 @@ def test_stale_progress_click_never_overrides_external_change(
         assert [e["action"] for e in store.history()] == ["add", "start", external_action]
 
 
-def test_no_tooltips_keep_accessible_names(gtk):
+def test_no_tooltips_on_ordinary_notes_keep_accessible_names(gtk):
     with Store(gtk.paths.database) as store:
         store.add("No hover popup")
     window = gtk.open()
