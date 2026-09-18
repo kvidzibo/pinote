@@ -115,6 +115,12 @@
     background-color: transparent;
 }
 
+.pinote-window .progress-divider {
+    background-color: #4b5563;
+    min-height: 1px;
+    border: none;
+}
+
 .pinote-window .note-row {
     color: #f3f5f8;
     border: none;
