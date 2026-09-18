@@ -29,7 +29,7 @@ isolated CLI interpreter. Run from the checkout:
 ```sh
 sudo apt install python3-gi gir1.2-gtk-3.0  # only if missing
 uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
-uv pip install --python .venv-gui/bin/python -e .
+uv pip install --python .venv-gui/bin/python -e '.[gui]'
 .venv-gui/bin/pinote-gui
 ```
 

@@ -54,7 +54,10 @@ jobs:
           python3-gi gir1.2-gtk-3.0 dbus-x11 xvfb xauth xdotool i3-wm
       - run: uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
       - run: uv build
-      - run: uv pip install --python .venv-gui/bin/python dist/*.whl --group dev
+      - run: |
+          for wheel in dist/*.whl; do
+            uv pip install --python .venv-gui/bin/python "$wheel[gui]" --group dev
+          done
       - run: xvfb-run -a -s '-screen 0 2560x1440x24' dbus-run-session -- .venv-gui/bin/python -m pytest -m gtk --run-gui
       - name: Small-display placement and reopen
         run: >-

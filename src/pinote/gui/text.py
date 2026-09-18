@@ -6,8 +6,10 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
-from gi.repository import Gdk, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from pinote.gui.preview_markdown import is_safe_link, render_markdown  # noqa: E402
+from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note  # noqa: E402
 
 
@@ -52,7 +54,7 @@ class NotePreview(Gtk.Window):
     # keeps the full preview visible without resizing the bottom-anchored list.
     __gsignals__ = {"closed": (GObject.SignalFlags.RUN_LAST, None, ())}
 
-    def __init__(self, button: Gtk.Button, note: Note):
+    def __init__(self, button: Gtk.Button, note: Note, *, markdown: bool = True):
         super().__init__(
             type=Gtk.WindowType.POPUP,
             transient_for=button.get_toplevel(),
@@ -61,12 +63,16 @@ class NotePreview(Gtk.Window):
         )
         self.button = button
         self.note_id = note.id
+        self.markdown = markdown
+        self.source_text: str | None = None
         self.seat = self.get_display().get_default_seat()
         self.grabbed = False
         self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
         self.get_style_context().add_class("pinote-window")
         self.get_accessible().set_name(f"Preview of note {note.id}")
-        self.body = Gtk.Label(label=note.text, xalign=0, yalign=0, selectable=True)
+        self.body = Gtk.Label(xalign=0, yalign=0, selectable=True)
+        self.body.connect("activate-link", self._activate_link)
+        self.update(note)
         self.body.set_line_wrap(True)
         self.body.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.body.set_max_width_chars(40)
@@ -145,6 +151,22 @@ class NotePreview(Gtk.Window):
         if self.has_grab():
             self.grab_remove()
 
+    def _activate_link(self, _label, uri: str) -> bool:
+        if is_safe_link(uri):
+            owner = self.button.get_toplevel()
+            self.popdown()  # Release the popup's input grab before launching a browser.
+            try:
+                Gtk.show_uri_on_window(owner, uri, Gdk.CURRENT_TIME)
+            except GLib.Error as exc:
+                LOGGER.warning("Cannot open preview link: %s", exc)
+        return True  # Never let GTK launch other URI schemes through its default handler.
+
     def update(self, note: Note) -> None:
-        if self.body.get_text() != note.text:
-            self.body.set_text(note.text)  # Literal text, never markup.
+        if self.source_text == note.text:
+            return  # Compare source, not rendered text, to preserve selection on polls.
+        self.source_text = note.text
+        markup = render_markdown(note.text) if self.markdown else None
+        if markup is None:
+            self.body.set_text(note.text)
+        else:
+            self.body.set_markup(markup)

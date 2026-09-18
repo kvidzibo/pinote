@@ -1639,6 +1639,104 @@ def test_multiline_entry_and_read_only_preview(gtk):
     assert not preview.grabbed and Gtk.grab_get_current() is None
 
 
+@pytest.mark.parametrize("markdown", [True, False])
+def test_markdown_preview_copy_poll_links_and_opt_out(gtk, monkeypatch, markdown):
+    from pinote.gui.app import Gdk, Gtk, Pango
+
+    config = Path(gtk.env["XDG_CONFIG_HOME"]) / "pinote/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f"[gui]\nmarkdown_preview = {str(markdown).lower()}\n")
+    source = (
+        "# Markdown 🐦\n\n**Bold _italic_** and `code <&>`\n\n"
+        "- One\n- Two\n\n[Web](https://example.org/?a=1&b=2)\n"
+        "<b>Literal HTML</b>\n\n```\n<&>\n```\n\n" + "Extra line\n" * 24 + "End"
+    )
+    rendered = (
+        "Markdown 🐦\n\nBold italic and code <&>\n\n"
+        "• One\n• Two\n\nWeb\n<b>Literal HTML</b>\n\n<&>\n\n" + "Extra line\n" * 24 + "End"
+    )
+    with Store(gtk.paths.database) as store:
+        store.add(source)
+        note = store.notes()[0]
+    window = gtk.open()
+    row = window.rows[note.id]
+    assert row.body.get_text() == source.split("\n")[0]
+    assert not row.body.get_use_markup()
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    preview = window.preview
+    assert preview.body.get_use_markup() is markdown
+    assert preview.body.get_text() == (rendered if markdown else source)
+    assert preview.body.get_selectable()
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text("Not copied yet", -1)
+    subprocess.run(["xdotool", "key", "ctrl+a", "ctrl+c"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: clipboard.wait_for_text() == preview.body.get_text())
+    selection = preview.body.get_selection_bounds()
+    assert selection[0]
+    adjustment = preview.scroll.get_vadjustment()
+    wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
+    assert preview.scroll.get_allocated_height() == 300
+    adjustment.set_value(80)
+    before = adjustment.get_value()
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.preview is preview and preview.body.get_selection_bounds() == selection
+    assert adjustment.get_value() == before
+    with Store(gtk.paths.database) as store:
+        assert store.notes()[0].text == source
+        assert [event["action"] for event in store.history(note.id)] == ["add"]
+
+    # External edits update the rendering, not the stored source or main-list label.
+    changed = "## Changed\n\n**Still Markdown**\n[Web](https://example.org/?a=1&b=2)"
+    with Store(gtk.paths.database) as store:
+        assert store.edit(note.id, changed, expected_updated_at=note.updated_at)
+    window._poll()
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not window.pending
+            and preview.source_text == changed
+            and adjustment.get_value() == 0
+            and preview.body.get_allocated_height() == preview.body.get_preferred_height()[1]
+        ),
+    )
+    assert preview.body.get_text() == ("Changed\n\nStill Markdown\nWeb" if markdown else changed)
+    assert row.body.get_text() == "## Changed"
+
+    # No real browser/application launch in tests, including prohibited URI schemes.
+    opened = []
+
+    def open_link(owner, uri, _time):
+        assert owner is window and window.preview is None and not preview.grabbed
+        opened.append(uri)
+
+    monkeypatch.setattr(Gtk, "show_uri_on_window", open_link)
+    assert preview.body.emit("activate-link", "file:///tmp/private")
+    assert not opened and window.preview is preview
+    if markdown:
+        rect = preview.body.get_layout().index_to_pos(len("Changed\n\nStill Markdown\n"))
+        layout_x, layout_y = preview.body.get_layout_offsets()
+        pointer_at(
+            gtk,
+            preview,
+            preview.body,
+            layout_x + (rect.x + rect.width // 2) // Pango.SCALE,
+            layout_y + (rect.y + rect.height // 2) // Pango.SCALE,
+            "click",
+            "1",
+        )
+        wait_until(gtk.glib, lambda: bool(opened))
+        assert opened == ["https://example.org/?a=1&b=2"]
+    else:
+        subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.preview is None)
+    assert not window.closed and Gtk.grab_get_current() is None
+    with Store(gtk.paths.database) as store:
+        assert store.notes()[0].text == changed
+        assert [event["action"] for event in store.history(note.id)] == ["add", "edit"]
+
+
 @pytest.mark.parametrize("limit", [1, 10])
 def test_saved_add_scrolls_to_new_row_but_background_changes_preserve_scroll(gtk, cli, limit):
     config = Path(gtk.env["XDG_CONFIG_HOME"]) / "pinote/config.toml"

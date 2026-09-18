@@ -16,6 +16,7 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class GuiConfig:
     max_visible_notes: int = 10
+    markdown_preview: bool = True
 
     @classmethod
     def load(cls, path: Path | None = None) -> GuiConfig:
@@ -36,4 +37,7 @@ class GuiConfig:
             raise ConfigError(
                 f"Invalid GUI config {path}: gui.max_visible_notes must be a positive integer."
             )
-        return cls(max_visible_notes=limit)
+        markdown = section.get("markdown_preview", cls.markdown_preview)
+        if type(markdown) is not bool:
+            raise ConfigError(f"Invalid GUI config {path}: gui.markdown_preview must be a boolean.")
+        return cls(max_visible_notes=limit, markdown_preview=markdown)

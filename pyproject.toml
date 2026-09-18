@@ -8,6 +8,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = []
 
+[project.optional-dependencies]
+gui = ["markdown-it-py>=3,<5"]
+
 [project.urls]
 Repository = "https://github.com/kvidzibo/pinote"
 Issues = "https://github.com/kvidzibo/pinote/issues"
@@ -21,7 +24,7 @@ requires = ["uv_build>=0.11.8,<0.12"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+dev = ["markdown-it-py>=3,<5", "pytest>=8,<10", "ruff>=0.11,<1"]
 
 [tool.uv.build-backend]
 source-include = ["docs/**"]
