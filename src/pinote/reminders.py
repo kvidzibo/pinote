@@ -41,3 +41,13 @@ def parse_reminder_time(value: str) -> datetime:
 
 def local_reminder_time(value: str) -> str:
     return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def relative_reminder_time(value: str, *, now: datetime | None = None) -> str:
+    """Elapsed time since the original due time, even for reminders delivered late."""
+    elapsed = ((now or datetime.now(UTC)) - datetime.fromisoformat(value)).total_seconds()
+    for seconds, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        count = int(elapsed // seconds)
+        if count >= 1:
+            return f"{count} {unit}{'s' if count != 1 else ''} ago"
+    return "just now"

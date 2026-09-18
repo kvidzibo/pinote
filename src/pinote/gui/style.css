@@ -128,6 +128,10 @@
     transition: none;
 }
 
+.pinote-window .reminder-indicator {
+    color: #e4c78c;
+}
+
 .pinote-window .note-row.context-target .note-content {
     box-shadow: inset 0 0 0 1px #8591a3;
     border-radius: 3px;

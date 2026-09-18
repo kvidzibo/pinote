@@ -23,6 +23,7 @@ from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.paths import Paths  # noqa: E402
+from pinote.reminders import relative_reminder_time  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
 
 
@@ -75,6 +76,16 @@ class NoteRow(Gtk.ListBoxRow):
         self.body.set_margin_top(3)
         self.body.connect("populate-popup", lambda _label, menu: on_menu(self.note.id, menu))
         content.pack_start(self.body, True, True, 0)
+        self.reminder_icon = Gtk.Image.new_from_icon_name(
+            "preferences-system-notifications-symbolic", Gtk.IconSize.MENU
+        )
+        self.reminder_icon.set_pixel_size(12)
+        self.reminder_icon.set_valign(Gtk.Align.START)
+        self.reminder_icon.set_margin_top(4)
+        self.reminder_icon.set_no_show_all(True)
+        self.reminder_icon.get_style_context().add_class("reminder-indicator")
+        self.reminder_icon.get_accessible().set_name(f"Scheduled reminder for note {note.id}")
+        content.pack_start(self.reminder_icon, False, False, 0)
         self.preview_button = icon_button("view-reveal-symbolic", f"Preview note {note.id}")
         self.preview_button.set_no_show_all(True)
         self.preview_button.get_accessible().set_description("Show the full multiline task.")
@@ -124,9 +135,19 @@ class NoteRow(Gtk.ListBoxRow):
         if note.text != self.note.text:
             self.body.set_text(note.text.split("\n", 1)[0])
         self.note = note
-        self.body.get_accessible().set_description(
-            f"Tag: {note.tag or 'Untagged'}. Right-click to edit or choose a tag."
+        due_text = (
+            f"Due {relative_reminder_time(note.reminder_due_at)}"
+            if note.reminder_due_at is not None
+            else None
         )
+        reminder = f"Scheduled reminder. {due_text}. " if due_text else ""
+        self.body.get_accessible().set_description(
+            f"{reminder}Tag: {note.tag or 'Untagged'}. Right-click to edit or choose a tag."
+        )
+        if self.reminder_icon.get_tooltip_text() != due_text:
+            self.reminder_icon.set_tooltip_text(due_text)
+        self.reminder_icon.get_accessible().set_description(due_text or "")
+        self.reminder_icon.set_visible(due_text is not None)
         self.preview_button.set_visible("\n" in note.text)
         self.preview_button.set_sensitive(not self.exiting)
         sensitive = sensitive and not self.exiting
@@ -299,6 +320,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
         self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list_box.get_style_context().add_class("reminder-list")
+        self.list_box.set_margin_end(6)
         self.empty = Gtk.Label(label="Loading reminders…")
         self.empty.get_style_context().add_class("dim-label")
         self.empty.set_margin_top(6)
@@ -306,6 +328,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.empty.show()
         self.list_box.set_placeholder(self.empty)
         self.scroll = Gtk.ScrolledWindow()
+        # Reserve the scrollbar's own width instead of covering row icons on hover.
+        self.scroll.set_overlay_scrolling(False)
         self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroll.set_propagate_natural_height(True)
         self.scroll.set_min_content_height(0)
