@@ -2354,10 +2354,18 @@ def test_in_progress_pins_on_focus_loss_above_input_and_below_new_tasks(gtk, mon
         pointer_at(gtk, window, row.body, 12, 8, "click", "3")
         wait_until(gtk.glib, lambda: window.context_menu is not None)
         assert row.get_parent() is window.list_box
-        subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
-        wait_until(gtk.glib, lambda: window.context_menu is None)
-        window._open_editor(row.note)
+        edit_item = next(
+            item for item in window.context_menu.get_children() if item.get_label() == "Edit…"
+        )
+        # Model a WM activation gap: menu closed, parent inactive, child not active yet.
+        with monkeypatch.context() as patch:
+            patch.setattr(Gtk.Window, "is_active", lambda _window: False)
+            edit_item.activate()
+            wait_until(gtk.glib, lambda: not window.pin_source)
+            assert row.get_parent() is window.list_box and 3 in window.deferred_progress
         focus(window.editor)
+        window.editor.notify("is-active")
+        wait_until(gtk.glib, lambda: not window.handoff_source)
         assert row.get_parent() is window.list_box
         window.editor.destroy()
         focus(window)
@@ -2418,6 +2426,14 @@ def test_in_progress_pins_on_focus_loss_above_input_and_below_new_tasks(gtk, mon
             try:
                 click_button(gtk, window, row.done)
                 wait_until(gtk.glib, started.is_set)
+                with monkeypatch.context() as gap:
+                    gap.setattr(Gtk.Window, "is_active", lambda _window: False)
+                    window.archive_button.activate()
+                    wait_until(gtk.glib, lambda: not window.pin_source)
+                    assert 3 in window.deferred_progress
+                focus(window.archive_window)
+                window.archive_window.notify("is-active")
+                wait_until(gtk.glib, lambda: not window.handoff_source)
                 focus(other)
                 focus(window)
             finally:

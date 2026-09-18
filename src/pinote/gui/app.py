@@ -262,6 +262,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.geometry_source = 0
         self.focus_source = 0
         self.pin_source = 0
+        self.handoff_source = 0
+        self.focus_handoff: Gtk.Window | None = None
         self.deferred_progress: set[int] = set()
         self.starting_note_id: int | None = None
         self.loaded_notes = False
@@ -450,14 +452,43 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # Menus and the native preview grab focus without leaving the checklist.
         return (
             any(window.is_active() for window in self.get_application().get_windows())
+            or self.focus_handoff is not None
             or self.menu.get_visible()
             or self.context_menu is not None
             or self.preview is not None
         )
 
     def _watch_child_focus(self, window: Gtk.Window) -> None:
-        window.connect("notify::is-active", self._queue_pin_check)
-        window.connect("destroy", self._queue_pin_check)
+        window.connect("notify::is-active", self._child_focus_changed)
+        window.connect("destroy", self._child_focus_closed)
+
+    def _present_child(self, window: Gtk.Window) -> None:
+        self._finish_focus_handoff()
+        # The WM may deactivate the parent before activating the child. Keep this
+        # intentional handoff inside pinote, but do not wait forever if focus is refused.
+        self.focus_handoff = window
+        self.handoff_source = GLib.timeout_add(250, self._finish_focus_handoff)
+        window.present()
+        if window.is_active():
+            self._finish_focus_handoff()
+
+    def _finish_focus_handoff(self) -> bool:
+        if self.handoff_source:
+            GLib.source_remove(self.handoff_source)
+            self.handoff_source = 0
+        self.focus_handoff = None
+        self._queue_pin_check()
+        return GLib.SOURCE_REMOVE
+
+    def _child_focus_changed(self, window, _property) -> None:
+        if self.focus_handoff is window and window.is_active():
+            self._finish_focus_handoff()
+        self._queue_pin_check()
+
+    def _child_focus_closed(self, window) -> None:
+        if self.focus_handoff is window:
+            self._finish_focus_handoff()
+        self._queue_pin_check()
 
     def _queue_pin_check(self, *_args) -> None:
         if not self.closed and not self.pin_source:
@@ -773,7 +804,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.editor is None:
             self.editor = NoteEditor(self, note, tag_only=tag_only)
             self._watch_child_focus(self.editor)
-        self.editor.present()
+        self._present_child(self.editor)
 
     def _open_schedule(self, note: Note) -> None:
         if self.closed or self.action_pending:
@@ -783,7 +814,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.editor is None:
             self.editor = NoteEditor(self, note, schedule_only=True)
             self._watch_child_focus(self.editor)
-        self.editor.present()
+        self._present_child(self.editor)
 
     def _open_reminders(self) -> None:
         if self.closed:
@@ -792,7 +823,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.scheduled_window is None or self.scheduled_window.closed:
             self.scheduled_window = ScheduledWindow(self)
             self._watch_child_focus(self.scheduled_window)
-        self.scheduled_window.present()
+        self._present_child(self.scheduled_window)
 
     def _set_tag(self, note: Note, tag: str | None) -> None:
         if self.closed or self.action_pending or note.id not in self.rows:
@@ -810,7 +841,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.archive_window is None or self.archive_window.closed:
             self.archive_window = ArchiveWindow(self)
             self._watch_child_focus(self.archive_window)
-        self.archive_window.present()
+        self._present_child(self.archive_window)
 
     def _poll(self) -> bool:
         if self.closed:
@@ -1121,10 +1152,18 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu.popdown()
         self.menu.destroy()
         GLib.source_remove(self.refresh_source)
-        for source in (self.geometry_source, self.focus_source, self.pin_source, self.draft_source):
+        for source in (
+            self.geometry_source,
+            self.focus_source,
+            self.pin_source,
+            self.handoff_source,
+            self.draft_source,
+        ):
             if source:
                 GLib.source_remove(source)
         self.geometry_source = self.focus_source = self.pin_source = self.draft_source = 0
+        self.handoff_source = 0
+        self.focus_handoff = None
         # GTK may retain child widgets after closing. Stop their callbacks now,
         # rather than waiting for each row's eventual destroy signal.
         for row in self.rows.values():
