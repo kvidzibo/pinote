@@ -261,6 +261,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.reveal_note_id: int | None = None
         self.geometry_source = 0
         self.focus_source = 0
+        self.pin_source = 0
+        self.deferred_progress: set[int] = set()
+        self.starting_note_id: int | None = None
+        self.loaded_notes = False
         self._configured_geometry = None
         self._initial_placement = True
         self._placement_requests: set[tuple[int, int]] = set()
@@ -318,24 +322,23 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.notice.connect("response", lambda *_args: self.notice.hide())
         layout.pack_start(self.notice, False, False, 0)
 
-        self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.list_box.get_style_context().add_class("reminder-list")
-        self.list_box.set_margin_end(6)
+        self.list_box, self.scroll = self._task_list()
+        self.progress_list, self.progress_scroll = self._task_list()
+        self.progress_scroll.show_all()
+        self.progress_scroll.hide()
+        self.progress_scroll.set_no_show_all(True)
+        self.progress_separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        self.progress_separator.get_style_context().add_class("progress-divider")
+        self.progress_separator.set_no_show_all(True)
         self.empty = Gtk.Label(label="Loading reminders…")
         self.empty.get_style_context().add_class("dim-label")
         self.empty.set_margin_top(6)
         self.empty.set_margin_bottom(6)
         self.empty.show()
         self.list_box.set_placeholder(self.empty)
-        self.scroll = Gtk.ScrolledWindow()
-        # Reserve the scrollbar's own width instead of covering row icons on hover.
-        self.scroll.set_overlay_scrolling(False)
-        self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scroll.set_propagate_natural_height(True)
-        self.scroll.set_min_content_height(0)
-        self.scroll.set_max_content_height(1)
-        self.scroll.add(self.list_box)
         layout.pack_start(self.scroll, True, True, 0)
+        layout.pack_start(self.progress_separator, False, False, 0)
+        layout.pack_start(self.progress_scroll, False, True, 0)
 
         self.composer = Gtk.Box(spacing=6)
         self.entry = TaskEntry()
@@ -387,6 +390,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.menu.append(item)
             item.show()
         self.menu.connect("show", self._prepare_filters)
+        self.menu.connect("hide", self._queue_pin_check)
         self._prepare_filters()
         self.menu_button.set_popup(self.menu)
         self.menu_button.set_direction(Gtk.ArrowType.UP)
@@ -410,10 +414,15 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
         self.connect("key-press-event", self._on_key_press)
         self.connect("size-allocate", self._queue_geometry)
-        self.list_box.connect("size-allocate", self._queue_geometry)
-        self.scroll.get_vadjustment().connect("changed", self._queue_geometry)
+        for list_box, scroll in (
+            (self.list_box, self.scroll),
+            (self.progress_list, self.progress_scroll),
+        ):
+            list_box.connect("size-allocate", self._queue_geometry)
+            scroll.get_vadjustment().connect("changed", self._queue_geometry)
+        self.connect("notify::is-active", self._queue_pin_check)
         self.connect("configure-event", self._on_configure)
-        for widget in (self, self.list_box, self.scroll):
+        for widget in (self, self.list_box, self.scroll, self.progress_list, self.progress_scroll):
             widget.add_events(Gdk.EventMask.BUTTON_RELEASE_MASK)
             widget.connect("event-after", self._after_pointer_event)
         self.connect("destroy", self._on_destroy)
@@ -421,6 +430,46 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.entry.grab_focus()
         self.refresh_source = GLib.timeout_add(1000, self._poll)
         self._poll()
+
+    @staticmethod
+    def _task_list() -> tuple[Gtk.ListBox, Gtk.ScrolledWindow]:
+        list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        list_box.get_style_context().add_class("reminder-list")
+        list_box.set_margin_end(6)
+        scroll = Gtk.ScrolledWindow()
+        # Both sections reserve scrollbar space rather than covering row icons.
+        scroll.set_overlay_scrolling(False)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_propagate_natural_height(True)
+        scroll.set_min_content_height(0)
+        scroll.set_max_content_height(1)
+        scroll.add(list_box)
+        return list_box, scroll
+
+    def _has_checklist_focus(self) -> bool:
+        # Menus and the native preview grab focus without leaving the checklist.
+        return (
+            any(window.is_active() for window in self.get_application().get_windows())
+            or self.menu.get_visible()
+            or self.context_menu is not None
+            or self.preview is not None
+        )
+
+    def _watch_child_focus(self, window: Gtk.Window) -> None:
+        window.connect("notify::is-active", self._queue_pin_check)
+        window.connect("destroy", self._queue_pin_check)
+
+    def _queue_pin_check(self, *_args) -> None:
+        if not self.closed and not self.pin_source:
+            self.pin_source = GLib.idle_add(self._pin_after_focus_loss)
+
+    def _pin_after_focus_loss(self) -> bool:
+        self.pin_source = 0
+        if not self.closed and self.deferred_progress and not self._has_checklist_focus():
+            # Includes an accepted Start whose worker has not finished yet.
+            self.deferred_progress.clear()
+            self._arrange_rows()
+        return GLib.SOURCE_REMOVE
 
     def _queue_geometry(self, *_args) -> None:
         if not self.closed and not self.geometry_source:
@@ -451,18 +500,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.anchor_bottom = current[1] + height
         area = self.get_display().get_monitor_at_window(self.get_window()).get_workarea()
         self.anchor_bottom = min(self.anchor_bottom, area.y + area.height)
-        width = self.list_box.get_allocated_width()
-        rows = self.list_box.get_children()[: self.config.max_visible_notes]
-        content_height = sum(row.get_preferred_height_for_width(width)[1] for row in rows)
-        if not rows:
-            content_height = self.empty.get_preferred_height_for_width(width)[1]
-        # Measure chrome, including any error notice, rather than reserving a
-        # fixed pixel budget that clips wrapped rows or the task entry.
-        chrome = height - self.scroll.get_allocated_height()
-        available = max(1, self.anchor_bottom - area.y - 25 - chrome)
-        limit = min(max(1, content_height), available)
-        if self.scroll.get_max_content_height() != limit:
-            self.scroll.set_max_content_height(limit)
+        limits = self._section_limits(height, area.y)
+        for scroll, limit in limits.items():
+            if scroll.get_max_content_height() != limit:
+                scroll.set_max_content_height(limit)
         position = (self.anchor_x, max(area.y, self.anchor_bottom - height))
         # Compare with the same snapshot used to update the anchor. A fresh
         # query can see a later manual move and undo it before its event arrives.
@@ -476,12 +517,15 @@ class ReminderWindow(Gtk.ApplicationWindow):
             row = self.rows.get(self.reveal_note_id)
             if row is not None:
                 allocation = row.get_allocation()
-                adjustment = self.scroll.get_vadjustment()
+                scroll = (
+                    self.progress_scroll if row.get_parent() is self.progress_list else self.scroll
+                )
+                adjustment = scroll.get_vadjustment()
                 top, bottom = allocation.y, allocation.y + allocation.height
                 # Wait for both the new row and the resized viewport to be allocated.
                 if (
                     allocation.height > 1
-                    and self.scroll.get_allocated_height() == limit
+                    and scroll.get_allocated_height() == limits[scroll]
                     and adjustment.get_upper() >= bottom
                 ):
                     if (
@@ -493,6 +537,37 @@ class ReminderWindow(Gtk.ApplicationWindow):
                         adjustment.set_value(bottom - adjustment.get_page_size())
                     self.reveal_note_id = None
         return GLib.SOURCE_REMOVE
+
+    def _section_limits(self, height: int, monitor_top: int) -> dict[Gtk.ScrolledWindow, int]:
+        ordinary = self.list_box.get_children()
+        progress = self.progress_list.get_children()
+        count = self.config.max_visible_notes
+        # Share the row budget, reserving at least one row for each nonempty section.
+        pinned_count = min(len(progress), max(1, count // 2) if ordinary else count)
+        ordinary_count = max(1, count - pinned_count)
+
+        def content_height(list_box, rows):
+            width = list_box.get_allocated_width()
+            return sum(row.get_preferred_height_for_width(width)[1] for row in rows)
+
+        normal_height = content_height(self.list_box, ordinary[:ordinary_count])
+        if not ordinary and not progress:
+            normal_height = self.empty.get_preferred_height_for_width(
+                self.list_box.get_allocated_width()
+            )[1]
+        pinned_height = content_height(self.progress_list, progress[:pinned_count])
+        # Measure chrome, including the separator and errors, against the fixed anchor.
+        chrome = height - sum(
+            scroll.get_allocated_height()
+            for scroll in (self.scroll, self.progress_scroll)
+            if scroll.get_visible()
+        )
+        available = max(2, self.anchor_bottom - monitor_top - 25 - chrome)
+        pinned_limit = min(pinned_height, max(1, available // 2) if ordinary else available)
+        return {
+            self.scroll: max(1, min(normal_height, available - pinned_limit)),
+            self.progress_scroll: max(1, pinned_limit),
+        }
 
     def _on_configure(self, _window, event) -> bool:
         position = (event.x, event.y)
@@ -574,6 +649,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             preview.destroy()
             if not self.closed:
                 self.entry.grab_focus()
+                self._queue_pin_check()
 
     @staticmethod
     def _radio_choices(menu, choices, selected, on_select) -> None:
@@ -687,6 +763,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 row.get_style_context().remove_class("context-target")
             self.context_menu = None
             self.context_note_id = None
+            self._queue_pin_check()
 
     def _open_editor(self, note: Note, *, tag_only: bool = False) -> None:
         if self.closed or self.action_pending or note.id not in self.rows:
@@ -695,6 +772,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu.popdown()
         if self.editor is None:
             self.editor = NoteEditor(self, note, tag_only=tag_only)
+            self._watch_child_focus(self.editor)
         self.editor.present()
 
     def _open_schedule(self, note: Note) -> None:
@@ -704,6 +782,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu.popdown()
         if self.editor is None:
             self.editor = NoteEditor(self, note, schedule_only=True)
+            self._watch_child_focus(self.editor)
         self.editor.present()
 
     def _open_reminders(self) -> None:
@@ -712,6 +791,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.menu.popdown()
         if self.scheduled_window is None or self.scheduled_window.closed:
             self.scheduled_window = ScheduledWindow(self)
+            self._watch_child_focus(self.scheduled_window)
         self.scheduled_window.present()
 
     def _set_tag(self, note: Note, tag: str | None) -> None:
@@ -729,6 +809,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.menu.popdown()
         if self.archive_window is None or self.archive_window.closed:
             self.archive_window = ArchiveWindow(self)
+            self._watch_child_focus(self.archive_window)
         self.archive_window.present()
 
     def _poll(self) -> bool:
@@ -825,6 +906,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.closed or self.action_pending or row is None or row.exiting:
             return
         self.action_pending = True
+        if action == "start":
+            self.starting_note_id = note_id
+            if self._has_checklist_focus():
+                self.deferred_progress.add(note_id)
         self._update_controls()
         self._submit(lambda: self.model.transition(note_id, action), action=(note_id, action))
 
@@ -893,11 +978,25 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if mutation and self.archive_window is not None:
                 self.archive_window._poll()
         finally:
+            if action and action[1] == "start":
+                self.starting_note_id = None
+                self.deferred_progress.intersection_update(
+                    note.id for note in self.notes_snapshot if note.state == "in_progress"
+                )
             self._update_controls()
             self._show_draft_error()
         return GLib.SOURCE_REMOVE
 
     def _render(self, notes: list[Note], *, action: tuple[int, str] | None = None) -> None:
+        progress = {note.id for note in notes if note.state == "in_progress"}
+        focused = self._has_checklist_focus()
+        if self.loaded_notes and focused:
+            previous = {note.id for note in self.notes_snapshot if note.state == "in_progress"}
+            self.deferred_progress.update(progress - previous - {self.starting_note_id})
+        elif not focused:
+            self.deferred_progress.clear()
+        self.deferred_progress.intersection_update(progress | {self.starting_note_id})
+        self.loaded_notes = True
         self.notes_snapshot = notes
         self._update_filter_label()
         notes = [
@@ -925,10 +1024,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 row = NoteRow(note, self._act, self._open_preview, self._populate_note_menu)
                 for widget in (row, row.body):
                     widget.connect("event-after", self._after_pointer_event)
-                # Departing rows still occupy a slot until their animation ends.
-                position = sum(note_id < note.id for note_id in self.rows)
                 self.rows[note.id] = row
-                self.list_box.insert(row, position)
+                self._place_row(row)
                 row.show_all()
             row = self.rows[note.id]
             if row.exiting:
@@ -945,17 +1042,51 @@ class ReminderWindow(Gtk.ApplicationWindow):
         elif self.tag_filter == "" and self.notes_snapshot:
             empty = "No untagged reminders."
         self.empty.set_text(empty)
-        self.list_box.get_accessible().set_name(
-            f"Reminders, {len(notes)} active {'note' if len(notes) == 1 else 'notes'}"
+        self._arrange_rows()
+        # Unchanged rows and both scroll adjustments are deliberately left intact.
+
+    def _place_row(self, row: NoteRow) -> None:
+        target = (
+            self.progress_list
+            if row.note.state == "in_progress" and row.note.id not in self.deferred_progress
+            else self.list_box
         )
+        parent = row.get_parent()
+        if parent is target:
+            return
+        if parent is not None:
+            parent.remove(row)
+        # Keep creation order within each section, including departing animation slots.
+        position = sum(child.note.id < row.note.id for child in target.get_children())
+        target.insert(row, position)
+
+    def _arrange_rows(self) -> None:
+        for row in self.rows.values():
+            if not row.exiting:
+                self._place_row(row)
+        self._update_sections()
+
+    def _update_sections(self) -> None:
+        ordinary = self.list_box.get_children()
+        progress = self.progress_list.get_children()
+        self.scroll.set_visible(bool(ordinary) or not progress)
+        self.progress_scroll.set_visible(bool(progress))
+        self.progress_separator.set_visible(bool(ordinary) and bool(progress))
+        for list_box, rows, name in (
+            (self.list_box, ordinary, "Reminders"),
+            (self.progress_list, progress, "In progress"),
+        ):
+            count = sum(not row.exiting for row in rows)
+            list_box.get_accessible().set_name(
+                f"{name}, {count} active {'note' if count == 1 else 'notes'}"
+            )
         self._queue_geometry()
-        # Existing rows and the scroll adjustment are deliberately left intact.
 
     def _remove_row(self, row: NoteRow) -> None:
         if not self.closed and self.rows.get(row.note.id) is row:
             self.rows.pop(row.note.id)
             row.destroy()
-            self._queue_geometry()
+            self._update_sections()
 
     def _error(self, message: str, *, action: bool) -> None:
         if message != self.last_error:
@@ -990,10 +1121,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu.popdown()
         self.menu.destroy()
         GLib.source_remove(self.refresh_source)
-        for source in (self.geometry_source, self.focus_source, self.draft_source):
+        for source in (self.geometry_source, self.focus_source, self.pin_source, self.draft_source):
             if source:
                 GLib.source_remove(source)
-        self.geometry_source = self.focus_source = self.draft_source = 0
+        self.geometry_source = self.focus_source = self.pin_source = self.draft_source = 0
         # GTK may retain child widgets after closing. Stop their callbacks now,
         # rather than waiting for each row's eventual destroy signal.
         for row in self.rows.values():

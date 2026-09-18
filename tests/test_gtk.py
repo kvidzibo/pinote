@@ -135,7 +135,11 @@ def gtk(request, tmp_path, monkeypatch):
             lambda: (
                 not window.pending
                 and not window.geometry_source
-                and window.scroll.get_allocated_height() == window.scroll.get_preferred_height()[1]
+                and all(
+                    not scroll.get_visible()
+                    or scroll.get_allocated_height() == scroll.get_preferred_height()[1]
+                    for scroll in (window.scroll, window.progress_scroll)
+                )
                 and window.get_position()[1] + window.get_size().height == window.anchor_bottom
             ),
         )
@@ -176,7 +180,15 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     wait_until(gtk.glib, lambda: row.body.get_allocated_height() > 1)
     assert not window.get_decorated()
     assert window.get_titlebar() is None
-    assert window.get_child().get_children() == [window.notice, window.scroll, window.composer]
+    assert window.get_child().get_children() == [
+        window.notice,
+        window.scroll,
+        window.progress_separator,
+        window.progress_scroll,
+        window.composer,
+    ]
+    assert not window.progress_scroll.get_visible()
+    assert not window.progress_separator.get_visible()
     assert window.entry.get_parent() is window.entry_scroll
     assert window.entry_box.get_parent() is window.composer
     assert window.entry.get_accessible().get_name() == "New task"
@@ -256,7 +268,11 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
             gtk.glib,
             lambda: (
                 not window.geometry_source
-                and window.scroll.get_allocated_height() == window.scroll.get_preferred_height()[1]
+                and all(
+                    not scroll.get_visible()
+                    or scroll.get_allocated_height() == scroll.get_preferred_height()[1]
+                    for scroll in (window.scroll, window.progress_scroll)
+                )
                 and window.get_position()[1] + window.get_size().height == window.anchor_bottom
             ),
         )
@@ -1777,7 +1793,8 @@ def test_add_during_a_departing_row_preserves_animation_and_order(gtk, animation
     window.add_button.clicked()
     wait_until(gtk.glib, lambda: not window.pending and 3 in window.rows)
     assert window.rows[1] is row and row.exiting
-    assert [child.note.id for child in window.list_box.get_children()] == [1, 2, 3]
+    assert [child.note.id for child in window.list_box.get_children()] == [2, 3]
+    assert window.progress_list.get_children() == [row]
     with Store(gtk.paths.database) as store:
         assert [event["action"] for event in store.history()] == [
             "add",
@@ -2101,11 +2118,14 @@ def test_restore_and_insert_during_animation_preserve_rows_and_order(
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending and 5 in window.rows)
     assert row.exiting
-    assert [child.note.id for child in window.list_box.get_children()] == [1, 2, 3, 4, 5]
+    assert [child.note.id for child in window.list_box.get_children()] == [1, 2, 4, 5]
+    assert window.progress_list.get_children() == [row]
     cli("restore", "3", "--no-notify")
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending and not row.exiting)
     assert window.rows[3] is row and window.rows[2] is unchanged
+    assert [child.note.id for child in window.list_box.get_children()] == [1, 2, 3, 4, 5]
+    assert not window.progress_list.get_children()
     assert row.done.get_sensitive() and not row.done.get_active()
     assert row.revealer.get_reveal_child() and row.revealer.get_child_revealed()
     assert not row.get_style_context().has_class("completed")
@@ -2267,6 +2287,175 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     assert window.rows[1].note.text == text
     assert window.list_box.get_accessible().get_name() == "Reminders, 1 active note"
     assert not window.notice.get_visible()
+
+
+def test_in_progress_pins_on_focus_loss_above_input_and_below_new_tasks(gtk, monkeypatch):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        for index in range(16):
+            store.add(f"Task {index + 1}\nDetails")
+        store.transition(1, "start")
+        store.transition(2, "start")
+    window = gtk.open()
+    other = Gtk.Window(title="pinote-test-focus-target")
+    other.set_default_size(100, 100)
+    other.move(800, 50)
+    other.show_all()
+
+    def focus(target):
+        subprocess.run(
+            ["xdotool", "search", "--name", f"^{target.get_title()}$", "windowfocus", "--sync"],
+            env=gtk.env,
+            check=True,
+            timeout=5,
+        )
+        wait_until(gtk.glib, target.is_active)
+
+    def sections():
+        return tuple(
+            [row.note.id for row in section.get_children()]
+            for section in (window.list_box, window.progress_list)
+        )
+
+    def settled():
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.pending
+                and not window.geometry_source
+                and all(
+                    not scroll.get_visible()
+                    or scroll.get_allocated_height() == scroll.get_preferred_height()[1]
+                    for scroll in (window.scroll, window.progress_scroll)
+                )
+                and window.get_position()[1] + window.get_size().height == window.anchor_bottom
+            ),
+        )
+
+    try:
+        assert sections() == (list(range(3, 17)), [1, 2])
+        focus(window)
+        row = window.rows[3]
+        click_button(gtk, window, row.done)
+        wait_until(gtk.glib, lambda: not window.pending and row.note.state == "in_progress")
+        window._poll()
+        wait_until(gtk.glib, lambda: not window.pending)
+        assert row.get_parent() is window.list_box  # No jump while interacting or polling.
+        pointer_at(gtk, window, window.rows[4].done, 8, 8, "click", "3")
+        wait_until(gtk.glib, lambda: window.rows[4].deletion_marked)
+
+        # Native grabs and focus moving into the editor do not leave the application.
+        click_button(gtk, window, row.preview_button)
+        wait_until(gtk.glib, lambda: window.preview is not None)
+        assert row.get_parent() is window.list_box
+        subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+        wait_until(gtk.glib, lambda: window.preview is None)
+        pointer_at(gtk, window, row.body, 12, 8, "click", "3")
+        wait_until(gtk.glib, lambda: window.context_menu is not None)
+        assert row.get_parent() is window.list_box
+        subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+        wait_until(gtk.glib, lambda: window.context_menu is None)
+        window._open_editor(row.note)
+        focus(window.editor)
+        assert row.get_parent() is window.list_box
+        window.editor.destroy()
+        focus(window)
+        assert row.get_parent() is window.list_box
+
+        focus(other)
+        wait_until(gtk.glib, lambda: row.get_parent() is window.progress_list)
+        settled()
+        assert sections() == (list(range(4, 17)), [1, 2, 3])
+        assert window.rows[3] is row and window.rows[4].deletion_marked
+        assert window.progress_separator.get_visible()
+        with Store(gtk.paths.database) as store:
+            assert len(store.history()) == 19  # Reordering/deletion marks do not write history.
+
+        # Scrolling ordinary tasks cannot move the pinned section off screen.
+        adjustment = window.scroll.get_vadjustment()
+        assert adjustment.get_upper() > adjustment.get_page_size()
+        pinned_y = row.translate_coordinates(window, 0, 0)[1]
+        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        wait_until(gtk.glib, lambda: adjustment.get_value() > 0)
+        assert row.translate_coordinates(window, 0, 0)[1] == pinned_y
+        assert pinned_y + row.get_allocated_height() <= window.composer.get_allocation().y
+        assert window.get_position()[1] >= 25
+
+        focus(window)
+        window.entry.set_text("New task above in-progress tasks")
+        click_button(gtk, window, window.add_button)
+        wait_until(
+            gtk.glib,
+            lambda: not window.pending and 17 in window.rows and window.reveal_note_id is None,
+        )
+        settled()
+        assert sections() == (list(range(4, 18)), [1, 2, 3])
+        new_allocation = window.rows[17].get_allocation()
+        assert new_allocation.y >= adjustment.get_value()
+        assert (
+            new_allocation.y + new_allocation.height
+            <= adjustment.get_value() + adjustment.get_page_size()
+        )
+        pointer_at(gtk, window, row.done, 8, 8, "click", "3")  # Reset returns to creation order.
+        wait_until(gtk.glib, lambda: not window.pending and row.note.state == "active")
+        assert sections() == (list(range(3, 18)), [1, 2])
+        assert window.rows[4].deletion_marked
+        adjustment.set_value(0)
+        settled()
+
+        # A blur during a slow Start still pins it, even if focus returns before the save.
+        original = window.model.transition
+        started, release = threading.Event(), threading.Event()
+
+        def slow_start(note_id, action):
+            started.set()
+            assert release.wait(timeout=5)
+            return original(note_id, action)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(window.model, "transition", slow_start)
+            try:
+                click_button(gtk, window, row.done)
+                wait_until(gtk.glib, started.is_set)
+                focus(other)
+                focus(window)
+            finally:
+                release.set()
+            wait_until(gtk.glib, lambda: not window.pending and row.note.state == "in_progress")
+        assert row.get_parent() is window.progress_list
+
+        # Large pinned sets get their own scrolling, including an all-in-progress view.
+        focus(other)
+        with Store(gtk.paths.database) as store:
+            for note_id in range(5, 17):
+                store.transition(note_id, "start")
+        window._poll()
+        settled()
+        pinned = window.progress_scroll.get_vadjustment()
+        assert sections()[0] == [4, 17]
+        assert pinned.get_upper() > pinned.get_page_size()
+        pinned.set_value(pinned.get_upper() - pinned.get_page_size())
+        window._poll()
+        settled()
+        assert pinned.get_value() > 0
+        with Store(gtk.paths.database) as store:
+            store.transition(4, "start")
+            store.transition(17, "start")
+        window._poll()
+        settled()
+        assert sections() == ([], list(range(1, 18)))
+        assert not window.scroll.get_visible() and not window.progress_separator.get_visible()
+        assert window.progress_scroll.get_visible()
+        assert pinned.get_upper() > pinned.get_page_size()
+        assert window.get_position()[1] >= 25
+        window._set_filter("Hidden")
+        assert not window.rows and not window.progress_scroll.get_visible()
+        window._set_filter("")
+        settled()
+        assert sections() == ([], list(range(1, 18)))
+    finally:
+        other.destroy()
 
 
 def test_polling_reuses_rows_preserves_scroll_and_shows_full_list(gtk, cli):

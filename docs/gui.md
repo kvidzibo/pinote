@@ -75,8 +75,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   bar, and one checkbox/text row per note—no trash button. Only reminder bells have
   tooltips (for example, **Due 2 hours ago**). The bottom edge stays fixed while the window grows
   upward as notes are added and shrinks as they are removed. The visible-note limit is
-  configurable (default **10**); extra notes scroll. The scrollbar has its own space,
-  with a gap beside the row icons.
+  configurable (default **10**); extra notes scroll. In-progress tasks have a separate
+  pinned section just above the input, so scrolling ordinary tasks never hides them.
+  Each scrollbar has its own space, with a gap beside the row icons.
 - Add using the bottom **Add a task…** field: press **Enter** or click **+**.
   **Shift+Enter** inserts a newline; pasting preserves newlines. The editor grows
   to a few lines, then scrolls. It keeps its expanded height while you edit, including
@@ -130,6 +131,13 @@ Edits and tag changes retain the task ID and record old/new values in history;
   | Marked for deletion | Cancel → Empty | Delete |
 
   Progress survives restarts. Clicking task text still focuses the input.
+- Newly started tasks stay in place until focus leaves pinote, then move into the
+  pinned in-progress section. Moving focus into pinote's menus, previews, or other
+  windows does not trigger the move. Already-started tasks open in the pinned section.
+  Both sections retain creation order: new tasks append to the ordinary section,
+  **above** in-progress tasks; clearing progress returns a task to its original place.
+  Tag filters apply to both sections. Marking for deletion does not change ordering.
+  Large in-progress sets scroll independently within their own height limit.
 - Marking for deletion alone saves nothing; the mark survives unchanged refreshes
   but clears when the task changes elsewhere or the checklist closes. Cancelling
   the mark leaves the checkbox empty, never in progress. Failed deletions keep the
@@ -198,9 +206,13 @@ Read from `$XDG_CONFIG_HOME/pinote/config.toml` (default
 max_visible_notes = 10
 ```
 
-The limit must be a positive integer. The viewport fits the first N matching note rows
-(wrapping their first lines), capped by available screen space; all remaining matching
-notes stay accessible by scrolling. An empty view stays compact. Missing configuration uses the defaults;
+The limit must be a positive integer. Both sections share this visible-row budget,
+with at least one row per nonempty section. While ordinary tasks remain, in-progress
+rows use up to half the budget and half the available list height; the ordinary
+section gets the remaining row budget. With only in-progress tasks, their section
+can use the whole budget. Wrapped lines and available screen space also constrain
+height; all matching tasks remain accessible through each section's scrollbar.
+An empty view stays compact. Missing configuration uses the defaults;
 invalid configuration reports an error without changing notes. The GUI never
 creates or overwrites this file. **Close and reopen the GUI** after changing it.
 
