@@ -26,13 +26,13 @@ From this checkout:
 sudo apt install python3-gi gir1.2-gtk-3.0
 
 uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
-uv pip install --python .venv-gui/bin/python -e .
+uv pip install --python .venv-gui/bin/python -e '.[gui]'
 .venv-gui/bin/pinote-gui
 ```
 
 Without uv, install Debian's `python3-venv`, then use
 `/usr/bin/python3 -m venv --system-site-packages .venv-gui` and
-`.venv-gui/bin/python -m pip install -e .`. This is still an isolated environment;
+`.venv-gui/bin/python -m pip install -e '.[gui]'`. This is still an isolated environment;
 it reads system GTK libraries but installs pinote locally, not into system Python.
 Both environments use the same source code, not separate copies of the project.
 
@@ -93,9 +93,15 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - Shows each matching active note's **first line**, with literal text and wrapping for
   long first lines. Multiline notes have an **eye/preview button** on the right;
   single-line notes do not. Preview opens a scrollable, read-only popup with the
-  full text, including blank lines. Select text and press **Ctrl+C** to copy it.
+  full text with basic Markdown: headings, bold/italic, lists, quotes, inline/fenced
+  code, and web/email links. Line breaks and blank lines are retained. Select text
+  and press **Ctrl+C** to copy the displayed text. Editing and list rows stay literal.
+  HTML stays literal, images show alt text without loading, and only explicit
+  HTTP/HTTPS/mailto links can open external applications. There is no syntax highlighting.
   **Esc** or clicking outside dismisses the preview without closing the checklist.
   Preview never changes the task or its history; it closes if the task leaves the list.
+  Set `markdown_preview = false` below to restore the original plain-text preview.
+  Markdown uses the optional `gui` install extra; without its parser, previews stay plain text.
 - Right-clicking note text outlines that row while its context menu or tag submenu
   is open. Dismissing the menu clears the outline without changing the task's state.
 - **Right-click note text → Edit…** opens a full multiline editor. Click **Save**
@@ -204,6 +210,7 @@ Read from `$XDG_CONFIG_HOME/pinote/config.toml` (default
 ```toml
 [gui]
 max_visible_notes = 10
+markdown_preview = true
 ```
 
 The limit must be a positive integer. Both sections share this visible-row budget,
@@ -212,7 +219,9 @@ rows use up to half the budget and half the available list height; the ordinary
 section gets the remaining row budget. With only in-progress tasks, their section
 can use the whole budget. Wrapped lines and available screen space also constrain
 height; all matching tasks remain accessible through each section's scrollbar.
-An empty view stays compact. Missing configuration uses the defaults;
+An empty view stays compact. `markdown_preview` must be a boolean; set it to `false`
+to disable formatting without changing or converting any notes.
+Missing configuration uses the defaults;
 invalid configuration reports an error without changing notes. The GUI never
 creates or overwrites this file. **Close and reopen the GUI** after changing it.
 

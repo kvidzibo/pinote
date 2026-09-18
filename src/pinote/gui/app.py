@@ -670,7 +670,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.focus_source = 0
         if self.preview is not None:
             self._close_preview(self.preview)
-        self.preview = NotePreview(row.preview_button, row.note)
+        self.preview = NotePreview(
+            row.preview_button, row.note, markdown=self.config.markdown_preview
+        )
         self.preview.connect("closed", self._close_preview)
         self.preview.popup()
 

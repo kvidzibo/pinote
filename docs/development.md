@@ -23,7 +23,7 @@ Install development tools into the GUI environment and run its
 interpreter directly (plain `uv run` would select the separate CLI environment):
 
 ```sh
-uv pip install --python .venv-gui/bin/python -e . --group dev
+uv pip install --python .venv-gui/bin/python -e '.[gui]' --group dev
 xvfb-run -a -s '-screen 0 2560x1440x24' dbus-run-session -- .venv-gui/bin/python -m pytest -m gtk --run-gui
 # Also cover placement on smaller displays:
 xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps or manual_position' --run-gui
