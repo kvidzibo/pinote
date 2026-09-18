@@ -2497,11 +2497,52 @@ def test_single_instance_reopen_and_real_window_close(gtk, tmp_path):
         assert result.returncode in (0, 1), result.stderr
         return result.stdout.split()
 
+    # Wait for the first snapshot AND its layout before dragging. Merely mapping
+    # at the bottom anchor can expose the loading placeholder; replacing it with
+    # the first row legitimately grows upward and changes the window's top edge.
+    script = textwrap.dedent("""\
+        import runpy
+        import sys
+        from pathlib import Path
+        from pinote.gui.app import Gio, GLib
+
+        executable, marker = sys.argv[1:]
+
+        def ready():
+            application = Gio.Application.get_default()
+            windows = application.get_windows() if application else []
+            if not windows:
+                return True
+            window = windows[0]
+            if (
+                set(window.rows) != {1}
+                or window.pending
+                or window.geometry_source
+                or window.rows[1].get_allocated_height() <= 1
+                or window.scroll.get_allocated_height() != window.scroll.get_preferred_height()[1]
+                or window.get_position()[1] + window.get_window().get_geometry().height
+                != window.anchor_bottom
+            ):
+                return True
+            Path(marker).touch()
+            return False
+
+        GLib.timeout_add(10, ready)
+        sys.argv = [executable]
+        runpy.run_path(executable, run_name="__main__")
+    """)
+    ready = tmp_path / "ready"
     for _ in range(2):
+        ready.unlink(missing_ok=True)
         with (tmp_path / "process.log").open("w") as output:
-            process = subprocess.Popen([executable], env=gtk.env, stdout=output, stderr=output)
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, executable, str(ready)],
+                env=gtk.env,
+                stdout=output,
+                stderr=output,
+            )
             try:
-                wait_until(gtk.glib, lambda: bool(visible_windows()))
+                wait_until(gtk.glib, lambda: ready.exists() and bool(visible_windows()))
                 windows = visible_windows()
                 assert len(windows) == 1
 
