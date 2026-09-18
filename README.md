@@ -4,7 +4,7 @@ Pinned desktop reminders with a small `note` CLI, stable IDs, and durable histor
 Linux/i3 first. The CLI has no Python runtime dependencies or background service.
 Choose a persistent Dunst notification or the optional `pinote-gui` GTK checklist
 with multiline editing, one optional tag per task, tag filtering,
-start/complete/delete checkboxes, and an archive.
+start/complete/delete checkboxes, scheduled reminders, and an archive.
 The GUI is a separate process, not a daemon.
 
 ## Install
@@ -51,14 +51,16 @@ note "check backups"     # Add, save, then refresh/reopen the desktop reminder
 note                     # List active notes in the terminal
 note done 2              # Complete note 2
 note rm 3                # Archive note 3; never erase it
-note restore 3           # Reactivate a note, or clear its in-progress status
+note restore 3           # Reactivate a note, clear progress, or bring a reminder back early
+note schedule 2 "2030-09-18 14:30" # Move note 2 to reminders until this local date/time
+note reminders           # List scheduled reminders, earliest first
 note history             # All timestamped events, oldest first (UTC)
 note history 3           # Activity for one note
-note list --all          # Include done and removed notes
+note list --all          # Include done, removed, and scheduled notes
 note show                # Show/reopen the persistent desktop notification
 note --no-notify "later" # Save without refreshing the desktop
 note export              # Active notes as Markdown on stdout
-note export --all        # Active and done notes; removed notes remain in the DB
+note export --all        # Active and done notes; removed/scheduled notes remain in the DB
 ```
 
 IDs are permanent, never renumbered or reused. Repeating a transition to the
@@ -73,9 +75,37 @@ or `note add -- "--starts-with-a-dash"` for leading dashes. Quote shell
 metacharacters. Notes can contain Unicode, quotes, and newlines, up to 4096
 characters; empty notes and terminal control characters are rejected.
 
+### Scheduled reminders
+
+Add a note normally, then schedule it for a **future local date and time**. It leaves
+the active list and stays in the separate reminders list until due. Reminders are
+one-shot: when due they return as unchecked active tasks with the same ID, text,
+tag, and history. Scheduling an in-progress task clears its progress.
+
+In the GUI, use **right-click note text → Set reminder…**, choose a calendar date
+and 24-hour time, then click **Set reminder**. **Bottom menu → Reminders…** shows
+scheduled notes, earliest first, with their full text and local trigger time.
+**Change time…** reschedules a reminder; **Move to main** cancels its timer and
+returns it immediately. Closing the reminders window does not stop timers.
+The main list's tag filter still applies when a reminder returns.
+
+While the GUI is open, due reminders return on its next poll (about one second).
+If pinote is closed or the computer is asleep, missed reminders return when the
+GUI next opens/resumes or a `note` command runs. There is **no new background
+service, wake-up alarm, or automatic Dunst notification** for timers; keep the GUI
+open for automatic delivery to the main list. GUI-triggered changes do not refresh Dunst.
+
+CLI equivalents: `note schedule ID "YYYY-MM-DD HH:MM"`, `note reminders`, and
+`note restore ID` to bring one back early. `note rm ID` archives a scheduled note
+and cancels its timer. Times are stored in UTC; input without an offset uses the
+current local timezone. ISO times with an explicit offset are also accepted, e.g.
+`2030-09-18T14:30:00+02:00`. Ambiguous or nonexistent local times at daylight-saving
+changes are rejected; choose another time or use an explicit offset. All reminder
+changes and automatic activations are recorded in `note history ID`.
+
 ### Desktop behavior
 
-Add, done, remove, restore, and import automatically refresh **one** persistent
+Add, schedule, done, remove, restore, and import automatically refresh **one** persistent
 Dunst notification. A dismissed notification reopens on the next mutation or
 `note show`. Closing it never changes the notes. `note` by itself only lists in
 the terminal. `--no-notify` suppresses automatic refresh, not an explicit `show`.
@@ -138,21 +168,21 @@ It works from any directory when invoked by its full path, uses this checkout's
 running GUI, waits for submitted saves, then reopens it with its original environment
 and workspace—even on a hidden workspace. If the GUI is stopped, it stays stopped.
 Ambiguous instances and concurrent restarts are refused; it never force-kills a GUI.
-As with a normal close, unfinished input is saved and restored; the archive window closes.
+As with a normal close, unfinished input is saved and restored; child windows close.
 Startup diagnostics go to the private `/tmp/pinote-gui-restart-*.log` path printed
 by the script; normal application logging to `app.log` is unchanged. The helper
 does not reinstall packages or change desktop configuration.
 
-### Upgrading for editing and tags
+### Upgrading for scheduled reminders
 
 Update **both** the CLI and GUI installations before reopening the GUI. For the
 editable setup above, update the checkout and run `uv tool install --reinstall .`
 for the separately installed CLI. Back up `notes.db` first (see below).
-The first database open upgrades schema 1 or 2 to **3** atomically, retaining note IDs,
-timestamps, history, and import markers. Existing tasks start untagged. Older pinote
-versions cannot read schema 3. Edits and tag changes retain the task ID and record
-old/new values in history; `note history ID` shows them. Historical text is preserved,
-not replaced when a task is edited.
+The first database open upgrades schema 1, 2, or 3 to **4** atomically, retaining note IDs,
+timestamps, tags, history, and import markers. Existing tasks have no scheduled time;
+schema 1/2 tasks start untagged. Older pinote versions cannot read schema 4.
+Edits and tag changes retain the task ID and record old/new values in history;
+`note history ID` shows them. Historical text is preserved, not replaced when a task is edited.
 
 ### Behavior
 
@@ -187,11 +217,11 @@ not replaced when a task is edited.
   by a stale editor. Unsaved edits are not cached like the new-task draft.
 - **Right-click note text → Tag →** choose a tag, **New tag…**, or **Untagged** to
   clear it. Each task has at most one tag. Names are case-sensitive, trimmed, Unicode
-  normalized, and limited to 64 characters on one line. Tags in use on active or
-  archived tasks are available for reuse; there is no separate tag registry.
+  normalized, and limited to 64 characters on one line. Tags in use on active,
+  scheduled, or archived tasks are available for reuse; there is no separate tag registry.
   Both tag menus show active-note counts, including in-progress tasks, for example
   **#Work (3)**. Counts cover all active tasks regardless of the current filter;
-  archived-only tags show **(0)**. They use the latest loaded list when the menu opens.
+  scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
 - **Bottom menu → Filter by tag →** selects **Untagged**, **All**, or a named tag.
   **Untagged is the default every time the checklist reopens.** Filtering only hides
   rows; it never archives or changes tasks. Assigning a different tag can immediately
@@ -222,8 +252,8 @@ not replaced when a task is edited.
   a task or clear progress, and `note history ID` to inspect its events. Failed
   start/reset/complete saves restore the last saved checkbox state. Screen-reader names
   and descriptions identify the checkbox's actions and note ID.
-- The bottom **menu** beside **+** contains **Filter by tag**, **Archive…**, and
-  **Close**. There is no Undo button. **Archive…** opens a separate, resizable,
+- The bottom **menu** beside **+** contains **Filter by tag**, **Reminders…**,
+  **Archive…**, and **Close**. There is no Undo button. **Archive…** opens a separate, resizable,
   titlebar-free window.
   It lists all currently completed/deleted tasks, newest first, including previous
   sessions and CLI changes. Each row shows its full text, **Completed** or **Deleted**,
@@ -234,9 +264,9 @@ not replaced when a task is edited.
 - **Restore** returns that task to the active list, unchecked, just like
   `note restore ID`. It preserves the ID and history and removes the task from the
   archive. Failed saves can be retried; stale restore buttons cannot overwrite
-  a task changed elsewhere. Both windows refresh CLI changes about once per second.
-  Closing the archive leaves the checklist open; closing the checklist closes both
-  windows, after finishing any already-submitted save.
+  a task changed elsewhere. All lists refresh CLI changes about once per second.
+  Closing the archive or reminders list leaves the checklist open; closing the checklist
+  closes all its windows, after finishing any already-submitted save.
 - After a successful click, **Done** holds its green check/highlight for 200 ms,
   then fades and collapses over 200 ms. Confirmed deletion fades/collapses over 200 ms.
   Saving happens first, and other rows remain usable during the animation.
@@ -290,8 +320,8 @@ creates or overwrites this file. **Close and reopen the GUI** after changing it.
 ### i3 setup
 
 For i3, put this rule **after** any general floating-window border rules so they
-cannot restore the titlebar. It covers the checklist, Edit, New tag, and Archive
-windows; replace any older rule matching only `^pinote-reminders$`.
+cannot restore the titlebar. It covers the checklist, Edit, New tag, Set reminder,
+Reminders, and Archive windows; replace any older rule matching only `^pinote-reminders$`.
 
 ```i3
 for_window [window_role="^pinote-"] floating enable, border none
@@ -332,7 +362,9 @@ import does not duplicate notes, even if the file changes. An empty import does
 not mark the source as imported. A copy at another path is a separate source.
 SQLite becomes the source of truth; editing the old Markdown file does not
 change pinote. Import creates untagged tasks; export omits tag metadata.
-Export is a readable snapshot, **not** a backup of IDs, tags, or history.
+Scheduled notes are excluded from Markdown exports, even with `--all`; use
+`note reminders` to list them. Export is a readable snapshot, **not** a backup of
+IDs, tags, scheduled times, or history.
 
 ## Desktop login
 

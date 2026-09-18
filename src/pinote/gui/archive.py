@@ -56,11 +56,22 @@ class ArchiveRow(Gtk.ListBoxRow):
         self.changed()
 
 
-class ArchiveWindow(Gtk.ApplicationWindow):
+class SavedTasksWindow(Gtk.ApplicationWindow):
+    """Shared polling, mutation and lifecycle for archive and scheduled lists."""
+
+    heading = "Archive"
+    role = "pinote-archive"
+    list_method = "archive"
+    action_method = "restore"
+    empty_text = "No completed or deleted tasks."
+
+    def _make_row(self, note: Note) -> ArchiveRow:
+        return ArchiveRow(note, self._restore)
+
     def __init__(self, owner):
         super().__init__(
             application=owner.get_application(),
-            title="pinote — Archive",
+            title=f"pinote — {self.heading}",
             transient_for=owner,
             destroy_with_parent=True,
         )
@@ -72,7 +83,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         self.error_is_action = False
         self.last_error = None
         self.rows: dict[int, ArchiveRow] = {}
-        self.set_role("pinote-archive")
+        self.set_role(self.role)
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
@@ -83,9 +94,9 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         layout.get_style_context().add_class("reminder-panel")
         self.add(layout)
         header = Gtk.Box(spacing=12)
-        header.pack_start(Gtk.Label(label="Archive", xalign=0), True, True, 0)
+        header.pack_start(Gtk.Label(label=self.heading, xalign=0), True, True, 0)
         self.close_button = Gtk.Button(label="Close")
-        self.close_button.get_accessible().set_name("Close archive (Esc)")
+        self.close_button.get_accessible().set_name(f"Close {self.heading.lower()} (Esc)")
         self.close_button.connect("clicked", lambda _button: self.close())
         header.pack_start(self.close_button, False, False, 0)
         layout.pack_start(header, False, False, 0)
@@ -102,7 +113,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list_box.get_style_context().add_class("reminder-list")
         self.list_box.set_sort_func(self._sort_rows)
-        self.empty = Gtk.Label(label="Loading archive…")
+        self.empty = Gtk.Label(label=f"Loading {self.heading.lower()}…")
         self.empty.get_style_context().add_class("dim-label")
         self.empty.set_margin_top(12)
         self.empty.show()
@@ -133,7 +144,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         if self.closed:
             return GLib.SOURCE_REMOVE
         if not self.pending:
-            self._submit(self.model.archive)
+            self._submit(getattr(self.model, self.list_method))
         return GLib.SOURCE_CONTINUE
 
     def _restore(self, note_id: int) -> None:
@@ -143,7 +154,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         note = row.note
         self.action_pending = True
         self._update_controls()
-        self._submit(lambda: self.model.restore(note), note_id=note_id)
+        self._submit(lambda: getattr(self.model, self.action_method)(note), note_id=note_id)
 
     def _submit(self, operation, *, note_id: int | None = None) -> None:
         self.pending += 1
@@ -182,12 +193,12 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         except (NoteError, OSError, sqlite3.Error) as exc:
             self._error(f"{exc}\nRun note to check the saved state.", action=mutation)
         except Exception:
-            LOGGER.exception("Unexpected archive operation failure.")
+            LOGGER.exception("Unexpected %s operation failure.", self.heading.lower())
             self._error("Unexpected failure. Run note to check the saved state.", action=mutation)
         else:
             self.last_error = None
             if mutation and not result:
-                self._error("This task changed elsewhere. Refreshing the archive.", action=True)
+                self._error("This task changed elsewhere. Refreshing the list.", action=True)
             elif mutation or not self.error_is_action:
                 self.notice.hide()
                 self.error_is_action = False
@@ -200,11 +211,11 @@ class ArchiveWindow(Gtk.ApplicationWindow):
 
     def _update_controls(self) -> None:
         for row in self.rows.values():
-            row.restore.set_sensitive(not self.closed and not self.action_pending)
+            row.update(row.note, sensitive=not self.closed and not self.action_pending)
 
     def _update_count(self) -> None:
-        self.empty.set_text("No completed or deleted tasks.")
-        self.list_box.get_accessible().set_name(f"Archive, {len(self.rows)} tasks")
+        self.empty.set_text(self.empty_text)
+        self.list_box.get_accessible().set_name(f"{self.heading}, {len(self.rows)} tasks")
 
     def _render(self, notes: list[Note]) -> None:
         wanted = {note.id for note in notes}
@@ -212,7 +223,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
             self.rows.pop(note_id).destroy()
         for note in notes:
             if note.id not in self.rows:
-                row = ArchiveRow(note, self._restore)
+                row = self._make_row(note)
                 self.rows[note.id] = row
                 self.list_box.add(row)
                 row.show_all()
@@ -221,7 +232,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
 
     def _error(self, message: str, *, action: bool) -> None:
         if message != self.last_error:
-            LOGGER.error("Archive: %s", message)
+            LOGGER.error("%s: %s", self.heading, message)
             self.last_error = message
         self.error_is_action = action or self.error_is_action
         self.error_text.set_text(message)
@@ -232,3 +243,7 @@ class ArchiveWindow(Gtk.ApplicationWindow):
         GLib.source_remove(self.refresh_source)
         # The checklist owns the shared worker. Closing this window never
         # cancels an accepted restore or shuts down the still-open checklist.
+
+
+class ArchiveWindow(SavedTasksWindow):
+    """Completed and removed tasks, newest first."""

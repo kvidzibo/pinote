@@ -26,7 +26,7 @@ def test_legacy_upgrade_allows_edits_and_tags_without_losing_history(tmp_path, v
         db.execute("UPDATE sqlite_sequence SET seq = 40 WHERE name = 'notes'")
         db.execute("UPDATE sqlite_sequence SET seq = 80 WHERE name = 'events'")
     with Store(path) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 4
         original = store.notes()[0]
         assert original.tag is None
         assert store.edit(7, "Edited\nDetails", expected_updated_at=original.updated_at)

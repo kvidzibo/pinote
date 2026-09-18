@@ -34,7 +34,7 @@ def parse(text: str) -> list[tuple[str, str]]:
 def export(notes: list[Note]) -> str:
     lines = ["# Reminders", ""]
     for note in notes:
-        if note.state == "removed":
+        if note.state in {"removed", "scheduled"}:
             continue
         mark = {"done": "x", "in_progress": "~"}.get(note.state, " ")
         parts = note.text.split("\n")

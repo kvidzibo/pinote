@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from pinote.cli import arguments, main
-from pinote.paths import Paths, xdg_path
+from pinote.paths import Paths, display_lock, xdg_path
 
 
 def test_full_cli_lifecycle(cli):
@@ -27,6 +27,47 @@ def test_full_cli_lifecycle(cli):
     assert "add" in history and "done" in history and "restore" in history
     assert "another" not in history
     assert "2. [removed] another" in cli("list", "--all").stdout
+
+
+def test_scheduled_reminder_cli_lists_history_restore_and_due_delivery(cli):
+    cli.env["TZ"] = "UTC"
+    cli("--no-notify", "Call\nDetails 🐦")
+    result = cli("schedule", "1", "2099-04-10 12:30", "--no-notify")
+    assert "scheduled for 2099-04-10 12:30:00 UTC" in result.stdout
+    assert cli().stdout == "No active notes.\n"
+    paths = Paths(cli.database.parent, Path(cli.env["XDG_STATE_HOME"]) / "pinote")
+    with display_lock(paths):
+        assert "1. 2099-04-10 12:30:00 UTC Call\n    Details 🐦" in cli("reminders").stdout
+    assert "[scheduled]" in cli("list", "--all").stdout
+    assert "Call" not in cli("export", "--all").stdout
+    assert "already scheduled" in cli("schedule", "1", "2099-04-10 12:30Z", "--no-notify").stdout
+    history = cli("history", "1").stdout
+    assert "schedule  active -> scheduled" in history
+    assert "reminder none -> 2099-04-10 12:30:00 UTC" in history
+    assert len(history.splitlines()) == 2
+    for value in ("yesterday", "2000-01-01 12:00"):
+        assert cli("schedule", "1", value, "--no-notify", check=False).returncode == 1
+    assert "2099-04-10 12:30" in cli("reminders").stdout
+    cli("restore", "1", "--no-notify")
+    assert cli().stdout == "1. Call\n    Details 🐦\n"
+    assert cli("reminders").stdout == "No scheduled reminders.\n"
+    # Scheduling still commits before a failing Dunst refresh.
+    assert (
+        "Notes saved, but desktop refresh failed" in cli("schedule", "1", "2099-04-11 12:30").stdout
+    )
+    with sqlite3.connect(cli.database) as db:
+        db.execute("UPDATE notes SET remind_at = '2000-01-01T12:00:00.000000+00:00' WHERE id = 1")
+    assert cli().stdout == "1. Call\n    Details 🐦\n"
+    assert cli("reminders").stdout == "No scheduled reminders.\n"
+    with sqlite3.connect(cli.database) as db:
+        assert db.execute("SELECT action FROM events WHERE note_id = 1").fetchall() == [
+            ("add",),
+            ("schedule",),
+            ("restore",),
+            ("schedule",),
+            ("remind",),
+        ]
+        assert db.execute("SELECT state, remind_at FROM notes").fetchone() == ("active", None)
 
 
 @pytest.mark.parametrize(

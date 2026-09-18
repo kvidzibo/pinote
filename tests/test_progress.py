@@ -120,7 +120,7 @@ def test_v1_upgrade_preserves_all_data_ids_and_import_markers(legacy):
             for table in ("notes", "events", "imports")
         }
     with Store(legacy) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 4
         columns = {
             "notes": "id, text, state, created_at, updated_at",
             "events": "id, note_id, action, previous_state, state, occurred_at",

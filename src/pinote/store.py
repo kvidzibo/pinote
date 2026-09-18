@@ -49,6 +49,7 @@ class Note:
     created_at: str
     updated_at: str
     tag: str | None = None
+    remind_at: str | None = None
 
 
 # Table names below are fixed internal identifiers, never user input.
@@ -122,6 +123,52 @@ MIGRATION_3 = (
 )
 
 
+MIGRATION_4 = (
+    """CREATE TABLE notes_v4 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')
+        ),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        tag TEXT,
+        remind_at TEXT,
+        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))
+    )""",
+    """CREATE TABLE events_v4 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER NOT NULL REFERENCES notes_v4(id),
+        action TEXT NOT NULL CHECK (
+            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',
+                       'edit', 'tag', 'schedule', 'remind')
+        ),
+        previous_state TEXT,
+        state TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        text TEXT NOT NULL,
+        previous_text TEXT,
+        tag TEXT,
+        previous_tag TEXT,
+        remind_at TEXT,
+        previous_remind_at TEXT
+    )""",
+    "INSERT INTO notes_v4 SELECT *, NULL FROM notes",
+    "INSERT INTO events_v4 SELECT *, NULL, NULL FROM events",
+    "UPDATE sqlite_sequence SET seq = MAX(seq, "
+    "COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'notes'), 0)) "
+    "WHERE name = 'notes_v4'",
+    "UPDATE sqlite_sequence SET seq = MAX(seq, "
+    "COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)) "
+    "WHERE name = 'events_v4'",
+    "DROP TABLE events",
+    "DROP TABLE notes",
+    "ALTER TABLE notes_v4 RENAME TO notes",
+    "ALTER TABLE events_v4 RENAME TO events",
+    "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'",
+)
+
+
 class Store:
     def __init__(self, path: Path, *, timeout: float = 10):
         private_directory(path.parent)
@@ -137,15 +184,15 @@ class Store:
 
     def _initialize(self) -> None:
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 3:
+        if version == 4:
             return  # Ordinary reads must not take a write lock.
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             # Another process may have upgraded while this connection waited.
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            if version == 3:
+            if version == 4:
                 return
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise NoteError(f"Unsupported database version {version}; update pinote.")
             if version == 0:
                 for statement in SCHEMA:
@@ -153,9 +200,12 @@ class Store:
             elif version == 1:
                 for statement in MIGRATION_2:
                     self.connection.execute(statement)
-            for statement in MIGRATION_3:
+            if version < 3:
+                for statement in MIGRATION_3:
+                    self.connection.execute(statement)
+            for statement in MIGRATION_4:
                 self.connection.execute(statement)
-            self.connection.execute("PRAGMA user_version = 3")
+            self.connection.execute("PRAGMA user_version = 4")
 
     def __enter__(self) -> Store:
         return self
@@ -232,20 +282,88 @@ class Store:
             )
         return True
 
-    def _change_state(self, note_id: int, action: str, previous: str, target: str) -> None:
+    def _change_state(
+        self, note_id: int, action: str, previous: str, target: str, *, remind_at: str | None = None
+    ) -> None:
         """Append a transition inside the caller's write transaction."""
         when = timestamp()
         row = self.connection.execute(
-            "SELECT text, tag FROM notes WHERE id = ?", (note_id,)
+            "SELECT text, tag, remind_at FROM notes WHERE id = ?", (note_id,)
         ).fetchone()
         self.connection.execute(
-            "UPDATE notes SET state = ?, updated_at = ? WHERE id = ?", (target, when, note_id)
+            "UPDATE notes SET state = ?, updated_at = ?, remind_at = ? WHERE id = ?",
+            (target, when, remind_at, note_id),
         )
         self.connection.execute(
-            "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, tag) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (note_id, action, previous, target, when, row["text"], row["tag"]),
+            "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, tag, "
+            "remind_at, previous_remind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                note_id,
+                action,
+                previous,
+                target,
+                when,
+                row["text"],
+                row["tag"],
+                remind_at,
+                row["remind_at"],
+            ),
         )
+
+    def schedule(
+        self, note_id: int, when: datetime, *, expected_updated_at: str | None = None
+    ) -> bool:
+        if when.tzinfo is None or when.utcoffset() is None:
+            raise NoteError("Reminder time must include a timezone.")
+        due = when.astimezone(UTC).isoformat(timespec="microseconds")
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if due <= timestamp():
+                raise NoteError("Choose a reminder time in the future.")
+            row = self.connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+            if row is None:
+                raise NoteError(f"No note with ID {note_id}.")
+            if expected_updated_at is not None and row["updated_at"] != expected_updated_at:
+                raise NoteError("This task changed elsewhere. Close and reopen Set reminder.")
+            if row["state"] not in {"active", "in_progress", "scheduled"}:
+                raise NoteError(f"Note {note_id} is {row['state']}; restore it first.")
+            if row["remind_at"] == due:
+                return False
+            self._change_state(note_id, "schedule", row["state"], "scheduled", remind_at=due)
+        return True
+
+    def scheduled_notes(self) -> list[Note]:
+        return [
+            Note(**dict(row))
+            for row in self.connection.execute(
+                "SELECT * FROM notes WHERE state = 'scheduled' ORDER BY remind_at, id"
+            )
+        ]
+
+    def has_due(self) -> bool:
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM notes WHERE state = 'scheduled' AND remind_at <= ? LIMIT 1",
+                (timestamp(),),
+            ).fetchone()
+            is not None
+        )
+
+    def activate_due(self) -> int:
+        # Ordinary polls stay read-only; recheck under the write transaction so
+        # concurrent frontends cannot fire twice or undo a reschedule/removal.
+        if not self.has_due():
+            return 0
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            rows = self.connection.execute(
+                "SELECT id FROM notes WHERE state = 'scheduled' AND remind_at <= ? "
+                "ORDER BY remind_at, id",
+                (timestamp(),),
+            ).fetchall()
+            for row in rows:
+                self._change_state(row["id"], "remind", "scheduled", "active")
+        return len(rows)
 
     def transition(
         self,
@@ -279,10 +397,10 @@ class Store:
             previous = row["state"]
             if previous == target:
                 return False
-            if action in {"start", "reset"} and previous in {"done", "removed"}:
+            if action in {"start", "reset"} and previous in {"done", "removed", "scheduled"}:
                 raise NoteError(f"Note {note_id} is {previous}; restore it first.")
-            if action == "done" and previous == "removed":
-                raise NoteError(f"Note {note_id} is removed; restore it first.")
+            if action == "done" and previous in {"removed", "scheduled"}:
+                raise NoteError(f"Note {note_id} is {previous}; restore it first.")
             self._change_state(note_id, action, previous, target)
         return True
 

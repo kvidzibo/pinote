@@ -11,6 +11,7 @@ import sys
 import textwrap
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -364,6 +365,115 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         ]
         assert store.history(1)[0]["text"] == "Original\nFull details"
         assert store.notes()[-1].tag == "Personal 🐦"
+
+
+def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk, monkeypatch):
+    clock = datetime.now(UTC)
+    monkeypatch.setattr("pinote.store.timestamp", lambda: clock.isoformat(timespec="microseconds"))
+    with Store(gtk.paths.database) as store:
+        store.add("Call <literal> 🐦\nFull details")
+    window = gtk.open()
+    window.entry.set_text("Keep my draft")
+    pointer_at(gtk, window, window.rows[1].body, 12, 8, "click", "3")
+    wait_until(
+        gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
+    )
+    item = next(
+        item for item in window.context_menu.get_children() if item.get_label() == "Set reminder…"
+    )
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, item.get_toplevel(), item)
+    wait_until(gtk.glib, lambda: window.editor is not None)
+    editor = window.editor
+    assert editor.schedule_only and not editor.get_decorated()
+
+    def set_time(editor, when):
+        local = when.astimezone()
+        editor.entry.select_month(local.month - 1, local.year)
+        editor.entry.select_day(local.day)
+        editor.hour.set_value(local.hour)
+        editor.minute.set_value(local.minute)
+
+    set_time(editor, clock - timedelta(days=1))
+    click_button(gtk, editor, editor.save_button)
+    wait_until(gtk.glib, lambda: not editor.saving and editor.error_text.get_visible())
+    assert "future" in editor.error_text.get_text()
+    due = (clock + timedelta(days=2)).replace(second=0, microsecond=0)
+    set_time(editor, due)
+    with display_lock(gtk.paths):
+        click_button(gtk, editor, editor.save_button)
+        wait_until(gtk.glib, lambda: not editor.saving and "busy" in editor.error_text.get_text())
+    assert editor.entry.get_date().day == due.astimezone().day
+    click_button(gtk, editor, editor.save_button)
+    wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
+    assert window.entry.get_text() == "Keep my draft"
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, window.menu.get_toplevel(), window.reminders_button)
+    wait_until(gtk.glib, lambda: window.scheduled_window is not None)
+    reminders = window.scheduled_window
+    wait_until(gtk.glib, lambda: not reminders.pending and 1 in reminders.rows)
+    assert not reminders.get_decorated() and reminders.get_role() == "pinote-scheduled"
+    row = reminders.rows[1]
+    assert row.body.get_text() == "Call <literal> 🐦\nFull details"
+    assert not row.body.get_use_markup()
+    assert due.astimezone().strftime("%Y-%m-%d %H:%M") in row.date.get_text()
+    before = row.note
+    clock += timedelta(seconds=1)
+    click_button(gtk, reminders, row.change)
+    wait_until(gtk.glib, lambda: window.editor is not None)
+    due += timedelta(days=1)
+    set_time(window.editor, due)
+    click_button(gtk, window.editor, window.editor.save_button)
+    wait_until(
+        gtk.glib,
+        lambda: window.editor is None and reminders.rows[1].note.remind_at != before.remind_at,
+    )
+    click_button(gtk, reminders, reminders.rows[1].restore)
+    wait_until(gtk.glib, lambda: not reminders.pending and not reminders.rows and 1 in window.rows)
+    assert window.rows[1].note.state == "active"
+    clock += timedelta(seconds=1)
+    window._open_schedule(window.rows[1].note)
+    set_time(window.editor, due)
+    click_button(gtk, window.editor, window.editor.save_button)
+    wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
+    reminders.close()
+    wait_until(gtk.glib, lambda: reminders.closed)
+    clock = due - timedelta(microseconds=1)
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert not window.rows
+    clock = due
+    # Only the main window's normal timer is running; the reminders window is closed.
+    wait_until(gtk.glib, lambda: 1 in window.rows)
+    assert window.rows[1].note.remind_at is None and not window.rows[1].done.get_active()
+    clock += timedelta(seconds=1)
+    window._open_schedule(window.rows[1].note)
+    set_time(window.editor, due + timedelta(days=1))
+    click_button(gtk, window.editor, window.editor.save_button)
+    wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    clock = due + timedelta(days=2)
+    window = gtk.open(application)
+    assert set(window.rows) == {1} and window.rows[1].note.state == "active"
+    with Store(gtk.paths.database) as store:
+        assert store.scheduled_notes() == []
+        assert [e["action"] for e in store.history(1)] == [
+            "add",
+            "schedule",
+            "schedule",
+            "restore",
+            "schedule",
+            "remind",
+            "schedule",
+            "remind",
+        ]
 
 
 @pytest.mark.parametrize("tag_only", [False, True])
