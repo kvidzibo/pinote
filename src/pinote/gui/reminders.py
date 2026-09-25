@@ -8,6 +8,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Pango  # noqa: E402
 
 from pinote.gui.archive import SavedTasksWindow  # noqa: E402
+from pinote.gui.icons import icon_button  # noqa: E402
 from pinote.reminders import local_reminder_time  # noqa: E402
 from pinote.store import Note  # noqa: E402
 
@@ -32,10 +33,12 @@ class ScheduledRow(Gtk.ListBoxRow):
         text.pack_start(self.date, False, False, 0)
         content.pack_start(text, True, True, 0)
         controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, valign=Gtk.Align.START)
-        self.change = Gtk.Button(label="Change time…")
+        self.change = icon_button(
+            "preferences-system-notifications-symbolic", "Change reminder time"
+        )
         self.change.get_accessible().set_name(f"Change reminder time for note {note.id}")
         self.change.connect("clicked", lambda _button: on_change(note.id))
-        self.restore = Gtk.Button(label="Move to main")
+        self.restore = icon_button("document-revert-symbolic", "Move to main list now")
         self.restore.get_accessible().set_name(f"Move note {note.id} to main list now")
         self.restore.connect("clicked", lambda _button: on_release(note.id))
         for button in (self.change, self.restore):

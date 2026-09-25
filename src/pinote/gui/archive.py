@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import Future
-from datetime import datetime
+from datetime import UTC, datetime
 
 import gi
 
@@ -12,6 +12,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
+from pinote.gui.icons import icon_button  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
 
@@ -35,7 +36,7 @@ class ArchiveRow(Gtk.ListBoxRow):
         text.pack_start(self.body, False, False, 0)
         text.pack_start(self.date, False, False, 0)
         content.pack_start(text, True, True, 0)
-        self.restore = Gtk.Button(label="Restore", valign=Gtk.Align.START)
+        self.restore = icon_button("document-revert-symbolic", f"Restore note {note.id}")
         self.restore.get_style_context().add_class("restore-button")
         self.restore.get_accessible().set_name(f"Restore note {note.id}")
         self.restore.get_accessible().set_description("Return this task to the active list.")
@@ -83,6 +84,7 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         self.error_is_action = False
         self.last_error = None
         self.rows: dict[int, ArchiveRow] = {}
+        self._notes: list[Note] = []
         self.set_role(self.role)
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
@@ -95,7 +97,20 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         self.add(layout)
         header = Gtk.Box(spacing=12)
         header.pack_start(Gtk.Label(label=self.heading, xalign=0), True, True, 0)
-        self.close_button = Gtk.Button(label="Close")
+        if self.heading == "Archive":
+            self.archive_filter = Gtk.ComboBoxText()
+            for label in ("All", "1d", "7d"):
+                self.archive_filter.append_text(label)
+            self.archive_filter.set_active(0)
+            self.archive_filter.get_accessible().set_name("Archive filter")
+            self.archive_filter.get_accessible().set_description(
+                "Show all archived tasks, or tasks updated in the last 1 or 7 days."
+            )
+            self.archive_filter.connect("changed", self._filter_changed)
+            header.pack_start(self.archive_filter, False, False, 0)
+        self.close_button = icon_button(
+            "window-close-symbolic", f"Close {self.heading.lower()} (Esc)"
+        )
         self.close_button.get_accessible().set_name(f"Close {self.heading.lower()} (Esc)")
         self.close_button.connect("clicked", lambda _button: self.close())
         header.pack_start(self.close_button, False, False, 0)
@@ -182,6 +197,7 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
                 if result:
                     # The save is committed: remove its button before refreshing,
                     # even if that read fails. Never invite a duplicate restore.
+                    self._notes = [note for note in self._notes if note.id != note_id]
                     row = self.rows.pop(note_id, None)
                     if row is not None:
                         row.destroy()
@@ -217,7 +233,27 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         self.empty.set_text(self.empty_text)
         self.list_box.get_accessible().set_name(f"{self.heading}, {len(self.rows)} tasks")
 
+    def _filter_changed(self, _combo) -> None:
+        self._render(self._notes)
+
+    def _filtered_notes(self, notes: list[Note]) -> list[Note]:
+        if self.heading != "Archive":
+            return notes
+        choice = self.archive_filter.get_active_text()
+        if choice == "All":
+            return notes
+        seconds = 86400 if choice == "1d" else 7 * 86400
+        now = datetime.now(UTC)
+        return [
+            note
+            for note in notes
+            if (now - datetime.fromisoformat(note.updated_at).astimezone(UTC)).total_seconds()
+            <= seconds
+        ]
+
     def _render(self, notes: list[Note]) -> None:
+        self._notes = notes
+        notes = self._filtered_notes(notes)
         wanted = {note.id for note in notes}
         for note_id in self.rows.keys() - wanted:
             self.rows.pop(note_id).destroy()

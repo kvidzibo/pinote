@@ -8,6 +8,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from pinote.gui.icons import icon_button  # noqa: E402
 from pinote.gui.preview_markdown import is_safe_link, render_markdown  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note  # noqa: E402
@@ -54,7 +55,7 @@ class NotePreview(Gtk.Window):
     # keeps the full preview visible without resizing the bottom-anchored list.
     __gsignals__ = {"closed": (GObject.SignalFlags.RUN_LAST, None, ())}
 
-    def __init__(self, button: Gtk.Button, note: Note, *, markdown: bool = True):
+    def __init__(self, button: Gtk.Button, note: Note, *, markdown: bool = True, on_edit=None):
         super().__init__(
             type=Gtk.WindowType.POPUP,
             transient_for=button.get_toplevel(),
@@ -85,9 +86,14 @@ class NotePreview(Gtk.Window):
         self.scroll.set_max_content_height(min(300, max(1, self.area.height - 100)))
         self.scroll.set_propagate_natural_height(True)
         self.scroll.add(self.body)
-        panel = Gtk.Box()
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         panel.get_style_context().add_class("note-preview")
         panel.add(self.scroll)
+        if on_edit is not None:
+            self.edit_button = icon_button("document-edit-symbolic", f"Edit note {note.id}")
+            self.edit_button.set_halign(Gtk.Align.END)
+            self.edit_button.connect("clicked", lambda _button: on_edit(self.note_id))
+            panel.add(self.edit_button)
         self.add(panel)
         panel.show_all()
         self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
