@@ -662,11 +662,26 @@ class ReminderWindow(Gtk.ApplicationWindow):
         return True
 
     def _edit_preview(self, note_id: int) -> None:
-        row = self.rows.get(note_id)
-        if self.preview is not None:
-            self._close_preview(self.preview)
-        if row is not None:
+        preview = self.preview
+        if self.closed or self.action_pending or preview is None:
+            return
+
+        def open_editor() -> bool:
+            row = self.rows.get(note_id)
+            if (
+                self.closed
+                or self.action_pending
+                or self.preview is not preview
+                or row is None
+                or row.exiting
+            ):
+                return GLib.SOURCE_REMOVE
+            self._close_preview(preview)
             self._open_editor(row.note)
+            return GLib.SOURCE_REMOVE
+
+        # Release the popup grab and destroy its button only after clicked finishes.
+        GLib.idle_add(open_editor)
 
     def _open_preview(self, note_id: int) -> None:
         row = self.rows.get(note_id)

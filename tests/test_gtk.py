@@ -1512,8 +1512,21 @@ def test_preview_edit_and_composer_drag_handle(gtk):
     wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
     preview = window.preview
     assert preview.edit_button.get_tooltip_text() == "Edit note 1"
+    clicked = []
+    preview.edit_button.connect_after(
+        "clicked", lambda _button: clicked.append(preview.get_mapped())
+    )
+    window.action_pending = True
+    try:
+        click_button(gtk, preview, preview.edit_button)
+        wait_until(gtk.glib, lambda: len(clicked) == 1)
+        assert window.preview is preview and preview.get_mapped()
+        assert window.editor is None
+    finally:
+        window.action_pending = False
     click_button(gtk, preview, preview.edit_button)
     wait_until(gtk.glib, lambda: window.preview is None and window.editor is not None)
+    assert clicked == [True, True]  # Popup destruction waits until after signal propagation.
     editor = window.editor
     assert not preview.grabbed
     editor.entry.get_buffer().set_text("Edited from preview\nSecond line")
@@ -1990,12 +2003,31 @@ def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
     archive.archive_filter.set_active(2)
     assert set(archive.rows) == {1, 2}
     archive.archive_filter.set_active(1)
-    now += timedelta(hours=2)
+    now += timedelta(hours=1)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert set(archive.rows) == {1}  # Exactly 24 hours is included.
+    now += timedelta(microseconds=1)
     archive._poll()
     wait_until(gtk.glib, lambda: not archive.pending)
     assert not archive.rows
+    assert archive.empty.get_text() == "No completed or deleted tasks in the past 24 hours."
+    assert archive.list_box.get_accessible().get_name() == "Archive, past 24 hours, 0 tasks"
+    archive.archive_filter.set_active(2)
+    now = datetime.fromisoformat(notes[0].updated_at) + timedelta(days=7)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert set(archive.rows) == {1}  # Exactly seven days is included.
+    now += timedelta(microseconds=1)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert not archive.rows
+    assert archive.empty.get_text() == "No completed or deleted tasks in the past 7 days."
+    assert archive.list_box.get_accessible().get_name() == "Archive, past 7 days, 0 tasks"
     archive.archive_filter.set_active(0)
     assert set(archive.rows) == {1, 2, 3}
+    assert archive.empty.get_text() == archive.empty_text
+    assert archive.list_box.get_accessible().get_name() == "Archive, 3 tasks"
     with Store(gtk.paths.database) as store:
         assert len(store.archived_notes()) == 3
 

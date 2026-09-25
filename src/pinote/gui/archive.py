@@ -230,8 +230,16 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
             row.update(row.note, sensitive=not self.closed and not self.action_pending)
 
     def _update_count(self) -> None:
-        self.empty.set_text(self.empty_text)
-        self.list_box.get_accessible().set_name(f"{self.heading}, {len(self.rows)} tasks")
+        period = None
+        if self.heading == "Archive":
+            period = {"1d": "past 24 hours", "7d": "past 7 days"}.get(
+                self.archive_filter.get_active_text()
+            )
+        self.empty.set_text(
+            f"No completed or deleted tasks in the {period}." if period else self.empty_text
+        )
+        heading = f"{self.heading}, {period}" if period else self.heading
+        self.list_box.get_accessible().set_name(f"{heading}, {len(self.rows)} tasks")
 
     def _filter_changed(self, _combo) -> None:
         self._render(self._notes)
