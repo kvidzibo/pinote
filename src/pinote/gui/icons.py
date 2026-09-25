@@ -15,6 +15,15 @@ def icon_image(name: str, size: int = 12) -> Gtk.Image:
     return image
 
 
+def icon_menu_item(icon: str, description: str) -> Gtk.MenuItem:
+    item = Gtk.MenuItem()
+    item.add(icon_image(icon))
+    item.set_tooltip_text(description)
+    item.get_accessible().set_name(description)
+    item.show_all()
+    return item
+
+
 def icon_button(icon: str, description: str) -> Gtk.Button:
     button = Gtk.Button(image=icon_image(icon), valign=Gtk.Align.START)
     button.set_relief(Gtk.ReliefStyle.NONE)

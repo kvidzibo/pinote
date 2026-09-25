@@ -157,10 +157,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - Hold the **four-arrow drag handle** beside the bottom hamburger menu and move
   the pointer to reposition the window; release to stop dragging.
   Action buttons use bundled icons with tooltips and accessible names, independent
-  of the desktop icon theme. Menu entries and filter choices keep their text labels.
-- The bottom **menu** beside **+** and the drag handle contains **Filter by tag**, **Reminders…**,
-  **Archive…**, and **Close**. There is no Undo button. **Archive…** opens a separate, resizable,
-  titlebar-free window.
+  of the desktop icon theme. Tag choices and note context menus keep their text labels.
+- The bottom **menu** beside **+** and the drag handle contains icon-only actions:
+  **Filter by tag** (funnel), **Reminders…** (bell), **Archive…** (box), and **Close** (×).
+  Hover for labels; the filter tooltip also shows the current selection. There is no Undo button.
+  **Archive…** opens a separate, resizable, titlebar-free window.
   **All** (default), **1d**, and **7d** filter by completion/deletion time over all
   history, the past 24 hours, or the past seven days. Filtering never deletes tasks.
   It lists currently completed/deleted tasks, newest first, including previous

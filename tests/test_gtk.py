@@ -12,6 +12,7 @@ import textwrap
 import threading
 import time
 from datetime import UTC, datetime, timedelta
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -194,6 +195,20 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert window.entry.get_accessible().get_name() == "New task"
     assert window.add_button.get_accessible().get_name() == "Add task"
     assert window.menu_button.get_accessible().get_name() == "Reminders menu"
+    for item, name, icon_name in (
+        (window.filter_item, "Filter by tag: Untagged", "view-filter-symbolic"),
+        (window.reminders_button, "Reminders…", "preferences-system-notifications-symbolic"),
+        (window.archive_button, "Archive…", "archive-symbolic"),
+        (window.close_menu_button, "Close reminders (Esc)", "window-close-symbolic"),
+    ):
+        assert item.get_accessible().get_name() == name
+        assert item.get_tooltip_text() == name
+        image = item.get_child()
+        assert isinstance(image, Gtk.Image) and image.get_visible()
+        icon, _size = image.get_gicon()
+        assert icon.get_bytes().get_data() == (
+            files("pinote.gui").joinpath("icons", f"{icon_name}.svg").read_bytes()
+        )
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
     assert window.composer.get_children() == [
@@ -479,7 +494,6 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
     assert window.rows[1].note.remind_at is None and not window.rows[1].done.get_active()
     row = window.rows[1]
     wait_until(gtk.glib, lambda: row.reminder_icon.get_mapped())
-    from importlib.resources import files
 
     icon, _size = row.reminder_icon.get_gicon()
     assert (

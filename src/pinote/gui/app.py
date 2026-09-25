@@ -18,7 +18,7 @@ from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
-from pinote.gui.icons import icon_button, icon_image  # noqa: E402
+from pinote.gui.icons import icon_button, icon_image, icon_menu_item  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
@@ -371,11 +371,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.menu.set_no_show_all(True)
         self.menu.get_style_context().add_class("pinote-window")
         self.menu.get_style_context().add_class("reminder-menu")
-        self.filter_item = Gtk.MenuItem()
-        self.reminders_button = Gtk.MenuItem(label="Reminders…")
-        self.archive_button = Gtk.MenuItem(label="Archive…")
-        self.close_menu_button = Gtk.MenuItem(label="Close")
-        self.close_menu_button.get_accessible().set_name("Close reminders (Esc)")
+        self.filter_item = icon_menu_item("view-filter-symbolic", "Filter by tag")
+        self.reminders_button = icon_menu_item(
+            "preferences-system-notifications-symbolic", "Reminders…"
+        )
+        self.archive_button = icon_menu_item("archive-symbolic", "Archive…")
+        self.close_menu_button = icon_menu_item("window-close-symbolic", "Close reminders (Esc)")
         for item in (
             self.filter_item,
             self.reminders_button,
@@ -727,7 +728,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             label = "All"
         else:
             label = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
-        self.filter_item.set_label(f"Filter by tag: {label}")
+        self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
+        self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
 
     def _tag_choices(self, selected: str | None, *, filtering: bool = False):
