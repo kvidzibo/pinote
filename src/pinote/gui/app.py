@@ -18,6 +18,7 @@ from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
+from pinote.gui.icons import icon_button, icon_image  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
@@ -25,15 +26,6 @@ from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.paths import Paths  # noqa: E402
 from pinote.reminders import relative_reminder_time  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
-
-
-def icon_button(icon: str, description: str) -> Gtk.Button:
-    image = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU)
-    image.set_pixel_size(12)
-    button = Gtk.Button(image=image, valign=Gtk.Align.START)
-    button.set_relief(Gtk.ReliefStyle.NONE)
-    button.get_accessible().set_name(description)
-    return button
 
 
 class NoteRow(Gtk.ListBoxRow):
@@ -76,9 +68,7 @@ class NoteRow(Gtk.ListBoxRow):
         self.body.set_margin_top(3)
         self.body.connect("populate-popup", lambda _label, menu: on_menu(self.note.id, menu))
         content.pack_start(self.body, True, True, 0)
-        self.reminder_icon = Gtk.Image.new_from_icon_name(
-            "preferences-system-notifications-symbolic", Gtk.IconSize.MENU
-        )
+        self.reminder_icon = icon_image("preferences-system-notifications-symbolic")
         self.reminder_icon.set_pixel_size(12)
         self.reminder_icon.set_valign(Gtk.Align.START)
         self.reminder_icon.set_margin_top(4)
@@ -368,11 +358,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.entry.connect("focus-out-event", self._entry_focus)
         self.add_button = icon_button("list-add-symbolic", "Add task")
         self.add_button.set_valign(Gtk.Align.CENTER)
-        menu_icon = Gtk.Image.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.MENU)
-        menu_icon.set_pixel_size(12)
+        menu_icon = icon_image("open-menu-symbolic")
         self.menu_button = Gtk.MenuButton(image=menu_icon, valign=Gtk.Align.CENTER)
         self.menu_button.set_relief(Gtk.ReliefStyle.NONE)
         self.menu_button.get_accessible().set_name("Reminders menu")
+        self.menu_button.set_tooltip_text("Reminders menu")
+        self.drag_button = icon_button("move-symbolic", "Hold and drag to move window")
+        self.drag_button.set_valign(Gtk.Align.CENTER)
+        self.drag_button.connect("button-press-event", self._begin_drag)
         # Native menus stay visible above even an empty, very short checklist.
         self.menu = Gtk.Menu()
         self.menu.set_no_show_all(True)
@@ -410,6 +403,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.close_menu_button.connect("activate", lambda _item: self.close())
         self.composer.pack_start(self.entry_box, True, True, 0)
         self.composer.pack_start(self.add_button, False, False, 0)
+        self.composer.pack_start(self.drag_button, False, False, 0)
         self.composer.pack_start(self.menu_button, False, False, 0)
         layout.pack_start(self.composer, False, False, 0)
         self._update_controls()
@@ -661,6 +655,34 @@ class ReminderWindow(Gtk.ApplicationWindow):
             return True
         return False
 
+    def _begin_drag(self, _button, event) -> bool:
+        if event.button != 1:
+            return False
+        self.begin_move_drag(1, int(event.x_root), int(event.y_root), event.time)
+        return True
+
+    def _edit_preview(self, note_id: int) -> None:
+        preview = self.preview
+        if self.closed or self.action_pending or preview is None:
+            return
+
+        def open_editor() -> bool:
+            row = self.rows.get(note_id)
+            if (
+                self.closed
+                or self.action_pending
+                or self.preview is not preview
+                or row is None
+                or row.exiting
+            ):
+                return GLib.SOURCE_REMOVE
+            self._close_preview(preview)
+            self._open_editor(row.note)
+            return GLib.SOURCE_REMOVE
+
+        # Release the popup grab and destroy its button only after clicked finishes.
+        GLib.idle_add(open_editor)
+
     def _open_preview(self, note_id: int) -> None:
         row = self.rows.get(note_id)
         if self.closed or row is None or row.exiting or "\n" not in row.note.text:
@@ -671,7 +693,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.preview is not None:
             self._close_preview(self.preview)
         self.preview = NotePreview(
-            row.preview_button, row.note, markdown=self.config.markdown_preview
+            row.preview_button,
+            row.note,
+            markdown=self.config.markdown_preview,
+            on_edit=self._edit_preview,
         )
         self.preview.connect("closed", self._close_preview)
         self.preview.popup()

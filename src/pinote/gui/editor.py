@@ -16,6 +16,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
+from pinote.gui.icons import icon_button  # noqa: E402
+
 
 class NoteEditor(Gtk.ApplicationWindow):
     def __init__(self, owner, note: Note, *, tag_only: bool = False, schedule_only: bool = False):
@@ -108,8 +110,13 @@ class NoteEditor(Gtk.ApplicationWindow):
             scroll.add(self.entry)
             layout.pack_start(scroll, True, True, 0)
         controls = Gtk.Box(spacing=8, halign=Gtk.Align.END)
-        self.cancel_button = Gtk.Button(label="Cancel")
-        self.save_button = Gtk.Button(label="Set reminder" if schedule_only else "Save")
+        self.cancel_button = icon_button("window-close-symbolic", "Cancel")
+        self.save_button = icon_button(
+            "preferences-system-notifications-symbolic"
+            if schedule_only
+            else "document-save-symbolic",
+            "Set reminder" if schedule_only else "Save",
+        )
         self.cancel_button.connect("clicked", lambda _button: self.close())
         self.save_button.connect("clicked", lambda _button: self._save())
         controls.add(self.cancel_button)

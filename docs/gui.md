@@ -99,7 +99,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   HTML stays literal, images show alt text without loading, and only explicit
   HTTP/HTTPS/mailto links can open external applications. There is no syntax highlighting.
   **Esc** or clicking outside dismisses the preview without closing the checklist.
-  Preview never changes the task or its history; it closes if the task leaves the list.
+  The preview's **pencil icon** opens the editor; viewing alone never changes the task
+  or its history. The preview closes if the task leaves the list.
   Set `markdown_preview = false` below to restore the original plain-text preview.
   Markdown uses the optional `gui` install extra; without its parser, previews stay plain text.
 - Right-clicking note text outlines that row while its context menu or tag submenu
@@ -121,7 +122,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
   rows; it never archives or changes tasks. Assigning a different tag can immediately
   hide a task from the current view. New tasks added under a named filter inherit that
   tag; under All/Untagged they are untagged. The new-task draft is kept when switching
-  filters. Archive and CLI/Dunst listings remain unfiltered, and restored tasks retain
+  filters. Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain
   their tags, so they may be hidden by the checklist's current filter.
 - Left-click note text or empty space in the checklist to focus **Add a task…**.
   Drag to select text: releasing the mouse copies the selection to the clipboard,
@@ -153,12 +154,18 @@ Edits and tag changes retain the task ID and record old/new values in history;
   a task or clear progress, and `note history ID` to inspect its events. Failed
   start/reset/complete saves restore the last saved checkbox state. Screen-reader names
   and descriptions identify the checkbox's actions and note ID.
-- The bottom **menu** beside **+** contains **Filter by tag**, **Reminders…**,
+- Hold the **four-arrow drag handle** beside the bottom hamburger menu and move
+  the pointer to reposition the window; release to stop dragging.
+  Action buttons use bundled icons with tooltips and accessible names, independent
+  of the desktop icon theme. Menu entries and filter choices keep their text labels.
+- The bottom **menu** beside **+** and the drag handle contains **Filter by tag**, **Reminders…**,
   **Archive…**, and **Close**. There is no Undo button. **Archive…** opens a separate, resizable,
   titlebar-free window.
-  It lists all currently completed/deleted tasks, newest first, including previous
+  **All** (default), **1d**, and **7d** filter by completion/deletion time over all
+  history, the past 24 hours, or the past seven days. Filtering never deletes tasks.
+  It lists currently completed/deleted tasks, newest first, including previous
   sessions and CLI changes. Each row shows its full text, **Completed** or **Deleted**,
-  the recorded date/time in your local timezone, and a **Restore** button.
+  the recorded date/time in your local timezone, and a **Restore** arrow icon.
   Imported completed tasks use their import date because the original completion
   date is unknown. Opening Archive again presents the same archive window.
   Its in-window **Close** button and **Esc** still close it.

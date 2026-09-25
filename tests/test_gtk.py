@@ -199,6 +199,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert window.composer.get_children() == [
         window.entry_box,
         window.add_button,
+        window.drag_button,
         window.menu_button,
     ]
     assert not window.get_resizable()
@@ -478,9 +479,15 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
     assert window.rows[1].note.remind_at is None and not window.rows[1].done.get_active()
     row = window.rows[1]
     wait_until(gtk.glib, lambda: row.reminder_icon.get_mapped())
-    icon_name, _size = row.reminder_icon.get_icon_name()
-    assert icon_name == "preferences-system-notifications-symbolic"
-    assert Gtk.IconTheme.get_default().has_icon(icon_name)
+    from importlib.resources import files
+
+    icon, _size = row.reminder_icon.get_gicon()
+    assert (
+        icon.get_bytes().get_data()
+        == files("pinote.gui")
+        .joinpath("icons/preferences-system-notifications-symbolic.svg")
+        .read_bytes()
+    )
     assert row.reminder_icon.get_accessible().get_name() == "Scheduled reminder for note 1"
     assert "Scheduled reminder." in row.body.get_accessible().get_description()
     assert row.preview_button.get_visible()  # The bell doesn't replace multiline preview.
@@ -810,14 +817,23 @@ def test_stale_progress_click_never_overrides_external_change(
         assert [e["action"] for e in store.history()] == ["add", "start", external_action]
 
 
-def test_no_tooltips_on_ordinary_notes_keep_accessible_names(gtk):
+def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
     with Store(gtk.paths.database) as store:
         store.add("No hover popup")
     window = gtk.open()
+    actions = {
+        window.add_button,
+        window.menu_button,
+        window.drag_button,
+        window.rows[1].preview_button,
+    }
     widgets = [window]
     while widgets:
         widget = widgets.pop()
-        assert not widget.get_has_tooltip()
+        if widget in actions:
+            assert widget.get_tooltip_text() == widget.get_accessible().get_name()
+        else:
+            assert not widget.get_has_tooltip()
         if hasattr(widget, "get_children"):
             widgets.extend(widget.get_children())
     assert window.rows[1].done.get_accessible().get_name() == "Start note 1"
@@ -1487,6 +1503,54 @@ def test_editor_keeps_expanded_height_until_draft_is_cleared(gtk):
         assert store.notes() == [] and store.history() == []
 
 
+def test_preview_edit_and_composer_drag_handle(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("First line\nSecond line")
+    window = gtk.open()
+    wait_until(gtk.glib, lambda: window.rows[1].get_allocated_height() > 1)
+    click_button(gtk, window, window.rows[1].preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    preview = window.preview
+    assert preview.edit_button.get_tooltip_text() == "Edit note 1"
+    clicked = []
+    preview.edit_button.connect_after(
+        "clicked", lambda _button: clicked.append(preview.get_mapped())
+    )
+    window.action_pending = True
+    try:
+        click_button(gtk, preview, preview.edit_button)
+        wait_until(gtk.glib, lambda: len(clicked) == 1)
+        assert window.preview is preview and preview.get_mapped()
+        assert window.editor is None
+    finally:
+        window.action_pending = False
+    click_button(gtk, preview, preview.edit_button)
+    wait_until(gtk.glib, lambda: window.preview is None and window.editor is not None)
+    assert clicked == [True, True]  # Popup destruction waits until after signal propagation.
+    editor = window.editor
+    assert not preview.grabbed
+    editor.entry.get_buffer().set_text("Edited from preview\nSecond line")
+    click_button(gtk, editor, editor.save_button)
+    wait_until(gtk.glib, lambda: window.rows[1].note.text.startswith("Edited from preview"))
+    wait_until(gtk.glib, lambda: not window.geometry_source and not window.pending)
+    start = window.get_position()
+    button = window.drag_button
+    pointer_at(gtk, window, button, 6, 6, "mousedown", "1")
+    wait_until(gtk.glib, lambda: True)  # Dispatch the press before moving the pointer.
+    subprocess.run(
+        ["xdotool", "mousemove_relative", "--", "70", "-40"],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    wait_until(gtk.glib, lambda: window.get_position() != start)
+    subprocess.run(["xdotool", "mouseup", "1"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: not window.geometry_source)
+    assert window.get_position() == (start[0] + 70, start[1] - 40)
+    window.entry.set_text("Still editable")
+    assert window.entry.get_text() == "Still editable"
+
+
 def test_multiline_entry_and_read_only_preview(gtk):
     from pinote.gui.app import Gdk, Gtk, Pango
 
@@ -1901,6 +1965,71 @@ def test_add_during_a_departing_row_preserves_animation_and_order(gtk, animation
             "done",
             "add",
         ]
+
+
+def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
+    from dataclasses import replace
+
+    import pinote.gui.archive as archive_module
+
+    now = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    with Store(gtk.paths.database) as store:
+        for index in range(3):
+            store.add(f"Archived {index}")
+            store.transition(index + 1, "rm")
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending)
+    notes = [
+        replace(note, updated_at=(now - timedelta(hours=hours)).isoformat())
+        for note, hours in zip(
+            sorted(archive._notes, key=lambda n: n.id), (23, 48, 192), strict=True
+        )
+    ]
+    monkeypatch.setattr(archive.model, "archive", lambda: notes)
+    monkeypatch.setattr(archive_module, "datetime", Clock)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert set(archive.rows) == {1, 2, 3}
+    archive.archive_filter.set_active(1)
+    assert set(archive.rows) == {1}
+    archive.archive_filter.set_active(2)
+    assert set(archive.rows) == {1, 2}
+    archive.archive_filter.set_active(1)
+    now += timedelta(hours=1)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert set(archive.rows) == {1}  # Exactly 24 hours is included.
+    now += timedelta(microseconds=1)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert not archive.rows
+    assert archive.empty.get_text() == "No completed or deleted tasks in the past 24 hours."
+    assert archive.list_box.get_accessible().get_name() == "Archive, past 24 hours, 0 tasks"
+    archive.archive_filter.set_active(2)
+    now = datetime.fromisoformat(notes[0].updated_at) + timedelta(days=7)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert set(archive.rows) == {1}  # Exactly seven days is included.
+    now += timedelta(microseconds=1)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert not archive.rows
+    assert archive.empty.get_text() == "No completed or deleted tasks in the past 7 days."
+    assert archive.list_box.get_accessible().get_name() == "Archive, past 7 days, 0 tasks"
+    archive.archive_filter.set_active(0)
+    assert set(archive.rows) == {1, 2, 3}
+    assert archive.empty.get_text() == archive.empty_text
+    assert archive.list_box.get_accessible().get_name() == "Archive, 3 tasks"
+    with Store(gtk.paths.database) as store:
+        assert len(store.archived_notes()) == 3
 
 
 def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, monkeypatch):
