@@ -253,10 +253,10 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
 
 
 def test_minimise_cycle_and_context_state_icons(gtk):
-    from pinote.gui.app import Gtk
+    from pinote.gui.app import Gdk, Gtk
 
     with Store(gtk.paths.database) as store:
-        store.add("Ordinary task")
+        store.add("Ordinary task\nFull copied details")
         store.add("Started task")
         store.transition(2, "start")
     window = gtk.open()
@@ -292,8 +292,16 @@ def test_minimise_cycle_and_context_state_icons(gtk):
     def menu_action(label):
         settle()
         pointer_at(gtk, window, window.rows[1].body, 12, 8, "click", "3")
-        wait_until(gtk.glib, lambda: window.context_menu is not None)
+        wait_until(
+            gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
+        )
         menu = window.context_menu
+        assert menu.get_allocated_width() < 80
+        for child in menu.get_children():
+            if isinstance(child, Gtk.SeparatorMenuItem):
+                continue
+            assert isinstance(child.get_child(), Gtk.Image)
+            assert child.get_tooltip_text() == child.get_accessible().get_name()
         item = next(
             child for child in menu.get_children() if child.get_accessible().get_name() == label
         )
@@ -307,6 +315,10 @@ def test_minimise_cycle_and_context_state_icons(gtk):
         click_button(gtk, menu, item)
         wait_until(gtk.glib, lambda: window.context_menu is None and not window.pending)
 
+    menu_action("Copy note")
+    assert Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_for_text() == (
+        "Ordinary task\nFull copied details"
+    )
     menu_action("Start")
     assert window.rows[1].note.state == "in_progress"
     menu_action("Reset")

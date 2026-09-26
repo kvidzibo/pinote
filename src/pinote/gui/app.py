@@ -797,8 +797,18 @@ class ReminderWindow(Gtk.ApplicationWindow):
             menu.connect(signal, self._context_closed)
         menu.get_style_context().add_class("pinote-window")
         menu.get_style_context().add_class("reminder-menu")
+        menu.get_style_context().add_class("icon-menu")
+        menu.set_reserve_toggle_size(False)
+        # GtkLabel supplies a generic text-editing menu (including disabled
+        # Cut/Paste/Delete). Replace it rather than mixing text and icon actions.
+        for child in menu.get_children():
+            child.destroy()
         note = row.note  # Actions carry the revision shown when the menu opened.
-        separator = Gtk.SeparatorMenuItem()
+        copy = icon_menu_item("edit-copy-symbolic", "Copy note")
+        copy.connect(
+            "activate",
+            lambda _item: Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(note.text, -1),
+        )
         edit = icon_menu_item("document-edit-symbolic", "Edit…")
         edit.connect("activate", lambda _item: self._open_editor(note))
         schedule = icon_menu_item("preferences-system-notifications-symbolic", "Set reminder…")
@@ -834,7 +844,15 @@ class ReminderWindow(Gtk.ApplicationWindow):
             )
             item.set_sensitive(not self.action_pending)
             state_items.append(item)
-        for item in (separator, *state_items, edit, schedule, tag_item):
+        for item in (
+            copy,
+            Gtk.SeparatorMenuItem(),
+            *state_items,
+            Gtk.SeparatorMenuItem(),
+            edit,
+            schedule,
+            tag_item,
+        ):
             menu.append(item)
             item.show()
         edit.set_sensitive(not self.action_pending)
