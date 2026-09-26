@@ -70,7 +70,9 @@ class ReminderModel:
             with Store(self.paths.database, timeout=0.1) as store:
                 return store.set_tag(note.id, tag, expected_updated_at=note.updated_at)
 
-    def transition(self, note_id: int, action: str) -> TransitionResult:
+    def transition(
+        self, note_id: int, action: str, *, expected_state: str | None = None
+    ) -> TransitionResult:
         expected_states = {
             "start": {"active"},
             "reset": {"in_progress"},
@@ -79,6 +81,13 @@ class ReminderModel:
         }
         if action not in expected_states:
             raise NoteError("The checklist only supports Start, Reset, Done, and Remove.")
+        if expected_state is not None:
+            # Explicit menu completion also works on an empty task. Compare the
+            # displayed state so stale menu actions cannot affect a changed task.
+            allowed = expected_states[action] | ({"active"} if action == "done" else set())
+            if expected_state not in allowed:
+                raise NoteError("This action is not available for the displayed task state.")
+            expected_states[action] = {expected_state}
         with display_lock(self.paths, blocking=False):
             with Store(self.paths.database, timeout=0.1) as store:
                 # A stale click must not complete a reset task, restart a done

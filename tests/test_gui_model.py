@@ -78,6 +78,23 @@ def test_full_text_transitions_and_history_use_existing_store(model):
     assert [note.id for note in model.notes()] == [second]
 
 
+def test_menu_completion_matches_displayed_state_without_relaxing_checkboxes(model):
+    note_id = model.add("Menu task")
+    assert not model.transition(note_id, "done").changed
+    assert model.transition(note_id, "start").changed
+    assert not model.transition(note_id, "done", expected_state="active").changed
+    assert model.transition(note_id, "reset").changed
+    assert not model.transition(note_id, "done", expected_state="in_progress").changed
+    assert model.transition(note_id, "done", expected_state="active").changed
+    with Store(model.paths.database) as store:
+        assert [event["action"] for event in store.history(note_id)] == [
+            "add",
+            "start",
+            "reset",
+            "done",
+        ]
+
+
 def test_stale_buttons_never_archive_completed_or_removed_notes(model):
     with Store(model.paths.database) as store:
         note_id = store.add("changed from CLI")
