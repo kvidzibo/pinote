@@ -19,6 +19,7 @@ build/
 /backups/
 display.lock
 gui-draft.txt
+gui-filter.json
 .gui-draft-*
 *.sqlite
 *.sqlite-*

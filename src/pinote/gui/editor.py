@@ -17,10 +17,15 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from pinote.gui.icons import icon_button  # noqa: E402
+from pinote.gui.placement import place_child  # noqa: E402
 
 
 class NoteEditor(Gtk.ApplicationWindow):
-    def __init__(self, owner, note: Note, *, tag_only: bool = False, schedule_only: bool = False):
+    def __init__(
+        self, owner, note: Note | None, *, tag_only: bool = False, schedule_only: bool = False
+    ):
+        if note is None and (not tag_only or schedule_only):
+            raise ValueError("A task is required for editing or scheduling")
         title = "Set reminder" if schedule_only else "New tag" if tag_only else "Edit task"
         super().__init__(
             application=owner.get_application(),
@@ -38,7 +43,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.set_role("pinote-editor")
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
-        self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        place_child(self, owner)
         area = self.get_display().get_monitor_at_window(owner.get_window()).get_workarea()
         self.set_default_size(
             min(480, max(1, area.width - 50)), -1 if tag_only or schedule_only else 240
@@ -176,6 +181,8 @@ class NoteEditor(Gtk.ApplicationWindow):
             value = buffer.get_text(*buffer.get_bounds(), True)
 
         def operation():
+            if self.note is None:
+                return self.owner.model.create_tag(value)
             if self.schedule_only:
                 return self.owner.model.schedule(self.note, value)
             if self.tag_only:
@@ -201,7 +208,7 @@ class NoteEditor(Gtk.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         self.saving = False
         try:
-            future.result()
+            result = future.result()
         except BlockingIOError:
             self._error("Another note command is busy. Try again.")
         except (NoteError, OSError, sqlite3.Error) as exc:
@@ -210,6 +217,9 @@ class NoteEditor(Gtk.ApplicationWindow):
             LOGGER.exception("Cannot save task changes.")
             self._error("Unexpected failure. Run note to check the saved state.")
         else:
+            if self.note is None:
+                self.owner._tags_changed(None, result)
+                self.owner._select_creation_tag(result)
             self.owner._poll()
             if self.owner.scheduled_window is not None:
                 self.owner.scheduled_window._poll()

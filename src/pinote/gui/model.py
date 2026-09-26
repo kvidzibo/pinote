@@ -53,6 +53,21 @@ class ReminderModel:
         with Store(self.paths.database, timeout=0.1) as store:
             return store.tags()
 
+    def create_tag(self, name: str) -> str:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.create_tag(name)
+
+    def rename_tag(self, old: str, new: str) -> bool:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.rename_tag(old, new)
+
+    def delete_tag(self, name: str) -> bool:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.delete_tag(name)
+
     def add(self, text: str, *, tag: str | None = None) -> int:
         with display_lock(self.paths, blocking=False):
             with Store(self.paths.database, timeout=0.1) as store:

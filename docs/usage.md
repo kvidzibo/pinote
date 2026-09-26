@@ -152,6 +152,8 @@ IDs, tags, scheduled times, or history.
   user and separate from tasks/history. It is saved about every 250 ms while editing
   and flushed on normal close; an abrupt termination may lose the latest edits.
   Draft read/write errors appear in the GUI and log. Drafts are plain text, not encrypted.
+- GUI tag filter: `gui-filter.json` beside `notes.db`, private to the current user.
+  Saved when changed and flushed on close; this is separate from the new-task tag selection.
 - Display lock: the same data directory. Mutations and notifications are
   serialized so an older process cannot overwrite a newer display.
 - Logs/warnings/unexpected failures: stdout and
@@ -167,7 +169,7 @@ sent to your desktop daemon and may also remain in Dunst's own history, so avoid
 secrets in notes. Database and exports are not encrypted.
 
 For a complete backup, close the GUI, stop running `note` commands, and copy
-`notes.db` plus `gui-draft.txt` if present; restore them while pinote is stopped.
+`notes.db` plus `gui-draft.txt` and `gui-filter.json` if present; restore them while pinote is stopped.
 Do not copy a live database mid-write. Keep personal data and exports out of Git.
 If storing copies inside a checkout, use its ignored `exports/` and `backups/`
 directories. Databases, draft caches, logs, local `MEMORY.md`/`REMINDER.md`,

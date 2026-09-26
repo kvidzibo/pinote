@@ -29,6 +29,11 @@
     padding: 6px 10px;
 }
 
+.pinote-window.reminder-menu menuitem.selected-tag {
+    background-color: #343c49;
+    font-weight: bold;
+}
+
 .pinote-window.reminder-menu menuitem:hover {
     background-color: #343c49;
 }
@@ -148,6 +153,18 @@
     padding: 3px 0;
     opacity: 1;
     transition: none;
+}
+
+.pinote-window .tag-manager-row:selected {
+    background-color: #343c49;
+}
+
+.pinote-window .tag-badge {
+    background-color: #343c49;
+    color: #c9d7ee;
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 8pt;
 }
 
 .pinote-window .reminder-indicator {

@@ -12,7 +12,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
-from pinote.gui.icons import icon_button  # noqa: E402
+from pinote.gui.icons import TagLabel, icon_button  # noqa: E402
+from pinote.gui.placement import place_child  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
 
@@ -34,7 +35,13 @@ class ArchiveRow(Gtk.ListBoxRow):
         self.date.set_line_wrap(True)
         self.date.get_style_context().add_class("dim-label")
         text.pack_start(self.body, False, False, 0)
-        text.pack_start(self.date, False, False, 0)
+        details = Gtk.Box(spacing=8)
+        details.pack_start(self.date, False, False, 0)
+        self.tag_badge = TagLabel()
+        self.tag_badge.set_no_show_all(True)
+        self.tag_badge.get_style_context().add_class("tag-badge")
+        details.pack_start(self.tag_badge, False, False, 0)
+        text.pack_start(details, False, False, 0)
         content.pack_start(text, True, True, 0)
         self.restore = icon_button("document-revert-symbolic", f"Restore note {note.id}")
         self.restore.get_style_context().add_class("restore-button")
@@ -46,10 +53,17 @@ class ArchiveRow(Gtk.ListBoxRow):
 
     def update(self, note: Note, *, sensitive: bool) -> None:
         self.note = note
+        self.tag_badge.label.set_text(note.tag or "")
+        self.tag_badge.set_tooltip_text(note.tag)
+        self.tag_badge.set_visible(note.tag is not None)
         if self.body.get_text() != note.text:
             self.body.set_text(note.text)  # Literal text, never Pango markup.
         status = "Completed" if note.state == "done" else "Deleted"
-        when = datetime.fromisoformat(note.updated_at).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        when = (
+            datetime.fromisoformat(note.archived_at or note.updated_at)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
         label = f"{status} · {when}"
         if self.date.get_text() != label:
             self.date.set_text(label)
@@ -88,7 +102,7 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         self.set_role(self.role)
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
-        self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        place_child(self, owner)
         area = self.get_display().get_monitor_at_window(owner.get_window()).get_workarea()
         self.set_default_size(min(640, max(1, area.width - 50)), min(440, max(1, area.height - 80)))
         self.get_style_context().add_class("pinote-window")
@@ -145,8 +159,8 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
 
     @staticmethod
     def _sort_rows(left, right) -> int:
-        a = (left.note.updated_at, left.note.id)
-        b = (right.note.updated_at, right.note.id)
+        a = (left.note.archived_at or left.note.updated_at, left.note.id)
+        b = (right.note.archived_at or right.note.updated_at, right.note.id)
         return (b > a) - (b < a)
 
     def _on_key_press(self, _window, event) -> bool:
@@ -255,7 +269,9 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         return [
             note
             for note in notes
-            if (now - datetime.fromisoformat(note.updated_at).astimezone(UTC)).total_seconds()
+            if (
+                now - datetime.fromisoformat(note.archived_at or note.updated_at).astimezone(UTC)
+            ).total_seconds()
             <= seconds
         ]
 

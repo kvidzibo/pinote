@@ -18,9 +18,17 @@ from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
-from pinote.gui.icons import icon_button, icon_image, icon_menu_item  # noqa: E402
+from pinote.gui.icons import (  # noqa: E402
+    TagLabel,
+    icon_button,
+    icon_image,
+    icon_menu_item,
+    tag_menu_item,
+)
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
+from pinote.gui.state import FilterCache  # noqa: E402
+from pinote.gui.tags import TagsWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.paths import Paths  # noqa: E402
@@ -57,6 +65,12 @@ class NoteRow(Gtk.ListBoxRow):
         self.done.connect("button-press-event", self._check_pressed)
         self.done.connect("button-release-event", lambda _button, event: event.button == 3)
         content.pack_start(self.done, False, False, 0)
+        self.tag_badge = TagLabel(icon_size=10)
+        self.tag_badge.set_valign(Gtk.Align.START)
+        self.tag_badge.set_margin_top(3)
+        self.tag_badge.set_no_show_all(True)
+        self.tag_badge.get_style_context().add_class("tag-badge")
+        content.pack_start(self.tag_badge, False, False, 0)
         # Never treat stored text as Pango markup, commands, or widget source.
         self.body = Gtk.Label(
             label=note.text.split("\n", 1)[0], xalign=0, yalign=0, selectable=True
@@ -125,6 +139,10 @@ class NoteRow(Gtk.ListBoxRow):
         if note.text != self.note.text:
             self.body.set_text(note.text.split("\n", 1)[0])
         self.note = note
+        self.tag_badge.label.set_text(note.tag or "")
+        self.tag_badge.set_tooltip_text(note.tag)
+        self.tag_badge.get_accessible().set_name(f"Tag: {note.tag or 'Untagged'}")
+        self.tag_badge.set_visible(note.tag is not None)
         due_text = (
             f"Due {relative_reminder_time(note.reminder_due_at)}"
             if note.reminder_due_at is not None
@@ -242,11 +260,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.archive_window: ArchiveWindow | None = None
         self.scheduled_window: ScheduledWindow | None = None
         self.editor: NoteEditor | None = None
+        self.tags_window: TagsWindow | None = None
         self.preview: NotePreview | None = None
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
         self.view_mode = 0  # All notes → in progress → bottom bar.
         self.tag_filter: str | None = ""  # Empty = Untagged; None = All.
+        self.creation_tag: str | None = None
         self.tags: list[str] = []
         self.notes_snapshot: list[Note] = []
         self.reveal_note_id: int | None = None
@@ -267,6 +287,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.action_pending = False
         self.draft_revision = 0
         self.draft = DraftCache(model.paths.data / "gui-draft.txt")
+        self.filter_cache = FilterCache(model.paths.data / "gui-filter.json")
+        self.filter_error: str | None = None
         self.draft_source = 0
         self.draft_error: str | None = None
         self.error_is_action = False
@@ -334,6 +356,24 @@ class ReminderWindow(Gtk.ApplicationWindow):
         layout.pack_start(self.progress_scroll, False, True, 0)
 
         self.composer = Gtk.Box(spacing=6)
+        self.tag_button = Gtk.MenuButton(valign=Gtk.Align.CENTER)
+        self.tag_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.tag_button.set_direction(Gtk.ArrowType.UP)
+        self.tag_button.connect("button-press-event", self._creation_tag_pressed)
+        self.tag_button.connect("button-release-event", lambda _button, event: event.button == 3)
+        tag_content = Gtk.Box(spacing=3)
+        tag_content.pack_start(icon_image("tag-symbolic"), False, False, 0)
+        self.tag_label = Gtk.Label()
+        self.tag_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.tag_label.set_max_width_chars(8)
+        tag_content.pack_start(self.tag_label, False, False, 0)
+        self.tag_button.add(tag_content)
+        self.composer_tag_menu = Gtk.Menu()
+        self.composer_tag_menu.get_style_context().add_class("pinote-window")
+        self.composer_tag_menu.get_style_context().add_class("reminder-menu")
+        self.composer_tag_menu.connect("show", self._prepare_composer_tags)
+        self.composer_tag_menu.connect("hide", self._queue_pin_check)
+        self.tag_button.set_popup(self.composer_tag_menu)
         self.entry = TaskEntry()
         self.entry_scroll = Gtk.ScrolledWindow()
         self.entry_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -382,11 +422,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
             "preferences-system-notifications-symbolic", "Reminders…"
         )
         self.archive_button = icon_menu_item("archive-symbolic", "Archive…")
+        self.tags_button = icon_menu_item("tag-symbolic", "Manage tags…")
         self.close_menu_button = icon_menu_item("window-close-symbolic", "Close reminders (Esc)")
         for item in (
             self.filter_item,
             self.reminders_button,
             self.archive_button,
+            self.tags_button,
             self.close_menu_button,
         ):
             self.menu.append(item)
@@ -396,6 +438,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self._prepare_filters()
         self.menu_button.set_popup(self.menu)
         self.menu_button.set_direction(Gtk.ArrowType.UP)
+        try:
+            self.tag_filter = self.filter_cache.load()
+        except (OSError, UnicodeError, ValueError) as exc:
+            self.filter_error = f"Cannot restore the tag filter: {exc}"
+            self._error(self.filter_error, action=True)
+        self._update_filter_label()
         try:
             self.entry.set_text(self.draft.load())
         except (OSError, UnicodeError) as exc:
@@ -407,7 +455,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.add_button.connect("clicked", lambda _button: self._add())
         self.reminders_button.connect("activate", lambda _item: self._open_reminders())
         self.archive_button.connect("activate", lambda _item: self._open_archive())
+        self.tags_button.connect("activate", lambda _item: self._open_tags())
         self.close_menu_button.connect("activate", lambda _item: self.close())
+        self.composer.pack_start(self.tag_button, False, False, 0)
         self.composer.pack_start(self.entry_box, True, True, 0)
         self.composer.pack_start(self.add_button, False, False, 0)
         self.composer.pack_start(self.drag_button, False, False, 0)
@@ -456,6 +506,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             any(window.is_active() for window in self.get_application().get_windows())
             or self.focus_handoff is not None
             or self.menu.get_visible()
+            or self.composer_tag_menu.get_visible()
             or self.context_menu is not None
             or self.preview is not None
         )
@@ -656,6 +707,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if event.keyval == Gdk.KEY_Escape:
             if self.preview is not None and self.preview.get_visible():
                 self.preview.popdown()
+            elif self.composer_tag_menu.get_visible():
+                self.composer_tag_menu.popdown()
             elif self.menu.get_visible():
                 self.menu.popdown()
             else:
@@ -718,23 +771,19 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self._queue_pin_check()
 
     @staticmethod
-    def _radio_choices(menu, choices, selected, on_select) -> None:
-        group = None
+    def _tag_menu_choices(menu, choices, selected, on_select) -> None:
+        menu.set_reserve_toggle_size(False)
         for value, label in choices:
-            item = Gtk.RadioMenuItem.new_with_label_from_widget(group, label)
-            group = item
-            item.set_active(value == selected)
-            item.connect(
-                "toggled", lambda item, value=value: on_select(value) if item.get_active() else None
-            )
+            item = tag_menu_item(label, selected=value == selected)
+            item.connect("activate", lambda _item, value=value: on_select(value))
             menu.append(item)
-            item.show()
 
     def _update_filter_label(self) -> None:
         if self.tag_filter is None:
             label = "All"
         else:
-            label = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
+            label = self.tag_filter or "Untagged"
+        self._update_creation_tag_label()
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
@@ -749,10 +798,78 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if filtering:
             choices.append((None, f"All ({len(self.notes_snapshot)})"))
         choices.extend(
-            (tag, f"#{tag} ({counts[tag]})")
+            (tag, f"{tag} ({counts[tag]})")
             for tag in sorted(tags, key=lambda tag: (tag.casefold(), tag))
         )
         return choices
+
+    def _update_creation_tag_label(self) -> None:
+        label = self.creation_tag or "Untagged"
+        self.tag_label.set_text(label)
+        self.tag_button.set_tooltip_text(f"Tag for new tasks: {label}. Right-click to clear.")
+        self.tag_button.get_accessible().set_name(f"Choose task tag: {label}")
+        self.tag_button.get_accessible().set_description("Right-click to clear the new-task tag.")
+
+    def _creation_tag_pressed(self, _button, event) -> bool:
+        if event.button != 3:
+            return False
+        if event.type == Gdk.EventType.BUTTON_PRESS and not self.closed:
+            self._select_creation_tag(None)
+        return True
+
+    def _select_creation_tag(self, tag: str | None) -> None:
+        self.creation_tag = tag
+        self._update_creation_tag_label()
+        self.composer_tag_menu.popdown()
+
+    def _prepare_composer_tags(self, menu) -> None:
+        for child in menu.get_children():
+            child.destroy()
+        menu.set_reserve_toggle_size(False)
+        tags = set(self.tags)
+        for tag in [None, *sorted(tags, key=lambda tag: (tag.casefold(), tag))]:
+            item = tag_menu_item(tag or "Untagged", selected=tag == self.creation_tag)
+            item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        new_tag = icon_menu_item("list-add-symbolic", "New tag…")
+        new_tag.connect("activate", lambda _item: self._open_creation_tag())
+        menu.append(new_tag)
+        menu.show_all()
+
+    def _open_creation_tag(self) -> None:
+        if self.closed or self.action_pending:
+            return
+        self.composer_tag_menu.popdown()
+        if self.editor is None:
+            self.editor = NoteEditor(self, None, tag_only=True)
+            self._watch_child_focus(self.editor)
+        self._present_child(self.editor)
+
+    def _open_tags(self) -> None:
+        if self.closed or self.action_pending:
+            return
+        self.menu.popdown()
+        if self.tags_window is None:
+            self.tags_window = TagsWindow(self)
+            self._watch_child_focus(self.tags_window)
+        self._present_child(self.tags_window)
+
+    def _tags_changed(self, old: str | None, new: str | None) -> None:
+        if old is not None:
+            self.tags = [tag for tag in self.tags if tag != old]
+            if self.creation_tag == old:
+                self._select_creation_tag(new)
+            if self.tag_filter == old:
+                self.tag_filter = new
+                self._remember_filter()
+        if new is not None and new not in self.tags:
+            self.tags.append(new)
+        self._update_filter_label()
+        self._poll()
+        for child in (self.archive_window, self.scheduled_window, self.tags_window):
+            if child is not None and not child.closed:
+                child._poll()
 
     def _prepare_filters(self, *_args) -> None:
         self._update_filter_label()
@@ -762,7 +879,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_menu = Gtk.Menu()
         self.filter_menu.get_style_context().add_class("pinote-window")
         self.filter_menu.get_style_context().add_class("reminder-menu")
-        self._radio_choices(
+        self._tag_menu_choices(
             self.filter_menu,
             self._tag_choices(self.tag_filter, filtering=True),
             self.tag_filter,
@@ -771,13 +888,39 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_item.set_submenu(self.filter_menu)
 
     def _set_filter(self, tag: str | None) -> None:
+        if self.closed:
+            return
         self.tag_filter = tag
+        self._remember_filter()
+        self.composer_tag_menu.popdown()
         self.menu.popdown()
         # Do not carry a departing row's animation into a different view.
         for row in list(self.rows.values()):
             if row.exiting:
                 self._remove_row(row)
         self._render(self.notes_snapshot)
+
+    def _remember_filter(self) -> None:
+        self.filter_cache.update(self.tag_filter)
+        self.worker.submit(self._persist_filter)
+
+    def _persist_filter(self) -> None:
+        try:
+            self.filter_cache.save()
+        except (OSError, UnicodeError) as exc:
+            message = f"Cannot save the tag filter; it may be lost on restart: {exc}"
+            if message != self.filter_error:
+                LOGGER.error("GUI: %s", message)
+            self.filter_error = message
+            if not self.closed:
+                GLib.idle_add(self._show_filter_error)
+        else:
+            self.filter_error = None
+
+    def _show_filter_error(self) -> bool:
+        if not self.closed and self.filter_error:
+            self._error(self.filter_error, action=True)
+        return GLib.SOURCE_REMOVE
 
     def _populate_note_menu(self, note_id: int, menu: Gtk.Menu) -> None:
         row = self.rows.get(note_id)
@@ -817,7 +960,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         tag_menu = Gtk.Menu()
         tag_menu.get_style_context().add_class("pinote-window")
         tag_menu.get_style_context().add_class("reminder-menu")
-        self._radio_choices(
+        self._tag_menu_choices(
             tag_menu, self._tag_choices(note.tag), note.tag, lambda tag: self._set_tag(note, tag)
         )
         tag_menu.append(Gtk.SeparatorMenuItem())
@@ -992,7 +1135,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.action_pending = True
         self._update_controls()
         revision = self.draft_revision
-        tag = self.tag_filter or None
+        tag = self.creation_tag
 
         def add():
             note_id = self.model.add(text, tag=tag) if tag else self.model.add(text)
@@ -1068,6 +1211,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self._render(result.notes, action=action if result.changed else None)
             else:
                 notes, self.tags = result
+                if self.tag_filter and self.tag_filter not in self.tags:
+                    self.tag_filter = None
+                    self._remember_filter()
+                if self.creation_tag is not None and self.creation_tag not in self.tags:
+                    self._select_creation_tag(None)
                 self._render(notes)
         except BlockingIOError:
             self._error("Another note command is busy. Try again.", action=mutation)
@@ -1095,6 +1243,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 )
             self._update_controls()
             self._show_draft_error()
+            self._show_filter_error()
         return GLib.SOURCE_REMOVE
 
     def _render(self, notes: list[Note], *, action: tuple[int, str] | None = None) -> None:
@@ -1148,7 +1297,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self._close_preview(self.preview)
         empty = "No active reminders."
         if self.tag_filter:
-            empty = f"No active reminders tagged #{self.tag_filter}."
+            empty = f"No active reminders tagged {self.tag_filter}."
         elif self.tag_filter == "" and self.notes_snapshot:
             empty = "No untagged reminders."
         self.empty.set_text(empty)
@@ -1228,8 +1377,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.context_menu is not None:
             self.context_menu.popdown()
         self.menu.popdown()
+        self.composer_tag_menu.popdown()
         if self.editor is not None:
             self.editor.destroy()
+        if self.tags_window is not None:
+            self.tags_window.destroy()
         Gtk.ApplicationWindow.close(self)
 
     def _on_destroy(self, _window) -> None:
@@ -1240,11 +1392,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.archive_window.destroy()
         if self.scheduled_window is not None and not self.scheduled_window.closed:
             self.scheduled_window.destroy()
+        if self.tags_window is not None and not self.tags_window.closed:
+            self.tags_window.destroy()
         if self.editor is not None:
             self.editor.destroy()
         if self.context_menu is not None:
             self.context_menu.popdown()
         self.menu.destroy()
+        self.composer_tag_menu.destroy()
         GLib.source_remove(self.refresh_source)
         for source in (
             self.geometry_source,
@@ -1265,6 +1420,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # Flush after accepted adds have cleared only their own draft. Read the
         # latest snapshot on the worker, never re-save a stale editor snapshot.
         self.worker.submit(self._persist_draft)
+        self.worker.submit(self._persist_filter)
         # Closing must not silently drop a click queued behind a poll. The
         # bounded worker drains pending operations before the process exits.
         self.worker.shutdown(wait=False)

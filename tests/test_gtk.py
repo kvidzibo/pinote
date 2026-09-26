@@ -199,6 +199,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         (window.filter_item, "Filter by tag: Untagged", "view-filter-symbolic"),
         (window.reminders_button, "Reminders…", "preferences-system-notifications-symbolic"),
         (window.archive_button, "Archive…", "archive-symbolic"),
+        (window.tags_button, "Manage tags…", "tag-symbolic"),
         (window.close_menu_button, "Close reminders (Esc)", "window-close-symbolic"),
     ):
         assert item.get_accessible().get_name() == name
@@ -212,6 +213,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
     assert window.composer.get_children() == [
+        window.tag_button,
         window.entry_box,
         window.add_button,
         window.drag_button,
@@ -227,6 +229,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert row.done.get_accessible().get_name() == "Start note 1"
     assert row.content.get_children() == [
         row.done,
+        row.tag_badge,
         row.body,
         row.reminder_icon,
         row.preview_button,
@@ -336,6 +339,216 @@ def test_minimise_cycle_and_context_state_icons(gtk):
     cycle(1, False, False)
 
 
+def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Existing", tag="Work <🐦>")
+    window = gtk.open()
+    click_button(gtk, window, window.tag_button)
+    wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
+    from pinote.gui.app import Gtk
+
+    item = window.composer_tag_menu.get_children()[1]
+    assert item.get_accessible().get_name() == "Work <🐦>"
+    assert not isinstance(item, Gtk.CheckMenuItem)
+    icon, _size = item.get_child().image.get_gicon()
+    assert icon.get_bytes().get_data() == (
+        files("pinote.gui").joinpath("icons", "tag-symbolic.svg").read_bytes()
+    )
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, item.get_toplevel(), item)
+    wait_until(gtk.glib, lambda: not window.composer_tag_menu.get_mapped())
+    assert window.creation_tag == "Work <🐦>"
+    assert window.tag_filter == "" and not window.rows
+    window._set_filter(None)
+    assert window.creation_tag == "Work <🐦>"
+    for note_id in (2, 3):
+        window.entry.set_text(f"Task {note_id}")
+        window.entry.emit("activate")
+        wait_until(
+            gtk.glib,
+            lambda note_id=note_id: (
+                not window.pending and note_id in window.rows and not window.reveal_note_id
+            ),
+        )
+        row = window.rows[note_id]
+        assert row.note.tag == "Work <🐦>"
+        assert row.tag_badge.get_visible()
+        assert row.tag_badge.label.get_text() == "Work <🐦>"
+        assert not row.tag_badge.label.get_use_markup()
+        assert row.tag_badge.image.get_visible()
+        assert row.content.get_children().index(row.tag_badge) < row.content.get_children().index(
+            row.body
+        )
+    window._set_filter(None)
+    window._set_tag(window.rows[2].note, None)
+    wait_until(gtk.glib, lambda: not window.pending and window.rows[2].note.tag is None)
+    assert not window.rows[2].tag_badge.get_visible()
+    with Store(gtk.paths.database) as store:
+        assert next(note for note in store.notes() if note.id == 3).tag == "Work <🐦>"
+    click_button(gtk, window, window.tag_button)
+    wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
+    new_tag = window.composer_tag_menu.get_children()[-1]
+    assert new_tag.get_accessible().get_name() == "New tag…"
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    # Let GTK dismiss the composer tooltip before clicking the menu beneath it.
+    pointer_at(gtk, new_tag.get_toplevel(), new_tag, 12, 12)
+    ready = time.monotonic() + 0.1
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, new_tag.get_toplevel(), new_tag)
+    wait_until(gtk.glib, lambda: window.editor is not None)
+    editor = window.editor
+    editor.entry.set_text("x" * 65)
+    editor.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not editor.saving)
+    assert editor.error_text.get_visible() and window.creation_tag == "Work <🐦>"
+    editor.entry.set_text("  Personal  ")
+    editor.entry.emit("activate")
+    wait_until(gtk.glib, lambda: window.editor is None)
+    assert window.creation_tag == "Personal" and window.tag_filter is None
+    with Store(gtk.paths.database) as store:
+        assert "Personal" in store.tags()  # Saved before any task uses it.
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    window._prepare_composer_tags(window.composer_tag_menu)
+    assert "Personal" in [
+        item.get_accessible().get_name() for item in window.composer_tag_menu.get_children()
+    ]
+    window.entry.set_text("New personal task")
+    window.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not window.pending and 4 in window.rows)
+    assert window.rows[4].note.tag == "Personal"
+    wait_until(gtk.glib, lambda: not window.reveal_note_id and not window.geometry_source)
+    window.entry.set_text("Keep this draft")
+    pointer_at(gtk, window, window.tag_button, 12, 12)
+    ready = time.monotonic() + 0.1
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    pointer_at(gtk, window, window.tag_button, 12, 12, "click", "3")
+    wait_until(gtk.glib, lambda: window.creation_tag is None)
+    assert window.tag_label.get_text() == "Untagged"
+    assert not window.composer_tag_menu.get_mapped()
+    assert window.tag_filter is None and set(window.rows) == {1, 2, 3, 4}
+    assert window.rows[4].note.tag == "Personal"
+    assert window.entry.get_text() == "Keep this draft"
+    window.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not window.pending and 5 in window.rows)
+    assert window.rows[5].note.tag is None
+
+
+def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Keep this task", tag="Work")
+    window = gtk.open()
+    window._set_filter(None)
+    window._select_creation_tag("Work")
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    pointer_at(gtk, window.tags_button.get_toplevel(), window.tags_button, 10, 10)
+    ready = time.monotonic() + 0.1
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, window.tags_button.get_toplevel(), window.tags_button)
+    wait_until(gtk.glib, lambda: window.tags_window is not None)
+    manager = window.tags_window
+    wait_until(gtk.glib, lambda: not manager.pending and "Work" in manager.rows)
+    assert manager.get_modal() and manager.get_role() == "pinote-tags"
+    assert manager.rows["Work"].get_child().image.get_visible()
+    manager.entry.set_text("Unused")
+    click_button(gtk, manager, manager.save_button)
+    wait_until(gtk.glib, lambda: not manager.pending and "Unused" in manager.rows)
+    with Store(gtk.paths.database) as store:
+        assert store.tags() == ["Unused", "Work"]
+    manager.list_box.select_row(manager.rows["Work"])
+    manager.entry.set_text("Unused")
+    manager.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not manager.saving)
+    assert manager.error_text.get_visible() and manager.entry.get_text() == "Unused"
+    manager.entry.set_text("Renamed")
+    click_button(gtk, manager, manager.save_button)
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not manager.pending
+            and not window.pending
+            and "Renamed" in manager.rows
+            and window.rows[1].note.tag == "Renamed"
+        ),
+    )
+    assert window.creation_tag == "Renamed" and window.tag_filter is None
+    manager.list_box.select_row(manager.rows["Renamed"])
+    click_button(gtk, manager, manager.delete_button)
+    wait_until(gtk.glib, lambda: manager.confirmation.get_visible())
+    click_button(gtk, manager, manager.cancel_button)
+    wait_until(gtk.glib, lambda: not manager.confirmation.get_visible())
+    with Store(gtk.paths.database) as store:
+        assert "Renamed" in store.tags()
+    click_button(gtk, manager, manager.delete_button)
+    wait_until(gtk.glib, lambda: manager.confirmation.get_visible())
+    click_button(gtk, manager, manager.confirm_button)
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not manager.pending
+            and not window.pending
+            and "Renamed" not in manager.rows
+            and window.rows[1].note.tag is None
+        ),
+    )
+    assert window.creation_tag is None and window.rows[1].note.text == "Keep this task"
+    manager.close()
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    window = gtk.open(application)
+    window._prepare_composer_tags(window.composer_tag_menu)
+    assert "Unused" in [
+        item.get_accessible().get_name() for item in window.composer_tag_menu.get_children()
+    ]
+    window._open_tags()
+    manager = window.tags_window
+    wait_until(gtk.glib, lambda: not manager.pending)
+    manager.entry.set_text("Saved while closing")
+    manager._save()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    with Store(gtk.paths.database) as store:
+        assert "Saved while closing" in store.tags()
+
+
+def test_tag_filter_persists_across_restarts_and_tracks_registry_changes(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Untagged task")
+        store.add("Tagged task", tag="Work 🐦")
+    window = gtk.open()
+    application = window.get_application()
+
+    def reopen(window):
+        window.close()
+        wait_until(gtk.glib, lambda: window.closed)
+        window.worker.shutdown(wait=True)
+        return gtk.open(application)
+
+    for selected, visible in (("Work 🐦", {2}), (None, {1, 2}), ("", {1})):
+        window.entry.set_text("Keep this draft")
+        window._set_filter(selected)
+        window = reopen(window)  # No wait before closing: queued saves must drain.
+        assert window.tag_filter == selected and set(window.rows) == visible
+        assert window.entry.get_text() == "Keep this draft"
+        assert window.creation_tag is None  # Input tags remain independent of filtering.
+    window._set_filter("Work 🐦")
+    window.model.rename_tag("Work 🐦", "Renamed")
+    window._tags_changed("Work 🐦", "Renamed")
+    window = reopen(window)
+    assert window.tag_filter == "Renamed" and set(window.rows) == {2}
+    window.model.delete_tag("Renamed")
+    window = reopen(window)
+    assert window.tag_filter is None and set(window.rows) == {1, 2}
+    window = reopen(window)
+    assert window.tag_filter is None  # Missing-tag fallback itself is persisted.
+
+
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     from pinote.gui.app import Gtk
 
@@ -348,12 +561,16 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     window = gtk.open()
     assert window.tag_filter == "" and set(window.rows) == {1}
     window._prepare_filters()
-    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
         "All (2)",
-        "#Archived (0)",
-        "#Work (1)",
+        "Archived (0)",
+        "Work (1)",
     ]
+    for item in window.filter_menu.get_children():
+        assert not isinstance(item, Gtk.CheckMenuItem)
+        assert isinstance(item.get_child().image, Gtk.Image)
+    assert window.filter_menu.get_children()[0].get_style_context().has_class("selected-tag")
     window.entry.set_text("Unfinished new task")
 
     def select(menu, label):
@@ -367,8 +584,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         wait_until(gtk.glib, lambda: time.monotonic() >= ready)
         click_button(gtk, item.get_toplevel(), item)
 
-    def context(note_id):
-        # Switching filters resizes and moves the bottom-anchored window.
+    def settle_window():
+        # Retagging and filtering resize/move the bottom-anchored window. The
+        # worker snapshot can settle before GTK allocates the new row heights.
         wait_until(
             gtk.glib,
             lambda: (
@@ -381,6 +599,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
                 and window.get_position()[1] + window.get_size().height == window.anchor_bottom
             ),
         )
+
+    def context(note_id):
+        settle_window()
         pointer_at(gtk, window, window.rows[note_id].body, 12, 8, "click", "3")
         wait_until(
             gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
@@ -399,6 +620,10 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         return tag.get_submenu()
 
     def filter_by(label):
+        settle_window()
+        pointer_at(gtk, window, window.menu_button, 12, 12)
+        ready = time.monotonic() + 0.1
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
         click_button(gtk, window, window.menu_button)
         wait_until(gtk.glib, lambda: window.menu.get_mapped())
         subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
@@ -428,26 +653,27 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     click_button(gtk, editor, editor.save_button)
     wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
     assert window.empty.get_text() == "No untagged reminders."
-    filter_by("#Personal 🐦 (1)")
+    filter_by("Personal 🐦 (1)")
     assert set(window.rows) == {1}
-    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (0)",
         "All (2)",
-        "#Archived (0)",
-        "#Personal 🐦 (1)",
-        "#Work (1)",
+        "Archived (0)",
+        "Personal 🐦 (1)",
+        "Work (1)",
     ]
+    window._select_creation_tag("Personal 🐦")
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {1, 4})
     assert window.rows[4].note.tag == "Personal 🐦"
     tags = tag_menu(1)
-    assert [item.get_label() for item in tags.get_children()][:4] == [
+    assert [item.get_accessible().get_name() for item in tags.get_children()][:4] == [
         "Untagged (0)",
-        "#Archived (0)",
-        "#Personal 🐦 (2)",
-        "#Work (1)",
+        "Archived (0)",
+        "Personal 🐦 (2)",
+        "Work (1)",
     ]
-    select(tags, "#Work (1)")
+    select(tags, "Work (1)")
     wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {4})
     filter_by("All (3)")
     assert set(window.rows) == {1, 2, 4}
@@ -471,19 +697,19 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert window.context_menu is None
     assert not target.get_style_context().has_class("context-target")
     window._prepare_filters()
-    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
         "All (2)",
-        "#Archived (0)",
-        "#Personal 🐦 (1)",
-        "#Work (0)",
+        "Archived (0)",
+        "Personal 🐦 (1)",
+        "Work (0)",
     ]
     application = window.get_application()
     window.close()
     wait_until(gtk.glib, lambda: window.closed)
     window.worker.shutdown(wait=True)
     window = gtk.open(application)
-    assert window.tag_filter == "" and set(window.rows) == {1}
+    assert window.tag_filter is None and set(window.rows) == {1, 4}
     with Store(gtk.paths.database) as store:
         assert [event["action"] for event in store.history(1)] == [
             "add",
@@ -940,6 +1166,10 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         widget = widgets.pop()
         if widget in actions:
             assert widget.get_tooltip_text() == widget.get_accessible().get_name()
+        elif widget is window.tag_button:
+            assert widget.get_tooltip_text() == (
+                "Tag for new tasks: Untagged. Right-click to clear."
+            )
         else:
             assert not widget.get_has_tooltip()
         if hasattr(widget, "get_children"):
@@ -1404,10 +1634,26 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             subprocess.run(["xdotool", "key", "Escape"], env=env, check=True, timeout=5)
             wait_until(gtk.glib, lambda: window.preview is None)
             assert not window.closed and tuple(window.get_position()) == expected_position()
-            for kind in ("edit", "tag", "archive"):
+            original_position = expected_position()
+            corner = (
+                geometry.x + geometry.width - window.get_size().width - 12,
+                screen_bottom - window.get_size().height - 12,
+            )
+            window.move(*corner)
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == corner)
+            for kind in ("edit", "tag", "archive", "reminders", "schedule", "tags"):
                 if kind == "archive":
                     window._open_archive()
                     child = window.archive_window
+                elif kind == "reminders":
+                    window._open_reminders()
+                    child = window.scheduled_window
+                elif kind == "schedule":
+                    window._open_schedule(window.rows[1].note)
+                    child = window.editor
+                elif kind == "tags":
+                    window._open_tags()
+                    child = window.tags_window
                 else:
                     window._open_editor(window.rows[1].note, tag_only=kind == "tag")
                     child = window.editor
@@ -1422,12 +1668,38 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                         nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
                     return None
 
-                wait_until(gtk.glib, lambda: managed_child() is not None)
+                def visible_child():
+                    node = managed_child()
+                    if node is None or not node["focused"]:
+                        return False
+                    rect = node["rect"]
+                    return (
+                        geometry.x <= rect["x"]
+                        and geometry.y <= rect["y"]
+                        and rect["x"] + rect["width"] <= geometry.x + geometry.width
+                        and rect["y"] + rect["height"] <= screen_bottom
+                    )
+
+                wait_until(gtk.glib, visible_child)
                 node = managed_child()
                 assert node["border"] == "none", f"{kind} has an i3 titlebar"
                 assert node["deco_rect"]["height"] == 0
+                if kind == "tag":
+                    child._error("Validation failed.\n" * 12)
+                    wait_until(
+                        gtk.glib, lambda child=child: child.error_text.get_allocated_height() > 100
+                    )
+                    wait_until(gtk.glib, visible_child)
+                if kind == "archive":
+                    # Re-present an existing window after it was hidden behind the parent.
+                    window.present()
+                    wait_until(gtk.glib, lambda: window.is_active())
+                    window._open_archive()
+                    wait_until(gtk.glib, visible_child)
                 child.close()
                 wait_until(gtk.glib, lambda child=child: child.closed)
+            window.move(*original_position)
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == original_position)
             with Store(gtk.paths.database) as store:
                 for index in range(30):
                     store.add(f"Extra reminder {index}")
@@ -2096,7 +2368,7 @@ def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
     archive = window.archive_window
     wait_until(gtk.glib, lambda: not archive.pending)
     notes = [
-        replace(note, updated_at=(now - timedelta(hours=hours)).isoformat())
+        replace(note, archived_at=(now - timedelta(hours=hours)).isoformat())
         for note, hours in zip(
             sorted(archive._notes, key=lambda n: n.id), (23, 48, 192), strict=True
         )
@@ -2122,7 +2394,7 @@ def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
     assert archive.empty.get_text() == "No completed or deleted tasks in the past 24 hours."
     assert archive.list_box.get_accessible().get_name() == "Archive, past 24 hours, 0 tasks"
     archive.archive_filter.set_active(2)
-    now = datetime.fromisoformat(notes[0].updated_at) + timedelta(days=7)
+    now = datetime.fromisoformat(notes[0].archived_at) + timedelta(days=7)
     archive._poll()
     wait_until(gtk.glib, lambda: not archive.pending)
     assert set(archive.rows) == {1}  # Exactly seven days is included.
@@ -2219,6 +2491,39 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
     wait_until(gtk.glib, lambda: window.closed and reopened.closed)
     with Store(gtk.paths.database) as store:
         assert [event["action"] for event in store.history(2)] == ["add", "rm", "restore", "done"]
+
+
+def test_tag_management_keeps_archive_dates_order_and_time_filters(gtk, monkeypatch):
+    import pinote.store as store_module
+
+    now = datetime.now(UTC)
+    with Store(gtk.paths.database) as store:
+        for days, action in ((10, "done"), (0, "done"), (11, "rm")):
+            when = (now - timedelta(days=days, hours=1)).isoformat()
+            with monkeypatch.context() as patch:
+                patch.setattr(store_module, "timestamp", lambda when=when: when)
+                note_id = store.add(f"Archived {days}", tag="Work")
+                store.transition(note_id, action)
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and len(archive.rows) == 3)
+    labels = {note_id: row.date.get_text() for note_id, row in archive.rows.items()}
+    revision = archive.rows[1].note.updated_at
+    for operation in (
+        lambda: window.model.rename_tag("Work", "Renamed"),
+        lambda: window.model.delete_tag("Renamed"),
+    ):
+        operation()
+        archive._poll()
+        wait_until(gtk.glib, lambda: not archive.pending)
+        assert [row.note.id for row in archive.list_box.get_children()] == [2, 1, 3]
+        assert {note_id: row.date.get_text() for note_id, row in archive.rows.items()} == labels
+        assert archive.rows[1].note.updated_at != revision
+        for period in (1, 2):
+            archive.archive_filter.set_active(period)
+            assert set(archive.rows) == {2}
+        archive.archive_filter.set_active(0)
 
 
 @pytest.mark.parametrize("action", ["done", "rm"])
