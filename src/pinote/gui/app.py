@@ -350,6 +350,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.tag_button = Gtk.MenuButton(valign=Gtk.Align.CENTER)
         self.tag_button.set_relief(Gtk.ReliefStyle.NONE)
         self.tag_button.set_direction(Gtk.ArrowType.UP)
+        self.tag_button.connect("button-press-event", self._creation_tag_pressed)
+        self.tag_button.connect("button-release-event", lambda _button, event: event.button == 3)
         tag_content = Gtk.Box(spacing=3)
         tag_content.pack_start(icon_image("tag-symbolic"), False, False, 0)
         self.tag_label = Gtk.Label()
@@ -791,8 +793,16 @@ class ReminderWindow(Gtk.ApplicationWindow):
     def _update_creation_tag_label(self) -> None:
         label = f"#{self.creation_tag}" if self.creation_tag else "Untagged"
         self.tag_label.set_text(label)
-        self.tag_button.set_tooltip_text(f"Tag for new tasks: {label}")
+        self.tag_button.set_tooltip_text(f"Tag for new tasks: {label}. Right-click to clear.")
         self.tag_button.get_accessible().set_name(f"Choose task tag: {label}")
+        self.tag_button.get_accessible().set_description("Right-click to clear the new-task tag.")
+
+    def _creation_tag_pressed(self, _button, event) -> bool:
+        if event.button != 3:
+            return False
+        if event.type == Gdk.EventType.BUTTON_PRESS and not self.closed:
+            self._select_creation_tag(None)
+        return True
 
     def _select_creation_tag(self, tag: str | None) -> None:
         self.creation_tag = tag

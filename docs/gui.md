@@ -123,6 +123,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
 - **Tag dropdown before the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
+  Right-click the tag beside the input to reset it to **Untagged**, keeping the draft,
+  existing tasks, and list filter unchanged.
   **+** creates and selects a new tag. Unused new tags remain available for this session;
   adding a task with that tag saves it. The selection resets to **Untagged** on reopen.
   Tags appear as small badges before task text; long names have full-name tooltips.

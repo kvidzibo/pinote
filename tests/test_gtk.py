@@ -408,6 +408,21 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and 4 in window.rows)
     assert window.rows[4].note.tag == "Personal"
+    wait_until(gtk.glib, lambda: not window.reveal_note_id and not window.geometry_source)
+    window.entry.set_text("Keep this draft")
+    pointer_at(gtk, window, window.tag_button, 12, 12)
+    ready = time.monotonic() + 0.1
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    pointer_at(gtk, window, window.tag_button, 12, 12, "click", "3")
+    wait_until(gtk.glib, lambda: window.creation_tag is None)
+    assert window.tag_label.get_text() == "Untagged"
+    assert not window.composer_tag_menu.get_mapped()
+    assert window.tag_filter is None and set(window.rows) == {1, 2, 3, 4}
+    assert window.rows[4].note.tag == "Personal"
+    assert window.entry.get_text() == "Keep this draft"
+    window.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not window.pending and 5 in window.rows)
+    assert window.rows[5].note.tag is None
 
 
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
@@ -1016,7 +1031,9 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         if widget in actions:
             assert widget.get_tooltip_text() == widget.get_accessible().get_name()
         elif widget is window.tag_button:
-            assert widget.get_tooltip_text() == "Tag for new tasks: Untagged"
+            assert widget.get_tooltip_text() == (
+                "Tag for new tasks: Untagged. Right-click to clear."
+            )
         else:
             assert not widget.get_has_tooltip()
         if hasattr(widget, "get_children"):
