@@ -270,29 +270,6 @@ with a monospace fallback. The window requests 96% opacity; transparency needs a
 compositor. These are bundled defaults, not a live import of Dunst configuration.
 Restart the GUI after editing the stylesheet in an editable checkout.
 
-### Clickable i3blocks icon
-
-With the checkout's `.venv-gui` installed, add this block to your i3blocks
-configuration (replace the checkout path), then run `i3-msg restart` to reload
-the whole window manager, including its bar and status process:
-
-```ini
-[pinote]
-command=/home/your-user/AI/pinote/scripts/toggle-pinote.sh --block
-interval=once
-format=raw
-```
-
-Requires `i3-msg`, `jq`, `flock`, and a Nerd Font for the note icon. Left-click
-launches Pinote if stopped, hides it in i3's scratchpad if on the current
-workspace, or brings it to the current workspace otherwise. Hiding does not
-close Pinote or discard drafts. Other mouse buttons do nothing. The helper
-ignores overlapping invocations and refuses to toggle when multiple checklist
-windows or other Pinote dialogs exist; close dialogs first. Show the checklist
-again before using `scripts/restart-pinote.sh`, which cannot restart scratchpad
-windows. You can also run `scripts/toggle-pinote.sh` directly or bind it to an
-i3 shortcut.
-
 ## Desktop login
 
 For the GTK checklist, use the startup command in [i3 setup](#i3-setup).
