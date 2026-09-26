@@ -2062,6 +2062,12 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
     height = window.get_size().height
     click_button(gtk, window, window.menu_button)
     wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    assert window.menu.get_allocated_width() <= 72
+    icon_positions = [
+        item.get_child().translate_coordinates(window.menu, 0, 0)
+        for item in window.menu.get_children()
+    ]
+    assert len({x for x, _y in icon_positions}) == 1
     assert window.get_size().height == height
     subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
     wait_until(gtk.glib, lambda: not window.menu.get_visible())

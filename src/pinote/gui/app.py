@@ -369,8 +369,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # Native menus stay visible above even an empty, very short checklist.
         self.menu = Gtk.Menu()
         self.menu.set_no_show_all(True)
+        self.menu.set_reserve_toggle_size(False)
         self.menu.get_style_context().add_class("pinote-window")
         self.menu.get_style_context().add_class("reminder-menu")
+        self.menu.get_style_context().add_class("icon-menu")
         self.filter_item = icon_menu_item("view-filter-symbolic", "Filter by tag")
         self.reminders_button = icon_menu_item(
             "preferences-system-notifications-symbolic", "Reminders…"

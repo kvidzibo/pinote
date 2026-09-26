@@ -17,7 +17,9 @@ def icon_image(name: str, size: int = 12) -> Gtk.Image:
 
 def icon_menu_item(icon: str, description: str) -> Gtk.MenuItem:
     item = Gtk.MenuItem()
-    item.add(icon_image(icon))
+    image = icon_image(icon, size=16)
+    image.set_halign(Gtk.Align.START)
+    item.add(image)
     item.set_tooltip_text(description)
     item.get_accessible().set_name(description)
     item.show_all()
