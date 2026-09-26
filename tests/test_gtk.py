@@ -584,8 +584,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         wait_until(gtk.glib, lambda: time.monotonic() >= ready)
         click_button(gtk, item.get_toplevel(), item)
 
-    def context(note_id):
-        # Switching filters resizes and moves the bottom-anchored window.
+    def settle_window():
+        # Retagging and filtering resize/move the bottom-anchored window. The
+        # worker snapshot can settle before GTK allocates the new row heights.
         wait_until(
             gtk.glib,
             lambda: (
@@ -598,6 +599,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
                 and window.get_position()[1] + window.get_size().height == window.anchor_bottom
             ),
         )
+
+    def context(note_id):
+        settle_window()
         pointer_at(gtk, window, window.rows[note_id].body, 12, 8, "click", "3")
         wait_until(
             gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
@@ -616,6 +620,10 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         return tag.get_submenu()
 
     def filter_by(label):
+        settle_window()
+        pointer_at(gtk, window, window.menu_button, 12, 12)
+        ready = time.monotonic() + 0.1
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
         click_button(gtk, window, window.menu_button)
         wait_until(gtk.glib, lambda: window.menu.get_mapped())
         subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
