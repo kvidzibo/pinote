@@ -43,6 +43,8 @@ running instance's workspace and leaves a stopped GUI stopped.
 ```sh
 note "check backups"                     # save and refresh the Dunst reminder
 note                                    # list active notes
+note list --json                        # machine-readable tasks for integrations
+note start 2                            # mark a task in progress
 note done 2                             # complete a task
 note rm 3                               # archive, never erase
 note restore 3                          # restore a task or clear its progress
