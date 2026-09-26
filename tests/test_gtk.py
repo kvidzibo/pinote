@@ -212,6 +212,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
     assert window.composer.get_children() == [
+        window.tag_button,
         window.entry_box,
         window.add_button,
         window.drag_button,
@@ -227,6 +228,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert row.done.get_accessible().get_name() == "Start note 1"
     assert row.content.get_children() == [
         row.done,
+        row.tag_badge,
         row.body,
         row.reminder_icon,
         row.preview_button,
@@ -334,6 +336,43 @@ def test_minimise_cycle_and_context_state_icons(gtk):
     assert not window.scroll.get_visible() and not window.progress_scroll.get_visible()
     cycle(0, True, False)
     cycle(1, False, False)
+
+
+def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Existing", tag="Work <🐦>")
+    window = gtk.open()
+    click_button(gtk, window, window.tag_button)
+    wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
+    item = window.composer_tag_menu.get_children()[-1]
+    assert item.get_label() == "#Work <🐦> (1)"
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, item.get_toplevel(), item)
+    wait_until(gtk.glib, lambda: not window.composer_tag_menu.get_mapped())
+    for note_id in (2, 3):
+        window.entry.set_text(f"Task {note_id}")
+        window.entry.emit("activate")
+        wait_until(
+            gtk.glib,
+            lambda note_id=note_id: (
+                not window.pending and note_id in window.rows and not window.reveal_note_id
+            ),
+        )
+        row = window.rows[note_id]
+        assert row.note.tag == "Work <🐦>"
+        assert row.tag_badge.get_visible()
+        assert row.tag_badge.get_text() == "#Work <🐦>"
+        assert not row.tag_badge.get_use_markup()
+        assert row.content.get_children().index(row.tag_badge) < row.content.get_children().index(
+            row.body
+        )
+    window._set_filter(None)
+    window._set_tag(window.rows[2].note, None)
+    wait_until(gtk.glib, lambda: not window.pending and window.rows[2].note.tag is None)
+    assert not window.rows[2].tag_badge.get_visible()
+    with Store(gtk.paths.database) as store:
+        assert next(note for note in store.notes() if note.id == 3).tag == "Work <🐦>"
 
 
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
@@ -940,6 +979,8 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         widget = widgets.pop()
         if widget in actions:
             assert widget.get_tooltip_text() == widget.get_accessible().get_name()
+        elif widget is window.tag_button:
+            assert widget.get_tooltip_text() == "Tag for new tasks: Untagged. List filter: Untagged"
         else:
             assert not widget.get_has_tooltip()
         if hasattr(widget, "get_children"):

@@ -121,7 +121,12 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Both tag menus show active-note counts, including in-progress tasks, for example
   **#Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
-- **Bottom menu → Filter by tag →** selects **Untagged**, **All**, or a named tag.
+- **Tag dropdown before the input** selects **Untagged**, **All**, or a named tag.
+  Selecting a tag assigns it to each new task until you change the selection, and
+  shows that tag's tasks. Tags appear as small badges before task text; long names
+  are shortened visually, with the full name in a tooltip. Reuse existing tags here;
+  create new tags through **Right-click note text → Tag → New tag…**.
+  **Bottom menu → Filter by tag →** changes the same selection.
   **Untagged is the default every time the checklist reopens.** Filtering only hides
   rows; it never archives or changes tasks. Assigning a different tag can immediately
   hide a task from the current view. New tasks added under a named filter inherit that

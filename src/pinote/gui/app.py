@@ -57,6 +57,13 @@ class NoteRow(Gtk.ListBoxRow):
         self.done.connect("button-press-event", self._check_pressed)
         self.done.connect("button-release-event", lambda _button, event: event.button == 3)
         content.pack_start(self.done, False, False, 0)
+        self.tag_badge = Gtk.Label(valign=Gtk.Align.START)
+        self.tag_badge.set_ellipsize(Pango.EllipsizeMode.END)
+        self.tag_badge.set_max_width_chars(12)
+        self.tag_badge.set_margin_top(3)
+        self.tag_badge.set_no_show_all(True)
+        self.tag_badge.get_style_context().add_class("tag-badge")
+        content.pack_start(self.tag_badge, False, False, 0)
         # Never treat stored text as Pango markup, commands, or widget source.
         self.body = Gtk.Label(
             label=note.text.split("\n", 1)[0], xalign=0, yalign=0, selectable=True
@@ -125,6 +132,10 @@ class NoteRow(Gtk.ListBoxRow):
         if note.text != self.note.text:
             self.body.set_text(note.text.split("\n", 1)[0])
         self.note = note
+        self.tag_badge.set_text(f"#{note.tag}" if note.tag else "")
+        self.tag_badge.set_tooltip_text(note.tag)
+        self.tag_badge.get_accessible().set_name(f"Tag: {note.tag or 'Untagged'}")
+        self.tag_badge.set_visible(note.tag is not None)
         due_text = (
             f"Due {relative_reminder_time(note.reminder_due_at)}"
             if note.reminder_due_at is not None
@@ -334,6 +345,22 @@ class ReminderWindow(Gtk.ApplicationWindow):
         layout.pack_start(self.progress_scroll, False, True, 0)
 
         self.composer = Gtk.Box(spacing=6)
+        self.tag_button = Gtk.MenuButton(valign=Gtk.Align.CENTER)
+        self.tag_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.tag_button.set_direction(Gtk.ArrowType.UP)
+        tag_content = Gtk.Box(spacing=3)
+        tag_content.pack_start(icon_image("tag-symbolic"), False, False, 0)
+        self.tag_label = Gtk.Label()
+        self.tag_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.tag_label.set_max_width_chars(8)
+        tag_content.pack_start(self.tag_label, False, False, 0)
+        self.tag_button.add(tag_content)
+        self.composer_tag_menu = Gtk.Menu()
+        self.composer_tag_menu.get_style_context().add_class("pinote-window")
+        self.composer_tag_menu.get_style_context().add_class("reminder-menu")
+        self.composer_tag_menu.connect("show", self._prepare_composer_tags)
+        self.composer_tag_menu.connect("hide", self._queue_pin_check)
+        self.tag_button.set_popup(self.composer_tag_menu)
         self.entry = TaskEntry()
         self.entry_scroll = Gtk.ScrolledWindow()
         self.entry_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -408,6 +435,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.reminders_button.connect("activate", lambda _item: self._open_reminders())
         self.archive_button.connect("activate", lambda _item: self._open_archive())
         self.close_menu_button.connect("activate", lambda _item: self.close())
+        self.composer.pack_start(self.tag_button, False, False, 0)
         self.composer.pack_start(self.entry_box, True, True, 0)
         self.composer.pack_start(self.add_button, False, False, 0)
         self.composer.pack_start(self.drag_button, False, False, 0)
@@ -456,6 +484,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             any(window.is_active() for window in self.get_application().get_windows())
             or self.focus_handoff is not None
             or self.menu.get_visible()
+            or self.composer_tag_menu.get_visible()
             or self.context_menu is not None
             or self.preview is not None
         )
@@ -656,6 +685,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if event.keyval == Gdk.KEY_Escape:
             if self.preview is not None and self.preview.get_visible():
                 self.preview.popdown()
+            elif self.composer_tag_menu.get_visible():
+                self.composer_tag_menu.popdown()
             elif self.menu.get_visible():
                 self.menu.popdown()
             else:
@@ -735,6 +766,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
             label = "All"
         else:
             label = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
+        self.tag_label.set_text(label)
+        creation_tag = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
+        self.tag_button.set_tooltip_text(f"Tag for new tasks: {creation_tag}. List filter: {label}")
+        self.tag_button.get_accessible().set_name(f"Choose task tag: {label}")
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
@@ -754,6 +789,16 @@ class ReminderWindow(Gtk.ApplicationWindow):
         )
         return choices
 
+    def _prepare_composer_tags(self, menu) -> None:
+        for child in menu.get_children():
+            child.destroy()
+        self._radio_choices(
+            menu,
+            self._tag_choices(self.tag_filter, filtering=True),
+            self.tag_filter,
+            self._set_filter,
+        )
+
     def _prepare_filters(self, *_args) -> None:
         self._update_filter_label()
         previous = self.filter_item.get_submenu()
@@ -772,6 +817,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _set_filter(self, tag: str | None) -> None:
         self.tag_filter = tag
+        self.composer_tag_menu.popdown()
         self.menu.popdown()
         # Do not carry a departing row's animation into a different view.
         for row in list(self.rows.values()):
@@ -1228,6 +1274,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.context_menu is not None:
             self.context_menu.popdown()
         self.menu.popdown()
+        self.composer_tag_menu.popdown()
         if self.editor is not None:
             self.editor.destroy()
         Gtk.ApplicationWindow.close(self)
@@ -1245,6 +1292,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.context_menu is not None:
             self.context_menu.popdown()
         self.menu.destroy()
+        self.composer_tag_menu.destroy()
         GLib.source_remove(self.refresh_source)
         for source in (
             self.geometry_source,

@@ -150,6 +150,14 @@
     transition: none;
 }
 
+.pinote-window .tag-badge {
+    background-color: #343c49;
+    color: #c9d7ee;
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 8pt;
+}
+
 .pinote-window .reminder-indicator {
     color: #e4c78c;
 }
