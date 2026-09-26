@@ -120,7 +120,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
   normalized, and limited to 64 characters on one line. Tags in use on active,
   scheduled, or archived tasks are available for reuse. Tags remain saved even when unused.
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
-  **#Work (3)**. Counts cover all active tasks regardless of the current filter;
+  **Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
 - **Tag dropdown before the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.

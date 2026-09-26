@@ -348,7 +348,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     from pinote.gui.app import Gtk
 
     item = window.composer_tag_menu.get_children()[1]
-    assert item.get_label() == "#Work <🐦>"
+    assert item.get_label() == "Work <🐦>"
     assert not isinstance(item, Gtk.CheckMenuItem)
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
@@ -370,7 +370,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
         row = window.rows[note_id]
         assert row.note.tag == "Work <🐦>"
         assert row.tag_badge.get_visible()
-        assert row.tag_badge.get_text() == "#Work <🐦>"
+        assert row.tag_badge.get_text() == "Work <🐦>"
         assert not row.tag_badge.get_use_markup()
         assert row.content.get_children().index(row.tag_badge) < row.content.get_children().index(
             row.body
@@ -407,7 +407,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending)
     window._prepare_composer_tags(window.composer_tag_menu)
-    assert "#Personal" in [item.get_label() for item in window.composer_tag_menu.get_children()]
+    assert "Personal" in [item.get_label() for item in window.composer_tag_menu.get_children()]
     window.entry.set_text("New personal task")
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and 4 in window.rows)
@@ -494,7 +494,7 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
     window.worker.shutdown(wait=True)
     window = gtk.open(application)
     window._prepare_composer_tags(window.composer_tag_menu)
-    assert "#Unused" in [item.get_label() for item in window.composer_tag_menu.get_children()]
+    assert "Unused" in [item.get_label() for item in window.composer_tag_menu.get_children()]
     window._open_tags()
     manager = window.tags_window
     wait_until(gtk.glib, lambda: not manager.pending)
@@ -522,8 +522,8 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert [item.get_label() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
         "All (2)",
-        "#Archived (0)",
-        "#Work (1)",
+        "Archived (0)",
+        "Work (1)",
     ]
     window.entry.set_text("Unfinished new task")
 
@@ -599,14 +599,14 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     click_button(gtk, editor, editor.save_button)
     wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
     assert window.empty.get_text() == "No untagged reminders."
-    filter_by("#Personal 🐦 (1)")
+    filter_by("Personal 🐦 (1)")
     assert set(window.rows) == {1}
     assert [item.get_label() for item in window.filter_menu.get_children()] == [
         "Untagged (0)",
         "All (2)",
-        "#Archived (0)",
-        "#Personal 🐦 (1)",
-        "#Work (1)",
+        "Archived (0)",
+        "Personal 🐦 (1)",
+        "Work (1)",
     ]
     window._select_creation_tag("Personal 🐦")
     window.entry.emit("activate")
@@ -615,11 +615,11 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     tags = tag_menu(1)
     assert [item.get_label() for item in tags.get_children()][:4] == [
         "Untagged (0)",
-        "#Archived (0)",
-        "#Personal 🐦 (2)",
-        "#Work (1)",
+        "Archived (0)",
+        "Personal 🐦 (2)",
+        "Work (1)",
     ]
-    select(tags, "#Work (1)")
+    select(tags, "Work (1)")
     wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {4})
     filter_by("All (3)")
     assert set(window.rows) == {1, 2, 4}
@@ -646,9 +646,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert [item.get_label() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
         "All (2)",
-        "#Archived (0)",
-        "#Personal 🐦 (1)",
-        "#Work (0)",
+        "Archived (0)",
+        "Personal 🐦 (1)",
+        "Work (0)",
     ]
     application = window.get_application()
     window.close()

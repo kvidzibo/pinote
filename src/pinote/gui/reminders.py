@@ -53,7 +53,7 @@ class ScheduledRow(Gtk.ListBoxRow):
             self.body.set_text(note.text)
         label = local_reminder_time(note.remind_at)
         if note.tag:
-            label += f" · #{note.tag}"
+            label += f" · {note.tag}"
         if self.date.get_text() != label:
             self.date.set_text(label)
         self.restore.set_sensitive(sensitive)

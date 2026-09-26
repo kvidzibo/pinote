@@ -147,7 +147,7 @@ class TagsWindow(Gtk.ApplicationWindow):
     def _confirm_delete(self) -> None:
         if self.selected is not None and not self.saving:
             self.confirm_text.set_text(
-                f"Delete #{self.selected}? Clear it from all tasks, including archived "
+                f"Delete {self.selected}? Clear it from all tasks, including archived "
                 "and scheduled tasks. Tasks are kept."
             )
             self.confirmation.show()

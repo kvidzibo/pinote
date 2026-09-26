@@ -133,7 +133,7 @@ class NoteRow(Gtk.ListBoxRow):
         if note.text != self.note.text:
             self.body.set_text(note.text.split("\n", 1)[0])
         self.note = note
-        self.tag_badge.set_text(f"#{note.tag}" if note.tag else "")
+        self.tag_badge.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)
         self.tag_badge.get_accessible().set_name(f"Tag: {note.tag or 'Untagged'}")
         self.tag_badge.set_visible(note.tag is not None)
@@ -773,7 +773,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.tag_filter is None:
             label = "All"
         else:
-            label = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
+            label = self.tag_filter or "Untagged"
         self._update_creation_tag_label()
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
@@ -789,13 +789,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if filtering:
             choices.append((None, f"All ({len(self.notes_snapshot)})"))
         choices.extend(
-            (tag, f"#{tag} ({counts[tag]})")
+            (tag, f"{tag} ({counts[tag]})")
             for tag in sorted(tags, key=lambda tag: (tag.casefold(), tag))
         )
         return choices
 
     def _update_creation_tag_label(self) -> None:
-        label = f"#{self.creation_tag}" if self.creation_tag else "Untagged"
+        label = self.creation_tag or "Untagged"
         self.tag_label.set_text(label)
         self.tag_button.set_tooltip_text(f"Tag for new tasks: {label}. Right-click to clear.")
         self.tag_button.get_accessible().set_name(f"Choose task tag: {label}")
@@ -819,7 +819,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         menu.set_reserve_toggle_size(False)
         tags = set(self.tags)
         for tag in [None, *sorted(tags, key=lambda tag: (tag.casefold(), tag))]:
-            item = Gtk.MenuItem(label=f"#{tag}" if tag else "Untagged")
+            item = Gtk.MenuItem(label=tag or "Untagged")
             item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
             menu.append(item)
         menu.append(Gtk.SeparatorMenuItem())
@@ -1258,7 +1258,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self._close_preview(self.preview)
         empty = "No active reminders."
         if self.tag_filter:
-            empty = f"No active reminders tagged #{self.tag_filter}."
+            empty = f"No active reminders tagged {self.tag_filter}."
         elif self.tag_filter == "" and self.notes_snapshot:
             empty = "No untagged reminders."
         self.empty.set_text(empty)
