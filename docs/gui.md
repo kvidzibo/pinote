@@ -118,20 +118,20 @@ Edits and tag changes retain the task ID and record old/new values in history;
   clear it. Each task has at most one tag. Names are case-sensitive, trimmed, Unicode
   normalized, and limited to 64 characters on one line. Tags in use on active,
   scheduled, or archived tasks are available for reuse; there is no separate tag registry.
-  Both tag menus show active-note counts, including in-progress tasks, for example
+  The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **#Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
-- **Tag dropdown before the input** selects **Untagged**, **All**, or a named tag.
-  Selecting a tag assigns it to each new task until you change the selection, and
-  shows that tag's tasks. Tags appear as small badges before task text; long names
-  are shortened visually, with the full name in a tooltip. Reuse existing tags here;
-  create new tags through **Right-click note text → Tag → New tag…**.
-  **Bottom menu → Filter by tag →** changes the same selection.
+- **Tag dropdown before the input** lists tags and **Untagged**, without radio buttons.
+  Select a tag to assign it to subsequent new tasks; this does not filter the list.
+  **+** creates and selects a new tag. Unused new tags remain available for this session;
+  adding a task with that tag saves it. The selection resets to **Untagged** on reopen.
+  Tags appear as small badges before task text; long names have full-name tooltips.
+- **Bottom menu → Filter by tag →** independently selects **Untagged**, **All**, or a tag.
   **Untagged is the default every time the checklist reopens.** Filtering only hides
-  rows; it never archives or changes tasks. Assigning a different tag can immediately
-  hide a task from the current view. New tasks added under a named filter inherit that
-  tag; under All/Untagged they are untagged. The new-task draft is kept when switching
-  filters. Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain
+  rows; it never changes tasks or the tag selected for new tasks. A newly added or
+  retagged task may be hidden by the current filter; choose **All** to see every task.
+  The new-task draft is kept when switching filters.
+  Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain
   their tags, so they may be hidden by the checklist's current filter.
 - Left-click note text or empty space in the checklist to focus **Add a task…**.
   Drag to select text: releasing the mouse copies the selection to the clipboard,

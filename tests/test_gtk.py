@@ -344,12 +344,19 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     window = gtk.open()
     click_button(gtk, window, window.tag_button)
     wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
-    item = window.composer_tag_menu.get_children()[-1]
-    assert item.get_label() == "#Work <🐦> (1)"
+    from pinote.gui.app import Gtk
+
+    item = window.composer_tag_menu.get_children()[1]
+    assert item.get_label() == "#Work <🐦>"
+    assert not isinstance(item, Gtk.CheckMenuItem)
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
     click_button(gtk, item.get_toplevel(), item)
     wait_until(gtk.glib, lambda: not window.composer_tag_menu.get_mapped())
+    assert window.creation_tag == "Work <🐦>"
+    assert window.tag_filter == "" and not window.rows
+    window._set_filter(None)
+    assert window.creation_tag == "Work <🐦>"
     for note_id in (2, 3):
         window.entry.set_text(f"Task {note_id}")
         window.entry.emit("activate")
@@ -373,6 +380,34 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     assert not window.rows[2].tag_badge.get_visible()
     with Store(gtk.paths.database) as store:
         assert next(note for note in store.notes() if note.id == 3).tag == "Work <🐦>"
+    click_button(gtk, window, window.tag_button)
+    wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
+    new_tag = window.composer_tag_menu.get_children()[-1]
+    assert new_tag.get_accessible().get_name() == "New tag…"
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    # Let GTK dismiss the composer tooltip before clicking the menu beneath it.
+    pointer_at(gtk, new_tag.get_toplevel(), new_tag, 12, 12)
+    ready = time.monotonic() + 0.1
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, new_tag.get_toplevel(), new_tag)
+    wait_until(gtk.glib, lambda: window.editor is not None)
+    editor = window.editor
+    editor.entry.set_text("x" * 65)
+    editor.entry.emit("activate")
+    assert editor.error_text.get_visible() and window.creation_tag == "Work <🐦>"
+    editor.entry.set_text("  Personal  ")
+    editor.entry.emit("activate")
+    wait_until(gtk.glib, lambda: window.editor is None)
+    assert window.creation_tag == "Personal" and window.tag_filter is None
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    window._prepare_composer_tags(window.composer_tag_menu)
+    assert "#Personal" in [item.get_label() for item in window.composer_tag_menu.get_children()]
+    window.entry.set_text("New personal task")
+    window.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not window.pending and 4 in window.rows)
+    assert window.rows[4].note.tag == "Personal"
 
 
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
@@ -476,6 +511,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         "#Personal 🐦 (1)",
         "#Work (1)",
     ]
+    window._select_creation_tag("Personal 🐦")
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {1, 4})
     assert window.rows[4].note.tag == "Personal 🐦"
@@ -980,7 +1016,7 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         if widget in actions:
             assert widget.get_tooltip_text() == widget.get_accessible().get_name()
         elif widget is window.tag_button:
-            assert widget.get_tooltip_text() == "Tag for new tasks: Untagged. List filter: Untagged"
+            assert widget.get_tooltip_text() == "Tag for new tasks: Untagged"
         else:
             assert not widget.get_has_tooltip()
         if hasattr(widget, "get_children"):

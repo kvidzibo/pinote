@@ -10,7 +10,7 @@ import gi
 
 from pinote.logging_setup import LOGGER
 from pinote.reminders import parse_reminder_time
-from pinote.store import Note, NoteError
+from pinote.store import Note, NoteError, validate_tag
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
@@ -20,7 +20,11 @@ from pinote.gui.icons import icon_button  # noqa: E402
 
 
 class NoteEditor(Gtk.ApplicationWindow):
-    def __init__(self, owner, note: Note, *, tag_only: bool = False, schedule_only: bool = False):
+    def __init__(
+        self, owner, note: Note | None, *, tag_only: bool = False, schedule_only: bool = False
+    ):
+        if note is None and (not tag_only or schedule_only):
+            raise ValueError("A task is required for editing or scheduling")
         title = "Set reminder" if schedule_only else "New tag" if tag_only else "Edit task"
         super().__init__(
             application=owner.get_application(),
@@ -174,6 +178,16 @@ class NoteEditor(Gtk.ApplicationWindow):
         else:
             buffer = self.entry.get_buffer()
             value = buffer.get_text(*buffer.get_bounds(), True)
+
+        if self.note is None:
+            try:
+                tag = validate_tag(value)
+            except NoteError as exc:
+                self._error(str(exc))
+                return
+            self.owner._select_creation_tag(tag)
+            self.destroy()
+            return
 
         def operation():
             if self.schedule_only:

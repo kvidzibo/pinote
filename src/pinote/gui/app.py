@@ -258,6 +258,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.context_note_id: int | None = None
         self.view_mode = 0  # All notes → in progress → bottom bar.
         self.tag_filter: str | None = ""  # Empty = Untagged; None = All.
+        self.creation_tag: str | None = None
+        self.draft_tags: set[str] = set()
         self.tags: list[str] = []
         self.notes_snapshot: list[Note] = []
         self.reveal_note_id: int | None = None
@@ -766,10 +768,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             label = "All"
         else:
             label = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
-        self.tag_label.set_text(label)
-        creation_tag = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
-        self.tag_button.set_tooltip_text(f"Tag for new tasks: {creation_tag}. List filter: {label}")
-        self.tag_button.get_accessible().set_name(f"Choose task tag: {label}")
+        self._update_creation_tag_label()
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
@@ -789,15 +788,46 @@ class ReminderWindow(Gtk.ApplicationWindow):
         )
         return choices
 
+    def _update_creation_tag_label(self) -> None:
+        label = f"#{self.creation_tag}" if self.creation_tag else "Untagged"
+        self.tag_label.set_text(label)
+        self.tag_button.set_tooltip_text(f"Tag for new tasks: {label}")
+        self.tag_button.get_accessible().set_name(f"Choose task tag: {label}")
+
+    def _select_creation_tag(self, tag: str | None) -> None:
+        self.creation_tag = tag
+        if tag is not None:
+            self.draft_tags.add(tag)
+        self._update_creation_tag_label()
+        self.composer_tag_menu.popdown()
+
     def _prepare_composer_tags(self, menu) -> None:
         for child in menu.get_children():
             child.destroy()
-        self._radio_choices(
-            menu,
-            self._tag_choices(self.tag_filter, filtering=True),
-            self.tag_filter,
-            self._set_filter,
+        menu.set_reserve_toggle_size(False)
+        tags = (
+            self.draft_tags
+            | set(self.tags)
+            | {note.tag for note in self.notes_snapshot if note.tag is not None}
         )
+        for tag in [None, *sorted(tags, key=lambda tag: (tag.casefold(), tag))]:
+            item = Gtk.MenuItem(label=f"#{tag}" if tag else "Untagged")
+            item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        new_tag = icon_menu_item("list-add-symbolic", "New tag…")
+        new_tag.connect("activate", lambda _item: self._open_creation_tag())
+        menu.append(new_tag)
+        menu.show_all()
+
+    def _open_creation_tag(self) -> None:
+        if self.closed or self.action_pending:
+            return
+        self.composer_tag_menu.popdown()
+        if self.editor is None:
+            self.editor = NoteEditor(self, None, tag_only=True)
+            self._watch_child_focus(self.editor)
+        self._present_child(self.editor)
 
     def _prepare_filters(self, *_args) -> None:
         self._update_filter_label()
@@ -1038,7 +1068,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.action_pending = True
         self._update_controls()
         revision = self.draft_revision
-        tag = self.tag_filter or None
+        tag = self.creation_tag
 
         def add():
             note_id = self.model.add(text, tag=tag) if tag else self.model.add(text)
