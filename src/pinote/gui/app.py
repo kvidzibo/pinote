@@ -27,6 +27,7 @@ from pinote.gui.icons import (  # noqa: E402
 )
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
+from pinote.gui.state import FilterCache  # noqa: E402
 from pinote.gui.tags import TagsWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
@@ -286,6 +287,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.action_pending = False
         self.draft_revision = 0
         self.draft = DraftCache(model.paths.data / "gui-draft.txt")
+        self.filter_cache = FilterCache(model.paths.data / "gui-filter.json")
+        self.filter_error: str | None = None
         self.draft_source = 0
         self.draft_error: str | None = None
         self.error_is_action = False
@@ -435,6 +438,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self._prepare_filters()
         self.menu_button.set_popup(self.menu)
         self.menu_button.set_direction(Gtk.ArrowType.UP)
+        try:
+            self.tag_filter = self.filter_cache.load()
+        except (OSError, UnicodeError, ValueError) as exc:
+            self.filter_error = f"Cannot restore the tag filter: {exc}"
+            self._error(self.filter_error, action=True)
+        self._update_filter_label()
         try:
             self.entry.set_text(self.draft.load())
         except (OSError, UnicodeError) as exc:
@@ -852,7 +861,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if self.creation_tag == old:
                 self._select_creation_tag(new)
             if self.tag_filter == old:
-                self.tag_filter = new or ""
+                self.tag_filter = new
+                self._remember_filter()
         if new is not None and new not in self.tags:
             self.tags.append(new)
         self._update_filter_label()
@@ -878,7 +888,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_item.set_submenu(self.filter_menu)
 
     def _set_filter(self, tag: str | None) -> None:
+        if self.closed:
+            return
         self.tag_filter = tag
+        self._remember_filter()
         self.composer_tag_menu.popdown()
         self.menu.popdown()
         # Do not carry a departing row's animation into a different view.
@@ -886,6 +899,28 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if row.exiting:
                 self._remove_row(row)
         self._render(self.notes_snapshot)
+
+    def _remember_filter(self) -> None:
+        self.filter_cache.update(self.tag_filter)
+        self.worker.submit(self._persist_filter)
+
+    def _persist_filter(self) -> None:
+        try:
+            self.filter_cache.save()
+        except (OSError, UnicodeError) as exc:
+            message = f"Cannot save the tag filter; it may be lost on restart: {exc}"
+            if message != self.filter_error:
+                LOGGER.error("GUI: %s", message)
+            self.filter_error = message
+            if not self.closed:
+                GLib.idle_add(self._show_filter_error)
+        else:
+            self.filter_error = None
+
+    def _show_filter_error(self) -> bool:
+        if not self.closed and self.filter_error:
+            self._error(self.filter_error, action=True)
+        return GLib.SOURCE_REMOVE
 
     def _populate_note_menu(self, note_id: int, menu: Gtk.Menu) -> None:
         row = self.rows.get(note_id)
@@ -1176,6 +1211,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self._render(result.notes, action=action if result.changed else None)
             else:
                 notes, self.tags = result
+                if self.tag_filter and self.tag_filter not in self.tags:
+                    self.tag_filter = None
+                    self._remember_filter()
                 if self.creation_tag is not None and self.creation_tag not in self.tags:
                     self._select_creation_tag(None)
                 self._render(notes)
@@ -1205,6 +1243,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 )
             self._update_controls()
             self._show_draft_error()
+            self._show_filter_error()
         return GLib.SOURCE_REMOVE
 
     def _render(self, notes: list[Note], *, action: tuple[int, str] | None = None) -> None:
@@ -1381,6 +1420,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # Flush after accepted adds have cleared only their own draft. Read the
         # latest snapshot on the worker, never re-save a stale editor snapshot.
         self.worker.submit(self._persist_draft)
+        self.worker.submit(self._persist_filter)
         # Closing must not silently drop a click queued behind a poll. The
         # bounded worker drains pending operations before the process exits.
         self.worker.shutdown(wait=False)

@@ -132,7 +132,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Right-click the tag beside the input to reset it to **Untagged**, keeping the draft,
   existing tasks, and list filter unchanged.
   **+** saves a new tag in the database immediately and selects it, even without a task.
-  Saved tags survive reopening; only the selection resets to **Untagged**.
+  Saved tags survive reopening; the new-task tag selection resets to **Untagged**.
   Tags appear as small badges before task text; long names have full-name tooltips.
 - **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
   **Save** to add a tag, or select one and change its name to rename it. Renaming
@@ -140,8 +140,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   asks for confirmation, then clears the tag from tasks and removes it from the registry;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
 - **Bottom menu → Filter by tag →** independently selects **Untagged**, **All**, or a tag.
-  **Untagged is the default every time the checklist reopens.** Filtering only hides
-  rows; it never changes tasks or the tag selected for new tasks. A newly added or
+  The filter is saved in `gui-filter.json` beside the database and restored on restart.
+  **Untagged** is the first-launch default; a deleted saved tag falls back to **All**.
+  Filtering only hides rows; it never changes tasks or the tag selected for new tasks. A newly added or
   retagged task may be hidden by the current filter; choose **All** to see every task.
   The new-task draft is kept when switching filters.
   Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain

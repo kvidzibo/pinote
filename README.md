@@ -65,15 +65,16 @@ Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md
   when it next opens/resumes, or when a `note` command runs. There is no timer
   service or automatic Dunst notification. GUI changes do not refresh Dunst.
 - IDs and history are retained. Completion/deletion is recoverable; closing the
-  checklist does not complete tasks. Its default filter is **Untagged**, so tagged
-  tasks may be hidden until you change the filter.
+  checklist does not complete tasks. Its first-launch filter is **Untagged**; later
+  launches restore your filter, so tagged tasks may be hidden until you change it.
 - Data is saved before notification delivery. Do not repeat an add just because
   Dunst failed. Quote shell metacharacters; use `note add "done"` for reserved names.
 - Notes default to `~/.local/share/pinote/notes.db`; logs to
   `~/.local/state/pinote/app.log` (XDG overrides supported). Data stays local but
   is **not encrypted**, and desktop notifications may remain in Dunst history.
 - Markdown exports are **not backups**: they omit IDs, tags, schedules, and history.
-  Close the GUI and stop CLI writes before copying `notes.db` and `gui-draft.txt`.
+  Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`, and
+  `gui-filter.json`.
   [Backup and upgrade details](docs/usage.md#data-privacy-and-backup).
 - Back up before upgrading; update both CLI and GUI installations together.
   Older versions cannot read schema 5. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).

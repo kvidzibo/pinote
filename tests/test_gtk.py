@@ -517,6 +517,38 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
         assert "Saved while closing" in store.tags()
 
 
+def test_tag_filter_persists_across_restarts_and_tracks_registry_changes(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Untagged task")
+        store.add("Tagged task", tag="Work 🐦")
+    window = gtk.open()
+    application = window.get_application()
+
+    def reopen(window):
+        window.close()
+        wait_until(gtk.glib, lambda: window.closed)
+        window.worker.shutdown(wait=True)
+        return gtk.open(application)
+
+    for selected, visible in (("Work 🐦", {2}), (None, {1, 2}), ("", {1})):
+        window.entry.set_text("Keep this draft")
+        window._set_filter(selected)
+        window = reopen(window)  # No wait before closing: queued saves must drain.
+        assert window.tag_filter == selected and set(window.rows) == visible
+        assert window.entry.get_text() == "Keep this draft"
+        assert window.creation_tag is None  # Input tags remain independent of filtering.
+    window._set_filter("Work 🐦")
+    window.model.rename_tag("Work 🐦", "Renamed")
+    window._tags_changed("Work 🐦", "Renamed")
+    window = reopen(window)
+    assert window.tag_filter == "Renamed" and set(window.rows) == {2}
+    window.model.delete_tag("Renamed")
+    window = reopen(window)
+    assert window.tag_filter is None and set(window.rows) == {1, 2}
+    window = reopen(window)
+    assert window.tag_filter is None  # Missing-tag fallback itself is persisted.
+
+
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     from pinote.gui.app import Gtk
 
@@ -669,7 +701,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     wait_until(gtk.glib, lambda: window.closed)
     window.worker.shutdown(wait=True)
     window = gtk.open(application)
-    assert window.tag_filter == "" and set(window.rows) == {1}
+    assert window.tag_filter is None and set(window.rows) == {1, 4}
     with Store(gtk.paths.database) as store:
         assert [event["action"] for event in store.history(1)] == [
             "add",
