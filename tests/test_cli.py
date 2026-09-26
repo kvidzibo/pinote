@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -27,6 +28,20 @@ def test_full_cli_lifecycle(cli):
     assert "add" in history and "done" in history and "restore" in history
     assert "another" not in history
     assert "2. [removed] another" in cli("list", "--all").stdout
+
+
+def test_json_list_and_start_transition(cli):
+    cli("--no-notify", "Tagged task")
+    with sqlite3.connect(cli.database) as db:
+        db.execute("UPDATE notes SET tag = 'Work' WHERE id = 1")
+
+    listed = cli("list", "--json", "--no-notify")
+    assert json.loads(listed.stdout) == [
+        {"id": 1, "text": "Tagged task", "state": "active", "tag": "Work"}
+    ]
+    assert cli("start", "1", "--no-notify").returncode == 0
+    assert json.loads(cli("list", "--json").stdout)[0]["state"] == "in_progress"
+    assert "start" in cli("history", "1").stdout
 
 
 def test_scheduled_reminder_cli_lists_history_restore_and_due_delivery(cli):

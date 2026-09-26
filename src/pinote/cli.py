@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from contextlib import nullcontext
@@ -18,6 +19,7 @@ COMMANDS = {
     "add",
     "list",
     "done",
+    "start",
     "rm",
     "restore",
     "history",
@@ -27,7 +29,7 @@ COMMANDS = {
     "schedule",
     "reminders",
 }
-MUTATIONS = {"add", "done", "rm", "restore", "import", "schedule"}
+MUTATIONS = {"add", "done", "start", "rm", "restore", "import", "schedule"}
 
 
 def positive_id(value: str) -> int:
@@ -54,6 +56,7 @@ def parser() -> argparse.ArgumentParser:
         ("add", "add a note (also the default for text arguments)"),
         ("list", "list active notes"),
         ("done", "mark a note done"),
+        ("start", "mark a note in progress"),
         ("rm", "archive a note without erasing history"),
         ("restore", "return an archived/scheduled note to active, or clear progress"),
         ("history", "show timestamped activity, optionally for one note"),
@@ -72,13 +75,15 @@ def parser() -> argparse.ArgumentParser:
         )
         if name == "add":
             sub.add_argument("text", nargs="+", help="note text; quote shell metacharacters")
-        elif name in {"done", "rm", "restore", "history"}:
+        elif name in {"done", "start", "rm", "restore", "history"}:
             kwargs = {"nargs": "?"} if name == "history" else {}
             sub.add_argument("id", type=positive_id, **kwargs)
         elif name == "schedule":
             sub.add_argument("id", type=positive_id)
             sub.add_argument("when", help='local time or ISO time, e.g. "2030-01-02 09:30"')
         elif name in {"list", "export"}:
+            if name == "list":
+                sub.add_argument("--json", action="store_true", help="emit notes as a JSON array")
             sub.add_argument(
                 "--all",
                 action="store_true",
@@ -128,23 +133,38 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                 print(f"{note.id}. {local_reminder_time(note.remind_at)} {text}")
             if not notes:
                 print("No scheduled reminders.")
-        elif args.command in {"done", "rm", "restore"}:
+        elif args.command in {"done", "start", "rm", "restore"}:
             changed = store.transition(args.id, args.command)
-            state = {"done": "done", "rm": "removed", "restore": "active"}[args.command]
+            state = {"done": "done", "start": "in progress", "rm": "removed", "restore": "active"}[
+                args.command
+            ]
             print(f"Note {args.id}: {state}." if changed else f"Note {args.id} is already {state}.")
         elif args.command == "list":
             notes = store.notes(all_states=args.all)
-            for note in notes:
-                state = (
-                    f"[{note.state.replace('_', ' ')}] "
-                    if args.all or note.state == "in_progress"
-                    else ""
+            if args.json:
+                print(
+                    json.dumps(
+                        [
+                            {"id": note.id, "text": note.text, "state": note.state, "tag": note.tag}
+                            for note in notes
+                        ],
+                        ensure_ascii=False,
+                    )
                 )
-                text = note.text.replace("\n", "\n    ")
-                scheduled = f" ({local_reminder_time(note.remind_at)})" if note.remind_at else ""
-                print(f"{note.id}. {state}{text}{scheduled}")
-            if not notes:
-                print("No notes." if args.all else "No active notes.")
+            else:
+                for note in notes:
+                    state = (
+                        f"[{note.state.replace('_', ' ')}] "
+                        if args.all or note.state == "in_progress"
+                        else ""
+                    )
+                    text = note.text.replace("\n", "\n    ")
+                    scheduled = (
+                        f" ({local_reminder_time(note.remind_at)})" if note.remind_at else ""
+                    )
+                    print(f"{note.id}. {state}{text}{scheduled}")
+                if not notes:
+                    print("No notes." if args.all else "No active notes.")
         elif args.command == "history":
             events = store.history(args.id)
             for event in events:

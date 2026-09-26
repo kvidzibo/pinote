@@ -53,6 +53,8 @@ note reminders           # List scheduled reminders, earliest first
 note history             # All timestamped events, oldest first (UTC)
 note history 3           # Activity for one note
 note list --all          # Include done, removed, and scheduled notes
+note list --json         # JSON array of {id, text, state, tag} objects
+note start 2             # Mark a task in progress
 note show                # Show/reopen the persistent desktop notification
 note --no-notify "later" # Save without refreshing the desktop
 note export              # Active notes as Markdown on stdout
@@ -106,7 +108,7 @@ changes and automatic activations are recorded in `note history ID`.
 
 ### Desktop behavior
 
-Add, schedule, done, remove, restore, and import automatically refresh **one** persistent
+Add, start, schedule, done, remove, restore, and import automatically refresh **one** persistent
 Dunst notification. A dismissed notification reopens on the next mutation or
 `note show`. Closing it never changes the notes. `note` by itself only lists in
 the terminal. `--no-notify` suppresses automatic refresh, not an explicit `show`.
