@@ -18,9 +18,13 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 for tool in i3-msg jq flock; do
     command -v "$tool" >/dev/null || { printf 'Missing command: %s\n' "$tool" >&2; exit 1; }
 done
-# Serialize clicks, including the interval before a newly launched window maps.
+[[ -x "$root/.venv-gui/bin/pinote-gui" ]] || {
+    printf 'Install the GTK environment described in README.md first.\n' >&2
+    exit 1
+}
+# Ignore overlapping clicks, including while a newly launched window maps.
 exec 9>"$root/.venv-gui/toggle-pinote.lock"
-flock -x 9
+flock -n 9 || exit 0
 
 windows() {
     i3-msg -t get_tree | jq -c '[recurse(.nodes[], .floating_nodes[]) |
@@ -35,10 +39,6 @@ if ((count > 1)); then
     printf 'Multiple Pinote windows; refusing an ambiguous toggle.\n' >&2
     exit 1
 elif ((count == 0)); then
-    [[ -x "$root/.venv-gui/bin/pinote-gui" ]] || {
-        printf 'Install the GTK environment described in README.md first.\n' >&2
-        exit 1
-    }
     # Do not inherit the bar pipe or lock into the long-running GUI.
     nohup "$root/.venv-gui/bin/pinote-gui" </dev/null >/dev/null 2>&1 9>&- &
     for ((attempt=0; attempt<100; attempt++)); do
@@ -49,6 +49,14 @@ elif ((count == 0)); then
     exit 1
 fi
 id=$(jq -r '.[0]' <<<"$ids")
+# Child dialogs are separate i3 containers: do not strand them when moving.
+if i3-msg -t get_tree | jq -e '
+    any(recurse(.nodes[], .floating_nodes[]);
+        (.window_properties.window_role? // "") |
+        startswith("pinote-") and . != "pinote-reminders")' >/dev/null; then
+    printf 'Close Pinote dialogs before toggling the checklist.\n' >&2
+    exit 1
+fi
 # A window on another workspace is brought here, not hidden out of sight.
 current=$(i3-msg -t get_workspaces | jq -r '.[] | select(.focused) | .name')
 workspace=$(i3-msg -t get_tree | jq -r --argjson id "$id" '

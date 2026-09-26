@@ -274,7 +274,7 @@ Restart the GUI after editing the stylesheet in an editable checkout.
 
 With the checkout's `.venv-gui` installed, add this block to your i3blocks
 configuration (replace the checkout path), then run `i3-msg restart` to reload
-the bar and its status process:
+the whole window manager, including its bar and status process:
 
 ```ini
 [pinote]
@@ -287,8 +287,11 @@ Requires `i3-msg`, `jq`, `flock`, and a Nerd Font for the note icon. Left-click
 launches Pinote if stopped, hides it in i3's scratchpad if on the current
 workspace, or brings it to the current workspace otherwise. Hiding does not
 close Pinote or discard drafts. Other mouse buttons do nothing. The helper
-refuses to toggle when multiple checklist windows exist. You can also run
-`scripts/toggle-pinote.sh` directly or bind it to an i3 shortcut.
+ignores overlapping invocations and refuses to toggle when multiple checklist
+windows or other Pinote dialogs exist; close dialogs first. Show the checklist
+again before using `scripts/restart-pinote.sh`, which cannot restart scratchpad
+windows. You can also run `scripts/toggle-pinote.sh` directly or bind it to an
+i3 shortcut.
 
 ## Desktop login
 

@@ -3371,6 +3371,27 @@ def test_toggle_helper_block_and_workspace_cycle(gtk, tmp_path):
                 )
                 == pid
             )
+            # Overlapping invocations must not queue an opposite toggle.
+            import fcntl
+
+            from gi.repository import Gtk
+
+            with (root / ".venv-gui/toggle-pinote.lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                assert toggle().returncode == 0
+                assert windows() == [(window, "original")]
+            dialog = Gtk.Window(title="Toggle regression dialog")
+            dialog.set_role("pinote-editor")
+            dialog.show_all()
+            try:
+                wait_until(gtk.glib, lambda: dialog.get_window().is_viewable())
+                wait_until(gtk.glib, lambda: "pinote-editor" in json.dumps(wm("-t", "get_tree")))
+                result = toggle()
+                assert result.returncode == 1 and "Close Pinote dialogs" in result.stderr
+                assert windows() == [(window, "original")]
+            finally:
+                dialog.destroy()
+            wait_until(gtk.glib, lambda: "pinote-editor" not in json.dumps(wm("-t", "get_tree")))
             wm("workspace elsewhere")
             assert toggle().returncode == 0
             wait_until(gtk.glib, lambda: windows() == [(window, "elsewhere")])
