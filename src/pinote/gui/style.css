@@ -33,6 +33,22 @@
     background-color: #343c49;
 }
 
+.pinote-window.icon-menu {
+    padding: 4px;
+}
+
+.pinote-window.icon-menu menuitem {
+    min-width: 16px;
+    min-height: 20px;
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+
+.pinote-window.icon-menu menuitem arrow {
+    min-width: 10px;
+    margin-left: 6px;
+}
+
 .pinote-window entry {
     background-image: none;
     background-color: #1c212a;

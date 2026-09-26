@@ -18,7 +18,7 @@ from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
-from pinote.gui.icons import icon_button, icon_image  # noqa: E402
+from pinote.gui.icons import icon_button, icon_image, icon_menu_item  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
@@ -245,6 +245,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.preview: NotePreview | None = None
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
+        self.view_mode = 0  # All notes → in progress → bottom bar.
         self.tag_filter: str | None = ""  # Empty = Untagged; None = All.
         self.tags: list[str] = []
         self.notes_snapshot: list[Note] = []
@@ -366,16 +367,22 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.drag_button = icon_button("move-symbolic", "Hold and drag to move window")
         self.drag_button.set_valign(Gtk.Align.CENTER)
         self.drag_button.connect("button-press-event", self._begin_drag)
+        self.minimise_button = icon_button("view-collapse-symbolic", "Show only in-progress notes")
+        self.minimise_button.set_valign(Gtk.Align.CENTER)
+        self.minimise_button.connect("clicked", self._cycle_view)
         # Native menus stay visible above even an empty, very short checklist.
         self.menu = Gtk.Menu()
         self.menu.set_no_show_all(True)
+        self.menu.set_reserve_toggle_size(False)
         self.menu.get_style_context().add_class("pinote-window")
         self.menu.get_style_context().add_class("reminder-menu")
-        self.filter_item = Gtk.MenuItem()
-        self.reminders_button = Gtk.MenuItem(label="Reminders…")
-        self.archive_button = Gtk.MenuItem(label="Archive…")
-        self.close_menu_button = Gtk.MenuItem(label="Close")
-        self.close_menu_button.get_accessible().set_name("Close reminders (Esc)")
+        self.menu.get_style_context().add_class("icon-menu")
+        self.filter_item = icon_menu_item("view-filter-symbolic", "Filter by tag")
+        self.reminders_button = icon_menu_item(
+            "preferences-system-notifications-symbolic", "Reminders…"
+        )
+        self.archive_button = icon_menu_item("archive-symbolic", "Archive…")
+        self.close_menu_button = icon_menu_item("window-close-symbolic", "Close reminders (Esc)")
         for item in (
             self.filter_item,
             self.reminders_button,
@@ -404,6 +411,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.composer.pack_start(self.entry_box, True, True, 0)
         self.composer.pack_start(self.add_button, False, False, 0)
         self.composer.pack_start(self.drag_button, False, False, 0)
+        self.composer.pack_start(self.minimise_button, False, False, 0)
         self.composer.pack_start(self.menu_button, False, False, 0)
         layout.pack_start(self.composer, False, False, 0)
         self._update_controls()
@@ -564,8 +572,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _section_limits(self, height: int, monitor_top: int) -> dict[Gtk.ScrolledWindow, int]:
-        ordinary = self.list_box.get_children()
-        progress = self.progress_list.get_children()
+        ordinary = self.list_box.get_children() if self.scroll.get_visible() else []
+        progress = self.progress_list.get_children() if self.progress_scroll.get_visible() else []
         count = self.config.max_visible_notes
         # Share the row budget, reserving at least one row for each nonempty section.
         pinned_count = min(len(progress), max(1, count // 2) if ordinary else count)
@@ -727,7 +735,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             label = "All"
         else:
             label = f"#{self.tag_filter}" if self.tag_filter else "Untagged"
-        self.filter_item.set_label(f"Filter by tag: {label}")
+        self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
+        self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
 
     def _tag_choices(self, selected: str | None, *, filtering: bool = False):
@@ -788,13 +797,23 @@ class ReminderWindow(Gtk.ApplicationWindow):
             menu.connect(signal, self._context_closed)
         menu.get_style_context().add_class("pinote-window")
         menu.get_style_context().add_class("reminder-menu")
+        menu.get_style_context().add_class("icon-menu")
+        menu.set_reserve_toggle_size(False)
+        # GtkLabel supplies a generic text-editing menu (including disabled
+        # Cut/Paste/Delete). Replace it rather than mixing text and icon actions.
+        for child in menu.get_children():
+            child.destroy()
         note = row.note  # Actions carry the revision shown when the menu opened.
-        separator = Gtk.SeparatorMenuItem()
-        edit = Gtk.MenuItem(label="Edit…")
+        copy = icon_menu_item("edit-copy-symbolic", "Copy note")
+        copy.connect(
+            "activate",
+            lambda _item: Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(note.text, -1),
+        )
+        edit = icon_menu_item("document-edit-symbolic", "Edit…")
         edit.connect("activate", lambda _item: self._open_editor(note))
-        schedule = Gtk.MenuItem(label="Set reminder…")
+        schedule = icon_menu_item("preferences-system-notifications-symbolic", "Set reminder…")
         schedule.connect("activate", lambda _item: self._open_schedule(note))
-        tag_item = Gtk.MenuItem(label="Tag")
+        tag_item = icon_menu_item("tag-symbolic", "Tag")
         tag_menu = Gtk.Menu()
         tag_menu.get_style_context().add_class("pinote-window")
         tag_menu.get_style_context().add_class("reminder-menu")
@@ -802,12 +821,38 @@ class ReminderWindow(Gtk.ApplicationWindow):
             tag_menu, self._tag_choices(note.tag), note.tag, lambda tag: self._set_tag(note, tag)
         )
         tag_menu.append(Gtk.SeparatorMenuItem())
-        new_tag = Gtk.MenuItem(label="New tag…")
+        new_tag = icon_menu_item("list-add-symbolic", "New tag…")
         new_tag.connect("activate", lambda _item: self._open_editor(note, tag_only=True))
         tag_menu.append(new_tag)
         tag_menu.show_all()
         tag_item.set_submenu(tag_menu)
-        for item in (separator, edit, schedule, tag_item):
+        state_items = []
+        states = (
+            [("reset", "document-revert-symbolic", "Reset")]
+            if note.state == "in_progress"
+            else [("start", "media-playback-start-symbolic", "Start")]
+        )
+        states += [
+            ("done", "task-complete-symbolic", "Complete"),
+            ("rm", "archive-symbolic", "Remove"),
+        ]
+        for action, icon, label in states:
+            item = icon_menu_item(icon, label)
+            item.connect(
+                "activate",
+                lambda _item, action=action: self._act(note.id, action, expected_state=note.state),
+            )
+            item.set_sensitive(not self.action_pending)
+            state_items.append(item)
+        for item in (
+            copy,
+            Gtk.SeparatorMenuItem(),
+            *state_items,
+            Gtk.SeparatorMenuItem(),
+            edit,
+            schedule,
+            tag_item,
+        ):
             menu.append(item)
             item.show()
         edit.set_sensitive(not self.action_pending)
@@ -959,7 +1004,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
         self._submit(add, action=None, draft_revision=revision)
 
-    def _act(self, note_id: int, action: str) -> None:
+    def _act(self, note_id: int, action: str, *, expected_state: str | None = None) -> None:
         row = self.rows.get(note_id)
         if self.closed or self.action_pending or row is None or row.exiting:
             return
@@ -969,7 +1014,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if self._has_checklist_focus():
                 self.deferred_progress.add(note_id)
         self._update_controls()
-        self._submit(lambda: self.model.transition(note_id, action), action=(note_id, action))
+        self._submit(
+            lambda: (
+                self.model.transition(note_id, action, expected_state=expected_state)
+                if expected_state is not None
+                else self.model.transition(note_id, action)
+            ),
+            action=(note_id, action),
+        )
 
     def _submit(
         self, operation, *, action: tuple[int, str] | None, draft_revision: int | None = None
@@ -1106,7 +1158,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
     def _place_row(self, row: NoteRow) -> None:
         target = (
             self.progress_list
-            if row.note.state == "in_progress" and row.note.id not in self.deferred_progress
+            if row.note.state == "in_progress"
+            and (self.view_mode == 1 or row.note.id not in self.deferred_progress)
             else self.list_box
         )
         parent = row.get_parent()
@@ -1124,12 +1177,26 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self._place_row(row)
         self._update_sections()
 
+    def _cycle_view(self, _button) -> None:
+        self.view_mode = (self.view_mode + 1) % 3
+        icon, description = (
+            ("view-collapse-symbolic", "Show only in-progress notes"),
+            ("view-bottom-bar-symbolic", "Show only bottom bar"),
+            ("view-expand-symbolic", "Show all notes"),
+        )[self.view_mode]
+        self.minimise_button.set_image(icon_image(icon))
+        self.minimise_button.set_tooltip_text(description)
+        self.minimise_button.get_accessible().set_name(description)
+        self._arrange_rows()
+
     def _update_sections(self) -> None:
         ordinary = self.list_box.get_children()
         progress = self.progress_list.get_children()
-        self.scroll.set_visible(bool(ordinary) or not progress)
-        self.progress_scroll.set_visible(bool(progress))
-        self.progress_separator.set_visible(bool(ordinary) and bool(progress))
+        self.scroll.set_visible(self.view_mode == 0 and (bool(ordinary) or not progress))
+        self.progress_scroll.set_visible(self.view_mode != 2 and bool(progress))
+        self.progress_separator.set_visible(
+            self.view_mode == 0 and bool(ordinary) and bool(progress)
+        )
         for list_box, rows, name in (
             (self.list_box, ordinary, "Reminders"),
             (self.progress_list, progress, "In progress"),

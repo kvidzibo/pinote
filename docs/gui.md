@@ -88,8 +88,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   adding that draft removes its cache; newer edits made while saving are kept.
   **Tab** moves focus to the controls.
   Failed saves keep your input. Successful saves clear only the submitted draft;
-  edits made while saving stay in the field. The list scrolls to the newly saved
-  task once it loads. List-refresh errors do not undo a saved task.
+  edits made while saving stay in the field. In the fully open view, the list scrolls
+  to the newly saved task once it loads. List-refresh errors do not undo a saved task.
 - Shows each matching active note's **first line**, with literal text and wrapping for
   long first lines. Multiline notes have an **eye/preview button** on the right;
   single-line notes do not. Preview opens a scrollable, read-only popup with the
@@ -105,6 +105,10 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Markdown uses the optional `gui` install extra; without its parser, previews stay plain text.
 - Right-clicking note text outlines that row while its context menu or tag submenu
   is open. Dismissing the menu clears the outline without changing the task's state.
+  The compact, icon-only menu offers **Copy note** (copies the full text), **Start**
+  (triangle) or **Reset** (return arrow), **Complete** (checkmark), and **Remove**
+  (archive box), plus editing, scheduling, and tags. Hover for labels; only tag
+  choices show text. Remove archives immediately; recover the task from Archive.
 - **Right-click note text → Edit…** opens a full multiline editor. Click **Save**
   or press **Ctrl+Enter** to save; **Enter** inserts a newline. **Cancel** or **Esc**
   discards unsaved edits. Editing keeps the task's ID, tag, and progress state.
@@ -157,10 +161,17 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - Hold the **four-arrow drag handle** beside the bottom hamburger menu and move
   the pointer to reposition the window; release to stop dragging.
   Action buttons use bundled icons with tooltips and accessible names, independent
-  of the desktop icon theme. Menu entries and filter choices keep their text labels.
-- The bottom **menu** beside **+** and the drag handle contains **Filter by tag**, **Reminders…**,
-  **Archive…**, and **Close**. There is no Undo button. **Archive…** opens a separate, resizable,
-  titlebar-free window.
+  of the desktop icon theme. Tag choices keep their text labels.
+- The **minimise button** next to the drag handle cycles with each click:
+  **all notes → in-progress notes and bottom bar → bottom bar only → all notes**.
+  Tag filters still apply. The in-progress view includes newly started tasks immediately.
+  Hidden tasks are unchanged; the input draft is preserved. The chosen view stays in
+  effect during updates: added tasks, reset tasks, and due reminders are ordinary
+  tasks, so switch to all notes to see them. Reopening starts fully open.
+- The bottom **menu** beside **+** and the drag handle contains icon-only actions:
+  **Filter by tag** (funnel), **Reminders…** (bell), **Archive…** (box), and **Close** (×).
+  Hover for labels; the filter tooltip also shows the current selection. There is no Undo button.
+  **Archive…** opens a separate, resizable, titlebar-free window.
   **All** (default), **1d**, and **7d** filter by completion/deletion time over all
   history, the past 24 hours, or the past seven days. Filtering never deletes tasks.
   It lists currently completed/deleted tasks, newest first, including previous

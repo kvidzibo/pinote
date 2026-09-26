@@ -12,6 +12,7 @@ import textwrap
 import threading
 import time
 from datetime import UTC, datetime, timedelta
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -194,12 +195,27 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert window.entry.get_accessible().get_name() == "New task"
     assert window.add_button.get_accessible().get_name() == "Add task"
     assert window.menu_button.get_accessible().get_name() == "Reminders menu"
+    for item, name, icon_name in (
+        (window.filter_item, "Filter by tag: Untagged", "view-filter-symbolic"),
+        (window.reminders_button, "Reminders…", "preferences-system-notifications-symbolic"),
+        (window.archive_button, "Archive…", "archive-symbolic"),
+        (window.close_menu_button, "Close reminders (Esc)", "window-close-symbolic"),
+    ):
+        assert item.get_accessible().get_name() == name
+        assert item.get_tooltip_text() == name
+        image = item.get_child()
+        assert isinstance(image, Gtk.Image) and image.get_visible()
+        icon, _size = image.get_gicon()
+        assert icon.get_bytes().get_data() == (
+            files("pinote.gui").joinpath("icons", f"{icon_name}.svg").read_bytes()
+        )
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
     assert window.composer.get_children() == [
         window.entry_box,
         window.add_button,
         window.drag_button,
+        window.minimise_button,
         window.menu_button,
     ]
     assert not window.get_resizable()
@@ -236,6 +252,90 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         assert len(store.history()) == 3
 
 
+def test_minimise_cycle_and_context_state_icons(gtk):
+    from pinote.gui.app import Gdk, Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Ordinary task\nFull copied details")
+        store.add("Started task")
+        store.transition(2, "start")
+    window = gtk.open()
+    window.entry.set_text("Preserved draft")
+    window.deferred_progress.add(2)
+    window._arrange_rows()
+
+    def settle():
+        ready = time.monotonic() + 0.2
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready and not window.geometry_source)
+
+    def cycle(mode, ordinary, progress):
+        settle()
+        click_button(gtk, window, window.minimise_button)
+        wait_until(gtk.glib, lambda: window.view_mode == mode)
+        window._render(window.notes_snapshot)
+        settle()
+        assert window.scroll.get_visible() == ordinary
+        assert window.progress_scroll.get_visible() == progress
+        assert window.composer.get_mapped()
+        assert window.entry.get_text() == "Preserved draft"
+        assert window.minimise_button.get_image().get_gicon() is not None
+        return window.get_size().height
+
+    settle()
+    full_height = window.get_size().height
+    progress_height = cycle(1, False, True)
+    assert window.rows[2].get_parent() is window.progress_list
+    bar_height = cycle(2, False, False)
+    assert bar_height < progress_height < full_height
+    cycle(0, True, window.rows[2].get_parent() is window.progress_list)
+
+    def menu_action(label):
+        settle()
+        pointer_at(gtk, window, window.rows[1].body, 12, 8, "click", "3")
+        wait_until(
+            gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
+        )
+        menu = window.context_menu
+        assert menu.get_allocated_width() < 80
+        for child in menu.get_children():
+            if isinstance(child, Gtk.SeparatorMenuItem):
+                continue
+            assert isinstance(child.get_child(), Gtk.Image)
+            assert child.get_tooltip_text() == child.get_accessible().get_name()
+        item = next(
+            child for child in menu.get_children() if child.get_accessible().get_name() == label
+        )
+        assert isinstance(item.get_child(), Gtk.Image)
+        icon, _size = item.get_child().get_gicon()
+        data = icon.get_bytes().get_data()
+        assert b"<svg" in data
+        assert item.get_tooltip_text() == label
+        ready = time.monotonic() + 0.6
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+        click_button(gtk, menu, item)
+        wait_until(gtk.glib, lambda: window.context_menu is None and not window.pending)
+
+    menu_action("Copy note")
+    assert Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_for_text() == (
+        "Ordinary task\nFull copied details"
+    )
+    menu_action("Start")
+    assert window.rows[1].note.state == "in_progress"
+    menu_action("Reset")
+    assert window.rows[1].note.state == "active"
+    menu_action("Complete")
+    wait_until(gtk.glib, lambda: 1 not in window.rows)
+    cycle(1, False, True)
+    cycle(2, False, False)
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "done")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and not window.rows)
+    assert not window.scroll.get_visible() and not window.progress_scroll.get_visible()
+    cycle(0, True, False)
+    cycle(1, False, False)
+
+
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     from pinote.gui.app import Gtk
 
@@ -257,7 +357,11 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     window.entry.set_text("Unfinished new task")
 
     def select(menu, label):
-        item = next(item for item in menu.get_children() if item.get_label() == label)
+        item = next(
+            item
+            for item in menu.get_children()
+            if item.get_label() == label or item.get_accessible().get_name() == label
+        )
         # GTK ignores pointer activation during its submenu-opening grace period.
         ready = time.monotonic() + 0.6
         wait_until(gtk.glib, lambda: time.monotonic() >= ready)
@@ -286,7 +390,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
 
     def tag_menu(note_id):
         menu = context(note_id)
-        tag = next(item for item in menu.get_children() if item.get_label() == "Tag")
+        tag = next(
+            item for item in menu.get_children() if item.get_accessible().get_name() == "Tag"
+        )
         subprocess.run(["xdotool", "key", "End", "Right"], env=gtk.env, check=True, timeout=5)
         wait_until(gtk.glib, lambda: tag.get_submenu().get_mapped())
         assert window.rows[note_id].get_style_context().has_class("context-target")
@@ -405,7 +511,9 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
         gtk.glib, lambda: window.context_menu is not None and window.context_menu.get_mapped()
     )
     item = next(
-        item for item in window.context_menu.get_children() if item.get_label() == "Set reminder…"
+        item
+        for item in window.context_menu.get_children()
+        if item.get_accessible().get_name() == "Set reminder…"
     )
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
@@ -479,7 +587,6 @@ def test_scheduled_reminders_move_between_lists_and_catch_up_after_reopening(gtk
     assert window.rows[1].note.remind_at is None and not window.rows[1].done.get_active()
     row = window.rows[1]
     wait_until(gtk.glib, lambda: row.reminder_icon.get_mapped())
-    from importlib.resources import files
 
     icon, _size = row.reminder_icon.get_gicon()
     assert (
@@ -825,6 +932,7 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         window.add_button,
         window.menu_button,
         window.drag_button,
+        window.minimise_button,
         window.rows[1].preview_button,
     }
     widgets = [window]
@@ -2048,6 +2156,12 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
     height = window.get_size().height
     click_button(gtk, window, window.menu_button)
     wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    assert window.menu.get_allocated_width() <= 72
+    icon_positions = [
+        item.get_child().translate_coordinates(window.menu, 0, 0)
+        for item in window.menu.get_children()
+    ]
+    assert len({x for x, _y in icon_positions}) == 1
     assert window.get_size().height == height
     subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
     wait_until(gtk.glib, lambda: not window.menu.get_visible())
@@ -2582,7 +2696,9 @@ def test_in_progress_pins_on_focus_loss_above_input_and_below_new_tasks(gtk, mon
         wait_until(gtk.glib, lambda: window.context_menu is not None)
         assert row.get_parent() is window.list_box
         edit_item = next(
-            item for item in window.context_menu.get_children() if item.get_label() == "Edit…"
+            item
+            for item in window.context_menu.get_children()
+            if item.get_accessible().get_name() == "Edit…"
         )
         # Model a WM activation gap: menu closed, parent inactive, child not active yet.
         with monkeypatch.context() as patch:
