@@ -17,6 +17,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from pinote.gui.icons import icon_button  # noqa: E402
+from pinote.gui.placement import place_child  # noqa: E402
 
 
 class NoteEditor(Gtk.ApplicationWindow):
@@ -42,7 +43,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.set_role("pinote-editor")
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
-        self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        place_child(self, owner)
         area = self.get_display().get_monitor_at_window(owner.get_window()).get_workarea()
         self.set_default_size(
             min(480, max(1, area.width - 50)), -1 if tag_only or schedule_only else 240

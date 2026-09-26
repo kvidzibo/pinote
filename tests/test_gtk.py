@@ -348,8 +348,12 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     from pinote.gui.app import Gtk
 
     item = window.composer_tag_menu.get_children()[1]
-    assert item.get_label() == "Work <🐦>"
+    assert item.get_accessible().get_name() == "Work <🐦>"
     assert not isinstance(item, Gtk.CheckMenuItem)
+    icon, _size = item.get_child().image.get_gicon()
+    assert icon.get_bytes().get_data() == (
+        files("pinote.gui").joinpath("icons", "tag-symbolic.svg").read_bytes()
+    )
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
     click_button(gtk, item.get_toplevel(), item)
@@ -370,8 +374,9 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
         row = window.rows[note_id]
         assert row.note.tag == "Work <🐦>"
         assert row.tag_badge.get_visible()
-        assert row.tag_badge.get_text() == "Work <🐦>"
-        assert not row.tag_badge.get_use_markup()
+        assert row.tag_badge.label.get_text() == "Work <🐦>"
+        assert not row.tag_badge.label.get_use_markup()
+        assert row.tag_badge.image.get_visible()
         assert row.content.get_children().index(row.tag_badge) < row.content.get_children().index(
             row.body
         )
@@ -407,7 +412,9 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending)
     window._prepare_composer_tags(window.composer_tag_menu)
-    assert "Personal" in [item.get_label() for item in window.composer_tag_menu.get_children()]
+    assert "Personal" in [
+        item.get_accessible().get_name() for item in window.composer_tag_menu.get_children()
+    ]
     window.entry.set_text("New personal task")
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and 4 in window.rows)
@@ -445,6 +452,7 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
     manager = window.tags_window
     wait_until(gtk.glib, lambda: not manager.pending and "Work" in manager.rows)
     assert manager.get_modal() and manager.get_role() == "pinote-tags"
+    assert manager.rows["Work"].get_child().image.get_visible()
     manager.entry.set_text("Unused")
     click_button(gtk, manager, manager.save_button)
     wait_until(gtk.glib, lambda: not manager.pending and "Unused" in manager.rows)
@@ -494,7 +502,9 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
     window.worker.shutdown(wait=True)
     window = gtk.open(application)
     window._prepare_composer_tags(window.composer_tag_menu)
-    assert "Unused" in [item.get_label() for item in window.composer_tag_menu.get_children()]
+    assert "Unused" in [
+        item.get_accessible().get_name() for item in window.composer_tag_menu.get_children()
+    ]
     window._open_tags()
     manager = window.tags_window
     wait_until(gtk.glib, lambda: not manager.pending)
@@ -519,12 +529,16 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     window = gtk.open()
     assert window.tag_filter == "" and set(window.rows) == {1}
     window._prepare_filters()
-    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
         "All (2)",
         "Archived (0)",
         "Work (1)",
     ]
+    for item in window.filter_menu.get_children():
+        assert not isinstance(item, Gtk.CheckMenuItem)
+        assert isinstance(item.get_child().image, Gtk.Image)
+    assert window.filter_menu.get_children()[0].get_style_context().has_class("selected-tag")
     window.entry.set_text("Unfinished new task")
 
     def select(menu, label):
@@ -601,7 +615,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert window.empty.get_text() == "No untagged reminders."
     filter_by("Personal 🐦 (1)")
     assert set(window.rows) == {1}
-    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (0)",
         "All (2)",
         "Archived (0)",
@@ -613,7 +627,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {1, 4})
     assert window.rows[4].note.tag == "Personal 🐦"
     tags = tag_menu(1)
-    assert [item.get_label() for item in tags.get_children()][:4] == [
+    assert [item.get_accessible().get_name() for item in tags.get_children()][:4] == [
         "Untagged (0)",
         "Archived (0)",
         "Personal 🐦 (2)",
@@ -643,7 +657,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert window.context_menu is None
     assert not target.get_style_context().has_class("context-target")
     window._prepare_filters()
-    assert [item.get_label() for item in window.filter_menu.get_children()] == [
+    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
         "All (2)",
         "Archived (0)",
@@ -1580,10 +1594,26 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             subprocess.run(["xdotool", "key", "Escape"], env=env, check=True, timeout=5)
             wait_until(gtk.glib, lambda: window.preview is None)
             assert not window.closed and tuple(window.get_position()) == expected_position()
-            for kind in ("edit", "tag", "archive"):
+            original_position = expected_position()
+            corner = (
+                geometry.x + geometry.width - window.get_size().width - 12,
+                screen_bottom - window.get_size().height - 12,
+            )
+            window.move(*corner)
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == corner)
+            for kind in ("edit", "tag", "archive", "reminders", "schedule", "tags"):
                 if kind == "archive":
                     window._open_archive()
                     child = window.archive_window
+                elif kind == "reminders":
+                    window._open_reminders()
+                    child = window.scheduled_window
+                elif kind == "schedule":
+                    window._open_schedule(window.rows[1].note)
+                    child = window.editor
+                elif kind == "tags":
+                    window._open_tags()
+                    child = window.tags_window
                 else:
                     window._open_editor(window.rows[1].note, tag_only=kind == "tag")
                     child = window.editor
@@ -1598,12 +1628,38 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                         nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
                     return None
 
-                wait_until(gtk.glib, lambda: managed_child() is not None)
+                def visible_child():
+                    node = managed_child()
+                    if node is None or not node["focused"]:
+                        return False
+                    rect = node["rect"]
+                    return (
+                        geometry.x <= rect["x"]
+                        and geometry.y <= rect["y"]
+                        and rect["x"] + rect["width"] <= geometry.x + geometry.width
+                        and rect["y"] + rect["height"] <= screen_bottom
+                    )
+
+                wait_until(gtk.glib, visible_child)
                 node = managed_child()
                 assert node["border"] == "none", f"{kind} has an i3 titlebar"
                 assert node["deco_rect"]["height"] == 0
+                if kind == "tag":
+                    child._error("Validation failed.\n" * 12)
+                    wait_until(
+                        gtk.glib, lambda child=child: child.error_text.get_allocated_height() > 100
+                    )
+                    wait_until(gtk.glib, visible_child)
+                if kind == "archive":
+                    # Re-present an existing window after it was hidden behind the parent.
+                    window.present()
+                    wait_until(gtk.glib, lambda: window.is_active())
+                    window._open_archive()
+                    wait_until(gtk.glib, visible_child)
                 child.close()
                 wait_until(gtk.glib, lambda child=child: child.closed)
+            window.move(*original_position)
+            wait_until(gtk.glib, lambda: tuple(window.get_position()) == original_position)
             with Store(gtk.paths.database) as store:
                 for index in range(30):
                     store.add(f"Extra reminder {index}")

@@ -29,6 +29,11 @@
     padding: 6px 10px;
 }
 
+.pinote-window.reminder-menu menuitem.selected-tag {
+    background-color: #343c49;
+    font-weight: bold;
+}
+
 .pinote-window.reminder-menu menuitem:hover {
     background-color: #343c49;
 }

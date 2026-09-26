@@ -18,7 +18,13 @@ from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
-from pinote.gui.icons import icon_button, icon_image, icon_menu_item  # noqa: E402
+from pinote.gui.icons import (  # noqa: E402
+    TagLabel,
+    icon_button,
+    icon_image,
+    icon_menu_item,
+    tag_menu_item,
+)
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.tags import TagsWindow  # noqa: E402
@@ -58,9 +64,8 @@ class NoteRow(Gtk.ListBoxRow):
         self.done.connect("button-press-event", self._check_pressed)
         self.done.connect("button-release-event", lambda _button, event: event.button == 3)
         content.pack_start(self.done, False, False, 0)
-        self.tag_badge = Gtk.Label(valign=Gtk.Align.START)
-        self.tag_badge.set_ellipsize(Pango.EllipsizeMode.END)
-        self.tag_badge.set_max_width_chars(12)
+        self.tag_badge = TagLabel(icon_size=10)
+        self.tag_badge.set_valign(Gtk.Align.START)
         self.tag_badge.set_margin_top(3)
         self.tag_badge.set_no_show_all(True)
         self.tag_badge.get_style_context().add_class("tag-badge")
@@ -133,7 +138,7 @@ class NoteRow(Gtk.ListBoxRow):
         if note.text != self.note.text:
             self.body.set_text(note.text.split("\n", 1)[0])
         self.note = note
-        self.tag_badge.set_text(note.tag or "")
+        self.tag_badge.label.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)
         self.tag_badge.get_accessible().set_name(f"Tag: {note.tag or 'Untagged'}")
         self.tag_badge.set_visible(note.tag is not None)
@@ -757,17 +762,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self._queue_pin_check()
 
     @staticmethod
-    def _radio_choices(menu, choices, selected, on_select) -> None:
-        group = None
+    def _tag_menu_choices(menu, choices, selected, on_select) -> None:
+        menu.set_reserve_toggle_size(False)
         for value, label in choices:
-            item = Gtk.RadioMenuItem.new_with_label_from_widget(group, label)
-            group = item
-            item.set_active(value == selected)
-            item.connect(
-                "toggled", lambda item, value=value: on_select(value) if item.get_active() else None
-            )
+            item = tag_menu_item(label, selected=value == selected)
+            item.connect("activate", lambda _item, value=value: on_select(value))
             menu.append(item)
-            item.show()
 
     def _update_filter_label(self) -> None:
         if self.tag_filter is None:
@@ -819,7 +819,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         menu.set_reserve_toggle_size(False)
         tags = set(self.tags)
         for tag in [None, *sorted(tags, key=lambda tag: (tag.casefold(), tag))]:
-            item = Gtk.MenuItem(label=tag or "Untagged")
+            item = tag_menu_item(tag or "Untagged", selected=tag == self.creation_tag)
             item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
             menu.append(item)
         menu.append(Gtk.SeparatorMenuItem())
@@ -869,7 +869,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_menu = Gtk.Menu()
         self.filter_menu.get_style_context().add_class("pinote-window")
         self.filter_menu.get_style_context().add_class("reminder-menu")
-        self._radio_choices(
+        self._tag_menu_choices(
             self.filter_menu,
             self._tag_choices(self.tag_filter, filtering=True),
             self.tag_filter,
@@ -925,7 +925,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         tag_menu = Gtk.Menu()
         tag_menu.get_style_context().add_class("pinote-window")
         tag_menu.get_style_context().add_class("reminder-menu")
-        self._radio_choices(
+        self._tag_menu_choices(
             tag_menu, self._tag_choices(note.tag), note.tag, lambda tag: self._set_tag(note, tag)
         )
         tag_menu.append(Gtk.SeparatorMenuItem())

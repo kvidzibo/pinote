@@ -79,6 +79,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   configurable (default **10**); extra notes scroll. In-progress tasks have a separate
   pinned section just above the input, so scrolling ordinary tasks never hides them.
   Each scrollbar has its own space, with a gap beside the row icons.
+- Child windows (Tags, Edit, New tag, Set reminder, Archive, and Reminders) open above
+  the checklist and stay within the monitor's usable area, including when errors
+  or other content make them grow. In-bounds manual positions are preserved.
 - Add using the bottom **Add a task…** field: press **Enter** or click **+**.
   **Shift+Enter** inserts a newline; pasting preserves newlines. The editor grows
   to a few lines, then scrolls. It keeps its expanded height while you edit, including
@@ -122,6 +125,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
+- Tag names use a tag icon in task badges, the archive, reminders, and tag-management
+  lists. Tag menus use these icons instead of radio circles; the current choice is highlighted.
 - **Tag dropdown before the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
   Right-click the tag beside the input to reset it to **Untagged**, keeping the draft,

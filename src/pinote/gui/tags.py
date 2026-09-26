@@ -11,7 +11,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
-from pinote.gui.icons import icon_button  # noqa: E402
+from pinote.gui.icons import TagLabel, icon_button  # noqa: E402
+from pinote.gui.placement import place_child  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import NoteError, validate_tag  # noqa: E402
 
@@ -35,7 +36,7 @@ class TagsWindow(Gtk.ApplicationWindow):
         self.set_role("pinote-tags")
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
-        self.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        place_child(self, owner)
         area = self.get_display().get_monitor_at_window(owner.get_window()).get_workarea()
         self.set_default_size(min(440, max(1, area.width - 50)), min(380, max(1, area.height - 80)))
         self.get_style_context().add_class("pinote-window")
@@ -246,8 +247,7 @@ class TagsWindow(Gtk.ApplicationWindow):
                 row.get_style_context().add_class("note-row")
                 row.get_style_context().add_class("tag-manager-row")
                 row.tag = tag
-                label = Gtk.Label(label=tag, xalign=0, ellipsize=Pango.EllipsizeMode.END)
-                label.set_max_width_chars(42)
+                label = TagLabel(tag, max_width_chars=42)
                 label.set_margin_top(6)
                 label.set_margin_bottom(6)
                 label.set_tooltip_text(tag)

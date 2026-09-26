@@ -8,7 +8,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Pango  # noqa: E402
 
 from pinote.gui.archive import SavedTasksWindow  # noqa: E402
-from pinote.gui.icons import icon_button  # noqa: E402
+from pinote.gui.icons import TagLabel, icon_button  # noqa: E402
 from pinote.reminders import local_reminder_time  # noqa: E402
 from pinote.store import Note  # noqa: E402
 
@@ -30,7 +30,13 @@ class ScheduledRow(Gtk.ListBoxRow):
         self.date.set_line_wrap(True)
         self.date.get_style_context().add_class("dim-label")
         text.pack_start(self.body, False, False, 0)
-        text.pack_start(self.date, False, False, 0)
+        details = Gtk.Box(spacing=8)
+        details.pack_start(self.date, False, False, 0)
+        self.tag_badge = TagLabel()
+        self.tag_badge.set_no_show_all(True)
+        self.tag_badge.get_style_context().add_class("tag-badge")
+        details.pack_start(self.tag_badge, False, False, 0)
+        text.pack_start(details, False, False, 0)
         content.pack_start(text, True, True, 0)
         controls = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, valign=Gtk.Align.START)
         self.change = icon_button(
@@ -52,8 +58,9 @@ class ScheduledRow(Gtk.ListBoxRow):
         if self.body.get_text() != note.text:
             self.body.set_text(note.text)
         label = local_reminder_time(note.remind_at)
-        if note.tag:
-            label += f" · {note.tag}"
+        self.tag_badge.label.set_text(note.tag or "")
+        self.tag_badge.set_tooltip_text(note.tag)
+        self.tag_badge.set_visible(note.tag is not None)
         if self.date.get_text() != label:
             self.date.set_text(label)
         self.restore.set_sensitive(sensitive)
