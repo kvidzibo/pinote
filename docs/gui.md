@@ -63,9 +63,10 @@ does not reinstall packages or change desktop configuration.
 Update **both** the CLI and GUI installations before reopening the GUI. For the
 editable setup above, update the checkout and run `uv tool install --reinstall .`
 for the separately installed CLI. Back up `notes.db` first ([backup instructions](usage.md#data-privacy-and-backup)).
-The first database open upgrades schema 1, 2, or 3 to **4** atomically, retaining note IDs,
-timestamps, tags, history, and import markers. Existing tasks have no scheduled time;
-schema 1/2 tasks start untagged. Older pinote versions cannot read schema 4.
+The first database open upgrades schema 1–4 to **5** atomically, retaining note IDs,
+timestamps, tags, reminders, history, and import markers. Schema 5 stores tags separately,
+including unused tags, and seeds the registry from existing tasks. Schema 1/2 tasks start
+untagged. Older pinote versions cannot read schema 5.
 Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Historical text is preserved, not replaced when a task is edited.
 
@@ -117,7 +118,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - **Right-click note text → Tag →** choose a tag, **New tag…**, or **Untagged** to
   clear it. Each task has at most one tag. Names are case-sensitive, trimmed, Unicode
   normalized, and limited to 64 characters on one line. Tags in use on active,
-  scheduled, or archived tasks are available for reuse; there is no separate tag registry.
+  scheduled, or archived tasks are available for reuse. Tags remain saved even when unused.
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **#Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
@@ -125,9 +126,14 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
   Right-click the tag beside the input to reset it to **Untagged**, keeping the draft,
   existing tasks, and list filter unchanged.
-  **+** creates and selects a new tag. Unused new tags remain available for this session;
-  adding a task with that tag saves it. The selection resets to **Untagged** on reopen.
+  **+** saves a new tag in the database immediately and selects it, even without a task.
+  Saved tags survive reopening; only the selection resets to **Untagged**.
   Tags appear as small badges before task text; long names have full-name tooltips.
+- **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
+  **Save** to add a tag, or select one and change its name to rename it. Renaming
+  updates all attached tasks, including archived and scheduled tasks. **Delete**
+  asks for confirmation, then clears the tag from tasks and removes it from the registry;
+  tasks and their history are kept. Existing names cannot be overwritten by renaming.
 - **Bottom menu → Filter by tag →** independently selects **Untagged**, **All**, or a tag.
   **Untagged is the default every time the checklist reopens.** Filtering only hides
   rows; it never changes tasks or the tag selected for new tasks. A newly added or
@@ -176,7 +182,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   effect during updates: added tasks, reset tasks, and due reminders are ordinary
   tasks, so switch to all notes to see them. Reopening starts fully open.
 - The bottom **menu** beside **+** and the drag handle contains icon-only actions:
-  **Filter by tag** (funnel), **Reminders…** (bell), **Archive…** (box), and **Close** (×).
+  **Filter by tag** (funnel), **Reminders…** (bell), **Archive…** (box),
+  **Manage tags…** (tag), and **Close** (×).
   Hover for labels; the filter tooltip also shows the current selection. There is no Undo button.
   **Archive…** opens a separate, resizable, titlebar-free window.
   **All** (default), **1d**, and **7d** filter by completion/deletion time over all

@@ -199,6 +199,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         (window.filter_item, "Filter by tag: Untagged", "view-filter-symbolic"),
         (window.reminders_button, "Reminders…", "preferences-system-notifications-symbolic"),
         (window.archive_button, "Archive…", "archive-symbolic"),
+        (window.tags_button, "Manage tags…", "tag-symbolic"),
         (window.close_menu_button, "Close reminders (Esc)", "window-close-symbolic"),
     ):
         assert item.get_accessible().get_name() == name
@@ -395,11 +396,14 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     editor = window.editor
     editor.entry.set_text("x" * 65)
     editor.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not editor.saving)
     assert editor.error_text.get_visible() and window.creation_tag == "Work <🐦>"
     editor.entry.set_text("  Personal  ")
     editor.entry.emit("activate")
     wait_until(gtk.glib, lambda: window.editor is None)
     assert window.creation_tag == "Personal" and window.tag_filter is None
+    with Store(gtk.paths.database) as store:
+        assert "Personal" in store.tags()  # Saved before any task uses it.
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending)
     window._prepare_composer_tags(window.composer_tag_menu)
@@ -423,6 +427,84 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and 5 in window.rows)
     assert window.rows[5].note.tag is None
+
+
+def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Keep this task", tag="Work")
+    window = gtk.open()
+    window._set_filter(None)
+    window._select_creation_tag("Work")
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    pointer_at(gtk, window.tags_button.get_toplevel(), window.tags_button, 10, 10)
+    ready = time.monotonic() + 0.1
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, window.tags_button.get_toplevel(), window.tags_button)
+    wait_until(gtk.glib, lambda: window.tags_window is not None)
+    manager = window.tags_window
+    wait_until(gtk.glib, lambda: not manager.pending and "Work" in manager.rows)
+    assert manager.get_modal() and manager.get_role() == "pinote-tags"
+    manager.entry.set_text("Unused")
+    click_button(gtk, manager, manager.save_button)
+    wait_until(gtk.glib, lambda: not manager.pending and "Unused" in manager.rows)
+    with Store(gtk.paths.database) as store:
+        assert store.tags() == ["Unused", "Work"]
+    manager.list_box.select_row(manager.rows["Work"])
+    manager.entry.set_text("Unused")
+    manager.entry.emit("activate")
+    wait_until(gtk.glib, lambda: not manager.saving)
+    assert manager.error_text.get_visible() and manager.entry.get_text() == "Unused"
+    manager.entry.set_text("Renamed")
+    click_button(gtk, manager, manager.save_button)
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not manager.pending
+            and not window.pending
+            and "Renamed" in manager.rows
+            and window.rows[1].note.tag == "Renamed"
+        ),
+    )
+    assert window.creation_tag == "Renamed" and window.tag_filter is None
+    manager.list_box.select_row(manager.rows["Renamed"])
+    click_button(gtk, manager, manager.delete_button)
+    wait_until(gtk.glib, lambda: manager.confirmation.get_visible())
+    click_button(gtk, manager, manager.cancel_button)
+    wait_until(gtk.glib, lambda: not manager.confirmation.get_visible())
+    with Store(gtk.paths.database) as store:
+        assert "Renamed" in store.tags()
+    click_button(gtk, manager, manager.delete_button)
+    wait_until(gtk.glib, lambda: manager.confirmation.get_visible())
+    click_button(gtk, manager, manager.confirm_button)
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not manager.pending
+            and not window.pending
+            and "Renamed" not in manager.rows
+            and window.rows[1].note.tag is None
+        ),
+    )
+    assert window.creation_tag is None and window.rows[1].note.text == "Keep this task"
+    manager.close()
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    window = gtk.open(application)
+    window._prepare_composer_tags(window.composer_tag_menu)
+    assert "#Unused" in [item.get_label() for item in window.composer_tag_menu.get_children()]
+    window._open_tags()
+    manager = window.tags_window
+    wait_until(gtk.glib, lambda: not manager.pending)
+    manager.entry.set_text("Saved while closing")
+    manager._save()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    with Store(gtk.paths.database) as store:
+        assert "Saved while closing" in store.tags()
 
 
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):

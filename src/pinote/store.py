@@ -169,6 +169,11 @@ MIGRATION_4 = (
     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'",
 )
 
+MIGRATION_5 = (
+    "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL)",
+    "INSERT OR IGNORE INTO tags(name) SELECT DISTINCT tag FROM notes WHERE tag IS NOT NULL",
+)
+
 
 class Store:
     def __init__(self, path: Path, *, timeout: float = 10):
@@ -185,15 +190,15 @@ class Store:
 
     def _initialize(self) -> None:
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 4:
+        if version == 5:
             return  # Ordinary reads must not take a write lock.
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             # Another process may have upgraded while this connection waited.
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            if version == 4:
+            if version == 5:
                 return
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise NoteError(f"Unsupported database version {version}; update pinote.")
             if version == 0:
                 for statement in SCHEMA:
@@ -204,9 +209,12 @@ class Store:
             if version < 3:
                 for statement in MIGRATION_3:
                     self.connection.execute(statement)
-            for statement in MIGRATION_4:
+            if version < 4:
+                for statement in MIGRATION_4:
+                    self.connection.execute(statement)
+            for statement in MIGRATION_5:
                 self.connection.execute(statement)
-            self.connection.execute("PRAGMA user_version = 4")
+            self.connection.execute("PRAGMA user_version = 5")
 
     def __enter__(self) -> Store:
         return self
@@ -232,11 +240,77 @@ class Store:
         text = validate_text(text)
         tag = validate_tag(tag)
         with self.connection:
+            if tag is not None:
+                self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
             return self._insert(text, "active", "add", timestamp(), tag)
 
     def tags(self) -> list[str]:
-        rows = self.connection.execute("SELECT DISTINCT tag FROM notes WHERE tag IS NOT NULL")
+        rows = self.connection.execute("SELECT name FROM tags")
         return sorted((r[0] for r in rows), key=lambda x: (x.casefold(), x))
+
+    def create_tag(self, name: str) -> str:
+        tag = validate_tag(name)
+        if tag is None:
+            raise NoteError("Tag name cannot be empty.")
+        with self.connection:
+            self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
+        return tag
+
+    def rename_tag(self, old: str, new: str) -> bool:
+        old_tag, new_tag = validate_tag(old), validate_tag(new)
+        if old_tag is None or new_tag is None:
+            raise NoteError("Tag name cannot be empty.")
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if not self.connection.execute(
+                "SELECT 1 FROM tags WHERE name=?", (old_tag,)
+            ).fetchone():
+                raise NoteError("This tag no longer exists. Reopen Tags and try again.")
+            if old_tag == new_tag:
+                return False
+            if self.connection.execute("SELECT 1 FROM tags WHERE name=?", (new_tag,)).fetchone():
+                raise NoteError("A tag with that name already exists. Choose another name.")
+            self.connection.execute("INSERT INTO tags(name) VALUES (?)", (new_tag,))
+            self._retag_all(old_tag, new_tag)
+            self.connection.execute("DELETE FROM tags WHERE name=?", (old_tag,))
+        return True
+
+    def delete_tag(self, name: str) -> bool:
+        tag = validate_tag(name)
+        if tag is None:
+            raise NoteError("Tag name cannot be empty.")
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if not self.connection.execute("SELECT 1 FROM tags WHERE name=?", (tag,)).fetchone():
+                raise NoteError("This tag no longer exists. Reopen Tags and try again.")
+            self._retag_all(tag, None)
+            self.connection.execute("DELETE FROM tags WHERE name=?", (tag,))
+        return True
+
+    def _retag_all(self, old: str, new: str | None) -> None:
+        rows = self.connection.execute("SELECT * FROM notes WHERE tag=?", (old,)).fetchall()
+        for row in rows:
+            when = timestamp()
+            self.connection.execute(
+                "UPDATE notes SET tag=?, updated_at=? WHERE id=?", (new, when, row["id"])
+            )
+            self.connection.execute(
+                "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, "
+                "previous_text, tag, previous_tag, remind_at, previous_remind_at) "
+                "VALUES (?, 'tag', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["id"],
+                    row["state"],
+                    row["state"],
+                    when,
+                    row["text"],
+                    row["text"],
+                    new,
+                    old,
+                    row["remind_at"],
+                    row["remind_at"],
+                ),
+            )
 
     def edit(self, note_id: int, text: str, *, expected_updated_at: str) -> bool:
         return self._update(note_id, "edit", validate_text(text), expected_updated_at)
@@ -259,6 +333,8 @@ class Store:
                 )
             new_text = value if action == "edit" else row["text"]
             new_tag = value if action == "tag" else row["tag"]
+            if action == "tag" and new_tag is not None:
+                self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (new_tag,))
             if new_text == row["text"] and new_tag == row["tag"]:
                 return False
             when = timestamp()

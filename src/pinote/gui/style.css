@@ -150,6 +150,10 @@
     transition: none;
 }
 
+.pinote-window .tag-manager-row:selected {
+    background-color: #343c49;
+}
+
 .pinote-window .tag-badge {
     background-color: #343c49;
     color: #c9d7ee;

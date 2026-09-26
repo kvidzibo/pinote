@@ -54,7 +54,9 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 
 In the GUI, add with **Enter** or **+**; right-click task text to change its state,
 edit, tag, or schedule it. The minimise button cycles all notes, in-progress only,
-and bottom-bar-only views. The bottom menu opens reminders and the archive. Full commands,
+and bottom-bar-only views. The bottom menu opens reminders, the archive, and tag management.
+Tags stay saved even without tasks; use the dropdown before the input to tag new tasks.
+Full commands,
 Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md).
 
 ## Important constraints
@@ -74,7 +76,7 @@ Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md
   Close the GUI and stop CLI writes before copying `notes.db` and `gui-draft.txt`.
   [Backup and upgrade details](docs/usage.md#data-privacy-and-backup).
 - Back up before upgrading; update both CLI and GUI installations together.
-  Older versions cannot read schema 4. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
+  Older versions cannot read schema 5. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
 
 ## Validation
 

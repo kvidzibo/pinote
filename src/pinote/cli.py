@@ -150,18 +150,18 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
             for event in events:
                 previous = event["previous_state"] or "new"
                 text = event["text"].replace("\n", "\\n")
-                if event["remind_at"] or event["previous_remind_at"]:
-                    old, new = (
-                        local_reminder_time(value) if value else "none"
-                        for value in (event["previous_remind_at"], event["remind_at"])
-                    )
-                    text = f"reminder {old} -> {new}  {text}"
-                elif event["action"] == "edit":
+                if event["action"] == "edit":
                     text = f"{event['previous_text']!r} -> {event['text']!r}"
                 elif event["action"] == "tag":
                     old = repr(event["previous_tag"]) if event["previous_tag"] else "Untagged"
                     new = repr(event["tag"]) if event["tag"] else "Untagged"
                     text = f"tag {old} -> {new}  {text}"
+                elif event["remind_at"] or event["previous_remind_at"]:
+                    old, new = (
+                        local_reminder_time(value) if value else "none"
+                        for value in (event["previous_remind_at"], event["remind_at"])
+                    )
+                    text = f"reminder {old} -> {new}  {text}"
                 print(
                     f"{event['occurred_at']}  #{event['note_id']}  {event['action']}  "
                     f"{previous} -> {event['state']}  {text}"

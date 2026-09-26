@@ -1,6 +1,7 @@
 """Editing/tagging must preserve revisions, snapshots, and legacy databases."""
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from test_progress import LEGACY_SCHEMA
@@ -26,7 +27,7 @@ def test_legacy_upgrade_allows_edits_and_tags_without_losing_history(tmp_path, v
         db.execute("UPDATE sqlite_sequence SET seq = 40 WHERE name = 'notes'")
         db.execute("UPDATE sqlite_sequence SET seq = 80 WHERE name = 'events'")
     with Store(path) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 5
         original = store.notes()[0]
         assert original.tag is None
         assert store.edit(7, "Edited\nDetails", expected_updated_at=original.updated_at)
@@ -59,7 +60,7 @@ def test_edit_tag_lifecycle_uses_lock_revision_and_atomic_snapshots(tmp_path, mo
     assert not model.edit(edited, edited.text)
     assert model.set_tag(edited, "  Cafe\u0301  ")
     tagged = model.notes()[0]
-    assert tagged.tag == "Café" and model.tags() == ["Café"]
+    assert tagged.tag == "Café" and model.tags() == ["Café", "Work"]
     assert not model.set_tag(tagged, "Café")
     for change in (lambda: model.edit(original, "Overwrite"), lambda: model.set_tag(edited, None)):
         with pytest.raises(NoteError, match="changed"):
@@ -78,7 +79,7 @@ def test_edit_tag_lifecycle_uses_lock_revision_and_atomic_snapshots(tmp_path, mo
     for change in (lambda: model.edit(archived, "Archived"), lambda: model.set_tag(archived, None)):
         with pytest.raises(NoteError, match="changed"):
             change()
-    assert model.tags() == ["Café"]  # Archived tags can be reused.
+    assert model.tags() == ["Café", "Work"]  # Archived and unused tags can be reused.
     assert model.restore(archived)
     restored = model.notes()[0]
     assert restored.tag == "Café"
@@ -103,7 +104,80 @@ def test_edit_tag_lifecycle_uses_lock_revision_and_atomic_snapshots(tmp_path, mo
         assert (events[0]["text"], events[0]["tag"]) == ("Original", "Work")
         assert (events[2]["previous_text"], events[2]["text"]) == ("Original", edited.text)
         assert (events[3]["previous_tag"], events[3]["tag"]) == ("Work", "Café")
-        assert events[-1]["tag"] is None and store.tags() == []
+        assert events[-1]["tag"] is None and store.tags() == ["Café", "Work"]
+
+
+def test_persistent_registry_upgrade_and_management_preserve_tasks_and_history(tmp_path):
+    model = ReminderModel(Paths(tmp_path / "data", tmp_path / "state"))
+    with Store(model.paths.database) as store:
+        for state in ("active", "in_progress", "done", "removed", "scheduled"):
+            note_id = store.add(state, tag="Work")
+            if state == "scheduled":
+                store.schedule(note_id, datetime.now(UTC) + timedelta(days=1))
+            elif state != "active":
+                store.transition(
+                    note_id, {"in_progress": "start", "done": "done", "removed": "rm"}[state]
+                )
+        before = store.notes(all_states=True)
+        history = [dict(event) for event in store.history()]
+        # The v4 tables are identical apart from the new registry.
+        store.connection.execute("DROP TABLE tags")
+        store.connection.execute("PRAGMA user_version = 4")
+    assert model.tags() == ["Work"]
+    assert model.create_tag("  Cafe\u0301  ") == "Café"
+    assert model.create_tag("Café") == "Café"
+    with Store(model.paths.database) as store:
+        assert store.tags() == ["Café", "Work"]
+        assert store.notes(all_states=True) == before
+        assert [dict(event) for event in store.history()] == history
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 5
+    with display_lock(model.paths), pytest.raises(BlockingIOError):
+        model.create_tag("Blocked")
+    with pytest.raises(NoteError, match="already exists"):
+        model.rename_tag("Work", "Café")
+    with pytest.raises(NoteError, match="no longer exists"):
+        model.delete_tag("Missing")
+    assert not model.rename_tag("Work", "Work")
+    with Store(model.paths.database) as store:
+        store.connection.execute(
+            "CREATE TRIGGER fail_tag BEFORE INSERT ON events "
+            "BEGIN SELECT RAISE(ABORT, 'failed event'); END"
+        )
+        for operation in (
+            lambda: model.rename_tag("Work", "Renamed"),
+            lambda: model.delete_tag("Work"),
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                operation()
+            assert store.tags() == ["Café", "Work"]
+            assert store.notes(all_states=True) == before
+        store.connection.execute("DROP TRIGGER fail_tag")
+    assert model.rename_tag("Work", "Renamed")
+    with Store(model.paths.database) as store:
+        renamed = store.notes(all_states=True)
+        assert all(note.tag == "Renamed" for note in renamed)
+        for original, note in zip(before, renamed, strict=True):
+            assert (note.id, note.text, note.state, note.created_at, note.remind_at) == (
+                original.id,
+                original.text,
+                original.state,
+                original.created_at,
+                original.remind_at,
+            )
+            assert note.updated_at != original.updated_at
+        assert [dict(event) for event in store.history()][: len(history)] == history
+    assert model.delete_tag("Renamed")
+    with Store(model.paths.database) as store:
+        assert store.tags() == ["Café"]
+        assert all(note.tag is None for note in store.notes(all_states=True))
+        assert len(store.notes(all_states=True)) == len(before)
+        for original in before:
+            event = store.history(original.id)[-1]
+            assert event["action"] == "tag" and event["previous_tag"] == "Renamed"
+            assert event["tag"] is None and event["state"] == original.state
+            assert event["remind_at"] == original.remind_at == event["previous_remind_at"]
+        assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_cli_history_shows_saved_text_and_tag_changes(cli):
@@ -117,6 +191,14 @@ def test_cli_history_shows_saved_text_and_tag_changes(cli):
     assert history[0].endswith("new -> active  Original")
     assert "'Original' -> 'Edited\\nDetails'" in history[1]
     assert "tag Untagged -> 'Work'" in history[2]
+    with Store(cli.database) as store:
+        store.schedule(note.id, datetime.now(UTC) + timedelta(days=1))
+        store.rename_tag("Work", "Personal")
+        store.delete_tag("Personal")
+    history = cli("history", "1").stdout.splitlines()
+    assert "tag 'Work' -> 'Personal'" in history[-2]
+    assert "tag 'Personal' -> Untagged" in history[-1]
+    assert all("reminder" not in event for event in history[-2:])
 
 
 @pytest.mark.parametrize(

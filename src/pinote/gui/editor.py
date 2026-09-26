@@ -10,7 +10,7 @@ import gi
 
 from pinote.logging_setup import LOGGER
 from pinote.reminders import parse_reminder_time
-from pinote.store import Note, NoteError, validate_tag
+from pinote.store import Note, NoteError
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
@@ -179,17 +179,9 @@ class NoteEditor(Gtk.ApplicationWindow):
             buffer = self.entry.get_buffer()
             value = buffer.get_text(*buffer.get_bounds(), True)
 
-        if self.note is None:
-            try:
-                tag = validate_tag(value)
-            except NoteError as exc:
-                self._error(str(exc))
-                return
-            self.owner._select_creation_tag(tag)
-            self.destroy()
-            return
-
         def operation():
+            if self.note is None:
+                return self.owner.model.create_tag(value)
             if self.schedule_only:
                 return self.owner.model.schedule(self.note, value)
             if self.tag_only:
@@ -215,7 +207,7 @@ class NoteEditor(Gtk.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         self.saving = False
         try:
-            future.result()
+            result = future.result()
         except BlockingIOError:
             self._error("Another note command is busy. Try again.")
         except (NoteError, OSError, sqlite3.Error) as exc:
@@ -224,6 +216,9 @@ class NoteEditor(Gtk.ApplicationWindow):
             LOGGER.exception("Cannot save task changes.")
             self._error("Unexpected failure. Run note to check the saved state.")
         else:
+            if self.note is None:
+                self.owner._tags_changed(None, result)
+                self.owner._select_creation_tag(result)
             self.owner._poll()
             if self.owner.scheduled_window is not None:
                 self.owner.scheduled_window._poll()

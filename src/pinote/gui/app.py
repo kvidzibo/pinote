@@ -21,6 +21,7 @@ from pinote.gui.editor import NoteEditor  # noqa: E402
 from pinote.gui.icons import icon_button, icon_image, icon_menu_item  # noqa: E402
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
+from pinote.gui.tags import TagsWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.paths import Paths  # noqa: E402
@@ -253,13 +254,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.archive_window: ArchiveWindow | None = None
         self.scheduled_window: ScheduledWindow | None = None
         self.editor: NoteEditor | None = None
+        self.tags_window: TagsWindow | None = None
         self.preview: NotePreview | None = None
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
         self.view_mode = 0  # All notes → in progress → bottom bar.
         self.tag_filter: str | None = ""  # Empty = Untagged; None = All.
         self.creation_tag: str | None = None
-        self.draft_tags: set[str] = set()
         self.tags: list[str] = []
         self.notes_snapshot: list[Note] = []
         self.reveal_note_id: int | None = None
@@ -413,11 +414,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
             "preferences-system-notifications-symbolic", "Reminders…"
         )
         self.archive_button = icon_menu_item("archive-symbolic", "Archive…")
+        self.tags_button = icon_menu_item("tag-symbolic", "Manage tags…")
         self.close_menu_button = icon_menu_item("window-close-symbolic", "Close reminders (Esc)")
         for item in (
             self.filter_item,
             self.reminders_button,
             self.archive_button,
+            self.tags_button,
             self.close_menu_button,
         ):
             self.menu.append(item)
@@ -438,6 +441,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.add_button.connect("clicked", lambda _button: self._add())
         self.reminders_button.connect("activate", lambda _item: self._open_reminders())
         self.archive_button.connect("activate", lambda _item: self._open_archive())
+        self.tags_button.connect("activate", lambda _item: self._open_tags())
         self.close_menu_button.connect("activate", lambda _item: self.close())
         self.composer.pack_start(self.tag_button, False, False, 0)
         self.composer.pack_start(self.entry_box, True, True, 0)
@@ -806,8 +810,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _select_creation_tag(self, tag: str | None) -> None:
         self.creation_tag = tag
-        if tag is not None:
-            self.draft_tags.add(tag)
         self._update_creation_tag_label()
         self.composer_tag_menu.popdown()
 
@@ -815,11 +817,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         for child in menu.get_children():
             child.destroy()
         menu.set_reserve_toggle_size(False)
-        tags = (
-            self.draft_tags
-            | set(self.tags)
-            | {note.tag for note in self.notes_snapshot if note.tag is not None}
-        )
+        tags = set(self.tags)
         for tag in [None, *sorted(tags, key=lambda tag: (tag.casefold(), tag))]:
             item = Gtk.MenuItem(label=f"#{tag}" if tag else "Untagged")
             item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
@@ -838,6 +836,30 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.editor = NoteEditor(self, None, tag_only=True)
             self._watch_child_focus(self.editor)
         self._present_child(self.editor)
+
+    def _open_tags(self) -> None:
+        if self.closed or self.action_pending:
+            return
+        self.menu.popdown()
+        if self.tags_window is None:
+            self.tags_window = TagsWindow(self)
+            self._watch_child_focus(self.tags_window)
+        self._present_child(self.tags_window)
+
+    def _tags_changed(self, old: str | None, new: str | None) -> None:
+        if old is not None:
+            self.tags = [tag for tag in self.tags if tag != old]
+            if self.creation_tag == old:
+                self._select_creation_tag(new)
+            if self.tag_filter == old:
+                self.tag_filter = new or ""
+        if new is not None and new not in self.tags:
+            self.tags.append(new)
+        self._update_filter_label()
+        self._poll()
+        for child in (self.archive_window, self.scheduled_window, self.tags_window):
+            if child is not None and not child.closed:
+                child._poll()
 
     def _prepare_filters(self, *_args) -> None:
         self._update_filter_label()
@@ -1154,6 +1176,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self._render(result.notes, action=action if result.changed else None)
             else:
                 notes, self.tags = result
+                if self.creation_tag is not None and self.creation_tag not in self.tags:
+                    self._select_creation_tag(None)
                 self._render(notes)
         except BlockingIOError:
             self._error("Another note command is busy. Try again.", action=mutation)
@@ -1317,6 +1341,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.composer_tag_menu.popdown()
         if self.editor is not None:
             self.editor.destroy()
+        if self.tags_window is not None:
+            self.tags_window.destroy()
         Gtk.ApplicationWindow.close(self)
 
     def _on_destroy(self, _window) -> None:
@@ -1327,6 +1353,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.archive_window.destroy()
         if self.scheduled_window is not None and not self.scheduled_window.closed:
             self.scheduled_window.destroy()
+        if self.tags_window is not None and not self.tags_window.closed:
+            self.tags_window.destroy()
         if self.editor is not None:
             self.editor.destroy()
         if self.context_menu is not None:
