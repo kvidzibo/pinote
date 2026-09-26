@@ -88,8 +88,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   adding that draft removes its cache; newer edits made while saving are kept.
   **Tab** moves focus to the controls.
   Failed saves keep your input. Successful saves clear only the submitted draft;
-  edits made while saving stay in the field. The list scrolls to the newly saved
-  task once it loads. List-refresh errors do not undo a saved task.
+  edits made while saving stay in the field. In the fully open view, the list scrolls
+  to the newly saved task once it loads. List-refresh errors do not undo a saved task.
 - Shows each matching active note's **first line**, with literal text and wrapping for
   long first lines. Multiline notes have an **eye/preview button** on the right;
   single-line notes do not. Preview opens a scrollable, read-only popup with the
@@ -165,7 +165,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - The **minimise button** next to the drag handle cycles with each click:
   **all notes → in-progress notes and bottom bar → bottom bar only → all notes**.
   Tag filters still apply. The in-progress view includes newly started tasks immediately.
-  Hidden tasks are unchanged; the input draft is preserved. Reopening starts fully open.
+  Hidden tasks are unchanged; the input draft is preserved. The chosen view stays in
+  effect during updates: added tasks, reset tasks, and due reminders are ordinary
+  tasks, so switch to all notes to see them. Reopening starts fully open.
 - The bottom **menu** beside **+** and the drag handle contains icon-only actions:
   **Filter by tag** (funnel), **Reminders…** (bell), **Archive…** (box), and **Close** (×).
   Hover for labels; the filter tooltip also shows the current selection. There is no Undo button.
