@@ -51,6 +51,7 @@ class Note:
     tag: str | None = None
     remind_at: str | None = None
     reminder_due_at: str | None = None  # Delivered reminder's due time, derived from history.
+    archived_at: str | None = None  # Completion/deletion time, independent of later tag edits.
 
 
 # Table names below are fixed internal identifiers, never user input.
@@ -485,8 +486,15 @@ class Store:
         return [
             Note(**dict(row))
             for row in self.connection.execute(
-                "SELECT * FROM notes WHERE state IN ('done', 'removed') "
-                "ORDER BY updated_at DESC, id DESC"
+                "WITH archived_events AS ("
+                " SELECT note_id, MAX(id) AS event_id FROM events"
+                " WHERE action IN ('done', 'rm', 'import') AND state IN ('done', 'removed')"
+                " GROUP BY note_id"
+                ") SELECT notes.*, COALESCE(events.occurred_at, notes.updated_at) AS archived_at"
+                " FROM notes LEFT JOIN archived_events ON archived_events.note_id = notes.id"
+                " LEFT JOIN events ON events.id = archived_events.event_id"
+                " WHERE notes.state IN ('done', 'removed')"
+                " ORDER BY archived_at DESC, notes.id DESC"
             )
         ]
 

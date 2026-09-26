@@ -2328,7 +2328,7 @@ def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
     archive = window.archive_window
     wait_until(gtk.glib, lambda: not archive.pending)
     notes = [
-        replace(note, updated_at=(now - timedelta(hours=hours)).isoformat())
+        replace(note, archived_at=(now - timedelta(hours=hours)).isoformat())
         for note, hours in zip(
             sorted(archive._notes, key=lambda n: n.id), (23, 48, 192), strict=True
         )
@@ -2354,7 +2354,7 @@ def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
     assert archive.empty.get_text() == "No completed or deleted tasks in the past 24 hours."
     assert archive.list_box.get_accessible().get_name() == "Archive, past 24 hours, 0 tasks"
     archive.archive_filter.set_active(2)
-    now = datetime.fromisoformat(notes[0].updated_at) + timedelta(days=7)
+    now = datetime.fromisoformat(notes[0].archived_at) + timedelta(days=7)
     archive._poll()
     wait_until(gtk.glib, lambda: not archive.pending)
     assert set(archive.rows) == {1}  # Exactly seven days is included.
@@ -2451,6 +2451,39 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
     wait_until(gtk.glib, lambda: window.closed and reopened.closed)
     with Store(gtk.paths.database) as store:
         assert [event["action"] for event in store.history(2)] == ["add", "rm", "restore", "done"]
+
+
+def test_tag_management_keeps_archive_dates_order_and_time_filters(gtk, monkeypatch):
+    import pinote.store as store_module
+
+    now = datetime.now(UTC)
+    with Store(gtk.paths.database) as store:
+        for days, action in ((10, "done"), (0, "done"), (11, "rm")):
+            when = (now - timedelta(days=days, hours=1)).isoformat()
+            with monkeypatch.context() as patch:
+                patch.setattr(store_module, "timestamp", lambda when=when: when)
+                note_id = store.add(f"Archived {days}", tag="Work")
+                store.transition(note_id, action)
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and len(archive.rows) == 3)
+    labels = {note_id: row.date.get_text() for note_id, row in archive.rows.items()}
+    revision = archive.rows[1].note.updated_at
+    for operation in (
+        lambda: window.model.rename_tag("Work", "Renamed"),
+        lambda: window.model.delete_tag("Renamed"),
+    ):
+        operation()
+        archive._poll()
+        wait_until(gtk.glib, lambda: not archive.pending)
+        assert [row.note.id for row in archive.list_box.get_children()] == [2, 1, 3]
+        assert {note_id: row.date.get_text() for note_id, row in archive.rows.items()} == labels
+        assert archive.rows[1].note.updated_at != revision
+        for period in (1, 2):
+            archive.archive_filter.set_active(period)
+            assert set(archive.rows) == {2}
+        archive.archive_filter.set_active(0)
 
 
 @pytest.mark.parametrize("action", ["done", "rm"])

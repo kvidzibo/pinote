@@ -59,7 +59,11 @@ class ArchiveRow(Gtk.ListBoxRow):
         if self.body.get_text() != note.text:
             self.body.set_text(note.text)  # Literal text, never Pango markup.
         status = "Completed" if note.state == "done" else "Deleted"
-        when = datetime.fromisoformat(note.updated_at).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        when = (
+            datetime.fromisoformat(note.archived_at or note.updated_at)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+        )
         label = f"{status} · {when}"
         if self.date.get_text() != label:
             self.date.set_text(label)
@@ -155,8 +159,8 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
 
     @staticmethod
     def _sort_rows(left, right) -> int:
-        a = (left.note.updated_at, left.note.id)
-        b = (right.note.updated_at, right.note.id)
+        a = (left.note.archived_at or left.note.updated_at, left.note.id)
+        b = (right.note.archived_at or right.note.updated_at, right.note.id)
         return (b > a) - (b < a)
 
     def _on_key_press(self, _window, event) -> bool:
@@ -265,7 +269,9 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         return [
             note
             for note in notes
-            if (now - datetime.fromisoformat(note.updated_at).astimezone(UTC)).total_seconds()
+            if (
+                now - datetime.fromisoformat(note.archived_at or note.updated_at).astimezone(UTC)
+            ).total_seconds()
             <= seconds
         ]
 
