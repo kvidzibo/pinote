@@ -140,9 +140,15 @@ Edits and tag changes retain the task ID and record old/new values in history;
   updates all attached tasks, including archived and scheduled tasks. **Delete**
   asks for confirmation, then clears the tag from tasks and removes it from the registry;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
-- **Bottom menu → Filter by tag →** independently selects **Untagged**, **All**, or a tag.
+- The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
+  and matching active-task count. Click it to select **Untagged**, **All**, or a tag;
+  **Bottom menu → Filter by tag →** offers the same choices.
+  This is separate from the tag icon on the left, which assigns tags to new tasks.
   The filter is saved in `gui-filter.json` beside the database and restored on restart.
   **Untagged** is the first-launch default; a deleted saved tag falls back to **All**.
+  If the filter hides every active task, the empty state says **No tasks match this filter**;
+  its funnel button (**Show all tasks**) clears the filter without changing the draft or new-task tag.
+  With no active tasks at all, the empty state invites you to add one instead.
   Filtering only hides rows; it never changes tasks or the tag selected for new tasks. A newly added or
   retagged task may be hidden by the current filter; choose **All** to see every task.
   The new-task draft is kept when switching filters.

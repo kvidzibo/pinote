@@ -349,8 +349,17 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.empty.get_style_context().add_class("dim-label")
         self.empty.set_margin_top(6)
         self.empty.set_margin_bottom(6)
-        self.empty.show()
-        self.list_box.set_placeholder(self.empty)
+        self.empty.set_line_wrap(True)
+        self.empty.set_max_width_chars(36)
+        self.show_all_button = icon_button("view-filter-clear-symbolic", "Show all tasks")
+        self.show_all_button.set_valign(Gtk.Align.CENTER)
+        self.show_all_button.set_no_show_all(True)
+        self.show_all_button.connect("clicked", lambda _button: self._set_filter(None))
+        self.empty_box = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER)
+        self.empty_box.pack_start(self.empty, False, False, 0)
+        self.empty_box.pack_start(self.show_all_button, False, False, 0)
+        self.empty_box.show_all()
+        self.list_box.set_placeholder(self.empty_box)
         layout.pack_start(self.scroll, True, True, 0)
         layout.pack_start(self.progress_separator, False, False, 0)
         layout.pack_start(self.progress_scroll, False, True, 0)
@@ -368,7 +377,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         tag_content.pack_start(icon_image("tag-symbolic"), False, False, 0)
         self.tag_label = Gtk.Label()
         self.tag_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.tag_label.set_max_width_chars(28)
+        self.tag_label.set_max_width_chars(14)
         tag_content.pack_start(self.tag_label, False, False, 0)
         self.tag_button.add(tag_content)
         self.composer_tag_menu = Gtk.Menu()
@@ -436,6 +445,24 @@ class ReminderWindow(Gtk.ApplicationWindow):
         ):
             self.menu.append(item)
             item.show()
+        self.visible_filter_menu = Gtk.Menu()
+        self.visible_filter_menu.get_style_context().add_class("pinote-window")
+        self.visible_filter_menu.get_style_context().add_class("reminder-menu")
+        self.visible_filter_menu.connect("show", self._prepare_visible_filters)
+        self.visible_filter_menu.connect("hide", self._queue_pin_check)
+        self.filter_button = Gtk.MenuButton(valign=Gtk.Align.CENTER)
+        self.filter_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.filter_button.set_direction(Gtk.ArrowType.UP)
+        filter_content = Gtk.Box(spacing=4)
+        filter_content.pack_start(icon_image("view-filter-symbolic"), False, False, 0)
+        self.filter_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.END)
+        self.filter_label.set_max_width_chars(12)
+        filter_content.pack_start(self.filter_label, False, False, 0)
+        self.filter_count = Gtk.Label()
+        self.filter_count.get_style_context().add_class("dim-label")
+        filter_content.pack_start(self.filter_count, False, False, 0)
+        self.filter_button.add(filter_content)
+        self.filter_button.set_popup(self.visible_filter_menu)
         self.menu.connect("show", self._prepare_filters)
         self.menu.connect("hide", self._queue_pin_check)
         self._prepare_filters()
@@ -464,6 +491,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.input_row.pack_start(self.add_button, False, False, 0)
         self.toolbar.pack_start(self.tag_button, False, False, 0)
         self.toolbar.pack_start(Gtk.Box(hexpand=True), True, True, 0)
+        self.toolbar.pack_start(self.filter_button, False, False, 0)
         self.toolbar.pack_start(self.drag_button, False, False, 0)
         self.toolbar.pack_start(self.minimise_button, False, False, 0)
         self.toolbar.pack_start(self.menu_button, False, False, 0)
@@ -513,6 +541,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             or self.focus_handoff is not None
             or self.menu.get_visible()
             or self.composer_tag_menu.get_visible()
+            or self.visible_filter_menu.get_visible()
             or self.context_menu is not None
             or self.preview is not None
         )
@@ -715,6 +744,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self.preview.popdown()
             elif self.composer_tag_menu.get_visible():
                 self.composer_tag_menu.popdown()
+            elif self.visible_filter_menu.get_visible():
+                self.visible_filter_menu.popdown()
             elif self.menu.get_visible():
                 self.menu.popdown()
             else:
@@ -793,6 +824,20 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
+        count = sum(
+            self.tag_filter is None or note.tag == (self.tag_filter or None)
+            for note in self.notes_snapshot
+        )
+        self.filter_label.set_text(label)
+        self.filter_count.set_text(f"({count})" if self.loaded_notes else "(…)")
+        description = (
+            f"Filter by tag: {label}. {count} of {len(self.notes_snapshot)} active tasks match."
+            if self.loaded_notes
+            else f"Filter by tag: {label}. Loading tasks."
+        )
+        self.filter_button.set_tooltip_text(description)
+        self.filter_button.get_accessible().set_name(f"Filter by tag: {label}")
+        self.filter_button.get_accessible().set_description(description)
 
     def _tag_choices(self, selected: str | None, *, filtering: bool = False):
         # Count the full active snapshot, not just rows matching the current filter.
@@ -893,10 +938,22 @@ class ReminderWindow(Gtk.ApplicationWindow):
         )
         self.filter_item.set_submenu(self.filter_menu)
 
+    def _prepare_visible_filters(self, menu) -> None:
+        for child in menu.get_children():
+            child.destroy()
+        self._tag_menu_choices(
+            menu,
+            self._tag_choices(self.tag_filter, filtering=True),
+            self.tag_filter,
+            self._set_filter,
+        )
+        menu.show_all()
+
     def _set_filter(self, tag: str | None) -> None:
         if self.closed:
             return
         self.tag_filter = tag
+        self.visible_filter_menu.popdown()
         self._remember_filter()
         self.composer_tag_menu.popdown()
         self.menu.popdown()
@@ -1301,12 +1358,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self.preview.update(note)
                 else:
                     self._close_preview(self.preview)
-        empty = "No active reminders."
-        if self.tag_filter:
-            empty = f"No active reminders tagged {self.tag_filter}."
-        elif self.tag_filter == "" and self.notes_snapshot:
-            empty = "No untagged reminders."
-        self.empty.set_text(empty)
+        hidden_tasks = bool(self.notes_snapshot) and not notes
+        self.empty.set_text(
+            "No tasks match this filter." if hidden_tasks else "No active tasks. Add one below."
+        )
+        self.show_all_button.set_visible(hidden_tasks)
         self._arrange_rows()
         # Unchanged rows and both scroll adjustments are deliberately left intact.
 
@@ -1384,6 +1440,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu.popdown()
         self.menu.popdown()
         self.composer_tag_menu.popdown()
+        self.visible_filter_menu.popdown()
         if self.editor is not None:
             self.editor.destroy()
         if self.tags_window is not None:
@@ -1406,6 +1463,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu.popdown()
         self.menu.destroy()
         self.composer_tag_menu.destroy()
+        self.visible_filter_menu.destroy()
         GLib.source_remove(self.refresh_source)
         for source in (
             self.geometry_source,
