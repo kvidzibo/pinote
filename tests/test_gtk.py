@@ -191,7 +191,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert not window.progress_scroll.get_visible()
     assert not window.progress_separator.get_visible()
     assert window.entry.get_parent() is window.entry_scroll
-    assert window.entry_box.get_parent() is window.composer
+    assert window.entry_box.get_parent() is window.input_row
     assert window.entry.get_accessible().get_name() == "New task"
     assert window.add_button.get_accessible().get_name() == "Add task"
     assert window.menu_button.get_accessible().get_name() == "Reminders menu"
@@ -212,25 +212,27 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         )
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
-    assert window.composer.get_children() == [
-        window.tag_button,
-        window.entry_box,
-        window.add_button,
+    assert window.composer.get_children() == [window.input_row, window.toolbar]
+    assert window.input_row.get_children() == [window.entry_box, window.add_button]
+    assert window.toolbar.get_children()[0] is window.tag_button
+    assert window.toolbar.get_children()[2:] == [
         window.drag_button,
         window.minimise_button,
         window.menu_button,
     ]
+    assert window.entry_box.get_allocated_width() > 350
     assert not window.get_resizable()
     assert window.get_size().width == 420
-    assert window.get_size().height < 140
+    # Full-width input plus a separate tag/action toolbar.
+    assert window.get_size().height < 175
     assert row.get_allocated_height() <= 30
     assert isinstance(row.done, Gtk.CheckButton)
     assert not row.done.get_active()
     assert row.done.get_accessible().get_name() == "Start note 1"
     assert row.content.get_children() == [
         row.done,
-        row.tag_badge,
         row.body,
+        row.tag_badge,
         row.reminder_icon,
         row.preview_button,
     ]
@@ -377,7 +379,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
         assert row.tag_badge.label.get_text() == "Work <🐦>"
         assert not row.tag_badge.label.get_use_markup()
         assert row.tag_badge.image.get_visible()
-        assert row.content.get_children().index(row.tag_badge) < row.content.get_children().index(
+        assert row.content.get_children().index(row.tag_badge) > row.content.get_children().index(
             row.body
         )
     window._set_filter(None)
@@ -1484,7 +1486,7 @@ def test_compact_window_fits_content_and_shrinks_after_removal(gtk):
     window = gtk.open()
     wait_until(gtk.glib, lambda: window.empty.get_allocated_height() > 1)
     empty_height = window.get_size().height
-    assert empty_height < 100
+    assert empty_height < 115  # Includes the separate tag/action toolbar.
     with Store(gtk.paths.database) as store:
         for index in range(35):
             store.add(f"Reminder {index}: " + "unbroken" * 100)
@@ -1608,7 +1610,7 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
 
             wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
             assert window.get_size().width == 420
-            assert window.get_size().height < 140
+            assert window.get_size().height < 175  # Two-line composer, still content-sized.
             nodes = [tree()]
             while nodes:
                 node = nodes.pop()
@@ -1727,7 +1729,7 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                 for note in store.notes():
                     store.transition(note.id, "rm")
             window._poll()
-            wait_until(gtk.glib, lambda: not window.rows and window.get_size().height < 100)
+            wait_until(gtk.glib, lambda: not window.rows and window.get_size().height < 115)
             wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
             expected = expected_position()
             window.move(160, 220)

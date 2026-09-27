@@ -125,11 +125,13 @@ Edits and tag changes retain the task ID and record old/new values in history;
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
-- Tag names use a tag icon in task badges, the archive, reminders, and tag-management
+- Task tags sit after the note text as muted labels; hover to read a truncated tag.
+  In-progress tasks keep neutral text, with a subtle row tint and amber checkbox.
+  Tag names use a tag icon in task labels, the archive, reminders, and tag-management
   lists. Tag menus use these icons instead of radio circles; the current choice is highlighted.
-- **Tag dropdown before the input** lists tags and **Untagged**, without radio buttons.
+- **Tag dropdown below the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
-  Right-click the tag beside the input to reset it to **Untagged**, keeping the draft,
+  Right-click the tag below the input to reset it to **Untagged**, keeping the draft,
   existing tasks, and list filter unchanged.
   **+** saves a new tag in the database immediately and selects it, even without a task.
   Saved tags survive reopening; the new-task tag selection resets to **Untagged**.

@@ -103,6 +103,11 @@
     color: inherit;
 }
 
+.pinote-window .composer {
+    border-top: 1px solid #39414e;
+    padding-top: 6px;
+}
+
 .pinote-window .task-entry {
     background-color: #1c212a;
     border: 1px solid #4b5563;
@@ -151,6 +156,7 @@
 
 .pinote-window .note-content {
     padding: 3px 0;
+    margin: 1px 0;
     opacity: 1;
     transition: none;
 }
@@ -165,6 +171,12 @@
     border-radius: 4px;
     padding: 1px 4px;
     font-size: 8pt;
+}
+
+.pinote-window .note-row .tag-badge {
+    background-color: transparent;
+    color: #939eaf;
+    padding: 1px 0;
 }
 
 .pinote-window .reminder-indicator {
@@ -182,12 +194,8 @@
 }
 
 .pinote-window .note-row.in-progress .note-content {
-    background-color: #343126;
+    background-color: #2b2e32;
     border-radius: 3px;
-}
-
-.pinote-window .note-row.in-progress label {
-    color: #e4c78c;
 }
 
 .pinote-window .note-row.in-progress checkbutton check {
