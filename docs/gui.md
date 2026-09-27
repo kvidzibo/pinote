@@ -73,7 +73,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
 ### Behavior
 
 - Compact, borderless dark popup: 420 px wide, 9 pt monospace text, no title/header
-  bar, and one checkbox/text row per note—no trash button. Only reminder bells have
+  bar, and one checkbox/text row per note—no trash button. Reminder bells show relative-time
   tooltips (for example, **Due 2 hours ago**). The bottom edge stays fixed while the window grows
   upward as notes are added and shrinks as they are removed. The visible-note limit is
   configurable (default **10**); extra notes scroll. In-progress tasks have a separate
@@ -135,7 +135,6 @@ Edits and tag changes retain the task ID and record old/new values in history;
   existing tasks, and list filter unchanged.
   **+** saves a new tag in the database immediately and selects it, even without a task.
   Saved tags survive reopening; the new-task tag selection resets to **Untagged**.
-  Tags appear as small badges before task text; long names have full-name tooltips.
 - **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
   **Save** to add a tag, or select one and change its name to rename it. Renaming
   updates all attached tasks, including archived and scheduled tasks. **Delete**
