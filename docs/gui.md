@@ -73,7 +73,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
 ### Behavior
 
 - Compact, borderless dark popup: 420 px wide, 9 pt monospace text, no title/header
-  bar, and one checkbox/text row per note—no trash button. Only reminder bells have
+  bar, and one checkbox/text row per note—no trash button. Reminder bells show relative-time
   tooltips (for example, **Due 2 hours ago**). The bottom edge stays fixed while the window grows
   upward as notes are added and shrinks as they are removed. The visible-note limit is
   configurable (default **10**); extra notes scroll. In-progress tasks have a separate
@@ -125,23 +125,30 @@ Edits and tag changes retain the task ID and record old/new values in history;
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
-- Tag names use a tag icon in task badges, the archive, reminders, and tag-management
+- Task tags sit after the note text as muted labels; hover to read a truncated tag.
+  In-progress tasks keep neutral text, with a subtle row tint and amber checkbox.
+  Tag names use a tag icon in task labels, the archive, reminders, and tag-management
   lists. Tag menus use these icons instead of radio circles; the current choice is highlighted.
-- **Tag dropdown before the input** lists tags and **Untagged**, without radio buttons.
+- **Tag dropdown below the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
-  Right-click the tag beside the input to reset it to **Untagged**, keeping the draft,
+  Right-click the tag below the input to reset it to **Untagged**, keeping the draft,
   existing tasks, and list filter unchanged.
   **+** saves a new tag in the database immediately and selects it, even without a task.
   Saved tags survive reopening; the new-task tag selection resets to **Untagged**.
-  Tags appear as small badges before task text; long names have full-name tooltips.
 - **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
   **Save** to add a tag, or select one and change its name to rename it. Renaming
   updates all attached tasks, including archived and scheduled tasks. **Delete**
   asks for confirmation, then clears the tag from tasks and removes it from the registry;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
-- **Bottom menu → Filter by tag →** independently selects **Untagged**, **All**, or a tag.
+- The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
+  and matching active-task count. Click it to select **Untagged**, **All**, or a tag;
+  **Bottom menu → Filter by tag →** offers the same choices.
+  This is separate from the tag icon on the left, which assigns tags to new tasks.
   The filter is saved in `gui-filter.json` beside the database and restored on restart.
   **Untagged** is the first-launch default; a deleted saved tag falls back to **All**.
+  If the filter hides every active task, the empty state says **No tasks match this filter**;
+  its funnel button (**Show all tasks**) clears the filter without changing the draft or new-task tag.
+  With no active tasks at all, the empty state invites you to add one instead.
   Filtering only hides rows; it never changes tasks or the tag selected for new tasks. A newly added or
   retagged task may be hidden by the current filter; choose **All** to see every task.
   The new-task draft is kept when switching filters.

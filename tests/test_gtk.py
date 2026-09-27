@@ -191,7 +191,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert not window.progress_scroll.get_visible()
     assert not window.progress_separator.get_visible()
     assert window.entry.get_parent() is window.entry_scroll
-    assert window.entry_box.get_parent() is window.composer
+    assert window.entry_box.get_parent() is window.input_row
     assert window.entry.get_accessible().get_name() == "New task"
     assert window.add_button.get_accessible().get_name() == "Add task"
     assert window.menu_button.get_accessible().get_name() == "Reminders menu"
@@ -212,25 +212,28 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         )
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
-    assert window.composer.get_children() == [
-        window.tag_button,
-        window.entry_box,
-        window.add_button,
+    assert window.composer.get_children() == [window.input_row, window.toolbar]
+    assert window.input_row.get_children() == [window.entry_box, window.add_button]
+    assert window.toolbar.get_children()[0] is window.tag_button
+    assert window.toolbar.get_children()[2:] == [
+        window.filter_button,
         window.drag_button,
         window.minimise_button,
         window.menu_button,
     ]
+    assert window.entry_box.get_allocated_width() > 350
     assert not window.get_resizable()
     assert window.get_size().width == 420
-    assert window.get_size().height < 140
+    # Full-width input plus a separate tag/action toolbar.
+    assert window.get_size().height < 175
     assert row.get_allocated_height() <= 30
     assert isinstance(row.done, Gtk.CheckButton)
     assert not row.done.get_active()
     assert row.done.get_accessible().get_name() == "Start note 1"
     assert row.content.get_children() == [
         row.done,
-        row.tag_badge,
         row.body,
+        row.tag_badge,
         row.reminder_icon,
         row.preview_button,
     ]
@@ -377,7 +380,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
         assert row.tag_badge.label.get_text() == "Work <🐦>"
         assert not row.tag_badge.label.get_use_markup()
         assert row.tag_badge.image.get_visible()
-        assert row.content.get_children().index(row.tag_badge) < row.content.get_children().index(
+        assert row.content.get_children().index(row.tag_badge) > row.content.get_children().index(
             row.body
         )
     window._set_filter(None)
@@ -517,6 +520,47 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
         assert "Saved while closing" in store.tags()
 
 
+def test_visible_filter_count_and_empty_state_recovery(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Tagged task", tag="Work")
+    window = gtk.open()
+    assert window.filter_label.get_text() == "Untagged"
+    assert window.filter_count.get_text() == "(0)"
+    assert window.empty.get_text() == "No tasks match this filter."
+    assert window.show_all_button.get_mapped()
+    window.entry.set_text("Keep this draft")
+    window._select_creation_tag("Work")
+    click_button(gtk, window, window.show_all_button)
+    wait_until(gtk.glib, lambda: window.tag_filter is None and 1 in window.rows)
+    assert window.filter_label.get_text() == "All"
+    assert window.filter_count.get_text() == "(1)"
+    assert not window.show_all_button.get_visible()
+    assert window.entry.get_text() == "Keep this draft"
+    assert window.creation_tag == "Work"
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
+    choices = window.visible_filter_menu.get_children()
+    assert [item.get_accessible().get_name() for item in choices] == [
+        "Untagged (0)",
+        "All (1)",
+        "Work (1)",
+    ]
+    pointer_at(gtk, choices[0].get_toplevel(), choices[0], 8, 8)
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    click_button(gtk, choices[0].get_toplevel(), choices[0])
+    wait_until(gtk.glib, lambda: window.tag_filter == "" and not window.rows)
+    assert window.filter_count.get_text() == "(0)"
+    assert window.show_all_button.get_mapped()
+    with Store(gtk.paths.database) as store:
+        store.transition(1, "rm")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.notes_snapshot and not window.pending)
+    assert window.empty.get_text() == "No active tasks. Add one below."
+    assert not window.show_all_button.get_visible()
+    assert "0 of 0 active tasks match" in window.filter_button.get_tooltip_text()
+
+
 def test_tag_filter_persists_across_restarts_and_tracks_registry_changes(gtk):
     with Store(gtk.paths.database) as store:
         store.add("Untagged task")
@@ -652,7 +696,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     editor.entry.set_text("Personal 🐦")
     click_button(gtk, editor, editor.save_button)
     wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
-    assert window.empty.get_text() == "No untagged reminders."
+    assert window.empty.get_text() == "No tasks match this filter."
     filter_by("Personal 🐦 (1)")
     assert set(window.rows) == {1}
     assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
@@ -1160,6 +1204,7 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         window.drag_button,
         window.minimise_button,
         window.rows[1].preview_button,
+        window.show_all_button,
     }
     widgets = [window]
     while widgets:
@@ -1169,6 +1214,10 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         elif widget is window.tag_button:
             assert widget.get_tooltip_text() == (
                 "Tag for new tasks: Untagged. Right-click to clear."
+            )
+        elif widget is window.filter_button:
+            assert widget.get_tooltip_text() == (
+                "Filter by tag: Untagged. 1 of 1 active tasks match."
             )
         else:
             assert not widget.get_has_tooltip()
@@ -1484,7 +1533,7 @@ def test_compact_window_fits_content_and_shrinks_after_removal(gtk):
     window = gtk.open()
     wait_until(gtk.glib, lambda: window.empty.get_allocated_height() > 1)
     empty_height = window.get_size().height
-    assert empty_height < 100
+    assert empty_height < 115  # Includes the separate tag/action toolbar.
     with Store(gtk.paths.database) as store:
         for index in range(35):
             store.add(f"Reminder {index}: " + "unbroken" * 100)
@@ -1511,7 +1560,7 @@ def test_compact_window_fits_content_and_shrinks_after_removal(gtk):
         gtk.glib,
         lambda: not window.rows and window.get_size().height == empty_height,
     )
-    assert window.empty.get_text() == "No active reminders."
+    assert window.empty.get_text() == "No active tasks. Add one below."
 
 
 def test_error_notice_keeps_task_entry_on_screen(gtk):
@@ -1608,7 +1657,7 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
 
             wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
             assert window.get_size().width == 420
-            assert window.get_size().height < 140
+            assert window.get_size().height < 175  # Two-line composer, still content-sized.
             nodes = [tree()]
             while nodes:
                 node = nodes.pop()
@@ -1727,7 +1776,7 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                 for note in store.notes():
                     store.transition(note.id, "rm")
             window._poll()
-            wait_until(gtk.glib, lambda: not window.rows and window.get_size().height < 100)
+            wait_until(gtk.glib, lambda: not window.rows and window.get_size().height < 115)
             wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
             expected = expected_position()
             window.move(160, 220)
@@ -2916,7 +2965,7 @@ def test_buttons_save_history_literal_text_and_refresh_from_cli(gtk, cli):
     pointer_at(gtk, window, window.rows[2].done, 10, 10, "click", "--repeat", "2", "3")
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
     assert window.empty.get_visible()
-    assert window.empty.get_text() == "No active reminders."
+    assert window.empty.get_text() == "No active tasks. Add one below."
     with Store(gtk.paths.database) as store:
         assert [note.state for note in store.notes(all_states=True)] == ["done", "removed"]
         assert [event["action"] for event in store.history()] == [
