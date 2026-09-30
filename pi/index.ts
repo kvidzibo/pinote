@@ -7,6 +7,7 @@ import { createPRWatcher } from "./pr-watch.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, compatibleVersion, setupCLI, setupHint, type CLIAction } from "./setup.ts";
 
+const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep PR links in the separate PR field.";
 type Task = {
   id: number;
   text: string;
@@ -261,7 +262,8 @@ export default function (pi: ExtensionAPI) {
         if (!canAct()) return;
         const draft = ctx.ui.getEditorText();
         const handoff = `Pinote task #${chosen.id} (revision ${chosen.updated_at}).\n` +
-          "Use pinote_get to read current task data and pinote_update to save agent handoff fields.\n\n" + chosen.markdown;
+          "Use pinote_get to read current task data and pinote_update to save agent handoff fields.\n" +
+          handoffGuidance + "\n\n" + chosen.markdown;
         ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
         ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
       } catch (error) {
@@ -290,6 +292,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "pinote_update",
     label: "Pinote update",
+    promptGuidelines: [handoffGuidance],
     description: "Patch arbitrary agent handoff fields on an explicit pinote task. Read first with pinote_get; pass its updated_at as expected_updated_at. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show it in the footer and watch for merge confirmation in interactive Pi. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task.",
     parameters: Type.Object({
       id: idSchema,
