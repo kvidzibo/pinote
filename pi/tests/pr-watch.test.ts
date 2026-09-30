@@ -84,6 +84,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   duringConfirm = undefined;
   await tick();
   assert.equal(completions, 1);
+  assert.equal(statuses.get("pinote-pr"), undefined, "completion immediately hides the PR link");
   const acknowledgedChecks = checks;
   await tick();
   assert.equal(checks, acknowledgedChecks, "do not repeatedly query an acknowledged merge");
@@ -91,7 +92,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
 
   // Reload after completion: selection is gone, but the saved watcher identity remains.
   watcher.start(ctx); await tick(0);
-  assert.match(statuses.get("pinote-pr")!, /PR #123/);
+  assert.equal(statuses.get("pinote-pr"), undefined, "restored completed watches stay hidden");
   assert.equal(confirmations, 2);
 
   // Restore an active selection and resume: persistent session entries suppress the same notice.
@@ -102,7 +103,10 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   watcher.start(ctx);
   state = "OPEN"; await tick(0);
   item.state = "done"; selected = null; state = "MERGED";
+  watcher.update(ctx, selected);
+  assert.equal(statuses.get("pinote-pr"), undefined, "selection clearing hides the link before the next poll");
   await tick();
+  assert.equal(statuses.get("pinote-pr"), undefined, "merge polling cannot repaint the retained task");
   assert.match(notices.at(-1)!, /PR #123 was merged and the task is already completed/);
   assert.equal(completions, 1);
   assert.equal(confirmations, 2);
@@ -135,4 +139,8 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   watcher.start(ctx); watcher.update(ctx, item); await tick();
   assert.equal(checks, stoppedChecks);
   assert.match(statuses.get("pinote-pr")!, /PR #123/);
+  item.state = "done"; selected = null;
+  watcher.update(ctx, selected); await tick();
+  assert.equal(checks, stoppedChecks);
+  assert.equal(statuses.get("pinote-pr"), undefined, "completion hides the link even with polling disabled");
 });

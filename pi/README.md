@@ -71,16 +71,16 @@ OSC 8 support is required for clicking links.
 Interactive Pi checks only the selected task's PR using authenticated `gh`
 (`gh auth login`). Polling defaults to 60 seconds; launch Pi with
 `PINOTE_PR_POLL_SECONDS=120 pi` to change it, or `0` to disable polling.
-Allowed intervals are 10–86400 seconds. The link remains visible when disabled.
+Allowed intervals are 10–86400 seconds. The selected task's link remains visible when polling is disabled.
 Network/authentication failures warn once until recovery and retry next interval.
 No polling runs in print/RPC mode or after Pi exits.
 
 On merge, Pi waits until idle and asks **Mark this task completed?** Confirmation
 uses the same guarded CLI Done operation as `/pi-note`; declining leaves the task
 unchanged. If it is already done, Pi says **PR #123 was merged and the task is
-already completed**, without completing it again. Completion clears the selection,
-so its watcher remains until another task is selected, the link is removed, or
-Pi exits. Removed/scheduled tasks are no longer watched.
+already completed**, without completing it again. Completion clears the selection
+and hides the footer link, even with polling disabled. The background watch remains
+until another task is selected, the link is removed, or Pi exits. Removed/scheduled tasks are no longer watched.
 
 The watched task ID/link and merge acknowledgements are saved in the Pi session,
 so `/reload` and session resume retain completed-task watches without repeating
