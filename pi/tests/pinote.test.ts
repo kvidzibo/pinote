@@ -115,7 +115,8 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   choices.push("pick");
   await extension.command();
   assert.equal(selectedId, 2, "newest task is first");
-  assert.match(status!, /#2.*Unicode/);
+  assert.match(status!, /Unicode/);
+  assert.ok(!status!.includes("#2"), "footer omits the task ID");
   assert.ok(!status!.includes("Hidden details"), "footer shows only the first line");
   assert.ok(!status!.includes("In progress"), "footer uses only the state indicator");
   const originalText = tasks[1].text;
@@ -134,7 +135,8 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   extension = load();
   draft = "";
   await extension.event("session_start");
-  assert.match(status!, /#2/);
+  assert.match(status!, /Unicode/);
+  assert.ok(!status!.includes("#2"), "restored footer omits the task ID");
   assert.equal(draft, "", "new sessions restore status, not editor contents");
   choices.push("Continue");
   await extension.command();

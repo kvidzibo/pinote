@@ -26,7 +26,8 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const text = (value: unknown): value is string =>
   typeof value === "string" && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value);
 const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/gu, "�");
-const title = (task: Summary) => truncateToWidth(`#${task.id} ${clean(task.text.split("\n", 1)[0]).replace(/\s+/gu, " ").trim()}`, 60);
+const firstLine = (task: Summary) => clean(task.text.split("\n", 1)[0]).replace(/\s+/gu, " ").trim();
+const title = (task: Summary) => truncateToWidth(`#${task.id} ${firstLine(task)}`, 60);
 
 function parse(raw: string): unknown {
   try { return JSON.parse(raw); } catch { throw new Error(compatible); }
@@ -102,7 +103,7 @@ export default function (pi: ExtensionAPI) {
     try {
       const current = await selected(ctx);
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", current ? truncateToWidth(`${noteIcon} ${taskState(current)} ${taskTag(current)} ${title(current)}`, 60) : undefined);
+        ctx.ui.setStatus("pinote", current ? truncateToWidth(`${noteIcon} ${taskState(current)} ${taskTag(current)} ${firstLine(current)}`, 60) : undefined);
         watcher.update(ctx, current);
       }
     } catch {

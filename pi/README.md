@@ -28,8 +28,8 @@ With a selected task it offers **Continue**, **Done**, and **Switch task**.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows `📌 ● [tag] #42 Task title` without replacing other footers.
-Only the task's first line appears there; the whole entry is truncated to 60 terminal columns.
+The normal Pi status area shows `📌 ● [tag] Task title` without replacing other footers.
+The footer omits the task ID and shows only the first line, truncated to 60 terminal columns including icons and tag.
 The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
 
 Selection is stored per canonical working directory in pinote's database. A new
