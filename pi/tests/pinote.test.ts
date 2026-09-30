@@ -118,7 +118,8 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.match(status!, /Unicode/);
   assert.ok(!status!.includes("#2"), "footer omits the task ID");
   assert.ok(!status!.includes("Hidden details"), "footer shows only the first line");
-  assert.ok(!status!.includes("In progress"), "footer uses only the state indicator");
+  assert.ok(!status!.includes("In progress"), "footer omits state text");
+  assert.ok(!/[●○]/u.test(status!), "footer omits state indicators");
   const originalText = tasks[1].text;
   tasks[1].text = "日本語 ".repeat(40) + "\nHidden details";
   await extension.event("agent_end");

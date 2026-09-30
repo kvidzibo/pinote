@@ -72,7 +72,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
     await event(extension, "session_start");
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(statuses.at(-1), "📌 ● [Untagged] Resume the task");
+    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.match(draft, /^Existing draft\n\n/);
     assert.match(draft, /Resume the task/);
     const get = extension.tools.get("pinote_get").definition;
@@ -94,7 +94,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     extension = await load(); // New process-like extension state, same durable database.
     draft = "";
     await event(extension, "session_start");
-    assert.equal(statuses.at(-1), "📌 ● [Untagged] Resume the task");
+    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.equal(draft, "", "startup never overwrites/submits the editor");
     choice = "Continue";
     await extension.commands.get("pi-note").handler("", ctx);

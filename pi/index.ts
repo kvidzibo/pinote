@@ -103,7 +103,7 @@ export default function (pi: ExtensionAPI) {
     try {
       const current = await selected(ctx);
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", current ? truncateToWidth(`${noteIcon} ${taskState(current)} ${taskTag(current)} ${firstLine(current)}`, 60) : undefined);
+        ctx.ui.setStatus("pinote", current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, 60) : undefined);
         watcher.update(ctx, current);
       }
     } catch {
