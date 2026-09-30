@@ -65,7 +65,7 @@ Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md
 ### Pi integration
 
 The optional [pi-note extension](pi/README.md) adds selected-task status,
-`/pinote` with Continue/Done/Switch, and agent read/update tools. Install from this
+`/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent read/update tools. Install from this
 checkout with `pi install ./pi` after updating the CLI. Selection persists per
 working directory; arbitrary Markdown handoff fields appear under **Agent** in
 the GTK preview without changing the task text. A GitHub `PR` field adds a footer

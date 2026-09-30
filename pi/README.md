@@ -1,7 +1,7 @@
 # pi-note
 
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
-in Pi: selected-task footer status, `/pinote`, and agent read/update tools.
+in Pi: selected-task footer status, `/pi-note`, and agent read/update tools.
 The extension and Python app share a repository but install separately.
 
 ## Install
@@ -22,10 +22,13 @@ The planned npm package name is `pi-note`; after its first release install with
 
 ## Use
 
-`/pinote` picks a task, starts it, and puts its full text and saved handoff fields
+`/pi-note` picks a task, starts it, and puts its full text and saved handoff fields
 in the editor. Existing drafts are preserved; nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, and **Switch task**.
-The normal Pi status area shows `📌 #42 Task title` without replacing other footers.
+Type in the task picker to filter by text, ID, tag, or state (all words must match).
+Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **● In progress** or
+**○ Active**, followed by the tag (`[Untagged]` when absent).
+The normal Pi status area shows `📌 ● In progress [tag] #42 Task title` without replacing other footers.
 The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
 
 Selection is stored per canonical working directory in pinote's database. A new
@@ -72,7 +75,7 @@ Network/authentication failures warn once until recovery and retry next interval
 No polling runs in print/RPC mode or after Pi exits.
 
 On merge, Pi waits until idle and asks **Mark this task completed?** Confirmation
-uses the same guarded CLI Done operation as `/pinote`; declining leaves the task
+uses the same guarded CLI Done operation as `/pi-note`; declining leaves the task
 unchanged. If it is already done, Pi says **PR #123 was merged and the task is
 already completed**, without completing it again. Completion clears the selection,
 so its watcher remains until another task is selected, the link is removed, or
@@ -87,7 +90,7 @@ A separate branch-based PR-status extension may show a duplicate link; disable i
 if you only want task-linked PRs.
 
 Task data stays local except for GitHub status requests. Tools work without a TUI,
-but `/pinote` needs an idle TUI.
+but `/pi-note` needs an idle TUI.
 This package does not synchronize databases or paths between machines. Note text
 and fields loaded into Pi are sent to the configured model when used as context;
 avoid secrets. Agent commands do not send desktop notifications.

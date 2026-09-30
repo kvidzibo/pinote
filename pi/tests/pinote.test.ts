@@ -27,6 +27,14 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       notify: (value: string) => { notices.push(value); },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
+      custom: async (factory: any) => new Promise((resolve) => {
+        const picker = factory({ requestRender() {} }, ctx.ui.theme, {
+          matches: (data: string, action: string) => (data === "\r" && action === "tui.select.confirm") ||
+            (data === "\x1b" && action === "tui.select.cancel"),
+        }, resolve);
+        beforeChoice?.();
+        picker.handleInput(choices.shift() === "pick" ? "\r" : "\x1b");
+      }),
       select: async (_title: string, labels: string[]) => {
         beforeChoice?.();
         const choice = choices.shift();
@@ -77,7 +85,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       },
     } as any);
     return {
-      command: () => commands.get("pinote").handler("", ctx),
+      command: () => commands.get("pi-note").handler("", ctx),
       event: (name: string) => events.get(name)({}, ctx),
       tool: (name: string, params: object, context = ctx, signal?: AbortSignal) =>
         tools.get(name).execute("call", params, signal, undefined, context),
