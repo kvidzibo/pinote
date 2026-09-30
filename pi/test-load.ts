@@ -15,6 +15,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
+    PINOTE_PR_POLL_SECONDS: "0",
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pi-note-test-bus",
   });
   delete process.env.DISPLAY;
@@ -27,9 +28,10 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   let choice = "pick";
   const ctx = {
     cwd, mode: "tui", hasUI: true, isIdle: () => true,
-    sessionManager: { getSessionId: () => "load-test" },
+    sessionManager: { getSessionId: () => "load-test", getBranch: () => [] },
     ui: {
-      setStatus: (_key: string, value?: string) => statuses.push(value),
+      theme: { fg: (_color: string, value: string) => value },
+      setStatus: (key: string, value?: string) => { if (key === "pinote") statuses.push(value); },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
       notify: () => {},

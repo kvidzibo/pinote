@@ -68,7 +68,9 @@ The optional [pi-note extension](pi/README.md) adds selected-task status,
 `/pinote` with Continue/Done/Switch, and agent read/update tools. Install from this
 checkout with `pi install ./pi` after updating the CLI. Selection persists per
 working directory; arbitrary Markdown handoff fields appear under **Agent** in
-the GTK preview without changing the task text. No cross-machine sync is provided.
+the GTK preview without changing the task text. A GitHub `PR` field adds a footer
+link and configurable merge polling in interactive Pi, with confirmation before
+completion. No cross-machine sync is provided.
 
 ## Important constraints
 

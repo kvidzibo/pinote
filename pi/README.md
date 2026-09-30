@@ -31,8 +31,8 @@ The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font,
 Selection is stored per canonical working directory in pinote's database. A new
 Pi session shows that selection; use **Continue** to load its current contents.
 Completing, removing, or scheduling a task clears its selections. Switching does
-not complete or reset the previous task. Status refreshes at session start,
-before/after agent activity, and after commands/tools, not on an idle timer.
+not complete or reset the previous task. Task status refreshes at session start,
+before/after agent activity, and after commands/tools.
 
 Agent tools:
 
@@ -41,7 +41,7 @@ Agent tools:
   `set` label/value pairs or `remove` labels. Updates merge fields, never replace
   the task text. If another process changed the task, read again before retrying.
 
-Values are Markdown strings; no predefined or required fields:
+Values are Markdown strings; no fields are required. `PR` enables the watcher below:
 
 ```markdown
 # Agent
@@ -57,7 +57,36 @@ sessions. Labels are case-sensitive (trimmed, Unicode-normalized), at most 64
 characters; values are at most 4096 characters. Maximum 64 fields / 32 KiB JSON
 per task. Use removal rather than empty values.
 
-All data stays local. Tools work without a TUI, but `/pinote` needs an idle TUI.
+### PR merge watcher
+
+Set `PR` with `pinote_update` to one `https://github.com/owner/repo/pull/123` URL
+or Markdown link. The footer adds a clickable, link-coloured **PR #123**, without
+status text. Other hosts, multiple links, and prose are not watched. Terminal
+OSC 8 support is required for clicking links.
+
+Interactive Pi checks only the selected task's PR using authenticated `gh`
+(`gh auth login`). Polling defaults to 60 seconds; launch Pi with
+`PINOTE_PR_POLL_SECONDS=120 pi` to change it, or `0` to disable polling.
+Allowed intervals are 10–86400 seconds. The link remains visible when disabled.
+Network/authentication failures warn once until recovery and retry next interval.
+No polling runs in print/RPC mode or after Pi exits.
+
+On merge, Pi waits until idle and asks **Mark this task completed?** Confirmation
+uses the same guarded CLI Done operation as `/pinote`; declining leaves the task
+unchanged. If it is already done, Pi says **PR #123 was merged and the task is
+already completed**, without completing it again. Completion clears the selection,
+so its watcher remains until another task is selected, the link is removed, or
+Pi exits. Removed/scheduled tasks are no longer watched.
+
+Merge acknowledgements are saved in the Pi session, preventing repeated prompts
+on polls, `/reload`, and session resume. A new session can notify again for a
+selected task. Task or PR changes during confirmation cannot complete a different
+task. No completion-hook system is added; this uses Pinote's existing Done flow.
+A separate branch-based PR-status extension may show a duplicate link; disable it
+if you only want task-linked PRs.
+
+Task data stays local except for GitHub status requests. Tools work without a TUI,
+but `/pinote` needs an idle TUI.
 This package does not synchronize databases or paths between machines. Note text
 and fields loaded into Pi are sent to the configured model when used as context;
 avoid secrets. Agent commands do not send desktop notifications.
