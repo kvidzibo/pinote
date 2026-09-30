@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -23,8 +24,10 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   const cwd = join(temp, "project");
   mkdirSync(cwd);
   const cli = (...args: string[]) => execFileSync("note", args, { encoding: "utf8", timeout: 5000 });
+  const notices: string[] = [];
   const statuses: Array<string | undefined> = [];
   const prStatuses: Array<string | undefined> = [];
+  const autocompleteWrappers: Array<(current: any) => any> = [];
   const entries: any[] = [];
   let draft = "Existing draft";
   let choice = "pick";
@@ -38,7 +41,9 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
-      notify: () => {},
+      notify: (message: string) => { notices.push(message); },
+      addAutocompleteProvider: (wrapper: any) => autocompleteWrappers.push(wrapper),
+      confirm: async () => { throw new Error("compatible setup must not ask for confirmation"); },
       custom: async (factory: any) => new Promise((resolve) => {
         const picker = factory({ requestRender() {} }, ctx.ui.theme, {
           matches: (data: string, action: string) => data === "\r" && action === "tui.select.confirm",
@@ -68,9 +73,17 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   try {
     cli("add", "Resume the task", "--no-notify");
     extension = await load();
-    assert.deepEqual([...extension.commands.keys()], ["pi-note"]);
-    assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
+    assert.deepEqual([...extension.commands.keys()].sort(), ["pi-note", "pi-note-setup", "pi-note-upgrade"]);
+    await extension.commands.get("pi-note-setup").handler("", ctx);
+    assert.match(notices.at(-1)!, /is ready/);
     await event(extension, "session_start");
+    const base = new CombinedAutocompleteProvider(
+      [...extension.commands.keys()].map((name: string) => ({ name })), cwd);
+    const suggestions = await autocompleteWrappers.at(-1)!(base).getSuggestions(["/pi-note"], 0, 8,
+      { signal: new AbortController().signal });
+    assert.deepEqual(suggestions.items.map((item: any) => item.value), ["pi-note"]);
+    assert.ok(!notices.some((message) => message.includes("Run /pi-note-upgrade")));
+    assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.match(draft, /^Existing draft\n\n/);

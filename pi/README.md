@@ -7,18 +7,51 @@ The extension and Python app share a repository but install separately.
 ## Install
 
 Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH).
-The extension probes `note --version` before commands: older CLIs interpret unknown
-commands as note text and must be rejected before use. From this checkout:
+From this checkout, install the extension with `pi install ./pi`, then run
+`/reload` in interactive Pi. Use `/pi-note-setup` if the CLI is missing, or the
+suggested `/pi-note-upgrade` if it is older than the bundled CLI. The planned npm package name is
+`pi-note`; after its first release use `pi install npm:pi-note` instead.
+It is not published yet. npm installation does not run Python installers.
 
-```sh
-uv tool install --reinstall .
-pi install ./pi
-```
+### CLI setup and upgrades
 
-Run `/reload` in existing Pi sessions. Remove the old standalone
-`settings/pi/extensions/pinote.ts` entry if installed; load only one copy.
-The planned npm package name is `pi-note`; after its first release install with
-`pi install npm:pi-note`. It is not published yet.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
+restart Pi with `uv` on PATH. At startup the extension checks `note --version`
+against its bundled CLI version (currently 0.3.0), without network requests:
+
+- Missing/unrecognized CLI: show `/pi-note-setup` in the slash-command menu.
+- Older CLI: show and suggest `/pi-note-upgrade`.
+- Equal/newer CLI: hide both commands; no upgrade notification.
+
+Both commands ask before installing into uv's isolated tool environment.
+The menu refreshes after setup/upgrade; restart Pi or `/reload` after external
+CLI changes. Manually typing either command rechecks the version and never
+reinstalls an equal/newer CLI or intentionally downgrades it.
+Python 3.11+ is required; uv can download a suitable interpreter when missing.
+The command downloads a pinned GitHub source archive and build dependencies,
+not a similarly named PyPI package. It does not install GTK dependencies, edit
+shell configuration, or change tasks. This checks the Python CLI bundled with
+the installed extension, not the latest npm/GitHub release. Update the extension
+first to receive a newer bundled CLI. `/pi-note-setup --upgrade` is replaced by
+`/pi-note-upgrade`.
+
+Back up your database before upgrading and update an optional GUI separately.
+For checkout development, use `uv tool install --reinstall .` at the repo root
+instead, so local Python changes are installed.
+
+If setup reports a PATH problem, run `uv tool dir --bin` in your terminal,
+put that directory before older `note` executables on PATH, and restart Pi.
+Check `note --version`, then restart Pi or `/reload`. Network/build failures and
+conflicting executables are reported without forcibly overwriting another
+installer's commands. Fix the reported cause and retry; installs time out after
+three minutes. Setup/upgrade commands are hidden while installation runs.
+Missing uv is reported with its installation link, not installed
+automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
+and still requires separate system dependencies.
+
+The extension probes `note --version` before task commands: older CLIs interpret
+unknown commands as note text and must be rejected before use. Remove the old
+standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one copy.
 
 ## Use
 
@@ -127,6 +160,10 @@ One-time maintainer setup (not performed by installing this package):
 2. In npm's package settings configure the GitHub trusted publisher: owner
    `kvidzibo`, repository `pinote`, workflow `publish.yml`, no environment.
 3. Add verified npm and Pi package-directory links here after publication.
+
+The CLI source pin in `setup.ts` must point to a verified immutable commit with a
+compatible Python package. Update it and the bundled-version setup text together
+when releasing Python changes; verify installation in a temporary uv tool directory.
 
 Subsequent releases: run `npm version patch|minor|major --no-git-tag-version`
 inside `pi/`, commit both version files in a PR, and merge through the normal
