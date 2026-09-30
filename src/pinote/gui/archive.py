@@ -56,8 +56,8 @@ class ArchiveRow(Gtk.ListBoxRow):
         self.tag_badge.label.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)
         self.tag_badge.set_visible(note.tag is not None)
-        if self.body.get_text() != note.text:
-            self.body.set_text(note.text)  # Literal text, never Pango markup.
+        if self.body.get_text() != note.markdown:
+            self.body.set_text(note.markdown)  # Literal text, never Pango markup.
         status = "Completed" if note.state == "done" else "Deleted"
         when = (
             datetime.fromisoformat(note.archived_at or note.updated_at)

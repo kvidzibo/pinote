@@ -55,8 +55,8 @@ class ScheduledRow(Gtk.ListBoxRow):
 
     def update(self, note: Note, *, sensitive: bool) -> None:
         self.note = note
-        if self.body.get_text() != note.text:
-            self.body.set_text(note.text)
+        if self.body.get_text() != note.markdown:
+            self.body.set_text(note.markdown)
         label = local_reminder_time(note.remind_at)
         self.tag_badge.label.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)

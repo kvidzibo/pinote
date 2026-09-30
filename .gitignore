@@ -11,6 +11,8 @@ dist/
 *.log
 *.log.*
 build/
+node_modules/
+*.tgz
 
 # Local notes, backups, and agent scratch memory
 /MEMORY.md

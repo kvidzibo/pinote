@@ -63,10 +63,11 @@ does not reinstall packages or change desktop configuration.
 Update **both** the CLI and GUI installations before reopening the GUI. For the
 editable setup above, update the checkout and run `uv tool install --reinstall .`
 for the separately installed CLI. Back up `notes.db` first ([backup instructions](usage.md#data-privacy-and-backup)).
-The first database open upgrades schema 1–4 to **5** atomically, retaining note IDs,
+The first database open upgrades schema 1–5 to **6** atomically, retaining note IDs,
 timestamps, tags, reminders, history, and import markers. Schema 5 stores tags separately,
-including unused tags, and seeds the registry from existing tasks. Schema 1/2 tasks start
-untagged. Older pinote versions cannot read schema 5.
+including unused tags; schema 6 adds agent fields, history snapshots, and per-directory
+Pi task selections. Existing tasks start with no agent fields; schema 1/2 tasks start
+untagged. Older pinote versions cannot read schema 6.
 Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Historical text is preserved, not replaced when a task is edited.
 

@@ -168,11 +168,12 @@ class NotePreview(Gtk.Window):
         return True  # Never let GTK launch other URI schemes through its default handler.
 
     def update(self, note: Note) -> None:
-        if self.source_text == note.text:
+        source = note.markdown
+        if self.source_text == source:
             return  # Compare source, not rendered text, to preserve selection on polls.
-        self.source_text = note.text
-        markup = render_markdown(note.text) if self.markdown else None
+        self.source_text = source
+        markup = render_markdown(source) if self.markdown else None
         if markup is None:
-            self.body.set_text(note.text)
+            self.body.set_text(source)
         else:
             self.body.set_markup(markup)

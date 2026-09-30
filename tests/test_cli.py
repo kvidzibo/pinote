@@ -105,7 +105,7 @@ def test_argument_errors(cli, argv):
 
 def test_help_and_version_have_no_side_effects(cli):
     assert "durable history" in cli("--help").stdout
-    assert "pinote 0.2.0" in cli("--version").stdout
+    assert "pinote 0.3.0" in cli("--version").stdout
     assert not cli.database.exists()
     assert not cli.log.exists()
 
@@ -236,4 +236,4 @@ def test_installed_console_entrypoint(cli):
         capture_output=True,
         check=True,
     )
-    assert result.stdout == "pinote 0.2.0\n"
+    assert result.stdout == "pinote 0.3.0\n"

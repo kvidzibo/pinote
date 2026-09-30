@@ -37,7 +37,7 @@ def test_gui_arguments_work_without_gtk_or_side_effects(cli, args):
     )
     assert result.returncode == (2 if args == ("--unknown",) else 0)
     if args == ("--version",):
-        assert result.stdout == "pinote-gui 0.2.0\n"
+        assert result.stdout == "pinote-gui 0.3.0\n"
     assert not cli.database.exists()
     assert not cli.log.exists()
 

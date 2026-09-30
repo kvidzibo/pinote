@@ -2230,6 +2230,51 @@ def test_markdown_preview_copy_poll_links_and_opt_out(gtk, monkeypatch, markdown
         assert [event["action"] for event in store.history(note.id)] == ["add", "edit"]
 
 
+def test_agent_fields_enable_single_line_preview_and_refresh_links(gtk, monkeypatch):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        note_id = store.add("Task with a handoff")
+        original = store.get(note_id)
+        note = store.update_agent(
+            note_id,
+            {
+                "PR": "[Fix #42](https://example.org/pull/42)",
+                "Next": "Review",
+                "Literal &copy;": "Kept",
+            },
+            [],
+            expected_updated_at=original.updated_at,
+        )
+    window = gtk.open()
+    row = window.rows[note_id]
+    assert row.body.get_text() == "Task with a handoff"
+    assert row.preview_button.get_visible()
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    preview = window.preview
+    assert preview.body.get_text() == (
+        "Task with a handoff\n\nAgent\nLiteral &copy;: Kept\n\nNext: Review\n\nPR: Fix #42"
+    )
+    assert '<a href="https://example.org/pull/42">' in preview.body.get_label()
+    opened = []
+    monkeypatch.setattr(Gtk, "show_uri_on_window", lambda _owner, uri, _time: opened.append(uri))
+    preview.body.emit("activate-link", "https://example.org/pull/42")
+    assert opened == ["https://example.org/pull/42"] and window.preview is None
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    with Store(gtk.paths.database) as store:
+        store.update_agent(
+            note_id, {}, ["PR", "Next", "Literal &copy;"], expected_updated_at=note.updated_at
+        )
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and window.preview is None)
+    assert not row.preview_button.get_visible()
+    with Store(gtk.paths.database) as store:
+        assert store.get(note_id).text == original.text
+        assert [event["action"] for event in store.history()] == ["add", "agent", "agent"]
+
+
 @pytest.mark.parametrize("limit", [1, 10])
 def test_saved_add_scrolls_to_new_row_but_background_changes_preserve_scroll(gtk, cli, limit):
     config = Path(gtk.env["XDG_CONFIG_HOME"]) / "pinote/config.toml"
