@@ -62,6 +62,14 @@ The separate funnel control shows the list filter and matching task count.
 Full commands,
 Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md).
 
+### Pi integration
+
+The optional [pi-note extension](pi/README.md) adds selected-task status,
+`/pinote` with Continue/Done/Switch, and agent read/update tools. Install from this
+checkout with `pi install ./pi` after updating the CLI. Selection persists per
+working directory; arbitrary Markdown handoff fields appear under **Agent** in
+the GTK preview without changing the task text. No cross-machine sync is provided.
+
 ## Important constraints
 
 - **Reminders are not wake-up alarms.** Due tasks return while the GUI is open,
@@ -75,12 +83,13 @@ Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md
 - Notes default to `~/.local/share/pinote/notes.db`; logs to
   `~/.local/state/pinote/app.log` (XDG overrides supported). Data stays local but
   is **not encrypted**, and desktop notifications may remain in Dunst history.
-- Markdown exports are **not backups**: they omit IDs, tags, schedules, and history.
+- Markdown exports are **not backups**: they omit IDs, tags, schedules, agent fields,
+  project selections, and history.
   Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`, and
   `gui-filter.json`.
   [Backup and upgrade details](docs/usage.md#data-privacy-and-backup).
 - Back up before upgrading; update both CLI and GUI installations together.
-  Older versions cannot read schema 5. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
+  Older versions cannot read schema 6. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
 
 ## Validation
 
@@ -92,6 +101,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
 xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
 uv build
+npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 ```
 
 GUI tests require the documented desktop tools and always run under Xvfb with a

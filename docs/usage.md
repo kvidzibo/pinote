@@ -73,6 +73,38 @@ or `note add -- "--starts-with-a-dash"` for leading dashes. Quote shell
 metacharacters. Notes can contain Unicode, quotes, and newlines, up to 4096
 characters; empty notes and terminal control characters are rejected.
 
+### Agent handoffs
+
+`note agent` commands return JSON and never refresh Dunst. Selection is durable
+per canonical working directory; fields belong to the task, not a Pi session.
+
+```sh
+note agent select 2 --cwd "$PWD"    # start and select atomically
+note agent selected --cwd "$PWD"    # task or null
+note agent get 2                    # task, Markdown, fields, updated_at revision
+note agent update 2 --expected-updated-at 'REVISION_FROM_GET' \
+  --set-json '{"PR":"[Fix #42](https://github.com/org/repo/pull/42)","Next":"Review"}'
+note agent update 2 --expected-updated-at 'LATEST_REVISION' --remove Next
+note agent done 2 --expected-updated-at 'LATEST_REVISION'
+```
+
+Update merges arbitrary label/Markdown-string pairs; it never overwrites task
+text. Labels are trimmed, Unicode-normalized and case-sensitive (64 characters
+maximum). Values use the same 4096-character/control-character rules as task
+text. Up to 64 fields / 32 KiB JSON can be saved per task. Empty values are
+rejected; use `--remove` instead. Conflicting set/remove labels are rejected.
+
+Use the returned `updated_at` for updates/completion; a stale revision fails
+without changing anything. Fields are retained as history snapshots and displayed
+under `# Agent` in terminal listings and the GTK Markdown preview. The task editor
+edits only task text, leaving agent fields intact. Fields also remain visible as
+literal text in the archive/reminders. Completion, removal and scheduling clear
+project selections; restoring does not silently reselect tasks.
+
+The existing `list --json` format is unchanged; use `agent get` for handoff data.
+See the [Pi extension](../pi/README.md) for `/pinote`, footer status, and tools.
+New sessions can continue locally; there is no automatic cross-machine sync.
+
 ### Scheduled reminders
 
 Add a note normally, then schedule it for a **future local date and time**. It leaves
@@ -144,11 +176,11 @@ SQLite becomes the source of truth; editing the old Markdown file does not
 change pinote. Import creates untagged tasks; export omits tag metadata.
 Scheduled notes are excluded from Markdown exports, even with `--all`; use
 `note reminders` to list them. Export is a readable snapshot, **not** a backup of
-IDs, tags, scheduled times, or history.
+IDs, tags, scheduled times, agent fields, project selections, or history.
 
 ## Data, privacy, and backup
 
-- Notes/history: `$XDG_DATA_HOME/pinote/notes.db`
+- Notes/history, agent fields and per-directory selections: `$XDG_DATA_HOME/pinote/notes.db`
   (default `~/.local/share/pinote/notes.db`).
 - Unfinished GUI input: `gui-draft.txt` beside `notes.db`, private to the current
   user and separate from tasks/history. It is saved about every 250 ms while editing

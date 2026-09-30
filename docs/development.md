@@ -12,6 +12,9 @@ uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
 xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
 uv build
+npm --prefix pi ci --ignore-scripts
+npm --prefix pi test
+(cd pi && npm pack --dry-run)
 ```
 
 Dunst tests require `dunst`, `dunstify`, `dunstctl`, `xvfb-run`, `xauth`, and
@@ -40,3 +43,9 @@ notification rendering, and CLI parsing are separated for focused testing.
 `gui/` contains the optional presentation and a GTK-free data adapter; GTK is
 loaded only when launching the GUI. Schema upgrades run transactionally in the
 shared store, so both frontends use the same progress states and history.
+
+`pi/` is the independently versioned `pi-note` npm package. It calls the `note`
+CLI rather than accessing SQLite. Its load test needs the checkout's `.venv/bin/note`
+and exercises the real Pi loader against temporary data. Package publishing runs
+after the full CI suite on pushes to `main`; the [package README](../pi/README.md#development-and-releases)
+documents the one-time npm trusted-publisher setup and version-bump workflow.

@@ -13,7 +13,7 @@ from pinote import __version__, markdown, notify
 from pinote.logging_setup import LOGGER, configure_logging
 from pinote.paths import Paths, display_lock
 from pinote.reminders import local_reminder_time, parse_reminder_time
-from pinote.store import NoteError, Store
+from pinote.store import Note, NoteError, Store
 
 COMMANDS = {
     "add",
@@ -28,6 +28,7 @@ COMMANDS = {
     "export",
     "schedule",
     "reminders",
+    "agent",
 }
 MUTATIONS = {"add", "done", "start", "rm", "restore", "import", "schedule"}
 
@@ -65,6 +66,10 @@ def parser() -> argparse.ArgumentParser:
         ("export", "write active notes as Markdown to stdout"),
         ("schedule", "schedule a reminder for a note"),
         ("reminders", "list scheduled reminders"),
+        (
+            "agent",
+            "read/update agent fields and persistent project selection (JSON, no desktop refresh)",
+        ),
     ):
         sub = subs.add_parser(name, help=help_text)
         sub.add_argument(
@@ -73,7 +78,22 @@ def parser() -> argparse.ArgumentParser:
             default=argparse.SUPPRESS,
             help="skip automatic desktop refresh",
         )
-        if name == "add":
+        if name == "agent":
+            actions = sub.add_subparsers(dest="agent_action", required=True)
+            for action in ("get", "selected", "select", "update", "done"):
+                operation = actions.add_parser(action)
+                if action != "selected":
+                    operation.add_argument("id", type=positive_id)
+                if action in {"selected", "select"}:
+                    operation.add_argument("--cwd", type=Path, required=True)
+                if action in {"update", "done"}:
+                    operation.add_argument("--expected-updated-at", required=True)
+                if action == "update":
+                    operation.add_argument("--set-json", default="{}", help="label: Markdown pairs")
+                    operation.add_argument(
+                        "--remove", action="append", default=[], help="field label"
+                    )
+        elif name == "add":
             sub.add_argument("text", nargs="+", help="note text; quote shell metacharacters")
         elif name in {"done", "start", "rm", "restore", "history"}:
             kwargs = {"nargs": "?"} if name == "history" else {}
@@ -106,10 +126,58 @@ def arguments(argv: list[str]) -> argparse.Namespace:
     return parser().parse_args([*prefix, *argv])
 
 
+def agent_task(note: Note | None) -> dict | None:
+    if note is None:
+        return None
+    return {
+        "id": note.id,
+        "text": note.text,
+        "state": note.state,
+        "tag": note.tag,
+        "updated_at": note.updated_at,
+        "agent_notes": note.agent_notes,
+        "markdown": note.markdown,
+    }
+
+
+def execute_agent(args: argparse.Namespace, store: Store) -> None:
+    action = args.agent_action
+    if action in {"select", "selected"} and not args.cwd.is_absolute():
+        raise NoteError("--cwd must be an absolute project directory.")
+    if action == "selected":
+        note = store.selected(args.cwd)
+    elif action == "select":
+        note = store.select(args.id, args.cwd)
+    elif action == "update":
+        try:
+            fields = json.loads(args.set_json)
+        except json.JSONDecodeError as exc:
+            raise NoteError(
+                "--set-json must contain a JSON object of label: Markdown pairs."
+            ) from exc
+        note = store.update_agent(
+            args.id, fields, args.remove, expected_updated_at=args.expected_updated_at
+        )
+    elif action == "done":
+        if not store.transition(
+            args.id,
+            "done",
+            expected_states={"active", "in_progress"},
+            expected_updated_at=args.expected_updated_at,
+        ):
+            raise NoteError("This task changed elsewhere. Read it again before completing.")
+        note = store.get(args.id)
+    else:
+        note = store.get(args.id)
+    print(json.dumps(agent_task(note), ensure_ascii=False))
+
+
 def execute(args: argparse.Namespace, paths: Paths) -> int:
     refresh = args.command in MUTATIONS and not args.no_notify
     scheduled_when = parse_reminder_time(args.when) if args.command == "schedule" else None
-    needs_lock = args.command in MUTATIONS | {"show"}
+    needs_lock = args.command in MUTATIONS | {"show"} or (
+        args.command == "agent" and args.agent_action in {"select", "update", "done"}
+    )
     lock = display_lock(paths) if needs_lock else nullcontext()
     with lock, Store(paths.database) as store:
         # No nested lock, and ordinary reads stay lock-free unless a timer is due.
@@ -118,7 +186,9 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         elif store.has_due():
             with display_lock(paths):
                 store.activate_due()
-        if args.command == "add":
+        if args.command == "agent":
+            execute_agent(args, store)
+        elif args.command == "add":
             note_id = store.add(" ".join(args.text))
             print(f"Added note {note_id}.")
         elif args.command == "schedule":
@@ -129,7 +199,7 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         elif args.command == "reminders":
             notes = store.scheduled_notes()
             for note in notes:
-                text = note.text.replace("\n", "\n    ")
+                text = note.markdown.replace("\n", "\n    ")
                 print(f"{note.id}. {local_reminder_time(note.remind_at)} {text}")
             if not notes:
                 print("No scheduled reminders.")
@@ -158,7 +228,7 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                         if args.all or note.state == "in_progress"
                         else ""
                     )
-                    text = note.text.replace("\n", "\n    ")
+                    text = note.markdown.replace("\n", "\n    ")
                     scheduled = (
                         f" ({local_reminder_time(note.remind_at)})" if note.remind_at else ""
                     )
@@ -172,6 +242,8 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                 text = event["text"].replace("\n", "\\n")
                 if event["action"] == "edit":
                     text = f"{event['previous_text']!r} -> {event['text']!r}"
+                elif event["action"] == "agent":
+                    text = f"agent {event['previous_agent_notes']} -> {event['agent_notes']}"
                 elif event["action"] == "tag":
                     old = repr(event["previous_tag"]) if event["previous_tag"] else "Untagged"
                     new = repr(event["tag"]) if event["tag"] else "Untagged"

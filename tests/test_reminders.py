@@ -44,7 +44,7 @@ def test_reminder_lifecycle_survives_v3_upgrade_restart_and_stale_actions(tmp_pa
     assert scheduled.remind_at == due.isoformat(timespec="microseconds")
     assert model.notes() == [] and model.archive() == []
     with Store(paths.database) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 6
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert store.import_notes("/old.md", [("duplicate", "active")]) is None

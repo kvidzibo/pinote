@@ -156,7 +156,7 @@ class NoteRow(Gtk.ListBoxRow):
             self.reminder_icon.set_tooltip_text(due_text)
         self.reminder_icon.get_accessible().set_description(due_text or "")
         self.reminder_icon.set_visible(due_text is not None)
-        self.preview_button.set_visible("\n" in note.text)
+        self.preview_button.set_visible("\n" in note.markdown)
         self.preview_button.set_sensitive(not self.exiting)
         sensitive = sensitive and not self.exiting
         self.done.set_sensitive(sensitive)
@@ -783,7 +783,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _open_preview(self, note_id: int) -> None:
         row = self.rows.get(note_id)
-        if self.closed or row is None or row.exiting or "\n" not in row.note.text:
+        if self.closed or row is None or row.exiting or "\n" not in row.note.markdown:
             return
         if self.focus_source:
             GLib.source_remove(self.focus_source)
@@ -1013,7 +1013,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         copy = icon_menu_item("edit-copy-symbolic", "Copy note")
         copy.connect(
             "activate",
-            lambda _item: Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(note.text, -1),
+            lambda _item: Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(note.markdown, -1),
         )
         edit = icon_menu_item("document-edit-symbolic", "Edit…")
         edit.connect("activate", lambda _item: self._open_editor(note))
@@ -1354,7 +1354,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 row.cancel_dismissal()
             row.update(note, sensitive=not self.action_pending)
             if self.preview is not None and self.preview.note_id == note.id:
-                if "\n" in note.text:
+                if "\n" in note.markdown:
                     self.preview.update(note)
                 else:
                     self._close_preview(self.preview)

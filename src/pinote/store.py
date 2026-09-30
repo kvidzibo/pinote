@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import string
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -52,6 +54,34 @@ class Note:
     remind_at: str | None = None
     reminder_due_at: str | None = None  # Delivered reminder's due time, derived from history.
     archived_at: str | None = None  # Completion/deletion time, independent of later tag edits.
+    agent_notes: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def markdown(self) -> str:
+        """Task text plus separately stored, user-defined agent fields."""
+        if not self.agent_notes:
+            return self.text
+        fields = []
+        for label, value in self.agent_notes.items():
+            # Labels are literal; only values are Markdown.
+            label = "".join("\\" + char if char in string.punctuation else char for char in label)
+            fields.append(f"{label}: {value}")
+        return self.text + "\n\n# Agent\n" + "\n\n".join(fields)
+
+
+def note_from_row(row: sqlite3.Row) -> Note:
+    values = dict(row)
+    values["agent_notes"] = json.loads(values["agent_notes"])
+    return Note(**values)
+
+
+def agent_label(value: str) -> str:
+    if not isinstance(value, str):
+        raise NoteError("Agent field labels must be strings.")
+    label = validate_tag(value)
+    if label is None:
+        raise NoteError("Agent field labels cannot be empty.")
+    return label
 
 
 # Table names below are fixed internal identifiers, never user input.
@@ -176,6 +206,38 @@ MIGRATION_5 = (
 )
 
 
+MIGRATION_6 = (
+    "ALTER TABLE notes ADD COLUMN agent_notes TEXT NOT NULL DEFAULT '{}'",
+    """CREATE TABLE events_v6 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER NOT NULL REFERENCES notes(id),
+        action TEXT NOT NULL CHECK (
+            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',
+                       'edit', 'tag', 'schedule', 'remind', 'agent')
+        ),
+        previous_state TEXT,
+        state TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        text TEXT NOT NULL,
+        previous_text TEXT,
+        tag TEXT,
+        previous_tag TEXT,
+        remind_at TEXT,
+        previous_remind_at TEXT,
+        agent_notes TEXT NOT NULL DEFAULT '{}',
+        previous_agent_notes TEXT NOT NULL DEFAULT '{}'
+    )""",
+    "INSERT INTO events_v6 SELECT *, '{}', '{}' FROM events",
+    "UPDATE sqlite_sequence SET seq = MAX(seq, "
+    "COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)) "
+    "WHERE name = 'events_v6'",
+    "DROP TABLE events",
+    "ALTER TABLE events_v6 RENAME TO events",
+    "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, "
+    "note_id INTEGER NOT NULL REFERENCES notes(id))",
+)
+
+
 class Store:
     def __init__(self, path: Path, *, timeout: float = 10):
         private_directory(path.parent)
@@ -191,15 +253,15 @@ class Store:
 
     def _initialize(self) -> None:
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 5:
+        if version == 6:
             return  # Ordinary reads must not take a write lock.
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             # Another process may have upgraded while this connection waited.
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            if version == 5:
+            if version == 6:
                 return
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise NoteError(f"Unsupported database version {version}; update pinote.")
             if version == 0:
                 for statement in SCHEMA:
@@ -213,9 +275,12 @@ class Store:
             if version < 4:
                 for statement in MIGRATION_4:
                     self.connection.execute(statement)
-            for statement in MIGRATION_5:
+            if version < 5:
+                for statement in MIGRATION_5:
+                    self.connection.execute(statement)
+            for statement in MIGRATION_6:
                 self.connection.execute(statement)
-            self.connection.execute("PRAGMA user_version = 5")
+            self.connection.execute("PRAGMA user_version = 6")
 
     def __enter__(self) -> Store:
         return self
@@ -297,8 +362,9 @@ class Store:
             )
             self.connection.execute(
                 "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, "
-                "previous_text, tag, previous_tag, remind_at, previous_remind_at) "
-                "VALUES (?, 'tag', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "previous_text, tag, previous_tag, remind_at, previous_remind_at, "
+                "agent_notes, previous_agent_notes) "
+                "VALUES (?, 'tag', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     row["id"],
                     row["state"],
@@ -310,6 +376,8 @@ class Store:
                     old,
                     row["remind_at"],
                     row["remind_at"],
+                    row["agent_notes"],
+                    row["agent_notes"],
                 ),
             )
 
@@ -345,7 +413,8 @@ class Store:
             )
             self.connection.execute(
                 "INSERT INTO events(note_id, action, previous_state, state, occurred_at, "
-                "text, previous_text, tag, previous_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "text, previous_text, tag, previous_tag, agent_notes, previous_agent_notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     note_id,
                     action,
@@ -356,6 +425,8 @@ class Store:
                     row["text"],
                     new_tag,
                     row["tag"],
+                    row["agent_notes"],
+                    row["agent_notes"],
                 ),
             )
         return True
@@ -366,7 +437,7 @@ class Store:
         """Append a transition inside the caller's write transaction."""
         when = timestamp()
         row = self.connection.execute(
-            "SELECT text, tag, remind_at FROM notes WHERE id = ?", (note_id,)
+            "SELECT text, tag, remind_at, agent_notes FROM notes WHERE id = ?", (note_id,)
         ).fetchone()
         self.connection.execute(
             "UPDATE notes SET state = ?, updated_at = ?, remind_at = ? WHERE id = ?",
@@ -374,7 +445,8 @@ class Store:
         )
         self.connection.execute(
             "INSERT INTO events(note_id, action, previous_state, state, occurred_at, text, tag, "
-            "remind_at, previous_remind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "remind_at, previous_remind_at, agent_notes, previous_agent_notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note_id,
                 action,
@@ -385,8 +457,12 @@ class Store:
                 row["tag"],
                 remind_at,
                 row["remind_at"],
+                row["agent_notes"],
+                row["agent_notes"],
             ),
         )
+        if target not in {"active", "in_progress"}:
+            self.connection.execute("DELETE FROM agent_selections WHERE note_id = ?", (note_id,))
 
     def schedule(
         self, note_id: int, when: datetime, *, expected_updated_at: str | None = None
@@ -412,7 +488,7 @@ class Store:
 
     def scheduled_notes(self) -> list[Note]:
         return [
-            Note(**dict(row))
+            note_from_row(row)
             for row in self.connection.execute(
                 "SELECT * FROM notes WHERE state = 'scheduled' ORDER BY remind_at, id"
             )
@@ -484,7 +560,7 @@ class Store:
 
     def archived_notes(self) -> list[Note]:
         return [
-            Note(**dict(row))
+            note_from_row(row)
             for row in self.connection.execute(
                 "WITH archived_events AS ("
                 " SELECT note_id, MAX(id) AS event_id FROM events"
@@ -517,7 +593,101 @@ class Store:
         """
         if not all_states:
             query += " WHERE notes.state IN ('active', 'in_progress')"
-        return [Note(**dict(row)) for row in self.connection.execute(query + " ORDER BY notes.id")]
+        return [note_from_row(row) for row in self.connection.execute(query + " ORDER BY notes.id")]
+
+    def get(self, note_id: int) -> Note:
+        row = self.connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            raise NoteError(f"No note with ID {note_id}.")
+        return note_from_row(row)
+
+    def selected(self, cwd: Path) -> Note | None:
+        row = self.connection.execute(
+            "SELECT notes.* FROM agent_selections JOIN notes ON notes.id = note_id "
+            "WHERE cwd = ? AND state IN ('active', 'in_progress')",
+            (str(cwd.resolve()),),
+        ).fetchone()
+        return note_from_row(row) if row else None
+
+    def select(self, note_id: int, cwd: Path) -> Note:
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            note = self.get(note_id)
+            if note.state not in {"active", "in_progress"}:
+                raise NoteError(f"Note {note_id} is {note.state}; restore it first.")
+            if note.state == "active":
+                self._change_state(note_id, "start", note.state, "in_progress")
+            self.connection.execute(
+                "INSERT INTO agent_selections(cwd, note_id) VALUES (?, ?) "
+                "ON CONFLICT(cwd) DO UPDATE SET note_id = excluded.note_id",
+                (str(cwd.resolve()), note_id),
+            )
+            return self.get(note_id)
+
+    def update_agent(
+        self,
+        note_id: int,
+        fields: dict[str, str],
+        remove: list[str],
+        *,
+        expected_updated_at: str,
+    ) -> Note:
+        if not isinstance(fields, dict):
+            raise NoteError("Agent fields must be a JSON object of label: Markdown string pairs.")
+        patch = {}
+        for key, value in fields.items():
+            label = agent_label(key)
+            if label in patch:
+                raise NoteError("Agent field labels must be unique after normalization.")
+            if not isinstance(value, str):
+                raise NoteError("Agent field values must be Markdown strings.")
+            validate_text(value)  # Validate without stripping Markdown-significant indentation.
+            value = value.replace("\r\n", "\n")
+            if len(value) > 4096:
+                raise NoteError("Agent field values cannot exceed 4096 characters.")
+            patch[label] = value
+        deleted = {agent_label(label) for label in remove}
+        if deleted.intersection(patch):
+            raise NoteError("Cannot set and remove the same agent field in one update.")
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            note = self.get(note_id)
+            if (
+                note.state not in {"active", "in_progress"}
+                or note.updated_at != expected_updated_at
+            ):
+                raise NoteError("This task changed elsewhere. Read it again before updating.")
+            updated = {key: value for key, value in note.agent_notes.items() if key not in deleted}
+            updated.update(patch)
+            encoded = json.dumps(updated, ensure_ascii=False, sort_keys=True)
+            if len(updated) > 64 or len(encoded.encode("utf-8")) > 32768:
+                raise NoteError("Agent notes cannot exceed 64 fields or 32 KiB of JSON.")
+            if updated == note.agent_notes:
+                return note
+            previous = json.dumps(note.agent_notes, ensure_ascii=False, sort_keys=True)
+            when = timestamp()
+            self.connection.execute(
+                "UPDATE notes SET agent_notes = ?, updated_at = ? WHERE id = ?",
+                (encoded, when, note_id),
+            )
+            self.connection.execute(
+                "INSERT INTO events(note_id, action, previous_state, state, occurred_at, "
+                "text, previous_text, tag, previous_tag, agent_notes, previous_agent_notes) "
+                "VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    note_id,
+                    note.state,
+                    note.state,
+                    when,
+                    note.text,
+                    note.text,
+                    note.tag,
+                    note.tag,
+                    encoded,
+                    previous,
+                ),
+            )
+            return self.get(note_id)
 
     def history(self, note_id: int | None = None) -> list[sqlite3.Row]:
         if (
