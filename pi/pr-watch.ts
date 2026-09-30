@@ -15,6 +15,7 @@ type Dependencies = {
   refresh: (ctx: ExtensionContext) => Promise<void>;
 };
 const entryType = "pinote-pr-acknowledged";
+const watchEntryType = "pinote-pr-watched";
 
 // Accept one bare URL or Markdown link, never arbitrary hosts or terminal escapes.
 export function taskPR(task: WatchedTask | null): PR | undefined {
@@ -25,7 +26,11 @@ export function taskPR(task: WatchedTask | null): PR | undefined {
   if (!match || [".", ".."].includes(match[2]) || !Number.isSafeInteger(Number(match[3]))) return;
   return { url: `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`, number: match[3] };
 }
-const keyFor = (task: WatchedTask, pr: PR) => JSON.stringify([task.id, pr.url]);
+const keyFor = (task: WatchedTask, pr: PR) => JSON.stringify([task.id, pr.url.toLowerCase()]);
+const watchKey = (task: WatchedTask | null) => {
+  const pr = taskPR(task);
+  return task && pr ? keyFor(task, pr) : undefined;
+};
 
 export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
   let ctx: ExtensionContext | undefined;
@@ -39,6 +44,14 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
   let warned = false;
   let acknowledged = new Set<string>();
 
+  const remember = (current: WatchedTask | null) => {
+    const changed = watchKey(current) !== watchKey(watched);
+    watched = current;
+    if (changed && ctx) pi.appendEntry(watchEntryType, {
+      cwd: ctx.cwd, task: current ? { id: current.id, url: taskPR(current)!.url } : null,
+    });
+    return changed;
+  };
   const paint = () => {
     if (!ctx) return;
     const pr = taskPR(watched);
@@ -54,13 +67,11 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
   };
   const update = (context: ExtensionContext, current: WatchedTask | null) => {
     if (!ctx || ctx.cwd !== context.cwd) return;
-    const previousKey = watched && taskPR(watched) ? keyFor(watched, taskPR(watched)!) : undefined;
     revision++;
     // Completion clears selection. Keep the last task until poll verifies its state.
-    if (current) watched = taskPR(current) ? current : null;
+    const changed = current ? remember(taskPR(current) ? current : null) : false;
     paint();
-    const nextKey = watched && taskPR(watched) ? keyFor(watched, taskPR(watched)!) : undefined;
-    if (nextKey !== previousKey) schedule(0);
+    if (changed) schedule(0);
   };
   const latest = async (context: ExtensionContext, previous: WatchedTask | null) => {
     const current = await deps.selected(context);
@@ -82,7 +93,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
       const snapshot = revision;
       const candidate = await latest(context, watched);
       if (!valid() || revision !== snapshot) return;
-      watched = candidate;
+      remember(candidate);
       paint();
       const pr = taskPR(candidate);
       if (!candidate || !pr) return;
@@ -95,7 +106,9 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
       if (!same()) return;
       if (result.code !== 0 || result.killed) throw new Error("GitHub CLI failed");
       const data = JSON.parse(result.stdout);
-      if (data.url !== pr.url || !["OPEN", "CLOSED", "MERGED"].includes(data.state)) throw new Error("Invalid PR response");
+      // GitHub canonicalizes owner/repository casing in its response URL.
+      if (typeof data.url !== "string" || data.url.toLowerCase() !== pr.url.toLowerCase() ||
+          !["OPEN", "CLOSED", "MERGED"].includes(data.state)) throw new Error("Invalid PR response");
       warned = false;
       if (data.state !== "MERGED" || !context.isIdle()) return;
       const release = deps.claim();
@@ -153,7 +166,18 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
         ? seconds * 1000 : 60_000;
       if (interval !== seconds * 1000) context.ui.notify("Invalid PINOTE_PR_POLL_SECONDS; using 60 seconds (allowed: 0 or 10–86400).", "warning");
       ctx = context;
-      acknowledged = new Set(context.sessionManager.getBranch().flatMap((entry) => {
+      const branch = context.sessionManager.getBranch();
+      // Persist only the identity; latest() must verify the real task state before polling.
+      for (const entry of branch) {
+        if (entry.type !== "custom" || entry.customType !== watchEntryType) continue;
+        const data = entry.data as { cwd?: unknown; task?: { id?: unknown; url?: unknown } | null } | undefined;
+        if (data?.cwd !== context.cwd) continue;
+        if (data.task === null) { watched = null; continue; }
+        if (!data.task || !Number.isSafeInteger(data.task.id) || Number(data.task.id) < 1 || typeof data.task.url !== "string") continue;
+        const restored = { id: Number(data.task.id), state: "unknown", updated_at: "", agent_notes: { PR: data.task.url } };
+        if (taskPR(restored)) watched = restored;
+      }
+      acknowledged = new Set(branch.flatMap((entry) => {
         if (entry.type !== "custom" || entry.customType !== entryType) return [];
         const data = entry.data as { cwd?: unknown; key?: unknown } | undefined;
         return data?.cwd === context.cwd && typeof data.key === "string" ? [data.key] : [];

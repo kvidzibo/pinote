@@ -24,14 +24,18 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   mkdirSync(cwd);
   const cli = (...args: string[]) => execFileSync("note", args, { encoding: "utf8", timeout: 5000 });
   const statuses: Array<string | undefined> = [];
+  const prStatuses: Array<string | undefined> = [];
+  const entries: any[] = [];
   let draft = "Existing draft";
   let choice = "pick";
   const ctx = {
     cwd, mode: "tui", hasUI: true, isIdle: () => true,
-    sessionManager: { getSessionId: () => "load-test", getBranch: () => [] },
+    sessionManager: { getSessionId: () => "load-test", getBranch: () => entries },
     ui: {
       theme: { fg: (_color: string, value: string) => value },
-      setStatus: (key: string, value?: string) => { if (key === "pinote") statuses.push(value); },
+      setStatus: (key: string, value?: string) => {
+        (key === "pinote" ? statuses : prStatuses).push(value);
+      },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
       notify: () => {},
@@ -46,6 +50,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     const result = await loadExtensions(manifest.pi.extensions.map((p: string) => join(root, p)), cwd);
     assert.deepEqual(result.errors, []);
     assert.equal(result.extensions.length, 1);
+    // Bind the session-storage action supplied by Pi's runtime in interactive sessions.
+    result.runtime.appendEntry = (customType: string, data: unknown) => entries.push({ type: "custom", customType, data });
     return result.extensions[0];
   };
   const event = async (extension: any, name: string) => {
@@ -69,6 +75,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     const params = { id: task.id, expected_updated_at: task.updated_at, set: { PR: pr, Next: "Review", "--Flag": "arbitrary label" } };
     const updated = JSON.parse((await update.execute("update", params, undefined, undefined, ctx)).content[0].text);
     assert.equal(updated.agent_notes.PR, pr);
+    assert.match(prStatuses.at(-1)!, /PR #42/);
+    assert.equal(entries.at(-1).customType, "pinote-pr-watched");
     assert.match(JSON.parse(cli("agent", "get", "1")).markdown, /# Agent/);
     assert.equal(updated.markdown, undefined, "model context must not duplicate structured fields as a Markdown body");
     await assert.rejects(update.execute("stale", params, undefined, undefined, ctx), /changed elsewhere/);

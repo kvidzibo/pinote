@@ -11,7 +11,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
     if (oldInterval === undefined) delete process.env.PINOTE_PR_POLL_SECONDS;
     else process.env.PINOTE_PR_POLL_SECONDS = oldInterval;
   });
-  const url = "https://github.com/org/repo/pull/123";
+  const url = "https://github.com/Org/Repo/pull/123";
   const item: WatchedTask = { id: 1, state: "in_progress", updated_at: "r1", agent_notes: { PR: `[Fix #123](${url})` } };
   for (const PR of [`${url} and ${url}`, "https://evil.test/org/repo/pull/123", `${url}\x1b[31m`, "https://github.com/org/../pull/123"]) {
     assert.equal(taskPR({ ...item, agent_notes: { PR } }), undefined);
@@ -48,7 +48,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
       assert.deepEqual(args, ["pr", "view", url, "--json", "state,url"]);
       assert.equal(opts.timeout, 10_000);
       await pendingFetch?.();
-      return { code: failures ? 1 : 0, stdout: JSON.stringify({ state, url }), killed: false };
+      return { code: failures ? 1 : 0, stdout: JSON.stringify({ state, url: url.toLowerCase() }), killed: false };
     },
   };
   const watcher = createPRWatcher(pi, {
@@ -67,7 +67,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   watcher.start(ctx);
   await tick(0);
   assert.equal(checks, 1);
-  assert.match(statuses.get("pinote-pr")!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/123\x1b\\PR #123/);
+  assert.match(statuses.get("pinote-pr")!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/123\x1b\\PR #123/iu);
   assert.match(statuses.get("pinote-pr")!, /^\x1b\[34m/);
   await tick(9999); assert.equal(checks, 1);
   failures = true;
@@ -87,6 +87,11 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   const acknowledgedChecks = checks;
   await tick();
   assert.equal(checks, acknowledgedChecks, "do not repeatedly query an acknowledged merge");
+  assert.equal(confirmations, 2);
+
+  // Reload after completion: selection is gone, but the saved watcher identity remains.
+  watcher.start(ctx); await tick(0);
+  assert.match(statuses.get("pinote-pr")!, /PR #123/);
   assert.equal(confirmations, 2);
 
   // Restore an active selection and resume: persistent session entries suppress the same notice.
@@ -111,7 +116,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   duringConfirm = () => { selected = { ...item, id: 2, agent_notes: {} }; };
   reply = true; watcher.start(ctx); await tick(0);
   assert.equal(completions, 1, "selection switch during confirmation cannot complete the old task");
-  assert.equal(entries.length, 0);
+  assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 0);
   assert.equal(statuses.get("pinote-pr"), undefined);
 
   duringConfirm = undefined; selected = item;

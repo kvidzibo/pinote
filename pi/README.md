@@ -78,8 +78,9 @@ already completed**, without completing it again. Completion clears the selectio
 so its watcher remains until another task is selected, the link is removed, or
 Pi exits. Removed/scheduled tasks are no longer watched.
 
-Merge acknowledgements are saved in the Pi session, preventing repeated prompts
-on polls, `/reload`, and session resume. A new session can notify again for a
+The watched task ID/link and merge acknowledgements are saved in the Pi session,
+so `/reload` and session resume retain completed-task watches without repeating
+acknowledged prompts. A new session can notify again for a
 selected task. Task or PR changes during confirmation cannot complete a different
 task. No completion-hook system is added; this uses Pinote's existing Done flow.
 A separate branch-based PR-status extension may show a duplicate link; disable it
