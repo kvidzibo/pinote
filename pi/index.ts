@@ -3,6 +3,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
+import { createPRWatcher } from "./pr-watch.ts";
 
 type Task = {
   id: number;
@@ -100,6 +101,7 @@ export default function (pi: ExtensionAPI) {
       const current = await selected(ctx);
       if (alive && generation === epoch && serial === refreshSerial) {
         ctx.ui.setStatus("pinote", current ? `${noteIcon} ${title(current)}` : undefined);
+        watcher.update(ctx, current);
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
@@ -107,10 +109,28 @@ export default function (pi: ExtensionAPI) {
       }
     }
   };
+  const watcher = createPRWatcher(pi, {
+    selected,
+    get: async (id) => requiredTask(await run(["agent", "get", String(id)]), id),
+    done: async (current, canAct) => {
+      const result = requiredTask(await run([
+        "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
+      ], undefined, canAct), current.id);
+      if (result.state !== "done") throw new Error(compatible);
+    },
+    claim: () => {
+      if (pending) return;
+      const operation = Symbol();
+      pending = operation;
+      return () => { if (pending === operation) pending = undefined; };
+    },
+    refresh,
+  });
   pi.on("session_start", async (_event, ctx) => {
     alive = true;
     epoch++;
     pending = undefined;
+    watcher.start(ctx);
     await refresh(ctx);
   });
   pi.on("before_agent_start", async (_event, ctx) => { await refresh(ctx); });
@@ -119,6 +139,7 @@ export default function (pi: ExtensionAPI) {
     alive = false;
     epoch++;
     refreshSerial++;
+    watcher.stop();
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
   });
 
@@ -201,7 +222,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "pinote_update",
     label: "Pinote update",
-    description: "Patch arbitrary agent handoff fields on an explicit pinote task. Read first with pinote_get; pass its updated_at as expected_updated_at. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task.",
+    description: "Patch arbitrary agent handoff fields on an explicit pinote task. Read first with pinote_get; pass its updated_at as expected_updated_at. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show it in the footer and watch for merge confirmation in interactive Pi. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task.",
     parameters: Type.Object({
       id: idSchema,
       expected_updated_at: Type.String({ minLength: 1 }),

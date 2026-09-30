@@ -20,8 +20,10 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   const ctx: any = {
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
+    sessionManager: { getBranch: () => [] },
     ui: {
-      setStatus: (_key: string, value?: string) => { status = value; },
+      theme: { fg: (_color: string, value: string) => value },
+      setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       notify: (value: string) => { notices.push(value); },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
@@ -156,4 +158,5 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   delaySelected = undefined;
   await extension.event("session_start");
   assert.equal(status, undefined, "the same runtime can handle a new session");
+  await extension.event("session_shutdown");
 });
