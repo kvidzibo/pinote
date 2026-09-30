@@ -7,18 +7,41 @@ The extension and Python app share a repository but install separately.
 ## Install
 
 Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH).
-The extension probes `note --version` before commands: older CLIs interpret unknown
-commands as note text and must be rejected before use. From this checkout:
+From this checkout, install the extension with `pi install ./pi`, then run
+`/reload` and `/pi-note-setup` in interactive Pi. The planned npm package name is
+`pi-note`; after its first release use `pi install npm:pi-note` instead.
+It is not published yet. npm installation does not run Python installers.
 
-```sh
-uv tool install --reinstall .
-pi install ./pi
-```
+### CLI setup and upgrades
 
-Run `/reload` in existing Pi sessions. Remove the old standalone
-`settings/pi/extensions/pinote.ts` entry if installed; load only one copy.
-The planned npm package name is `pi-note`; after its first release install with
-`pi install npm:pi-note`. It is not published yet.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
+restart Pi with `uv` on PATH. `/pi-note-setup` checks for a compatible CLI and,
+if needed, asks before installing it into uv's isolated tool environment.
+It requires Python 3.11+; uv can download a suitable interpreter when missing.
+The command downloads a pinned GitHub source archive and build dependencies,
+not a similarly named PyPI package. It does not install GTK dependencies, edit
+shell configuration, or change tasks. A compatible CLI is left untouched.
+
+After updating the extension, `/pi-note-setup --upgrade` asks to reinstall the
+CLI version bundled with that extension (currently 0.3.0), even if a compatible
+version is already installed. This can replace a newer uv-managed version;
+keep manually managed/newer installations unless you intend to replace them.
+Back up your database before upgrading and update an optional GUI separately.
+For checkout development, use `uv tool install --reinstall .` at the repo root
+instead, so local Python changes are installed.
+
+If setup reports a PATH problem, run `uv tool dir --bin` in your terminal,
+put that directory before older `note` executables on PATH, and restart Pi.
+Check `note --version`, then retry `/pi-note-setup`. Network/build failures and
+conflicting executables are reported without forcibly overwriting another
+installer's commands. Fix the reported cause and retry; installs time out after
+three minutes. Missing uv is reported with its installation link, not installed
+automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
+and still requires separate system dependencies.
+
+The extension probes `note --version` before task commands: older CLIs interpret
+unknown commands as note text and must be rejected before use. Remove the old
+standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one copy.
 
 ## Use
 
@@ -122,6 +145,10 @@ One-time maintainer setup (not performed by installing this package):
 2. In npm's package settings configure the GitHub trusted publisher: owner
    `kvidzibo`, repository `pinote`, workflow `publish.yml`, no environment.
 3. Add verified npm and Pi package-directory links here after publication.
+
+The CLI source pin in `setup.ts` must point to a verified immutable commit with a
+compatible Python package. Update it and the bundled-version setup text together
+when releasing Python changes; verify installation in a temporary uv tool directory.
 
 Subsequent releases: run `npm version patch|minor|major --no-git-tag-version`
 inside `pi/`, commit both version files in a PR, and merge through the normal

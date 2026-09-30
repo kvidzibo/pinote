@@ -5,6 +5,7 @@ import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
+import { compatibleVersion, setupCLI, setupHint } from "./setup.ts";
 
 type Task = {
   id: number;
@@ -67,6 +68,8 @@ export default function (pi: ExtensionAPI) {
   let epoch = 0;
   let refreshSerial = 0;
   let pending: symbol | undefined;
+  let setupAbort: AbortController | undefined;
+  let activeContext: ExtensionContext | undefined;
 
   const invoke = async (argv: string[], signal?: AbortSignal) => {
     signal?.throwIfAborted();
@@ -74,21 +77,21 @@ export default function (pi: ExtensionAPI) {
     try {
       result = await pi.exec("note", argv, { timeout: 5000, signal });
     } catch (error) {
-      throw new Error(`Pinote CLI unavailable: ${clean(String(error))}. Install pinote 0.3.0+; note must be on PATH.`);
+      throw new Error(`Pinote CLI unavailable: ${clean(String(error))}. ${setupHint}`);
     }
     if (result.killed || result.code !== 0) {
       const detail = clean((result.stderr || result.stdout || "note failed or timed out").trim());
-      throw new Error(`${detail}${result.killed ? " Read the task before retrying; a write may have committed." : ""}`);
+      throw new Error(`${detail}${argv[0] === "--version" ? ` ${setupHint}` : result.killed ? " Read the task before retrying; a write may have committed." : ""}`);
     }
     return result.stdout;
   };
   const run = async (argv: string[], signal?: AbortSignal, canRun = () => true) => {
+    if (setupAbort) throw new Error("Pinote CLI setup is still running. Retry after it finishes.");
     // Old pinote treats unknown commands as note text. Probe safely before every call,
     // including tools in headless sessions, and do not cache across CLI upgrades/downgrades.
     const version = (await invoke(["--version"], signal)).trim();
-    const match = /^pinote (\d+)\.(\d+)\.(\d+)$/u.exec(version);
-    if (!match || (Number(match[1]) === 0 && Number(match[2]) < 3)) {
-      throw new Error(`pi-note requires pinote 0.3.0+; found ${clean(version) || "an unknown CLI"}. Upgrade note before using /pi-note or its tools.`);
+    if (!compatibleVersion(version)) {
+      throw new Error(`pi-note requires pinote 0.3.0+; found ${clean(version) || "an unknown CLI"}. ${setupHint}`);
     }
     if (!canRun()) throw new Error("Pinote operation cancelled: the session changed.");
     return invoke(argv, signal);
@@ -97,7 +100,7 @@ export default function (pi: ExtensionAPI) {
     task(await run(["agent", "selected", "--cwd", ctx.cwd], signal));
 
   const refresh = async (ctx: ExtensionContext) => {
-    if (!alive || !ctx.hasUI || ctx.mode !== "tui") return;
+    if (!alive || setupAbort || !ctx.hasUI || ctx.mode !== "tui") return;
     const generation = epoch;
     const serial = ++refreshSerial;
     try {
@@ -108,7 +111,7 @@ export default function (pi: ExtensionAPI) {
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · /pi-note`);
+        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · /pi-note-setup`);
       }
     }
   };
@@ -130,20 +133,61 @@ export default function (pi: ExtensionAPI) {
     refresh,
   });
   pi.on("session_start", async (_event, ctx) => {
+    setupAbort?.abort();
     alive = true;
+    activeContext = ctx;
     epoch++;
-    pending = undefined;
-    watcher.start(ctx);
+    // Keep the setup lock until its aborted subprocess has actually settled.
+    if (!setupAbort) pending = undefined;
+    if (!setupAbort) watcher.start(ctx);
     await refresh(ctx);
   });
   pi.on("before_agent_start", async (_event, ctx) => { await refresh(ctx); });
   pi.on("agent_end", async (_event, ctx) => { await refresh(ctx); });
   pi.on("session_shutdown", (_event, ctx) => {
+    setupAbort?.abort();
     alive = false;
+    activeContext = undefined;
     epoch++;
     refreshSerial++;
     watcher.stop();
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
+  });
+
+  pi.registerCommand("pi-note-setup", {
+    description: "Install the Python CLI with uv (optional --upgrade reinstalls the bundled version)",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI || ctx.mode !== "tui") return;
+      if (args.trim() && args.trim() !== "--upgrade") {
+        ctx.ui.notify("Usage: /pi-note-setup [--upgrade]", "warning");
+        return;
+      }
+      if (pending || !ctx.isIdle()) {
+        ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
+        return;
+      }
+      const operation = Symbol();
+      pending = operation;
+      const generation = epoch;
+      const controller = new AbortController();
+      setupAbort = controller;
+      watcher.stop();
+      const currentSession = () => alive && generation === epoch;
+      try {
+        await setupCLI(pi, ctx, args.trim() === "--upgrade",
+          () => currentSession() && ctx.isIdle(), controller.signal);
+      } catch (error) {
+        if (currentSession()) ctx.ui.notify(`Pinote setup: ${clean(String(error))}`, "error");
+      } finally {
+        if (pending === operation) pending = undefined;
+        if (setupAbort === controller) setupAbort = undefined;
+        const latestContext = activeContext ?? (currentSession() ? ctx : undefined);
+        if (alive && latestContext) {
+          watcher.start(latestContext);
+          await refresh(latestContext);
+        }
+      }
+    },
   });
 
   pi.registerCommand("pi-note", {

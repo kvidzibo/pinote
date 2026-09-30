@@ -23,6 +23,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   const cwd = join(temp, "project");
   mkdirSync(cwd);
   const cli = (...args: string[]) => execFileSync("note", args, { encoding: "utf8", timeout: 5000 });
+  const notices: string[] = [];
   const statuses: Array<string | undefined> = [];
   const prStatuses: Array<string | undefined> = [];
   const entries: any[] = [];
@@ -38,7 +39,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
-      notify: () => {},
+      notify: (message: string) => { notices.push(message); },
+      confirm: async () => { throw new Error("compatible setup must not ask for confirmation"); },
       custom: async (factory: any) => new Promise((resolve) => {
         const picker = factory({ requestRender() {} }, ctx.ui.theme, {
           matches: (data: string, action: string) => data === "\r" && action === "tui.select.confirm",
@@ -68,7 +70,9 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   try {
     cli("add", "Resume the task", "--no-notify");
     extension = await load();
-    assert.deepEqual([...extension.commands.keys()], ["pi-note"]);
+    assert.deepEqual([...extension.commands.keys()].sort(), ["pi-note", "pi-note-setup"]);
+    await extension.commands.get("pi-note-setup").handler("", ctx);
+    assert.match(notices.at(-1)!, /is ready/);
     assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
     await event(extension, "session_start");
     await extension.commands.get("pi-note").handler("", ctx);
