@@ -45,6 +45,11 @@ Agent tools:
   `set` label/value pairs or `remove` labels. Updates merge fields, never replace
   the task text. If another process changed the task, read again before retrying.
 
+Agents are guided to keep notes to three short bullets total: relevant outcome,
+blocker, and next action. Replace stale notes; omit narration, repeated task text,
+and routine test logs. Keep PR links in `PR`. This is guidance, not truncation or
+a storage limit.
+
 Values are Markdown strings; no fields are required. `PR` enables the watcher below:
 
 ```markdown
