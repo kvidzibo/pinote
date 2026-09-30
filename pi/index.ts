@@ -5,7 +5,7 @@ import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
-import { compatibleVersion, setupCLI, setupHint } from "./setup.ts";
+import { bundledCLIVersion, cliMenu, detectCLI, compatibleVersion, setupCLI, setupHint, type CLIAction } from "./setup.ts";
 
 type Task = {
   id: number;
@@ -70,6 +70,17 @@ export default function (pi: ExtensionAPI) {
   let pending: symbol | undefined;
   let setupAbort: AbortController | undefined;
   let activeContext: ExtensionContext | undefined;
+  let cliState: CLIAction | undefined;
+  const checkCLI = async (ctx: ExtensionContext, suggest = false) => {
+    if (!ctx.hasUI || ctx.mode !== "tui" || setupAbort) return;
+    const generation = epoch;
+    const action = await detectCLI(pi);
+    if (!alive || generation !== epoch || setupAbort) return;
+    cliState = action;
+    if (suggest && action === "upgrade") {
+      ctx.ui.notify(`Pinote CLI ${bundledCLIVersion} is bundled with this extension. Run /pi-note-upgrade to update your older CLI.`, "info");
+    }
+  };
 
   const invoke = async (argv: string[], signal?: AbortSignal) => {
     signal?.throwIfAborted();
@@ -111,7 +122,7 @@ export default function (pi: ExtensionAPI) {
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · /pi-note-setup`);
+        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
       }
     }
   };
@@ -137,8 +148,15 @@ export default function (pi: ExtensionAPI) {
     alive = true;
     activeContext = ctx;
     epoch++;
+    const generation = epoch;
+    cliState = undefined;
+    if (ctx.hasUI && ctx.mode === "tui") {
+      ctx.ui.addAutocompleteProvider((current) => cliMenu(current, () => setupAbort ? undefined : cliState));
+    }
     // Keep the setup lock until its aborted subprocess has actually settled.
     if (!setupAbort) pending = undefined;
+    await checkCLI(ctx, true);
+    if (!alive || generation !== epoch) return;
     if (!setupAbort) watcher.start(ctx);
     await refresh(ctx);
   });
@@ -154,12 +172,12 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
   });
 
-  pi.registerCommand("pi-note-setup", {
-    description: "Install the Python CLI with uv (optional --upgrade reinstalls the bundled version)",
+  const registerInstallCommand = (name: "pi-note-setup" | "pi-note-upgrade") => pi.registerCommand(name, {
+    description: name === "pi-note-setup" ? "Install the missing Python CLI with uv" : "Upgrade an older Python CLI to the bundled version",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim() && args.trim() !== "--upgrade") {
-        ctx.ui.notify("Usage: /pi-note-setup [--upgrade]", "warning");
+      if (args.trim()) {
+        ctx.ui.notify(`Usage: /${name}`, "warning");
         return;
       }
       if (pending || !ctx.isIdle()) {
@@ -174,7 +192,7 @@ export default function (pi: ExtensionAPI) {
       watcher.stop();
       const currentSession = () => alive && generation === epoch;
       try {
-        await setupCLI(pi, ctx, args.trim() === "--upgrade",
+        await setupCLI(pi, ctx, name === "pi-note-upgrade",
           () => currentSession() && ctx.isIdle(), controller.signal);
       } catch (error) {
         if (currentSession()) ctx.ui.notify(`Pinote setup: ${clean(String(error))}`, "error");
@@ -183,12 +201,17 @@ export default function (pi: ExtensionAPI) {
         if (setupAbort === controller) setupAbort = undefined;
         const latestContext = activeContext ?? (currentSession() ? ctx : undefined);
         if (alive && latestContext) {
+          const generation = epoch;
+          await checkCLI(latestContext, !currentSession());
+          if (!alive || generation !== epoch || setupAbort) return;
           watcher.start(latestContext);
           await refresh(latestContext);
         }
       }
     },
   });
+  registerInstallCommand("pi-note-setup");
+  registerInstallCommand("pi-note-upgrade");
 
   pi.registerCommand("pi-note", {
     description: "Continue, complete, or switch the selected pinote task",

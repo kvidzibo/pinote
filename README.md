@@ -66,11 +66,13 @@ Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md
 
 The optional [pi-note extension](pi/README.md) adds selected-task status,
 `/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent read/update tools. Install from this
-checkout with `pi install ./pi`, run `/reload`, then `/pi-note-setup` in Pi.
-Setup requires [uv](https://docs.astral.sh/uv/getting-started/installation/), asks
-before installing a pinned CLI in an isolated environment, and can download
-Python 3.11+. It leaves compatible CLIs unchanged; `/pi-note-setup --upgrade`
-explicitly reinstalls the extension's bundled CLI version. Keep uv's tool bin
+checkout with `pi install ./pi`, then run `/reload`. At startup Pi compares the
+installed CLI with the bundled version, without a network check. It shows
+`/pi-note-setup` only for a missing/unrecognized CLI, or suggests `/pi-note-upgrade`
+for an older CLI; both are hidden when current or newer.
+Setup/upgrade requires [uv](https://docs.astral.sh/uv/getting-started/installation/),
+asks before installing a pinned CLI in an isolated environment, and can download
+Python 3.11+. Equal/newer CLIs are left untouched. Keep uv's tool bin
 directory on PATH and restart Pi after PATH changes. GTK remains optional and
 separate. For local Python development, install the checkout using the command
 above instead. After the first npm publication, `pi install npm:pi-note` will

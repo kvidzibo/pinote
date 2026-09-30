@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import pinote from "../index.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 
 test("task selection, handoff, guarded Done and tools survive new sessions without submission", async () => {
@@ -11,6 +11,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   ];
   let selectedId: number | undefined;
   let cliVersion = "pinote 0.2.0";
+  const autocompleteWrappers: Array<(current: any) => any> = [];
   let failSelection = false;
   let beforeChoice: (() => void) | undefined;
   let delaySelected: (() => Promise<void>) | undefined;
@@ -27,6 +28,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       theme: { fg: (_color: string, value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       notify: (value: string) => { notices.push(value); },
+      addAutocompleteProvider: (wrapper: any) => autocompleteWrappers.push(wrapper),
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
       custom: async (factory: any) => new Promise((resolve) => {
@@ -96,11 +98,32 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   let extension = load();
   await extension.event("session_start");
   assert.match(status!, /unavailable/);
+  const current = new CombinedAutocompleteProvider(
+    ["pi-note", "pi-note-setup", "pi-note-upgrade"].map((name) => ({ name })), "/tmp");
+  const menu = autocompleteWrappers.at(-1)!(current);
+  const menuNames = async () => (await menu.getSuggestions(["/pi-note"], 0, 8,
+    { signal: new AbortController().signal })).items.map((item: any) => item.value).sort();
+  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
+  assert.ok(notices.some((message) => message.includes("Run /pi-note-upgrade")));
   await assert.rejects(extension.tool("pinote_get", { id: 2 }), /requires pinote 0\.3\.0/);
   assert.ok(calls.every((args) => args[0] === "--version"), "old CLIs must never receive unknown commands");
   cliVersion = "pinote 0.3.0";
   await extension.event("session_start");
   assert.equal(status, undefined);
+  assert.deepEqual(await menuNames(), ["pi-note"]);
+  cliVersion = "";
+  await extension.event("session_start");
+  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-setup"]);
+  cliVersion = "pinote 0.2.9";
+  await extension.event("session_start");
+  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
+  cliVersion = "pinote 1.0.0";
+  const noticeCount = notices.length;
+  await extension.event("session_start");
+  assert.deepEqual(await menuNames(), ["pi-note"]);
+  assert.equal(notices.length, noticeCount, "newer CLI must not trigger an upgrade notice");
+  cliVersion = "pinote 0.3.0";
+  await extension.event("session_start");
   await assert.rejects(extension.tool("pinote_get", {}), /No selected/);
   choices.push(undefined);
   await extension.command();

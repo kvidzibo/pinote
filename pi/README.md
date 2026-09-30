@@ -8,34 +8,44 @@ The extension and Python app share a repository but install separately.
 
 Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH).
 From this checkout, install the extension with `pi install ./pi`, then run
-`/reload` and `/pi-note-setup` in interactive Pi. The planned npm package name is
+`/reload` in interactive Pi. Use `/pi-note-setup` if the CLI is missing, or the
+suggested `/pi-note-upgrade` if it is older than the bundled CLI. The planned npm package name is
 `pi-note`; after its first release use `pi install npm:pi-note` instead.
 It is not published yet. npm installation does not run Python installers.
 
 ### CLI setup and upgrades
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
-restart Pi with `uv` on PATH. `/pi-note-setup` checks for a compatible CLI and,
-if needed, asks before installing it into uv's isolated tool environment.
-It requires Python 3.11+; uv can download a suitable interpreter when missing.
+restart Pi with `uv` on PATH. At startup the extension checks `note --version`
+against its bundled CLI version (currently 0.3.0), without network requests:
+
+- Missing/unrecognized CLI: show `/pi-note-setup` in the slash-command menu.
+- Older CLI: show and suggest `/pi-note-upgrade`.
+- Equal/newer CLI: hide both commands; no upgrade notification.
+
+Both commands ask before installing into uv's isolated tool environment.
+The menu refreshes after setup/upgrade; restart Pi or `/reload` after external
+CLI changes. Manually typing either command rechecks the version and never
+reinstalls an equal/newer CLI or intentionally downgrades it.
+Python 3.11+ is required; uv can download a suitable interpreter when missing.
 The command downloads a pinned GitHub source archive and build dependencies,
 not a similarly named PyPI package. It does not install GTK dependencies, edit
-shell configuration, or change tasks. A compatible CLI is left untouched.
+shell configuration, or change tasks. This checks the Python CLI bundled with
+the installed extension, not the latest npm/GitHub release. Update the extension
+first to receive a newer bundled CLI. `/pi-note-setup --upgrade` is replaced by
+`/pi-note-upgrade`.
 
-After updating the extension, `/pi-note-setup --upgrade` asks to reinstall the
-CLI version bundled with that extension (currently 0.3.0), even if a compatible
-version is already installed. This can replace a newer uv-managed version;
-keep manually managed/newer installations unless you intend to replace them.
 Back up your database before upgrading and update an optional GUI separately.
 For checkout development, use `uv tool install --reinstall .` at the repo root
 instead, so local Python changes are installed.
 
 If setup reports a PATH problem, run `uv tool dir --bin` in your terminal,
 put that directory before older `note` executables on PATH, and restart Pi.
-Check `note --version`, then retry `/pi-note-setup`. Network/build failures and
+Check `note --version`, then restart Pi or `/reload`. Network/build failures and
 conflicting executables are reported without forcibly overwriting another
 installer's commands. Fix the reported cause and retry; installs time out after
-three minutes. Missing uv is reported with its installation link, not installed
+three minutes. Setup/upgrade commands are hidden while installation runs.
+Missing uv is reported with its installation link, not installed
 automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
 and still requires separate system dependencies.
 

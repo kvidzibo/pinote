@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { setupCLI, cliSource } from "../setup.ts";
+import { setupCLI, cliSource, cliAction } from "../setup.ts";
 import pinote from "../index.ts";
 
 const context = (confirm: () => Promise<boolean>) => ({
@@ -22,7 +22,12 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   const signal = new AbortController().signal;
   const ctx = context(async () => true);
 
-  // Cancellation and missing uv never install.
+  assert.equal(cliAction("pinote 0.2.99"), "upgrade");
+  assert.equal(cliAction("pinote 0.3.0"), "ready");
+  assert.equal(cliAction("pinote 0.4.0"), "ready");
+  assert.equal(cliAction("pinote 1.0.0"), "ready");
+
+  // Probe note before uv; setup handles missing CLIs, upgrade handles older versions.
   results = [new Error("missing note"), { code: 0, stdout: "uv 0.6" }];
   await setupCLI(pi, context(async () => false), false, active, signal);
   assert.equal(calls.length, 2); // note probe, uv probe
@@ -33,37 +38,52 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.equal(calls.length, 2);
   assert.match(notices.at(-1)!.message, /Install uv/);
 
-  // Compatible CLI is a no-op; installer uses exact pinned arguments.
   calls.length = 0;
   results = [{ code: 0, stdout: "pinote 0.3.1\n" }];
   await setupCLI(pi, ctx, false, active, signal);
   assert.deepEqual(calls, [{ command: "note", args: ["--version"] }]);
   calls.length = 0;
-  results = [{ code: 0, stdout: "uv 0.6" }, { code: 0 }, { code: 0, stdout: "pinote 0.3.0" }];
+  results = [{ code: 0, stdout: "pinote 0.2.9" }];
+  await setupCLI(pi, context(async () => true), false, active, signal);
+  assert.match(notices.at(-1)!.message, /pi-note-upgrade/);
+  assert.deepEqual(calls.at(-1), { command: "note", args: ["--version"] });
+  calls.length = 0;
+  results = [{ code: 0, stdout: "pinote 1.0.0" }];
   await setupCLI(pi, ctx, true, active, signal);
+  assert.match(notices.at(-1)!.message, /ready/);
+  assert.deepEqual(calls, [{ command: "note", args: ["--version"] }]);
+  calls.length = 0;
+  results = [new Error("missing note"), { code: 0, stdout: "uv 0.6" }, new Error("missing note"), { code: 0 }, { code: 0, stdout: "pinote 0.3.0" }];
+  await setupCLI(pi, ctx, false, active, signal);
   assert.match(notices.at(-1)!.message, /is ready/);
-  assert.deepEqual(calls[1], { command: "uv", args: ["--no-config", "tool", "install", "--reinstall", "--python", ">=3.11", `pinote @ ${cliSource}`] });
+  assert.deepEqual(calls[3], { command: "uv", args: ["--no-config", "tool", "install", "--reinstall", "--python", ">=3.11", `pinote @ ${cliSource}`] });
 
   calls.length = 0;
-  results = [{ code: 0 }, { code: 1, stderr: "network down" }];
+  results = [{ code: 0, stdout: "pinote 0.2.0" }, { code: 0 }, { code: 0, stdout: "pinote 0.2.0" }, { code: 1, stderr: "network down" }];
   await assert.rejects(setupCLI(pi, ctx, true, active, signal), /network down/);
   calls.length = 0;
-  results = [{ code: 0 }, { code: 0 }, { code: 0, stdout: "pinote 0.2.0" }];
+  results = [{ code: 0, stdout: "pinote 0.2.0" }, { code: 0 }, { code: 0, stdout: "pinote 0.2.0" }, { code: 0 }, { code: 0, stdout: "pinote 0.2.0" }];
   await setupCLI(pi, ctx, true, active, signal);
   assert.match(notices.at(-1)!.message, /PATH/);
+
+  calls.length = 0;
+  results = [{ code: 0, stdout: "pinote 0.2.0" }, { code: 0 }, { code: 0, stdout: "pinote 1.0.0" }];
+  await setupCLI(pi, ctx, true, active, signal);
+  assert.match(notices.at(-1)!.message, /installation skipped/);
+  assert.ok(!calls.some((call) => call.args.includes("install")), "external upgrade during confirmation must not be downgraded");
 
   // A session invalidated while confirmation is open must not launch installation.
   calls.length = 0;
   let valid = true;
-  results = [{ code: 0 }];
+  results = [{ code: 0, stdout: "pinote 0.2.0" }, { code: 0 }];
   await setupCLI(pi, context(async () => { valid = false; return true; }), true, () => valid, signal);
-  assert.deepEqual(calls, [{ command: "uv", args: ["--version"] }]);
+  assert.deepEqual(calls, [{ command: "note", args: ["--version"] }, { command: "uv", args: ["--version"] }]);
 
   // Losing idle status after installation starts must not hide an install failure.
   valid = true;
   await assert.rejects(setupCLI({ exec: async (_command: string, args: string[]) => {
     if (args.includes("install")) { valid = false; return { code: 1, stderr: "late failure" }; }
-    return { code: 0 };
+    return { code: 0, stdout: "pinote 0.2.0" };
   } } as any, ctx, true, () => valid, signal), /late failure/);
 
   // Session replacement must hold the setup lock until the aborted child exits.
@@ -74,6 +94,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   let started!: () => void;
   const installing = new Promise<void>((resolve) => { started = resolve; });
   let installs = 0;
+  let cliVersion = "pinote 0.2.0";
   const taskCalls: string[][] = [];
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const savedPoll = process.env.PINOTE_PR_POLL_SECONDS;
@@ -94,7 +115,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
         return { code: 1, killed: true };
       }
       if (_command === "note") {
-        if (args[0] === "--version") return { code: 0, stdout: "pinote 0.3.0" };
+        if (args[0] === "--version") return { code: 0, stdout: cliVersion };
         taskCalls.push(args);
         return { code: 0, stdout: "null" };
       }
@@ -102,9 +123,9 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
     },
   } as any);
   const commandCtx: any = { ...ctx, mode: "tui", hasUI: true, isIdle: () => true,
-    sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, setStatus() {} } };
+    sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, setStatus() {}, addAutocompleteProvider() {} } };
   await events.get("session_start")({}, commandCtx);
-  const setup = commands.get("pi-note-setup").handler("--upgrade", commandCtx);
+  const setup = commands.get("pi-note-upgrade").handler("", commandCtx);
   await installing;
   const replacementCtx = { ...commandCtx, cwd: "/tmp/replacement-project" };
   await events.get("session_start")({}, replacementCtx);
@@ -113,10 +134,11 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   await Promise.resolve();
   assert.equal(taskCalls.length, countWhileInstalling, "PR polls stay paused during setup");
   assert.ok(!notices.some(({ message }) => message.includes("PR check failed")));
-  await commands.get("pi-note-setup").handler("--upgrade", commandCtx);
+  await commands.get("pi-note-upgrade").handler("", commandCtx);
   assert.equal(installs, 1);
   assert.match(notices.at(-1)!.message, /Wait until Pi is idle/);
   await assert.rejects(tools.get("pinote_get").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
+  cliVersion = "pinote 0.3.0";
   finishInstall();
   await setup;
   assert.deepEqual(taskCalls.at(-1), ["agent", "selected", "--cwd", replacementCtx.cwd]);
