@@ -25,8 +25,8 @@ The planned npm package name is `pi-note`; after its first release install with
 `/pinote` picks a task, starts it, and puts its full text and saved handoff fields
 in the editor. Existing drafts are preserved; nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, and **Switch task**.
-The normal Pi status area shows `✎ #42 Task title` without replacing other footers.
-The pencil glyph is bundled in `icons/note.txt`; no Nerd Font or icon theme is required.
+The normal Pi status area shows `📌 #42 Task title` without replacing other footers.
+The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
 
 Selection is stored per canonical working directory in pinote's database. A new
 Pi session shows that selection; use **Continue** to load its current contents.
