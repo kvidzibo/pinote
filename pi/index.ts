@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { readFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 
@@ -13,6 +14,8 @@ type Task = {
   markdown: string;
 };
 type Summary = Pick<Task, "id" | "text" | "state">;
+// The standard Pi footer accepts text, so ship a portable terminal glyph, not a theme icon.
+const noteIcon = readFileSync(new URL("./icons/note.txt", import.meta.url), "utf8").trim();
 const idSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const compatible = "Incompatible note CLI response. Install pinote 0.3.0+ and check note on PATH.";
 const validId = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
@@ -96,11 +99,11 @@ export default function (pi: ExtensionAPI) {
     try {
       const current = await selected(ctx);
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", current ? `Pinote ${title(current)}` : undefined);
+        ctx.ui.setStatus("pinote", current ? `${noteIcon} ${title(current)}` : undefined);
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", "Pinote unavailable · /pinote");
+        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · /pinote`);
       }
     }
   };

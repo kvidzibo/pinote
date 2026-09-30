@@ -14,7 +14,7 @@
   "homepage": "https://github.com/kvidzibo/pinote/tree/main/pi#readme",
   "bugs": { "url": "https://github.com/kvidzibo/pinote/issues" },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
-  "files": ["index.ts", "README.md", "LICENSE"],
+  "files": ["index.ts", "icons", "README.md", "LICENSE"],
   "pi": { "extensions": ["./index.ts"] },
   "scripts": {
     "check": "tsc --noEmit",
