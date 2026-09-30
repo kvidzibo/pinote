@@ -14,8 +14,8 @@ test("task picker filters full text, tag, ID and state, preserves identity and c
   (id) => { result = id; finished = true; }, () => {});
   picker.focused = true;
   assert.equal(picker.focused, true);
-  assert.match(picker.render(100).join("\n"), /● In progress \[Backend\]/);
-  assert.match(picker.render(100).join("\n"), /○ Active \[Untagged\]/);
+  assert.match(picker.render(100).join("\n"), /● \[Backend\]/);
+  assert.match(picker.render(100).join("\n"), /○ \[Untagged\]/);
   picker.handleInput("backend #2 progress needle 日本語");
   assert.match(picker.render(100).join("\n"), /\(1\/2\)/);
   for (const width of [20, 40, 100]) {

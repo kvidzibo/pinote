@@ -8,7 +8,7 @@ export type TaskSummary = {
   tag: string | null;
 };
 const singleLine = (value: string) => value.replace(/\s+/gu, " ").trim();
-export const taskState = (task: TaskSummary) => task.state === "in_progress" ? "● In progress" : "○ Active";
+export const taskState = (task: TaskSummary) => task.state === "in_progress" ? "●" : "○";
 export const taskTag = (task: TaskSummary) => task.tag ? `[${singleLine(task.tag)}]` : "[Untagged]";
 
 const selectionActions = ["tui.select.up", "tui.select.down", "tui.select.confirm", "tui.select.cancel"] as const;
@@ -41,7 +41,7 @@ export class TaskPicker {
   private filter() {
     const terms = this.input.getValue().toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
     const tasks = this.tasks.filter((task) => {
-      const search = `${task.text} #${task.id} ${taskTag(task)} ${taskState(task)}`.toLocaleLowerCase();
+      const search = `${task.text} #${task.id} ${taskTag(task)} ${task.state.replaceAll("_", " ")}`.toLocaleLowerCase();
       return terms.every((term) => search.includes(term));
     });
     this.count = tasks.length;

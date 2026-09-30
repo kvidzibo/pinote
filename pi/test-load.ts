@@ -72,7 +72,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
     await event(extension, "session_start");
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(statuses.at(-1), "📌 ● In progress [Untagged] #1 Resume the task");
+    assert.equal(statuses.at(-1), "📌 ● [Untagged] #1 Resume the task");
     assert.match(draft, /^Existing draft\n\n/);
     assert.match(draft, /Resume the task/);
     const get = extension.tools.get("pinote_get").definition;
