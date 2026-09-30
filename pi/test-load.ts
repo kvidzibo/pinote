@@ -39,6 +39,13 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
       notify: () => {},
+      custom: async (factory: any) => new Promise((resolve) => {
+        const picker = factory({ requestRender() {} }, ctx.ui.theme, {
+          matches: (data: string, action: string) => data === "\r" && action === "tui.select.confirm",
+        }, resolve);
+        picker.handleInput("Resume");
+        picker.handleInput("\r");
+      }),
       select: async (_title: string, options: string[]) =>
         choice === "pick" ? options[0] : options.find((value) => value === choice),
     },
@@ -61,11 +68,11 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   try {
     cli("add", "Resume the task", "--no-notify");
     extension = await load();
-    assert.deepEqual([...extension.commands.keys()], ["pinote"]);
+    assert.deepEqual([...extension.commands.keys()], ["pi-note"]);
     assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
     await event(extension, "session_start");
-    await extension.commands.get("pinote").handler("", ctx);
-    assert.equal(statuses.at(-1), "📌 #1 Resume the task");
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.match(draft, /^Existing draft\n\n/);
     assert.match(draft, /Resume the task/);
     const get = extension.tools.get("pinote_get").definition;
@@ -87,14 +94,14 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     extension = await load(); // New process-like extension state, same durable database.
     draft = "";
     await event(extension, "session_start");
-    assert.match(statuses.at(-1)!, /#1.*Resume the task/);
+    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.equal(draft, "", "startup never overwrites/submits the editor");
     choice = "Continue";
-    await extension.commands.get("pinote").handler("", ctx);
+    await extension.commands.get("pi-note").handler("", ctx);
     assert.ok(draft.includes(pr));
     assert.match(draft, /Next: Review/);
     choice = "Done";
-    await extension.commands.get("pinote").handler("", ctx);
+    await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null);
   } finally {

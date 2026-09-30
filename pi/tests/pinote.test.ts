@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import pinote from "../index.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { stripVTControlCharacters } from "node:util";
 
 test("task selection, handoff, guarded Done and tools survive new sessions without submission", async () => {
   const tasks = [
     { id: 1, text: "Older task", state: "active", tag: null, updated_at: "r1", agent_notes: {} as Record<string, string>, markdown: "Older task" },
-    { id: 2, text: "Unicode 日本語 task", state: "active", tag: null, updated_at: "r2", agent_notes: {} as Record<string, string>, markdown: "Unicode 日本語 task" },
+    { id: 2, text: "Unicode 日本語 task\nHidden details", state: "active", tag: null, updated_at: "r2", agent_notes: {} as Record<string, string>, markdown: "Unicode 日本語 task" },
   ];
   let selectedId: number | undefined;
   let cliVersion = "pinote 0.2.0";
@@ -27,6 +29,14 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       notify: (value: string) => { notices.push(value); },
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
+      custom: async (factory: any) => new Promise((resolve) => {
+        const picker = factory({ requestRender() {} }, ctx.ui.theme, {
+          matches: (data: string, action: string) => (data === "\r" && action === "tui.select.confirm") ||
+            (data === "\x1b" && action === "tui.select.cancel"),
+        }, resolve);
+        beforeChoice?.();
+        picker.handleInput(choices.shift() === "pick" ? "\r" : "\x1b");
+      }),
       select: async (_title: string, labels: string[]) => {
         beforeChoice?.();
         const choice = choices.shift();
@@ -77,7 +87,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       },
     } as any);
     return {
-      command: () => commands.get("pinote").handler("", ctx),
+      command: () => commands.get("pi-note").handler("", ctx),
       event: (name: string) => events.get(name)({}, ctx),
       tool: (name: string, params: object, context = ctx, signal?: AbortSignal) =>
         tools.get(name).execute("call", params, signal, undefined, context),
@@ -105,7 +115,17 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   choices.push("pick");
   await extension.command();
   assert.equal(selectedId, 2, "newest task is first");
-  assert.match(status!, /#2.*Unicode/);
+  assert.match(status!, /Unicode/);
+  assert.ok(!status!.includes("#2"), "footer omits the task ID");
+  assert.ok(!status!.includes("Hidden details"), "footer shows only the first line");
+  assert.ok(!status!.includes("In progress"), "footer omits state text");
+  assert.ok(!/[●○]/u.test(status!), "footer omits state indicators");
+  const originalText = tasks[1].text;
+  tasks[1].text = "日本語 ".repeat(40) + "\nHidden details";
+  await extension.event("agent_end");
+  assert.ok(visibleWidth(status!) <= 60, "entire footer entry is capped in terminal columns");
+  assert.match(stripVTControlCharacters(status!), /\.\.\.$/u);
+  tasks[1].text = originalText;
   assert.match(draft, /^Existing draft\n\nPinote task #2/);
   const data = (await extension.tool("pinote_get", {})).details;
   const fields = { PR: "[Fix #42](https://example.org/pr/42)", Next: "Review" };
@@ -116,7 +136,8 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   extension = load();
   draft = "";
   await extension.event("session_start");
-  assert.match(status!, /#2/);
+  assert.match(status!, /Unicode/);
+  assert.ok(!status!.includes("#2"), "restored footer omits the task ID");
   assert.equal(draft, "", "new sessions restore status, not editor contents");
   choices.push("Continue");
   await extension.command();

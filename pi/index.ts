@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
+import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 
 type Task = {
   id: number;
@@ -14,7 +15,7 @@ type Task = {
   agent_notes: Record<string, string>;
   markdown: string;
 };
-type Summary = Pick<Task, "id" | "text" | "state">;
+type Summary = Pick<Task, "id" | "text" | "state" | "tag">;
 // The standard Pi footer accepts text, so ship a portable terminal glyph, not a theme icon.
 const noteIcon = readFileSync(new URL("./icons/note.txt", import.meta.url), "utf8").trim();
 const idSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
@@ -25,7 +26,8 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const text = (value: unknown): value is string =>
   typeof value === "string" && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value);
 const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/gu, "�");
-const title = (task: Summary) => truncateToWidth(`#${task.id} ${clean(task.text).replace(/\s+/gu, " ").trim()}`, 60);
+const firstLine = (task: Summary) => clean(task.text.split("\n", 1)[0]).replace(/\s+/gu, " ").trim();
+const title = (task: Summary) => truncateToWidth(`#${task.id} ${firstLine(task)}`, 60);
 
 function parse(raw: string): unknown {
   try { return JSON.parse(raw); } catch { throw new Error(compatible); }
@@ -42,14 +44,15 @@ function task(raw: string): Task | null {
 }
 function requiredTask(raw: string, id?: number): Task {
   const value = task(raw);
-  if (!value) throw new Error("No selected pinote task. Select one with /pinote first.");
+  if (!value) throw new Error("No selected pinote task. Select one with /pi-note first.");
   if (id !== undefined && value.id !== id) throw new Error(compatible);
   return value;
 }
 function taskList(raw: string): Summary[] {
   const value = parse(raw);
   if (!Array.isArray(value) || !value.every((v) => record(v) && validId(v.id) && text(v.text) &&
-      v.text.trim() && typeof v.state === "string" && ["active", "in_progress"].includes(v.state))) throw new Error(compatible);
+      v.text.trim() && (v.tag === null || text(v.tag)) &&
+      typeof v.state === "string" && ["active", "in_progress"].includes(v.state))) throw new Error(compatible);
   return value.sort((a, b) => b.id - a.id);
 }
 
@@ -85,7 +88,7 @@ export default function (pi: ExtensionAPI) {
     const version = (await invoke(["--version"], signal)).trim();
     const match = /^pinote (\d+)\.(\d+)\.(\d+)$/u.exec(version);
     if (!match || (Number(match[1]) === 0 && Number(match[2]) < 3)) {
-      throw new Error(`pi-note requires pinote 0.3.0+; found ${clean(version) || "an unknown CLI"}. Upgrade note before using /pinote or its tools.`);
+      throw new Error(`pi-note requires pinote 0.3.0+; found ${clean(version) || "an unknown CLI"}. Upgrade note before using /pi-note or its tools.`);
     }
     if (!canRun()) throw new Error("Pinote operation cancelled: the session changed.");
     return invoke(argv, signal);
@@ -100,12 +103,12 @@ export default function (pi: ExtensionAPI) {
     try {
       const current = await selected(ctx);
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", current ? `${noteIcon} ${title(current)}` : undefined);
+        ctx.ui.setStatus("pinote", current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, 60) : undefined);
         watcher.update(ctx, current);
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · /pinote`);
+        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · /pi-note`);
       }
     }
   };
@@ -143,11 +146,11 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
   });
 
-  pi.registerCommand("pinote", {
+  pi.registerCommand("pi-note", {
     description: "Continue, complete, or switch the selected pinote task",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim()) { ctx.ui.notify("Usage: /pinote", "warning"); return; }
+      if (args.trim()) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
       if (pending || !ctx.isIdle()) {
         ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
         return;
@@ -161,7 +164,7 @@ export default function (pi: ExtensionAPI) {
         const current = await selected(ctx);
         if (!canAct()) return;
         const action = current
-          ? await ctx.ui.select(`Pinote — ${title(current)}`, ["Continue", "Done", "Switch task"])
+          ? await ctx.ui.select(`Pinote — ${taskState(current)} ${taskTag(current)} ${title(current)}`, ["Continue", "Done", "Switch task"])
           : "Switch task";
         if (!action || !canAct()) return;
         if (action === "Done" && current) {
@@ -180,12 +183,10 @@ export default function (pi: ExtensionAPI) {
           const tasks = taskList(await run(["list", "--json"]));
           if (!canAct()) return;
           if (!tasks.length) { ctx.ui.notify("No active pinote tasks.", "info"); return; }
-          const labels = tasks.map((value) => `${title(value)}${value.state === "in_progress" ? " [in progress]" : ""}`);
-          const choice = await ctx.ui.select("Pinote — select a task", labels);
+          const choice = await ctx.ui.custom<number | undefined>((tui, theme, kb, done) =>
+            new TaskPicker(tasks, theme, (data, action) => kb.matches(data, action), done, () => tui.requestRender()));
           if (choice === undefined || !canAct()) return;
-          const chosen = tasks[labels.indexOf(choice)];
-          if (!chosen) return;
-          id = chosen.id;
+          id = choice;
         } else return;
         // Validate/start the explicit task and return its latest handoff in one transaction.
         refreshSerial++;
