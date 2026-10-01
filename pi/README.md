@@ -1,12 +1,12 @@
 # pi-note
 
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
-in Pi: selected-task footer status, `/pi-note`, and agent read/update tools.
+in Pi: selected-task footer status, `/pi-note`, and agent read/update/add/tag tools.
 The extension and Python app share a repository but install separately.
 
 ## Install
 
-Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH).
+Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag need **pinote 0.4.0+**.
 From this checkout, install the extension with `pi install ./pi`, then run
 `/reload` in interactive Pi. Use `/pi-note-setup` if the CLI is missing, or the
 suggested `/pi-note-upgrade` if it is older than the bundled CLI. The planned npm package name is
@@ -17,7 +17,7 @@ It is not published yet. npm installation does not run Python installers.
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
 restart Pi with `uv` on PATH. At startup the extension checks `note --version`
-against its bundled CLI version (currently 0.3.0), without network requests:
+against its bundled CLI version (currently 0.4.0), without network requests:
 
 - Missing/unrecognized CLI: show `/pi-note-setup` in the slash-command menu.
 - Older CLI: show and suggest `/pi-note-upgrade`.
@@ -77,9 +77,20 @@ before/after agent activity, and after commands/tools.
 Agent tools:
 
 - `pinote_get`: read the selected task, or an explicit `id`, including its revision.
+  Omitting `id` returns null when this project has no selected task.
 - `pinote_update`: supply `id`, `expected_updated_at` from that read, and arbitrary
   `set` label/value pairs or `remove` labels. Updates merge fields, never replace
-  the task text. If another process changed the task, read again before retrying.
+  the task text or tag. If another process changed the task, read again before retrying.
+- `pinote_tags`: list saved tag names.
+- `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
+  selects it for this project; use that only after the user agrees.
+- `pinote_tag`: set or clear a tag on an active or in-progress task. Read first and
+  pass `expected_updated_at`.
+
+When the user gives work and no task is selected, the agent proposes one note as
+`[tag] text` and asks before creating it. No continues without a note. Yes calls
+`pinote_add` with `select: true`. An existing selection is not replaced unless the
+user asks to switch. Reuse a saved tag name when it fits.
 
 Agents are guided to keep notes to three short bullets total: relevant outcome,
 blocker, and next action. Replace stale notes; omit narration, repeated task text,

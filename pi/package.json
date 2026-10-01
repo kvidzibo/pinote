@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",

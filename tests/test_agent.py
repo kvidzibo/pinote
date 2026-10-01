@@ -1,6 +1,7 @@
 """Durable handoff fields and project selection through the public CLI."""
 
 import json
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -127,3 +128,54 @@ def test_agent_handoff_upgrade_restart_and_revision_safe_updates(cli, tmp_path):
         assert store.get(7).text == "Original task"
         assert json.loads(store.history(7)[-1]["agent_notes"]) == current["agent_notes"]
         assert store.selected(Path(cwd)) is None
+
+
+def test_agent_add_and_tag_without_desktop_refresh(cli, tmp_path):
+    calls = tmp_path / "dunst-calls"
+    fake = Path(cli.env["PATH"].split(os.pathsep)[0]) / "dunstify"
+    fake.write_text(f"#!/bin/sh\necho called >> {calls}\nexit 1\n")
+    fake.chmod(0o700)
+    project = tmp_path / "project"
+    project.mkdir()
+
+    def agent(*args, check=True):
+        result = cli("agent", *args, check=check)
+        return json.loads(result.stdout) if result.returncode == 0 else result
+
+    assert agent("tags") == []
+    created = agent("add", "--text", "Check backups", "--tag", "  Cafe\u0301  ")
+    assert created["text"] == "Check backups" and created["state"] == "active"
+    assert created["tag"] == "Café" and agent("selected", "--cwd", str(project)) is None
+    selected = agent("add", "--text", "Follow up", "--tag", "pinote", "--cwd", str(project))
+    assert selected["state"] == "in_progress" and selected["tag"] == "pinote"
+    assert agent("selected", "--cwd", str(project))["id"] == selected["id"]
+    assert agent("selected", "--cwd", str(tmp_path / "other")) is None
+    stale = agent(
+        "tag",
+        str(selected["id"]),
+        "--expected-updated-at",
+        "stale",
+        "--tag",
+        "Work",
+        check=False,
+    )
+    assert stale.returncode == 1 and "changed elsewhere" in stale.stdout
+    assert agent("get", str(selected["id"]))["tag"] == "pinote"
+    cleared = agent(
+        "tag", str(created["id"]), "--expected-updated-at", created["updated_at"], "--clear"
+    )
+    assert cleared["tag"] is None and cleared["text"] == "Check backups"
+    retagged = agent(
+        "tag", str(created["id"]), "--expected-updated-at", cleared["updated_at"], "--tag", "Café"
+    )
+    assert retagged["tag"] == "Café" and agent("tags") == ["Café", "pinote"]
+    invalid = agent("add", "--text", "nope", "--tag", "bad\nname", check=False)
+    assert invalid.returncode == 1 and "nope" not in cli("list", "--json").stdout
+    empty = agent("add", "--text", "nope", "--tag", "  ", check=False)
+    assert empty.returncode == 1 and "empty" in empty.stdout
+    relative = agent("add", "--text", "nope", "--cwd", "relative", check=False)
+    assert relative.returncode == 1 and "absolute" in relative.stdout
+    assert agent("tags") == ["Café", "pinote"]
+    assert not calls.exists()
+    history = cli("history", str(selected["id"])).stdout
+    assert "add" in history and "start" in history

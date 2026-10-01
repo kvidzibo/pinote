@@ -86,15 +86,25 @@ note agent update 2 --expected-updated-at 'REVISION_FROM_GET' \
   --set-json '{"PR":"[Fix #42](https://github.com/org/repo/pull/42)","Next":"Review"}'
 note agent update 2 --expected-updated-at 'LATEST_REVISION' --remove Next
 note agent done 2 --expected-updated-at 'LATEST_REVISION'
+note agent tags
+note agent add --text "check backups" --tag pinote
+note agent add --text "follow up" --tag pinote --cwd "$PWD"
+note agent tag 2 --expected-updated-at 'REVISION' --tag Work
+note agent tag 2 --expected-updated-at 'REVISION' --clear
 ```
 
+`add` creates an active task and registers a new tag. `--cwd` also starts and
+selects it for that project. `tag` requires the current revision and only changes
+active or in-progress tasks; `--clear` removes the tag. `tags` lists saved names.
+These commands do not refresh Dunst.
+
 Update merges arbitrary label/Markdown-string pairs; it never overwrites task
-text. Labels are trimmed, Unicode-normalized and case-sensitive (64 characters
+text or its tag. Labels are trimmed, Unicode-normalized and case-sensitive (64 characters
 maximum). Values use the same 4096-character/control-character rules as task
 text. Up to 64 fields / 32 KiB JSON can be saved per task. Empty values are
 rejected; use `--remove` instead. Conflicting set/remove labels are rejected.
 
-Use the returned `updated_at` for updates/completion; a stale revision fails
+Use the returned `updated_at` for updates, tagging, and completion; a stale revision fails
 without changing anything. Fields are retained as history snapshots and displayed
 under `# Agent` in terminal listings and the GTK Markdown preview. The task editor
 edits only task text, leaving agent fields intact. Fields also remain visible as
