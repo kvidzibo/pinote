@@ -3,7 +3,7 @@ import { stripVTControlCharacters } from "node:util";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 
 // Immutable source: the Python app is not yet published to PyPI.
-export const cliSource = "https://github.com/kvidzibo/pinote/archive/9c6795f655e6b9d2c51c735fc84b6485fb663bb1.tar.gz";
+export const cliSource = "https://github.com/kvidzibo/pinote/archive/1597baf60bff8bc96893be40781f152a001623d1.tar.gz";
 export const bundledCLIVersion = "0.4.0";
 export const setupHint = "Use /pi-note-setup for a missing CLI or /pi-note-upgrade for an older CLI; note must be on PATH.";
 export type CLIAction = "setup" | "upgrade" | "ready";
