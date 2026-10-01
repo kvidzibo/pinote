@@ -133,9 +133,12 @@ Allowed intervals are 10–86400 seconds. The selected task's link remains visib
 Network/authentication failures warn once until recovery and retry next interval.
 No polling runs in print/RPC mode or after Pi exits.
 
-On merge, Pi waits until idle and asks **Mark this task completed?** Confirmation
-uses the same guarded CLI Done operation as `/pi-note`; declining leaves the task
-unchanged. If it is already done, Pi says **PR #123 was merged and the task is
+On merge, Pi waits until idle and asks **Mark this task completed?** In Kitty,
+indeterminate progress animates the tab while the prompt awaits input (with Kitty's
+default progress-aware tab title or a working/ready renderer). Progress clears on
+response, cancellation, or shutdown; other terminals and redirected output are untouched.
+Confirmation uses the same guarded CLI Done operation as `/pi-note`; declining leaves
+the task unchanged. If it is already done, Pi says **PR #123 was merged and the task is
 already completed**, without completing it again. Completion clears the selection
 and hides the footer link, even with polling disabled. The background watch remains
 until another task is selected, the link is removed, or Pi exits. Removed/scheduled tasks are no longer watched.
