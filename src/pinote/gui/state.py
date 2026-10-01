@@ -13,19 +13,23 @@ class FilterCache:
     def __init__(self, path: Path):
         self._cache = DraftCache(path)
 
-    def load(self) -> str | None:
+    def load(self) -> frozenset[str] | None:
         text = self._cache.load()
         if not text:
-            return ""  # First launch defaults to Untagged.
+            return frozenset({""})  # First launch defaults to Untagged.
         value = json.loads(text)
-        if value is not None and not isinstance(value, str):
-            raise ValueError("Saved tag filter must be a tag name or null.")
-        if value is not None:
-            return validate_tag(value) or ""
-        return None  # All tasks.
+        if value is None:
+            return None  # All tasks.
+        if isinstance(value, str):
+            value = [value]  # Restore single-tag filters saved by older versions.
+        if not isinstance(value, list) or any(not isinstance(tag, str) for tag in value):
+            raise ValueError("Saved tag filter must be a list of tag names or null.")
+        return frozenset(validate_tag(tag) or "" for tag in value)
 
-    def update(self, tag: str | None) -> None:
-        self._cache.update(json.dumps(tag, ensure_ascii=True))
+    def update(self, tags: frozenset[str] | None) -> None:
+        self._cache.update(
+            json.dumps(sorted(tags) if tags is not None else None, ensure_ascii=True)
+        )
 
     def save(self) -> None:
         self._cache.save()

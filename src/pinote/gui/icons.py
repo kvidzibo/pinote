@@ -39,8 +39,8 @@ class TagLabel(Gtk.Box):
         self.show_all()
 
 
-def tag_menu_item(text: str, *, selected: bool = False) -> Gtk.MenuItem:
-    item = Gtk.MenuItem()
+def tag_menu_item(text: str, *, selected: bool = False, checkable: bool = False) -> Gtk.MenuItem:
+    item = Gtk.CheckMenuItem(active=selected) if checkable else Gtk.MenuItem()
     item.add(TagLabel(text, max_width_chars=40))
     item.get_accessible().set_name(text)
     item.get_accessible().set_description("Selected" if selected else "")

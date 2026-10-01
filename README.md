@@ -58,7 +58,7 @@ In the GUI, add with **Enter** or **+**; right-click task text to change its sta
 edit, tag, or schedule it. The minimise button cycles all notes, in-progress only,
 and bottom-bar-only views. The bottom menu opens reminders, the archive, and tag management.
 Tags stay saved even without tasks; use the tag dropdown below the input to tag new tasks.
-The separate funnel control shows the list filter and matching task count.
+The separate funnel control selects one or more tags to view together and shows the matching task count.
 Full commands,
 Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md).
 
