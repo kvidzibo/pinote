@@ -230,6 +230,27 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   await extension.event("session_tree");
   assert.equal((await extension.tool("pinote_get", {})).details.id, 2);
 
+  let releaseChoice!: () => void;
+  let enteredChoice!: () => void;
+  const choiceStarted = new Promise<void>((resolve) => { enteredChoice = resolve; });
+  let getsDuringSwitch = 0;
+  delaySelected = () => {
+    if (++getsDuringSwitch !== 2) return Promise.resolve();
+    return new Promise<void>((resolve) => { releaseChoice = resolve; enteredChoice(); });
+  };
+  const draftBeforeSwitch = draft;
+  choices.push("Switch task", "older");
+  const switching = extension.command();
+  await choiceStarted;
+  entries.push({ type: "custom", customType: "pinote-selection", data: { id: 2 } });
+  await extension.event("session_tree");
+  releaseChoice();
+  await switching;
+  assert.equal(sessionTask(), 2, "in-flight selection must not be written onto the new branch");
+  assert.equal(draft, draftBeforeSwitch);
+  assert.equal((await extension.tool("pinote_get", {})).details.id, 2);
+  delaySelected = undefined;
+
   let release!: () => void;
   let entered!: () => void;
   const started = new Promise<void>((resolve) => { entered = resolve; });

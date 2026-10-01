@@ -145,3 +145,56 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.equal((await tools.get("pinote_get").execute("get", {}, undefined, undefined, replacementCtx)).details, null);
   await events.get("session_shutdown")({}, replacementCtx);
 });
+
+test("tree navigation during setup restores the active branch", async () => {
+  const entries: Array<{ type: string; customType: string; data: { id: number | null } }> = [];
+  let finishInstall!: () => void;
+  let started!: () => void;
+  const installing = new Promise<void>((resolve) => { started = resolve; });
+  let cliVersion = "pinote 0.2.0";
+  let status: string | undefined;
+  const task = {
+    id: 4, text: "Branch task", state: "in_progress", tag: null, updated_at: "r4",
+    agent_notes: {}, markdown: "Branch task",
+  };
+  const commands = new Map<string, any>();
+  const events = new Map<string, any>();
+  const tools = new Map<string, any>();
+  pinote({
+    registerCommand: (name: string, command: any) => commands.set(name, command),
+    registerTool: (tool: any) => tools.set(tool.name, tool),
+    on: (name: string, handler: any) => events.set(name, handler),
+    appendEntry: (customType: string, data: { id: number | null }) => entries.push({ type: "custom", customType, data }),
+    exec: async (command: string, args: string[]) => {
+      if (args.includes("install")) {
+        started();
+        await new Promise<void>((resolve) => { finishInstall = resolve; });
+        cliVersion = "pinote 0.4.0";
+        return { code: 0, stdout: "" };
+      }
+      if (command === "note" && args[0] === "--version") return { code: 0, stdout: cliVersion };
+      if (command === "note" && args[1] === "get") return { code: 0, stdout: JSON.stringify(task) };
+      if (command === "uv") return { code: 0, stdout: "uv 0.6" };
+      return { code: 0, stdout: "null" };
+    },
+  } as any);
+  const ctx: any = {
+    cwd: "/tmp/project", mode: "tui", hasUI: true, isIdle: () => true,
+    sessionManager: { getBranch: () => entries },
+    ui: {
+      setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
+      notify() {}, addAutocompleteProvider() {}, confirm: async () => true,
+      theme: { fg: (_color: string, value: string) => value },
+    },
+  };
+  await events.get("session_start")({}, ctx);
+  const setup = commands.get("pi-note-upgrade").handler("", ctx);
+  await installing;
+  entries.push({ type: "custom", customType: "pinote-selection", data: { id: 4 } });
+  await events.get("session_tree")({}, ctx);
+  finishInstall();
+  await setup;
+  assert.match(status!, /Branch task/);
+  assert.equal((await tools.get("pinote_get").execute("get", {}, undefined, undefined, ctx)).details.id, 4);
+  await events.get("session_shutdown")({}, ctx);
+});

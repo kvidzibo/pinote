@@ -134,8 +134,9 @@ export default function (pi: ExtensionAPI) {
   // One folder can host several sessions. Remember the task in the Pi session, not by cwd.
   const selectionType = "pinote-selection";
   let selectedId: number | null = null;
-  const remember = (id: number | null) => {
-    if (selectedId === id) return;
+  let branchEpoch = 0;
+  const remember = (id: number | null, branch = branchEpoch) => {
+    if (!alive || branch !== branchEpoch || selectedId === id) return;
     selectedId = id;
     pi.appendEntry(selectionType, { id });
   };
@@ -166,16 +167,19 @@ export default function (pi: ExtensionAPI) {
     return currentTask(signal, canUse);
   };
   const startTask = async (id: number, canAct: () => boolean, signal?: AbortSignal) => {
-    const before = requiredTask(await run(["agent", "get", String(id)], signal, canAct), id);
+    const branch = branchEpoch;
+    const still = () => canAct() && branch === branchEpoch;
+    const before = requiredTask(await run(["agent", "get", String(id)], signal, still), id);
+    if (!still()) return;
     if (!["active", "in_progress"].includes(before.state)) {
       throw new Error(`Note ${id} is ${before.state}; restore it first.`);
     }
     // Start without the shared cwd selection so another session can keep a different task.
-    if (before.state === "active") await run(["--no-notify", "start", String(id)], signal, canAct);
-    const chosen = requiredTask(await run(["agent", "get", String(id)], signal, canAct), id);
+    if (before.state === "active") await run(["--no-notify", "start", String(id)], signal, still);
+    const chosen = requiredTask(await run(["agent", "get", String(id)], signal, still), id);
     if (chosen.state !== "in_progress") throw new Error(compatible);
-    if (!canAct()) return;
-    remember(chosen.id);
+    if (!still()) return;
+    remember(chosen.id, branch);
     return chosen;
   };
 
@@ -217,6 +221,7 @@ export default function (pi: ExtensionAPI) {
     alive = true;
     activeContext = ctx;
     epoch++;
+    branchEpoch++;
     selectedId = readSelection(ctx);
     const generation = epoch;
     cliState = undefined;
@@ -231,11 +236,13 @@ export default function (pi: ExtensionAPI) {
     await refresh(ctx);
   });
   pi.on("session_tree", async (_event, ctx) => {
-    if (!alive || setupAbort) return;
-    const generation = epoch;
+    if (!alive) return;
+    branchEpoch++;
+    const generation = branchEpoch;
     const id = readSelection(ctx);
-    if (!alive || generation !== epoch) return;
+    if (!alive || generation !== branchEpoch) return;
     selectedId = id;
+    if (setupAbort) return;
     await refresh(ctx);
   });
   pi.on("before_agent_start", async (_event, ctx) => { await refresh(ctx); });
@@ -246,6 +253,7 @@ export default function (pi: ExtensionAPI) {
     activeContext = undefined;
     selectedId = null;
     epoch++;
+    branchEpoch++;
     refreshSerial++;
     watcher.stop();
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
@@ -304,8 +312,9 @@ export default function (pi: ExtensionAPI) {
       const operation = Symbol();
       pending = operation;
       const generation = epoch;
+      const branch = branchEpoch;
       const currentSession = () => alive && generation === epoch;
-      const canAct = () => currentSession() && ctx.isIdle();
+      const canAct = () => currentSession() && ctx.isIdle() && branch === branchEpoch;
       try {
         const current = await selected(ctx);
         if (!canAct()) return;
@@ -319,7 +328,7 @@ export default function (pi: ExtensionAPI) {
             "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
           ], undefined, canAct), current.id);
           if (completed.state !== "done") throw new Error(compatible);
-          if (currentSession()) remember(null);
+          if (currentSession() && branch === branchEpoch) remember(null, branch);
           if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
           return;
         }
@@ -416,14 +425,17 @@ export default function (pi: ExtensionAPI) {
       const argv = ["agent", "add", `--text=${params.text}`];
       if (params.tag !== undefined) argv.push(`--tag=${params.tag}`);
       const generation = epoch;
+      const branch = branchEpoch;
       const created = await writeTask(ctx, signal, argv, undefined, "0.4.0");
       if (params.select !== true) return toolResult(created);
-      if (!alive || generation !== epoch) throw new Error("Pinote operation cancelled: the session changed.");
+      if (!alive || generation !== epoch || branch !== branchEpoch) throw new Error("Pinote operation cancelled: the session changed.");
       if (pending) throw new Error("A pinote operation is already open. Retry after it finishes.");
       const operation = Symbol();
       pending = operation;
       try {
-        const chosen = await startTask(created.id, () => alive && generation === epoch && pending === operation, signal);
+        const chosen = await startTask(
+          created.id, () => alive && generation === epoch && branch === branchEpoch && pending === operation, signal,
+        );
         if (!chosen) throw new Error("Pinote operation cancelled: the session changed.");
         return toolResult(chosen);
       } finally {
