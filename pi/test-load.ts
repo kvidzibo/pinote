@@ -83,7 +83,9 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       { signal: new AbortController().signal });
     assert.deepEqual(suggestions.items.map((item: any) => item.value), ["pi-note"]);
     assert.ok(!notices.some((message) => message.includes("Run /pi-note-upgrade")));
-    assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
+    assert.deepEqual([...extension.tools.keys()].sort(), [
+      "pinote_add", "pinote_get", "pinote_tag", "pinote_tags", "pinote_update",
+    ]);
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     const prompt = "Read task #1 with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.";
@@ -103,6 +105,16 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     const removed = await update.execute("remove", { id: task.id, expected_updated_at: updated.updated_at,
       remove: ["--Flag"] }, undefined, undefined, ctx);
     assert.equal(JSON.parse(removed.content[0].text).agent_notes["--Flag"], undefined);
+    const created = JSON.parse((await extension.tools.get("pinote_add").definition.execute(
+      "add", { text: "Agent added", tag: "pinote" }, undefined, undefined, ctx)).content[0].text);
+    assert.equal(created.state, "active");
+    assert.equal(created.tag, "pinote");
+    assert.deepEqual(JSON.parse((await extension.tools.get("pinote_tags").definition.execute(
+      "tags", {}, undefined, undefined, ctx)).content[0].text), ["pinote"]);
+    const cleared = JSON.parse((await extension.tools.get("pinote_tag").definition.execute(
+      "tag", { id: created.id, expected_updated_at: created.updated_at, clear: true }, undefined, undefined, ctx)).content[0].text);
+    assert.equal(cleared.tag, null);
+    assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)).text, "Resume the task");
     await event(extension, "session_shutdown");
     extension = await load(); // New process-like extension state, same durable database.
     draft = "";

@@ -23,7 +23,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   const ctx = context(async () => true);
 
   assert.equal(cliAction("pinote 0.2.99"), "upgrade");
-  assert.equal(cliAction("pinote 0.3.0"), "ready");
+  assert.equal(cliAction("pinote 0.3.0"), "upgrade");
   assert.equal(cliAction("pinote 0.4.0"), "ready");
   assert.equal(cliAction("pinote 1.0.0"), "ready");
 
@@ -39,7 +39,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.match(notices.at(-1)!.message, /Install uv/);
 
   calls.length = 0;
-  results = [{ code: 0, stdout: "pinote 0.3.1\n" }];
+  results = [{ code: 0, stdout: "pinote 0.4.1\n" }];
   await setupCLI(pi, ctx, false, active, signal);
   assert.deepEqual(calls, [{ command: "note", args: ["--version"] }]);
   calls.length = 0;
@@ -53,7 +53,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.match(notices.at(-1)!.message, /ready/);
   assert.deepEqual(calls, [{ command: "note", args: ["--version"] }]);
   calls.length = 0;
-  results = [new Error("missing note"), { code: 0, stdout: "uv 0.6" }, new Error("missing note"), { code: 0 }, { code: 0, stdout: "pinote 0.3.0" }];
+  results = [new Error("missing note"), { code: 0, stdout: "uv 0.6" }, new Error("missing note"), { code: 0 }, { code: 0, stdout: "pinote 0.4.0" }];
   await setupCLI(pi, ctx, false, active, signal);
   assert.match(notices.at(-1)!.message, /is ready/);
   assert.deepEqual(calls[3], { command: "uv", args: ["--no-config", "tool", "install", "--reinstall", "--python", ">=3.11", `pinote @ ${cliSource}`] });
@@ -138,7 +138,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.equal(installs, 1);
   assert.match(notices.at(-1)!.message, /Wait until Pi is idle/);
   await assert.rejects(tools.get("pinote_get").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
-  cliVersion = "pinote 0.3.0";
+  cliVersion = "pinote 0.4.0";
   finishInstall();
   await setup;
   assert.deepEqual(taskCalls.at(-1), ["agent", "selected", "--cwd", replacementCtx.cwd]);

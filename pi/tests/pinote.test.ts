@@ -109,6 +109,10 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.ok(calls.every((args) => args[0] === "--version"), "old CLIs must never receive unknown commands");
   cliVersion = "pinote 0.3.0";
   await extension.event("session_start");
+  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
+  assert.equal((await extension.tool("pinote_get", { id: 2 })).details.id, 2);
+  cliVersion = "pinote 0.4.0";
+  await extension.event("session_start");
   assert.equal(status, undefined);
   assert.deepEqual(await menuNames(), ["pi-note"]);
   cliVersion = "";
@@ -122,9 +126,9 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   await extension.event("session_start");
   assert.deepEqual(await menuNames(), ["pi-note"]);
   assert.equal(notices.length, noticeCount, "newer CLI must not trigger an upgrade notice");
-  cliVersion = "pinote 0.3.0";
+  cliVersion = "pinote 0.4.0";
   await extension.event("session_start");
-  await assert.rejects(extension.tool("pinote_get", {}), /No selected/);
+  assert.equal((await extension.tool("pinote_get", {})).details, null);
   choices.push(undefined);
   await extension.command();
   assert.equal(selectedId, undefined);
@@ -207,4 +211,85 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   await extension.event("session_start");
   assert.equal(status, undefined, "the same runtime can handle a new session");
   await extension.event("session_shutdown");
+});
+
+test("add and tag require pinote 0.4.0 and select only when asked", async () => {
+  let cliVersion = "pinote 0.3.0";
+  let current: any = null;
+  const calls: string[][] = [];
+  const tools = new Map<string, any>();
+  let status: string | undefined;
+  const ctx: any = {
+    cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
+    ui: { setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; } },
+  };
+  const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
+  pinote({
+    registerCommand() {},
+    registerTool: (definition: any) => tools.set(definition.name, definition),
+    on() {},
+    async exec(command: string, args: string[]) {
+      assert.equal(command, "note");
+      calls.push(args);
+      if (args[0] === "--version") return { code: 0, stdout: cliVersion, stderr: "", killed: false };
+      if (args[1] === "tags") return success(["pinote"]);
+      if (args[1] === "selected") return success(current);
+      if (args[1] === "add") {
+        const text = args.find((arg) => arg.startsWith("--text="))!.slice("--text=".length);
+        const tagArg = args.find((arg) => arg.startsWith("--tag="));
+        const created = {
+          id: 9, text, state: args.includes("--cwd") ? "in_progress" : "active",
+          tag: tagArg ? tagArg.slice("--tag=".length) : null, updated_at: "r9",
+          agent_notes: {}, markdown: text,
+        };
+        if (args.includes("--cwd")) current = created;
+        return success(created);
+      }
+      if (args[1] === "tag" && current) {
+        current = {
+          ...current,
+          tag: args.includes("--clear") ? null : args.find((arg) => arg.startsWith("--tag="))!.slice("--tag=".length),
+          updated_at: "r10",
+        };
+        return success(current);
+      }
+      return { code: 1, stdout: "", stderr: "unexpected", killed: false };
+    },
+  } as any);
+  const guidelines = tools.get("pinote_get").promptGuidelines.join("\n");
+  assert.match(guidelines, /propose one note as `\[tag\] text`/);
+  assert.match(guidelines, /On no, continue without a note/);
+  assert.match(guidelines, /select true/);
+  await assert.rejects(
+    tools.get("pinote_add").execute("id", { text: "Ship it", tag: "pinote", select: true }, undefined, undefined, ctx),
+    /0\.4\.0/,
+  );
+  assert.ok(calls.every((args) => args[0] === "--version" || args[1] === "selected"));
+  assert.ok(!calls.some((args) => args[1] === "add"), "old CLIs must not receive add");
+  cliVersion = "pinote 0.4.0";
+  calls.length = 0;
+  const added = await tools.get("pinote_add").execute("id", { text: "Ship it", tag: "pinote" }, undefined, undefined, ctx);
+  assert.equal(added.details.state, "active");
+  const addCalls = () => calls.filter((args) => args[1] === "add");
+  assert.equal(addCalls().length, 1);
+  assert.ok(!addCalls()[0].includes("--cwd"));
+  const chosen = await tools.get("pinote_add").execute(
+    "id", { text: "Ship it", tag: "pinote", select: true }, undefined, undefined, ctx,
+  );
+  assert.equal(chosen.details.state, "in_progress");
+  assert.ok(addCalls()[1].includes("--cwd") && addCalls()[1].includes("/tmp/project"));
+  assert.match(status!, /\[pinote\] Ship it/);
+  assert.deepEqual((await tools.get("pinote_tags").execute("id", {}, undefined, undefined, ctx)).details, ["pinote"]);
+  assert.equal(
+    (await tools.get("pinote_tag").execute(
+      "id", { id: 9, expected_updated_at: "r9", clear: true }, undefined, undefined, ctx,
+    )).details.tag,
+    null,
+  );
+  await assert.rejects(
+    tools.get("pinote_tag").execute(
+      "id", { id: 9, expected_updated_at: "r9", tag: "pinote", clear: true }, undefined, undefined, ctx,
+    ),
+    /not both/,
+  );
 });

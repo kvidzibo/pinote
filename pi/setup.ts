@@ -3,8 +3,8 @@ import { stripVTControlCharacters } from "node:util";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 
 // Immutable source: the Python app is not yet published to PyPI.
-export const cliSource = "https://github.com/kvidzibo/pinote/archive/9c6795f655e6b9d2c51c735fc84b6485fb663bb1.tar.gz";
-export const bundledCLIVersion = "0.3.0";
+export const cliSource = "https://github.com/kvidzibo/pinote/archive/1597baf60bff8bc96893be40781f152a001623d1.tar.gz";
+export const bundledCLIVersion = "0.4.0";
 export const setupHint = "Use /pi-note-setup for a missing CLI or /pi-note-upgrade for an older CLI; note must be on PATH.";
 export type CLIAction = "setup" | "upgrade" | "ready";
 
@@ -44,9 +44,19 @@ export function cliMenu(current: AutocompleteProvider, action: () => CLIAction |
     shouldTriggerFileCompletion: (...args) => current.shouldTriggerFileCompletion?.(...args) ?? true,
   };
 }
-export function compatibleVersion(version: string): boolean {
+export function versionAtLeast(version: string, minimum: string): boolean {
   const match = /^pinote (\d+)\.(\d+)\.(\d+)$/u.exec(version.trim());
-  return !!match && (Number(match[1]) > 0 || Number(match[2]) >= 3);
+  if (!match) return false;
+  const installed = match.slice(1).map(Number);
+  const required = minimum.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (installed[i] > required[i]) return true;
+    if (installed[i] < required[i]) return false;
+  }
+  return true;
+}
+export function compatibleVersion(version: string): boolean {
+  return versionAtLeast(version, "0.3.0");
 }
 const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x1f\x7f-\x9f]/gu, " ").slice(0, 1500);
 

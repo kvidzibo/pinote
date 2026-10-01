@@ -65,8 +65,9 @@ Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md
 ### Pi integration
 
 The optional [pi-note extension](pi/README.md) adds selected-task status,
-`/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent read/update tools. Install from this
-checkout with `pi install ./pi`, then run `/reload`. At startup Pi compares the
+`/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent read/update/add/tag tools.
+With no selected task, the agent proposes one note and tag and asks before creating and selecting it.
+Install from this checkout with `pi install ./pi`, then run `/reload`. At startup Pi compares the
 installed CLI with the bundled version, without a network check. It shows
 `/pi-note-setup` only for a missing/unrecognized CLI, or suggests `/pi-note-upgrade`
 for an older CLI; both are hidden when current or newer.

@@ -310,6 +310,26 @@ class Store:
                 self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
             return self._insert(text, "active", "add", timestamp(), tag)
 
+    def add_note(self, text: str, *, tag: str | None = None, cwd: Path | None = None) -> Note:
+        """Add a note and, when cwd is set, start and select it in one transaction."""
+        text = validate_text(text)
+        tag = validate_tag(tag)
+        if cwd is not None and not cwd.is_absolute():
+            raise NoteError("--cwd must be an absolute project directory.")
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            if tag is not None:
+                self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
+            note_id = self._insert(text, "active", "add", timestamp(), tag)
+            if cwd is not None:
+                self._change_state(note_id, "start", "active", "in_progress")
+                self.connection.execute(
+                    "INSERT INTO agent_selections(cwd, note_id) VALUES (?, ?) "
+                    "ON CONFLICT(cwd) DO UPDATE SET note_id = excluded.note_id",
+                    (str(cwd.resolve()), note_id),
+                )
+            return self.get(note_id)
+
     def tags(self) -> list[str]:
         rows = self.connection.execute("SELECT name FROM tags")
         return sorted((r[0] for r in rows), key=lambda x: (x.casefold(), x))
