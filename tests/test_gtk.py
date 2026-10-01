@@ -362,7 +362,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     click_button(gtk, item.get_toplevel(), item)
     wait_until(gtk.glib, lambda: not window.composer_tag_menu.get_mapped())
     assert window.creation_tag == "Work <🐦>"
-    assert window.tag_filter == "" and not window.rows
+    assert window.tag_filter == frozenset({""}) and not window.rows
     window._set_filter(None)
     assert window.creation_tag == "Work <🐦>"
     for note_id in (2, 3):
@@ -549,7 +549,7 @@ def test_visible_filter_count_and_empty_state_recovery(gtk):
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
     click_button(gtk, choices[0].get_toplevel(), choices[0])
-    wait_until(gtk.glib, lambda: window.tag_filter == "" and not window.rows)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({""}) and not window.rows)
     assert window.filter_count.get_text() == "(0)"
     assert window.show_all_button.get_mapped()
     with Store(gtk.paths.database) as store:
@@ -574,23 +574,111 @@ def test_tag_filter_persists_across_restarts_and_tracks_registry_changes(gtk):
         window.worker.shutdown(wait=True)
         return gtk.open(application)
 
-    for selected, visible in (("Work 🐦", {2}), (None, {1, 2}), ("", {1})):
+    # Legacy single-tag files remain readable, including Untagged and All.
+    for legacy, selected, visible in (
+        ("Work 🐦", frozenset({"Work 🐦"}), {2}),
+        (None, None, {1, 2}),
+        ("", frozenset({""}), {1}),
+    ):
+        window.close()
+        wait_until(gtk.glib, lambda window=window: window.closed)
+        window.worker.shutdown(wait=True)
+        (gtk.paths.data / "gui-filter.json").write_text(json.dumps(legacy))
+        window = gtk.open(application)
+        assert window.tag_filter == selected and set(window.rows) == visible
+    for selected, visible in (
+        (frozenset({"Work 🐦"}), {2}),
+        (None, {1, 2}),
+        (frozenset({""}), {1}),
+        (frozenset({"", "Work 🐦"}), {1, 2}),
+        (frozenset(), set()),
+    ):
         window.entry.set_text("Keep this draft")
         window._set_filter(selected)
         window = reopen(window)  # No wait before closing: queued saves must drain.
         assert window.tag_filter == selected and set(window.rows) == visible
         assert window.entry.get_text() == "Keep this draft"
         assert window.creation_tag is None  # Input tags remain independent of filtering.
-    window._set_filter("Work 🐦")
+    window._set_filter(frozenset({"", "Work 🐦"}))
     window.model.rename_tag("Work 🐦", "Renamed")
     window._tags_changed("Work 🐦", "Renamed")
     window = reopen(window)
-    assert window.tag_filter == "Renamed" and set(window.rows) == {2}
-    window.model.delete_tag("Renamed")
+    assert window.tag_filter == frozenset({"", "Renamed"}) and set(window.rows) == {1, 2}
+    window.model.delete_tag("Renamed")  # External deletion drops only the missing selection.
+    window = reopen(window)
+    assert window.tag_filter == frozenset({""}) and set(window.rows) == {1, 2}
+    window.model.create_tag("Unused")
+    window._set_filter(frozenset({"", "Unused"}))
+    window.model.delete_tag("Unused")
+    window._tags_changed("Unused", None)  # GUI deletion also preserves other selections.
+    window = reopen(window)
+    assert window.tag_filter == frozenset({""})
+    window.model.create_tag("Last")
+    window._set_filter(frozenset({"Last"}))
+    window.model.delete_tag("Last")
     window = reopen(window)
     assert window.tag_filter is None and set(window.rows) == {1, 2}
     window = reopen(window)
     assert window.tag_filter is None  # Missing-tag fallback itself is persisted.
+
+
+def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Untagged task")
+        store.add("Work task", tag="Work")
+        store.add("Personal task", tag="Personal")
+        store.transition(3, "start")
+        store.add("Other task", tag="Other")
+    window = gtk.open()
+    window.entry.set_text("Keep this draft")
+    window._select_creation_tag("Other")
+
+    def toggle(label, selected, visible):
+        if not window.visible_filter_menu.get_mapped():
+            click_button(gtk, window, window.filter_button)
+            wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
+        menu = window.visible_filter_menu
+        item = next(child for child in menu.get_children() if child.filter_tag == label)
+        assert isinstance(item, Gtk.CheckMenuItem) and not item.get_draw_as_radio()
+        pointer_at(gtk, item.get_toplevel(), item, 12, 12)
+        ready = time.monotonic() + 0.6
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+        click_button(gtk, item.get_toplevel(), item)
+        wait_until(gtk.glib, lambda: window.tag_filter == selected and set(window.rows) == visible)
+        assert window.filter_count.get_text() == f"({len(visible)})"
+        assert window.creation_tag == "Other" and window.entry.get_text() == "Keep this draft"
+        for child in menu.get_children():
+            active = (
+                selected is None
+                if child.filter_tag is None
+                else selected is not None and child.filter_tag in selected
+            )
+            assert child.get_active() == active
+            assert child.get_style_context().has_class("selected-tag") == active
+        if menu.get_mapped():
+            menu.popdown()
+        wait_until(gtk.glib, lambda: not window.geometry_source)
+
+    toggle("Work", frozenset({"", "Work"}), {1, 2})
+    toggle("", frozenset({"Work"}), {2})
+    toggle("Personal", frozenset({"Work", "Personal"}), {2, 3})
+    assert window.rows[3].get_parent() is window.progress_list
+    assert "Personal, Work" in window.filter_button.get_tooltip_text()
+    window._cycle_view(window.minimise_button)
+    assert not window.scroll.get_visible() and window.progress_scroll.get_visible()
+    window._cycle_view(window.minimise_button)
+    assert not window.scroll.get_visible() and not window.progress_scroll.get_visible()
+    window._cycle_view(window.minimise_button)
+    toggle("Work", frozenset({"Personal"}), {3})
+    toggle("Personal", frozenset(), set())
+    assert window.filter_label.get_text() == "No tags"
+    assert window.show_all_button.get_visible()
+    toggle(None, None, {1, 2, 3, 4})
+    toggle("Work", frozenset({"Work"}), {2})
+    with Store(gtk.paths.database) as store:
+        assert len(store.history()) == 5  # Filtering never mutates tasks.
 
 
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
@@ -603,7 +691,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         store.transition(2, "start")
         store.transition(3, "done")
     window = gtk.open()
-    assert window.tag_filter == "" and set(window.rows) == {1}
+    assert window.tag_filter == frozenset({""}) and set(window.rows) == {1}
     window._prepare_filters()
     assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
         "Untagged (1)",
@@ -612,7 +700,8 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         "Work (1)",
     ]
     for item in window.filter_menu.get_children():
-        assert not isinstance(item, Gtk.CheckMenuItem)
+        assert isinstance(item, Gtk.CheckMenuItem)
+        assert not item.get_draw_as_radio()
         assert isinstance(item.get_child().image, Gtk.Image)
     assert window.filter_menu.get_children()[0].get_style_context().has_class("selected-tag")
     window.entry.set_text("Unfinished new task")
@@ -672,7 +761,11 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         wait_until(gtk.glib, lambda: window.menu.get_mapped())
         subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
         wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
+        previous = window.tag_filter
         select(window.filter_menu, label)
+        wait_until(gtk.glib, lambda: window.tag_filter != previous)
+        if window.menu.get_mapped():
+            window.menu.popdown()
         wait_until(gtk.glib, lambda: not window.menu.get_mapped())
 
     for save in (False, True):
@@ -1217,7 +1310,8 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
             )
         elif widget is window.filter_button:
             assert widget.get_tooltip_text() == (
-                "Filter by tag: Untagged. 1 of 1 active tasks match."
+                "Filter by tag: Untagged. 1 of 1 active tasks match. "
+                "Select multiple tags to show tasks matching any of them."
             )
         else:
             assert not widget.get_has_tooltip()
@@ -3207,9 +3301,9 @@ def test_in_progress_pins_on_focus_loss_above_input_and_below_new_tasks(gtk, mon
         assert window.progress_scroll.get_visible()
         assert pinned.get_upper() > pinned.get_page_size()
         assert window.get_position()[1] >= 25
-        window._set_filter("Hidden")
+        window._set_filter(frozenset({"Hidden"}))
         assert not window.rows and not window.progress_scroll.get_visible()
-        window._set_filter("")
+        window._set_filter(frozenset({""}))
         settled()
         assert sections() == ([], list(range(1, 18)))
     finally:

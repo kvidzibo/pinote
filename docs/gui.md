@@ -130,6 +130,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
   In-progress tasks keep neutral text, with a subtle row tint and amber checkbox.
   Tag names use a tag icon in task labels, the archive, reminders, and tag-management
   lists. Tag menus use these icons instead of radio circles; the current choice is highlighted.
+  List-filter menus also show checkboxes for their independently selected tags.
 - **Tag dropdown below the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
   Right-click the tag below the input to reset it to **Untagged**, keeping the draft,
@@ -142,11 +143,16 @@ Edits and tag changes retain the task ID and record old/new values in history;
   asks for confirmation, then clears the tag from tasks and removes it from the registry;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
 - The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
-  and matching active-task count. Click it to select **Untagged**, **All**, or a tag;
-  **Bottom menu → Filter by tag →** offers the same choices.
+  and matching active-task count. Click it to toggle one or more tags, including **Untagged**;
+  tasks matching **any** selected tag appear in both sections. Click a checked tag to remove it;
+  with no tags checked, no tasks match. **All** clears the selection and shows every active task;
+  choosing a tag from **All** starts a new selection.
+  **Bottom menu → Filter by tag →** offers the same checkboxes.
   This is separate from the tag icon on the left, which assigns tags to new tasks.
   The filter is saved in `gui-filter.json` beside the database and restored on restart.
-  **Untagged** is the first-launch default; a deleted saved tag falls back to **All**.
+  **Untagged** is the first-launch default; older single-tag filters are also restored.
+  Renaming a tag updates its selection. Deleting a selected tag keeps other selections;
+  if no selections remain after deletion, the filter falls back to **All**.
   If the filter hides every active task, the empty state says **No tasks match this filter**;
   its funnel button (**Show all tasks**) clears the filter without changing the draft or new-task tag.
   With no active tasks at all, the empty state invites you to add one instead.

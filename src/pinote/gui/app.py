@@ -265,7 +265,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
         self.view_mode = 0  # All notes → in progress → bottom bar.
-        self.tag_filter: str | None = ""  # Empty = Untagged; None = All.
+        self.tag_filter: frozenset[str] | None = frozenset({""})  # "" = Untagged; None = All.
         self.creation_tag: str | None = None
         self.tags: list[str] = []
         self.notes_snapshot: list[Note] = []
@@ -815,23 +815,65 @@ class ReminderWindow(Gtk.ApplicationWindow):
             item.connect("activate", lambda _item, value=value: on_select(value))
             menu.append(item)
 
+    def _filter_matches(self, note: Note) -> bool:
+        return self.tag_filter is None or (note.tag or "") in self.tag_filter
+
+    def _filter_menu_choices(self, menu) -> None:
+        menu.set_reserve_toggle_size(True)
+        for value, label in self._tag_choices(None, filtering=True):
+            selected = (
+                self.tag_filter is None
+                if value is None
+                else self.tag_filter is not None and value in self.tag_filter
+            )
+            item = tag_menu_item(label, selected=selected, checkable=True)
+            item.filter_tag = value
+            item.filter_handler = item.connect(
+                "activate", lambda _item, value=value: self._toggle_filter(value)
+            )
+            menu.append(item)
+
     def _update_filter_label(self) -> None:
         if self.tag_filter is None:
             label = "All"
+        elif not self.tag_filter:
+            label = "No tags"
         else:
-            label = self.tag_filter or "Untagged"
+            label = ", ".join(
+                tag or "Untagged"
+                for tag in sorted(self.tag_filter, key=lambda tag: (tag.casefold(), tag))
+            )
+        for menu in (self.visible_filter_menu, getattr(self, "filter_menu", None)):
+            if menu is None:
+                continue
+            for item in menu.get_children():
+                selected = (
+                    self.tag_filter is None
+                    if item.filter_tag is None
+                    else self.tag_filter is not None and item.filter_tag in self.tag_filter
+                )
+                # set_active emits activate; syncing checks must not toggle the filter.
+                item.handler_block(item.filter_handler)
+                try:
+                    item.set_active(selected)
+                finally:
+                    item.handler_unblock(item.filter_handler)
+                item.get_accessible().set_description("Selected" if selected else "")
+                context = item.get_style_context()
+                if selected:
+                    context.add_class("selected-tag")
+                else:
+                    context.remove_class("selected-tag")
         self._update_creation_tag_label()
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
         self.menu_button.get_accessible().set_description(f"Filter by tag: {label}")
-        count = sum(
-            self.tag_filter is None or note.tag == (self.tag_filter or None)
-            for note in self.notes_snapshot
-        )
+        count = sum(self._filter_matches(note) for note in self.notes_snapshot)
         self.filter_label.set_text(label)
         self.filter_count.set_text(f"({count})" if self.loaded_notes else "(…)")
         description = (
-            f"Filter by tag: {label}. {count} of {len(self.notes_snapshot)} active tasks match."
+            f"Filter by tag: {label}. {count} of {len(self.notes_snapshot)} active tasks match. "
+            "Select multiple tags to show tasks matching any of them."
             if self.loaded_notes
             else f"Filter by tag: {label}. Loading tasks."
         )
@@ -911,8 +953,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.tags = [tag for tag in self.tags if tag != old]
             if self.creation_tag == old:
                 self._select_creation_tag(new)
-            if self.tag_filter == old:
-                self.tag_filter = new
+            if self.tag_filter is not None and old in self.tag_filter:
+                remaining = self.tag_filter - {old}
+                self.tag_filter = remaining | {new} if new is not None else remaining or None
                 self._remember_filter()
         if new is not None and new not in self.tags:
             self.tags.append(new)
@@ -930,33 +973,33 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_menu = Gtk.Menu()
         self.filter_menu.get_style_context().add_class("pinote-window")
         self.filter_menu.get_style_context().add_class("reminder-menu")
-        self._tag_menu_choices(
-            self.filter_menu,
-            self._tag_choices(self.tag_filter, filtering=True),
-            self.tag_filter,
-            self._set_filter,
-        )
+        self._filter_menu_choices(self.filter_menu)
         self.filter_item.set_submenu(self.filter_menu)
 
     def _prepare_visible_filters(self, menu) -> None:
         for child in menu.get_children():
             child.destroy()
-        self._tag_menu_choices(
-            menu,
-            self._tag_choices(self.tag_filter, filtering=True),
-            self.tag_filter,
-            self._set_filter,
-        )
+        self._filter_menu_choices(menu)
         menu.show_all()
 
-    def _set_filter(self, tag: str | None) -> None:
+    def _toggle_filter(self, tag: str | None) -> None:
+        if tag is None:
+            selected = None
+        elif self.tag_filter is None:
+            selected = frozenset({tag})
+        else:
+            selected = self.tag_filter ^ {tag}
+        self._set_filter(selected, close_menu=False)
+
+    def _set_filter(self, tags: frozenset[str] | None, *, close_menu: bool = True) -> None:
         if self.closed:
             return
-        self.tag_filter = tag
-        self.visible_filter_menu.popdown()
+        self.tag_filter = tags
+        if close_menu:
+            self.visible_filter_menu.popdown()
+            self.menu.popdown()
         self._remember_filter()
         self.composer_tag_menu.popdown()
-        self.menu.popdown()
         # Do not carry a departing row's animation into a different view.
         for row in list(self.rows.values()):
             if row.exiting:
@@ -1274,9 +1317,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self._render(result.notes, action=action if result.changed else None)
             else:
                 notes, self.tags = result
-                if self.tag_filter and self.tag_filter not in self.tags:
-                    self.tag_filter = None
-                    self._remember_filter()
+                if self.tag_filter is not None:
+                    remaining = self.tag_filter & {"", *self.tags}
+                    if remaining != self.tag_filter:
+                        self.tag_filter = remaining or None
+                        self._remember_filter()
                 if self.creation_tag is not None and self.creation_tag not in self.tags:
                     self._select_creation_tag(None)
                 self._render(notes)
@@ -1321,11 +1366,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.loaded_notes = True
         self.notes_snapshot = notes
         self._update_filter_label()
-        notes = [
-            note
-            for note in notes
-            if self.tag_filter is None or note.tag == (self.tag_filter or None)
-        ]
+        notes = [note for note in notes if self._filter_matches(note)]
         wanted = {note.id for note in notes}
         if self.context_menu is not None and self.context_note_id not in wanted:
             self.context_menu.popdown()
