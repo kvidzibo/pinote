@@ -32,6 +32,30 @@ const watchKey = (task: WatchedTask | null) => {
   return task && pr ? keyFor(task, pr) : undefined;
 };
 
+async function confirmCompletion(ctx: ExtensionContext, pr: PR, signal: AbortSignal) {
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const report = () => process.stdout.write("\x1b]9;4;3\x1b\\");
+  const stop = () => {
+    if (timer === undefined) return;
+    clearInterval(timer);
+    timer = undefined;
+    process.stdout.write("\x1b]9;4;0\x1b\\");
+  };
+  if (process.stdout.isTTY && process.env.KITTY_WINDOW_ID && !signal.aborted) {
+    report();
+    // Refresh Kitty's progress timeout and redraw the tab while input is pending.
+    timer = setInterval(report, 125);
+    timer.unref();
+    signal.addEventListener("abort", stop, { once: true });
+  }
+  try {
+    return await ctx.ui.confirm(`PR #${pr.number} was merged`, "Mark this task completed?", { signal });
+  } finally {
+    signal.removeEventListener("abort", stop);
+    stop();
+  }
+}
+
 export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
   let ctx: ExtensionContext | undefined;
   let watched: WatchedTask | null = null;
@@ -129,7 +153,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
         };
         if (current.state === "done") { alreadyDone(); return; }
         if (!["active", "in_progress"].includes(current.state)) return;
-        const confirmed = await context.ui.confirm(`PR #${pr.number} was merged`, "Mark this task completed?", { signal });
+        const confirmed = await confirmCompletion(context, pr, signal);
         if (!same() || !context.isIdle()) return;
         // Re-read selection, link, and revision after the dialog; never complete a changed task.
         const fresh = await latest(context, current);

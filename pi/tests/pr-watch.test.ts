@@ -144,3 +144,100 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   assert.equal(checks, stoppedChecks);
   assert.equal(statuses.get("pinote-pr"), undefined, "completion hides the link even with polling disabled");
 });
+
+test("Kitty tab progress lasts only while merge confirmation needs input", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const oldInterval = process.env.PINOTE_PR_POLL_SECONDS;
+  const oldKitty = process.env.KITTY_WINDOW_ID;
+  const oldTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  process.env.PINOTE_PR_POLL_SECONDS = "10";
+  process.env.KITTY_WINDOW_ID = "1";
+  Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+  t.after(() => {
+    if (oldInterval === undefined) delete process.env.PINOTE_PR_POLL_SECONDS;
+    else process.env.PINOTE_PR_POLL_SECONDS = oldInterval;
+    if (oldKitty === undefined) delete process.env.KITTY_WINDOW_ID;
+    else process.env.KITTY_WINDOW_ID = oldKitty;
+    if (oldTTY) Object.defineProperty(process.stdout, "isTTY", oldTTY);
+    else Reflect.deleteProperty(process.stdout, "isTTY");
+  });
+  const writes: string[] = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  t.mock.method(process.stdout, "write", (value: unknown, ...args: unknown[]) => {
+    if (typeof value === "string" && value.startsWith("\x1b]9;4;")) { writes.push(value); return true; }
+    return Reflect.apply(originalWrite, process.stdout, [value, ...args]);
+  });
+  const busy = "\x1b]9;4;3\x1b\\";
+  const clear = "\x1b]9;4;0\x1b\\";
+  const task: WatchedTask = { id: 1, state: "active", updated_at: "r1", agent_notes: { PR: "https://github.com/org/repo/pull/1" } };
+  const entries: any[] = [];
+  let idle = false;
+  let confirmations = 0;
+  let reply!: (value: boolean) => void;
+  let reject!: (error: Error) => void;
+  const ctx: any = {
+    cwd: "/tmp/project", mode: "tui", hasUI: true, isIdle: () => idle,
+    sessionManager: { getBranch: () => entries },
+    ui: {
+      theme: { fg: (_color: string, value: string) => value },
+      setStatus() {}, notify() {},
+      confirm: (_title: string, _message: string, options: { signal: AbortSignal }) => {
+        assert.equal(options.signal.aborted, false);
+        confirmations++;
+        return new Promise<boolean>((resolve, fail) => { reply = resolve; reject = fail; });
+      },
+    },
+  };
+  const watcher = createPRWatcher({
+    appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
+    exec: async () => ({ code: 0, killed: false, stdout: JSON.stringify({ state: "MERGED", url: task.agent_notes.PR }) }),
+  } as any, {
+    selected: async () => task, get: async () => task,
+    done: async () => { throw new Error("declined prompts must not complete tasks"); },
+    claim: () => () => {}, refresh: async () => {},
+  });
+  t.after(() => watcher.stop());
+  const tick = async (ms = 0) => { t.mock.timers.tick(ms); for (let n = 0; n < 12; n++) await setImmediate(); };
+  watcher.start(ctx); await tick();
+  assert.deepEqual(writes, [], "busy Pi must not signal a prompt");
+  idle = true; await tick(10_000);
+  assert.deepEqual(writes, [busy]);
+  await tick(125);
+  assert.deepEqual(writes, [busy, busy], "refresh progress while waiting for input");
+  assert.equal(confirmations, 1);
+  reply(false); await tick();
+  assert.deepEqual(writes, [busy, busy, clear]);
+  await tick(20_000);
+  assert.equal(writes.length, 3, "acknowledged merges never keep or restart progress");
+
+  entries.length = 0;
+  watcher.start(ctx); await tick();
+  const oldReply = reply;
+  watcher.stop();
+  assert.equal(writes.at(-1), clear, "shutdown clears even if the dialog ignores abort");
+  const stopped = writes.length;
+  await tick(1000);
+  assert.equal(writes.length, stopped);
+  watcher.start(ctx); await tick();
+  assert.equal(writes.at(-1), busy);
+  const restarted = writes.length;
+  oldReply(false); await tick();
+  assert.equal(writes.length, restarted, "an old dialog cannot clear a replacement session's indicator");
+  reject(new Error("dialog failed")); await tick();
+  assert.equal(writes.at(-1), clear, "dialog errors also clear progress");
+  watcher.stop();
+
+  for (const terminal of ["other", "redirected"]) {
+    if (terminal === "other") delete process.env.KITTY_WINDOW_ID;
+    else {
+      process.env.KITTY_WINDOW_ID = "1";
+      Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+    }
+    entries.length = 0;
+    const before: number = writes.length;
+    watcher.start(ctx); await tick();
+    reply(false); await tick();
+    watcher.stop();
+    assert.equal(writes.length, before, "other terminals and redirected stdout get no Kitty sequences");
+  }
+});
