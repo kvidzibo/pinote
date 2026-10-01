@@ -100,22 +100,23 @@ user asks to switch. Reuse a saved tag name when it fits.
 
 Agents are guided to keep notes to three short bullets total: relevant outcome,
 blocker, and next action. Replace stale notes; omit narration, repeated task text,
-and routine test logs. Keep a GitHub pull request in `PR`. To add another footer
-link, set a named field to one https URL or Markdown link and append its label to
-`Bar`, one label per line. Do not list `PR` in `Bar`. Remove the field and its `Bar`
-line to drop a link. This is guidance, not truncation or a storage limit.
+and routine test logs. Keep a GitHub pull request in `PR`. To show another footer
+field, set its Markdown value and append its label to `Bar`, one label per line.
+Do not list `PR` in `Bar`. Remove the field and its `Bar` line to drop it. This is
+guidance, not truncation or a storage limit.
 
 Values are Markdown strings; no fields are required. `PR` enables the watcher below.
-`Bar` chooses extra footer links:
+`Bar` chooses extra footer fields:
 
 ```markdown
 # Agent
 PR: [Task selection #42](https://github.com/org/repo/pull/42)
-Dashboard: [Metrics](https://example.com/d/app)
+Dashboard: [Metrics](http://127.0.0.1:3000/d/app)
+Next: Address review comments
 Bar: Dashboard
+Next
 Jira: [PROJ-123](https://example.atlassian.net/browse/PROJ-123)
 CWD: `/home/me/project`
-Next: Address review comments
 ```
 
 The GTK preview renders this section using its existing safe Markdown renderer.
@@ -126,16 +127,17 @@ per task. Use removal rather than empty values.
 
 ### Footer links
 
-The selected active or in-progress task can show clickable chips after its title.
+The selected active or in-progress task can show fields after its title.
 `PR` is always shown when it matches the watcher format below, as **PR #123**.
-`Bar` is a newline-separated list of other field labels. Each listed value must be
-one https URL, bare or as the only target of a Markdown link; the chip text is the
-field label. Prose, multiple links, credentials, other schemes, URLs over 2048
-characters after serialization, missing labels, and the `PR` and `Bar` labels themselves are skipped.
-At most four extra chips are shown, each truncated to 24 columns. Removing a listed
-field hides its chip even if `Bar` still names it. Terminal OSC 8 support is required
+`Bar` is a newline-separated list of other field labels. Each listed value is
+Markdown: the footer shows its text, and links in it are clickable for any scheme
+except `javascript:`, `data:`, and `vbscript:`. Credentials, control characters,
+and targets over 2048 characters after serialization are shown as text but not
+linked. Missing labels and the `PR` and `Bar` labels themselves are skipped.
+At most four extra fields are shown, each truncated to 60 columns. Removing a listed
+field hides it even if `Bar` still names it. Terminal OSC 8 support is required
 for clicking links. Pi joins footer statuses on one line, so a narrow terminal can
-ellipsize later chips. Other fields, such as `Jira` and `Next` in the example, stay
+ellipsize later fields. Other fields, such as `Jira` and `CWD` in the example, stay
 off the footer unless named in `Bar`.
 
 ### PR merge watcher

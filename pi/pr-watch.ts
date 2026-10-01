@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { footerChips, footerStatusKey, legacyFooterStatusKey, renderFooterLinks, type FooterLink } from "./footer-links.ts";
+import { footerChips, footerStatusKey, legacyFooterStatusKey, renderFooterLinks, type FooterChip } from "./footer-links.ts";
 
 export type WatchedTask = {
   id: number;
@@ -61,7 +61,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
   let ctx: ExtensionContext | undefined;
   let watched: WatchedTask | null = null;
   let visiblePR: PR | undefined;
-  let visibleLinks: FooterLink[] = [];
+  let visibleLinks: FooterChip[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller = new AbortController();
   let generation = 0;

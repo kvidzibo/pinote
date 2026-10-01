@@ -1,52 +1,55 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { customFooterLinks, footerChips, httpsTarget, renderFooterLinks } from "../footer-links.ts";
+import { stripVTControlCharacters } from "node:util";
+import { customFooterChips, footerChips, renderFooterLinks, renderMarkdown } from "../footer-links.ts";
 
-test("footer keeps a structured PR chip and up to four named https links", () => {
-  assert.equal(httpsTarget("see https://example.com"), undefined);
-  assert.equal(httpsTarget("https://user:pass@example.com/dash"), undefined);
-  assert.equal(httpsTarget("https://example.com/\x1b]8;;http://evil"), undefined);
-  assert.equal(httpsTarget("http://example.com"), undefined);
-  assert.equal(httpsTarget("[Metrics](http://example.com)"), undefined);
-  assert.equal(httpsTarget(`https://example.com/${"a".repeat(2048)}`), undefined);
-  assert.equal(httpsTarget(`https://example.com/${"é".repeat(1000)}`), undefined);
-  assert.equal(httpsTarget("[Metrics](https://example.com/d/app)"), "https://example.com/d/app");
-  assert.equal(httpsTarget("https://example.com/d/app"), "https://example.com/d/app");
+const color = (text: string) => `\x1b[34m${text}\x1b[39m`;
+const shown = (notes: Record<string, string>) =>
+  stripVTControlCharacters(renderFooterLinks(customFooterChips(notes), color) ?? "");
+const controls = (value: string) => [...value].some((char) => {
+  const code = char.charCodeAt(0);
+  return code < 32 || code === 127;
+});
+
+test("footer shows Markdown bar fields and links any safe scheme", () => {
+  assert.equal(renderMarkdown("see https://example.com").at(-1)?.url, "https://example.com/");
+  assert.equal(renderMarkdown("[click](javascript:alert(1))").some((part) => part.url), false);
+  assert.match(renderMarkdown("[click](javascript:alert(1))").map((part) => part.text).join(""), /click/);
+  assert.equal(renderMarkdown("[dash](https://user:pass@example.com)").some((part) => part.url), false);
+  const injected = renderMarkdown("https://example.com/\x1b]8;;http://evil");
+  assert.ok(injected.every((part) => !controls(`${part.text}${part.url ?? ""}`)));
+  assert.equal(renderMarkdown(`[x](https://example.com/${"é".repeat(1000)})`).some((part) => part.url), false);
+  assert.equal(renderMarkdown("[Metrics](http://127.0.0.1:3000/d)")[0]?.url, "http://127.0.0.1:3000/d");
+  assert.equal(renderMarkdown("[box](file:///tmp/a)")[0]?.url, "file:///tmp/a");
+  assert.equal(renderMarkdown("wait `here` **now**").map((part) => part.text).join(""), "wait here now");
 
   const notes = {
     PR: "https://github.com/org/repo/pull/9",
-    Dashboard: "[Metrics](https://example.com/d/app)",
-    Next: "Review",
-    Logs: "https://evil.example/a https://evil.example/b",
-    Secret: "https://user:pass@example.com/x",
+    Dashboard: "[Metrics](http://127.0.0.1:3000/d)",
+    Next: "Address review comments",
+    Logs: "https://example.com/a https://example.com/b",
+    Secret: "[hidden](https://user:pass@example.com/x)",
     One: "https://example.com/1",
-    Two: "https://example.com/2",
-    Three: "https://example.com/3",
-    Four: "https://example.com/4",
-    Bar: "Dashboard\nDashboard\nNext\nMissing\nPR\nBar\nLogs\nSecret\nOne\nTwo\nThree\nFour",
+    Bar: "Dashboard\nDashboard\nNext\nMissing\nPR\nBar\nLogs\nSecret\nOne",
   };
-  const links = footerChips({ state: "in_progress", agent_notes: notes }, {
+  const rendered = renderFooterLinks(footerChips({ state: "in_progress", agent_notes: notes }, {
     url: "https://github.com/org/repo/pull/9", number: "9",
-  });
-  assert.deepEqual(links.map((link) => link.label), ["PR #9", "Dashboard", "One", "Two", "Three"]);
+  }), color)!;
+  const text = stripVTControlCharacters(rendered);
+  assert.match(text, /^PR #9 · Dashboard: Metrics · Next: Address review comments · Logs:/);
+  assert.match(text, /Secret: hidden/);
+  assert.match(rendered, /\x1b\]8;;http:\/\/127\.0\.0\.1:3000\/d\x1b\\Metrics/);
+  assert.doesNotMatch(rendered, /user:pass|example\.com\/1|Missing/);
   assert.equal(footerChips({ state: "done", agent_notes: notes }, {
     url: "https://github.com/org/repo/pull/9", number: "9",
   }).length, 0);
-  assert.deepEqual(customFooterLinks({ Bar: "Dashboard\nDashboard", Dashboard: "https://example.com/d" }).map((link) => link.url), [
-    "https://example.com/d",
-  ]);
+  assert.equal(shown({ Bar: "Dashboard\nDashboard", Dashboard: "http://127.0.0.1:3000/d" }), "Dashboard: http://127.0.0.1:3000/d");
 
   const name = "D".repeat(40);
-  const wide = customFooterLinks({ Bar: name, [name]: "https://example.com/wide" });
-  assert.equal(wide.length, 1);
-  assert.ok(visibleWidth(wide[0].label) <= 24);
-  assert.match(wide[0].label, /\.\.\.$/u);
-  assert.equal(customFooterLinks({ Bar: "A\u001b[31m", "A\u001b[31m": "https://example.com/a" })[0]?.label, "A");
-
-  const rendered = renderFooterLinks(links.slice(0, 2), (text) => `\x1b[34m${text}\x1b[39m`);
-  assert.match(rendered!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/9\x1b\\PR #9/);
-  assert.match(rendered!, /Dashboard/);
-  assert.match(rendered!, / · /);
-  assert.equal(renderFooterLinks([], (text) => text), undefined);
+  const wide = shown({ Bar: name, [name]: "https://example.com/wide" });
+  assert.ok(visibleWidth(wide) <= 60);
+  assert.match(wide, /^D+\.\.\.: /u);
+  assert.equal(shown({ Bar: "A\u001b[31m", "A\u001b[31m": "local note" }), "A: local note");
+  assert.equal(renderFooterLinks([], color), undefined);
 });

@@ -76,8 +76,9 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   await tick(0);
   assert.equal(checks, 1);
   assert.match(statuses.get("pinote-links")!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/123\x1b\\PR #123/iu);
-  assert.match(statuses.get("pinote-links")!, /\x1b\]8;;https:\/\/example.com\/d\/app\x1b\\Dashboard/);
-  assert.doesNotMatch(statuses.get("pinote-links")!, /Next|Review|Missing/);
+  assert.match(statuses.get("pinote-links")!, /Dashboard: \x1b\[34m\x1b\]8;;https:\/\/example.com\/d\/app\x1b\\Metrics/);
+  assert.match(statuses.get("pinote-links")!, /Next: Review/);
+  assert.doesNotMatch(statuses.get("pinote-links")!, /Missing/);
   assert.equal(statuses.get("pinote-pr"), undefined, "the old PR status key stays clear");
   assert.match(statuses.get("pinote-links")!, /^\x1b\[34m/);
   await tick(9999); assert.equal(checks, 1);
