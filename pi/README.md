@@ -55,8 +55,11 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 
 ## Use
 
-`/pi-note` picks a task, starts it, and puts its full text and saved handoff fields
-in the editor. Existing drafts are preserved; nothing is submitted automatically.
+`/pi-note` picks a task, starts it, and adds a short task-ID prompt to the editor:
+“Read task #121 with pinote_get and work on it. Ask only if blocked. Save progress
+with pinote_update.” The agent fetches current task text and saved handoff fields
+when you submit; they are not copied into the draft. Existing drafts are preserved;
+nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, and **Switch task**.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
@@ -66,7 +69,7 @@ The footer omits the task ID and state and shows only the first line, truncated 
 The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
 
 Selection is stored per canonical working directory in pinote's database. A new
-Pi session shows that selection; use **Continue** to load its current contents.
+Pi session shows that selection; use **Continue** to insert its task-ID prompt.
 Completing, removing, or scheduling a task clears its selections. Switching does
 not complete or reset the previous task. Task status refreshes at session start,
 before/after agent activity, and after commands/tools.

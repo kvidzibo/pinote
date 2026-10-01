@@ -86,8 +86,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.deepEqual([...extension.tools.keys()].sort(), ["pinote_get", "pinote_update"]);
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
-    assert.match(draft, /^Existing draft\n\n/);
-    assert.match(draft, /Resume the task/);
+    const prompt = "Read task #1 with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.";
+    assert.equal(draft, `Existing draft\n\n${prompt}`);
     const get = extension.tools.get("pinote_get").definition;
     const update = extension.tools.get("pinote_update").definition;
     const task = JSON.parse((await get.execute("get", {}, undefined, undefined, ctx)).content[0].text);
@@ -111,8 +111,11 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(draft, "", "startup never overwrites/submits the editor");
     choice = "Continue";
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.ok(draft.includes(pr));
-    assert.match(draft, /Next: Review/);
+    assert.equal(draft, prompt);
+    const resumed = JSON.parse((await extension.tools.get("pinote_get").definition.execute(
+      "resume", { id: task.id }, undefined, undefined, ctx)).content[0].text);
+    assert.equal(resumed.text, "Resume the task");
+    assert.deepEqual(resumed.agent_notes, { PR: pr, Next: "Review" });
     choice = "Done";
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");

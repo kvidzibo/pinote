@@ -261,9 +261,7 @@ export default function (pi: ExtensionAPI) {
         const chosen = requiredTask(await run(["agent", "select", String(id), "--cwd", ctx.cwd], undefined, canAct), id);
         if (!canAct()) return;
         const draft = ctx.ui.getEditorText();
-        const handoff = `Pinote task #${chosen.id} (revision ${chosen.updated_at}).\n` +
-          "Use pinote_get to read current task data and pinote_update to save agent handoff fields.\n" +
-          handoffGuidance + "\n\n" + chosen.markdown;
+        const handoff = `Read task #${chosen.id} with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.`;
         ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
         ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
       } catch (error) {
