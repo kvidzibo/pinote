@@ -141,6 +141,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   cliVersion = "pinote 0.4.0";
   finishInstall();
   await setup;
-  assert.deepEqual(taskCalls.at(-1), ["agent", "selected", "--cwd", replacementCtx.cwd]);
+  assert.ok(!taskCalls.some((args) => args.includes("selected") || args.includes(commandCtx.cwd)));
+  assert.equal((await tools.get("pinote_get").execute("get", {}, undefined, undefined, replacementCtx)).details, null);
   await events.get("session_shutdown")({}, replacementCtx);
 });

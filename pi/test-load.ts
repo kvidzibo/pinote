@@ -88,6 +88,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     ]);
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
+    assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
     const prompt = "Read task #1 with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.";
     assert.equal(draft, `Existing draft\n\n${prompt}`);
     const get = extension.tools.get("pinote_get").definition;
@@ -114,7 +115,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     const cleared = JSON.parse((await extension.tools.get("pinote_tag").definition.execute(
       "tag", { id: created.id, expected_updated_at: created.updated_at, clear: true }, undefined, undefined, ctx)).content[0].text);
     assert.equal(cleared.tag, null);
-    assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)).text, "Resume the task");
+    assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "added tasks must not bind the folder");
     await event(extension, "session_shutdown");
     extension = await load(); // New process-like extension state, same durable database.
     draft = "";

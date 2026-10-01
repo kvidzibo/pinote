@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
@@ -103,7 +102,7 @@ export default function (pi: ExtensionAPI) {
     }
     return result.stdout;
   };
-  const run = async (argv: string[], signal?: AbortSignal, canRun = () => true, minimum = "0.3.0") => {
+  const ensureCLI = async (signal?: AbortSignal, canRun = () => true, minimum = "0.3.0") => {
     if (setupAbort) throw new Error("Pinote CLI setup is still running. Retry after it finishes.");
     // Old pinote treats unknown commands as note text. Probe safely before every call,
     // including tools in headless sessions, and do not cache across CLI upgrades/downgrades.
@@ -112,6 +111,9 @@ export default function (pi: ExtensionAPI) {
       throw new Error(`pi-note requires pinote ${minimum}+; found ${clean(version) || "an unknown CLI"}. ${setupHint}`);
     }
     if (!canRun()) throw new Error("Pinote operation cancelled: the session changed.");
+  };
+  const run = async (argv: string[], signal?: AbortSignal, canRun = () => true, minimum = "0.3.0") => {
+    await ensureCLI(signal, canRun, minimum);
     return invoke(argv, signal);
   };
   const writeTask = async (
@@ -129,8 +131,53 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch) await refresh(ctx);
     }
   };
-  const selected = async (ctx: ExtensionContext, signal?: AbortSignal) =>
-    task(await run(["agent", "selected", "--cwd", ctx.cwd], signal));
+  // One folder can host several sessions. Remember the task in the Pi session, not by cwd.
+  const selectionType = "pinote-selection";
+  let selectedId: number | null = null;
+  const remember = (id: number | null) => {
+    if (selectedId === id) return;
+    selectedId = id;
+    pi.appendEntry(selectionType, { id });
+  };
+  const readSelection = (ctx: ExtensionContext) => {
+    let id: number | null = null;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type !== "custom" || entry.customType !== selectionType) continue;
+      const data = entry.data as { id?: unknown } | null;
+      id = data && validId(data.id) ? data.id : null;
+    }
+    return id;
+  };
+  const currentTask = async (signal?: AbortSignal, canUse = () => alive) => {
+    const id = selectedId;
+    if (!validId(id) || !canUse()) return null;
+    const current = task(await run(["agent", "get", String(id)], signal, canUse));
+    if (!canUse() || selectedId !== id) return null;
+    if (!current || current.id !== id || !["active", "in_progress"].includes(current.state)) {
+      if (canUse() && selectedId === id) remember(null);
+      return null;
+    }
+    return current;
+  };
+  const selected = async (_ctx: ExtensionContext, signal?: AbortSignal) => {
+    const generation = epoch;
+    const canUse = () => alive && generation === epoch;
+    await ensureCLI(signal, canUse);
+    return currentTask(signal, canUse);
+  };
+  const startTask = async (id: number, canAct: () => boolean, signal?: AbortSignal) => {
+    const before = requiredTask(await run(["agent", "get", String(id)], signal, canAct), id);
+    if (!["active", "in_progress"].includes(before.state)) {
+      throw new Error(`Note ${id} is ${before.state}; restore it first.`);
+    }
+    // Start without the shared cwd selection so another session can keep a different task.
+    if (before.state === "active") await run(["--no-notify", "start", String(id)], signal, canAct);
+    const chosen = requiredTask(await run(["agent", "get", String(id)], signal, canAct), id);
+    if (chosen.state !== "in_progress") throw new Error(compatible);
+    if (!canAct()) return;
+    remember(chosen.id);
+    return chosen;
+  };
 
   const refresh = async (ctx: ExtensionContext) => {
     if (!alive || setupAbort || !ctx.hasUI || ctx.mode !== "tui") return;
@@ -170,6 +217,7 @@ export default function (pi: ExtensionAPI) {
     alive = true;
     activeContext = ctx;
     epoch++;
+    selectedId = readSelection(ctx);
     const generation = epoch;
     cliState = undefined;
     if (ctx.hasUI && ctx.mode === "tui") {
@@ -182,12 +230,21 @@ export default function (pi: ExtensionAPI) {
     if (!setupAbort) watcher.start(ctx);
     await refresh(ctx);
   });
+  pi.on("session_tree", async (_event, ctx) => {
+    if (!alive || setupAbort) return;
+    const generation = epoch;
+    const id = readSelection(ctx);
+    if (!alive || generation !== epoch) return;
+    selectedId = id;
+    await refresh(ctx);
+  });
   pi.on("before_agent_start", async (_event, ctx) => { await refresh(ctx); });
   pi.on("agent_end", async (_event, ctx) => { await refresh(ctx); });
   pi.on("session_shutdown", (_event, ctx) => {
     setupAbort?.abort();
     alive = false;
     activeContext = undefined;
+    selectedId = null;
     epoch++;
     refreshSerial++;
     watcher.stop();
@@ -262,6 +319,7 @@ export default function (pi: ExtensionAPI) {
             "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
           ], undefined, canAct), current.id);
           if (completed.state !== "done") throw new Error(compatible);
+          if (currentSession()) remember(null);
           if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
           return;
         }
@@ -277,10 +335,9 @@ export default function (pi: ExtensionAPI) {
           if (choice === undefined || !canAct()) return;
           id = choice;
         } else return;
-        // Validate/start the explicit task and return its latest handoff in one transaction.
         refreshSerial++;
-        const chosen = requiredTask(await run(["agent", "select", String(id), "--cwd", ctx.cwd], undefined, canAct), id);
-        if (!canAct()) return;
+        const chosen = await startTask(id, canAct);
+        if (!chosen || !canAct()) return;
         const draft = ctx.ui.getEditorText();
         const handoff = `Read task #${chosen.id} with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.`;
         ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
@@ -298,15 +355,14 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_get",
     label: "Pinote get",
     promptGuidelines: createGuidance,
-    description: "Read a pinote task and its Markdown agent fields/revision. Omit id to read this project's selected task; returns null when none is selected. Supply id to read another task. Use the returned updated_at for pinote_update and pinote_tag.",
+    description: "Read a pinote task and its Markdown agent fields/revision. Omit id to read this session's selected task; returns null when none is selected. Supply id to read another task. Use the returned updated_at for pinote_update and pinote_tag.",
     parameters: Type.Object({ id: Type.Optional(idSchema) }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (params.id !== undefined && !validId(params.id)) throw new Error("id must be a positive safe integer.");
-      const argv = params.id === undefined
-        ? ["agent", "selected", "--cwd", ctx.cwd]
-        : ["agent", "get", String(params.id)];
-      const raw = await run(argv, signal);
-      return toolResult(params.id === undefined ? task(raw) : requiredTask(raw, params.id));
+      const result = params.id === undefined
+        ? await selected(ctx, signal)
+        : requiredTask(await run(["agent", "get", String(params.id)], signal), params.id);
+      return toolResult(result);
     },
   });
   pi.registerTool({
@@ -345,7 +401,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_add",
     label: "Pinote add",
     promptGuidelines: createGuidance,
-    description: "Create an active pinote task. Optional tag is registered if new. Set select true only after the user agrees to make it this session's active task; that starts it and selects it for this project. Omitting select leaves the current selection unchanged. Does not refresh the desktop notification.",
+    description: "Create an active pinote task. Optional tag is registered if new. Set select true only after the user agrees to make it this session's active task; that starts it and remembers it for this session only. Omitting select leaves the current selection unchanged. Does not refresh the desktop notification or bind the project directory.",
     parameters: Type.Object({
       text: Type.String({ minLength: 1 }),
       tag: Type.Optional(Type.String({ minLength: 1 })),
@@ -357,11 +413,23 @@ export default function (pi: ExtensionAPI) {
         throw new Error("tag must be a non-empty name, or omit it.");
       }
       if (params.select !== undefined && typeof params.select !== "boolean") throw new Error("select must be a boolean.");
-      if (params.select === true && !isAbsolute(ctx.cwd)) throw new Error("Project directory must be absolute before selecting a task.");
       const argv = ["agent", "add", `--text=${params.text}`];
       if (params.tag !== undefined) argv.push(`--tag=${params.tag}`);
-      if (params.select === true) argv.push("--cwd", ctx.cwd);
-      return toolResult(await writeTask(ctx, signal, argv, undefined, "0.4.0"));
+      const generation = epoch;
+      const created = await writeTask(ctx, signal, argv, undefined, "0.4.0");
+      if (params.select !== true) return toolResult(created);
+      if (!alive || generation !== epoch) throw new Error("Pinote operation cancelled: the session changed.");
+      if (pending) throw new Error("A pinote operation is already open. Retry after it finishes.");
+      const operation = Symbol();
+      pending = operation;
+      try {
+        const chosen = await startTask(created.id, () => alive && generation === epoch && pending === operation, signal);
+        if (!chosen) throw new Error("Pinote operation cancelled: the session changed.");
+        return toolResult(chosen);
+      } finally {
+        if (pending === operation) pending = undefined;
+        if (alive && generation === epoch) await refresh(ctx);
+      }
     },
   });
   pi.registerTool({

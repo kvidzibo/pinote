@@ -4,13 +4,18 @@ import pinote from "../index.ts";
 import { CombinedAutocompleteProvider, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 
-test("task selection, handoff, guarded Done and tools survive new sessions without submission", async () => {
+test("task selection, handoff, guarded Done and tools stay session-local without submission", async () => {
   const tasks = [
     { id: 1, text: "Older task", state: "active", tag: null, updated_at: "r1", agent_notes: {} as Record<string, string>, markdown: "Older task" },
     { id: 2, text: "Unicode 日本語 task\nHidden details", state: "active", tag: null, updated_at: "r2", agent_notes: {} as Record<string, string>, markdown: "Unicode 日本語 task" },
   ];
-  let selectedId: number | undefined;
   let cliVersion = "pinote 0.2.0";
+  const entries: Array<{ type: string; customType: string; data: { id: number | null } }> = [];
+  const sessionTask = (sessionEntries = entries) => {
+    let id: number | null = null;
+    for (const entry of sessionEntries) if (entry.customType === "pinote-selection") id = entry.data.id;
+    return id;
+  };
   const autocompleteWrappers: Array<(current: any) => any> = [];
   let failSelection = false;
   let beforeChoice: (() => void) | undefined;
@@ -23,7 +28,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   const ctx: any = {
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
-    sessionManager: { getBranch: () => [] },
+    sessionManager: { getBranch: () => entries },
     ui: {
       theme: { fg: (_color: string, value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
@@ -37,7 +42,9 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
             (data === "\x1b" && action === "tui.select.cancel"),
         }, resolve);
         beforeChoice?.();
-        picker.handleInput(choices.shift() === "pick" ? "\r" : "\x1b");
+        const choice = choices.shift();
+        if (choice === "older") { resolve(1); return; }
+        picker.handleInput(choice === "pick" ? "\r" : "\x1b");
       }),
       select: async (_title: string, labels: string[]) => {
         beforeChoice?.();
@@ -48,7 +55,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       },
     },
   };
-  function load() {
+  function load(sessionEntries = entries, session = ctx) {
     const commands = new Map<string, any>();
     const tools = new Map<string, any>();
     const events = new Map<string, any>();
@@ -56,28 +63,26 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       registerCommand: (name: string, definition: any) => commands.set(name, definition),
       registerTool: (definition: any) => tools.set(definition.name, definition),
       on: (name: string, callback: any) => events.set(name, callback),
+      appendEntry: (customType: string, data: { id: number | null }) =>
+        sessionEntries.push({ type: "custom", customType, data }),
       async exec(command: string, args: string[], options: any) {
         assert.equal(command, "note");
         assert.equal(options.timeout, 5000);
         calls.push(args);
         if (args[0] === "--version") return { code: 0, stdout: cliVersion, stderr: "", killed: false };
-        const item = tasks.find((value) => value.id === Number(args[2]));
-        const selected = tasks.find((value) => value.id === selectedId && value.state !== "done");
+        const item = tasks.find((value) => value.id === Number(args[2] ?? args[1]));
         if (args[0] === "list") return success(tasks.filter((value) => value.state !== "done"));
-        if (args[1] === "selected") {
-          const result = success(selected ?? null);
+        if (args[1] === "get") {
           await delaySelected?.();
-          return result;
+          return success(item ?? null);
         }
-        if (args[1] === "get") return success(item ?? null);
-        if (args[1] === "select" && !failSelection && item && item.state !== "done") {
-          selectedId = item.id;
-          item.state = "in_progress";
-          return success(item);
+        if (args[0] === "--no-notify" && args[1] === "start" && !failSelection && item && item.state !== "done") {
+          if (item.state === "active") item.state = "in_progress";
+          return { code: 0, stdout: `Note ${item.id}: in progress.`, stderr: "", killed: false };
         }
         if (item && ["done", "update"].includes(args[1]) && args[args.indexOf("--expected-updated-at") + 1] === item.updated_at) {
           item.updated_at += "x";
-          if (args[1] === "done") { item.state = "done"; selectedId = undefined; }
+          if (args[1] === "done") item.state = "done";
           else {
             Object.assign(item.agent_notes, JSON.parse(args[args.indexOf("--set-json") + 1]));
             args.forEach((arg) => { if (arg.startsWith("--remove=")) delete item.agent_notes[arg.slice(9)]; });
@@ -89,9 +94,9 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
       },
     } as any);
     return {
-      command: () => commands.get("pi-note").handler("", ctx),
-      event: (name: string) => events.get(name)({}, ctx),
-      tool: (name: string, params: object, context = ctx, signal?: AbortSignal) =>
+      command: () => commands.get("pi-note").handler("", session),
+      event: (name: string) => events.get(name)({}, session),
+      tool: (name: string, params: object, context = session, signal?: AbortSignal) =>
         tools.get(name).execute("call", params, signal, undefined, context),
     };
   }
@@ -131,17 +136,19 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.equal((await extension.tool("pinote_get", {})).details, null);
   choices.push(undefined);
   await extension.command();
-  assert.equal(selectedId, undefined);
+  assert.equal(sessionTask(), null);
   assert.equal(draft, "Existing draft");
   failSelection = true;
   choices.push("pick");
   await extension.command();
   assert.equal(draft, "Existing draft");
-  assert.equal(selectedId, undefined);
+  assert.equal(sessionTask(), null);
   failSelection = false;
   choices.push("pick");
   await extension.command();
-  assert.equal(selectedId, 2, "newest task is first");
+  assert.equal(sessionTask(), 2, "newest task is first");
+  assert.equal(tasks[1].state, "in_progress");
+  assert.ok(!calls.some((args) => args.includes("select") || args.includes("selected")));
   assert.match(status!, /Unicode/);
   assert.ok(!status!.includes("#2"), "footer omits the task ID");
   assert.ok(!status!.includes("Hidden details"), "footer shows only the first line");
@@ -166,7 +173,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   await extension.event("session_start");
   assert.match(status!, /Unicode/);
   assert.ok(!status!.includes("#2"), "restored footer omits the task ID");
-  assert.equal(draft, "", "new sessions restore status, not editor contents");
+  assert.equal(draft, "", "resumed sessions restore status, not editor contents");
   choices.push("Continue");
   await extension.command();
   assert.equal(draft, prompt, "Continue inserts only the task-ID prompt, not saved fields");
@@ -177,7 +184,7 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   choices.push("Switch task", undefined);
   await extension.command();
   assert.equal(draft, previousDraft);
-  assert.equal(selectedId, 2);
+  assert.equal(sessionTask(), 2);
   beforeChoice = () => { tasks[1].updated_at += "external"; };
   choices.push("Done");
   await extension.command();
@@ -191,11 +198,37 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.deepEqual(tasks[1].agent_notes, { PR: fields.PR });
   const aborted = new AbortController(); aborted.abort(new Error("cancelled"));
   await assert.rejects(extension.tool("pinote_get", { id: 2 }, headless, aborted.signal), /cancelled/);
-  choices.push("Done");
-  await extension.command();
-  assert.equal(tasks[1].state, "done");
-  assert.equal(status, undefined);
-  assert.equal(choices.length, 0);
+
+  const otherEntries: Array<{ type: string; customType: string; data: { id: number | null } }> = [];
+  let otherStatus: string | undefined;
+  const other = {
+    ...ctx,
+    cwd: ctx.cwd,
+    sessionManager: { getBranch: () => otherEntries },
+    ui: { ...ctx.ui, setStatus: (key: string, value?: string) => { if (key === "pinote") otherStatus = value; } },
+  };
+  const second = load(otherEntries, other);
+  await second.event("session_start");
+  assert.equal(otherStatus, undefined, "another session in the same folder starts unselected");
+  choices.push("older");
+  await second.command();
+  assert.equal(sessionTask(otherEntries), 1);
+  assert.match(otherStatus!, /Older task/);
+  assert.equal(sessionTask(), 2, "the other session keeps its own task");
+  assert.equal(tasks[0].state, "in_progress");
+  assert.equal(tasks[1].state, "in_progress");
+  const firstAgain = load();
+  await firstAgain.event("session_start");
+  assert.match(status!, /Unicode/);
+  assert.equal((await firstAgain.tool("pinote_get", {})).details.id, 2);
+  assert.equal((await second.tool("pinote_get", {})).details.id, 1);
+  await firstAgain.event("session_shutdown");
+  entries.push({ type: "custom", customType: "pinote-selection", data: { id: 1 } });
+  await extension.event("session_tree");
+  assert.equal((await extension.tool("pinote_get", {})).details.id, 1, "tree navigation follows the active branch");
+  entries.push({ type: "custom", customType: "pinote-selection", data: { id: 2 } });
+  await extension.event("session_tree");
+  assert.equal((await extension.tool("pinote_get", {})).details.id, 2);
 
   let release!: () => void;
   let entered!: () => void;
@@ -209,8 +242,19 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.equal(status, undefined, "stale async status cannot repaint after shutdown");
   delaySelected = undefined;
   await extension.event("session_start");
-  assert.equal(status, undefined, "the same runtime can handle a new session");
+  assert.match(status!, /Unicode/, "the same runtime restores this session's task");
+
+  choices.push("Done");
+  await extension.command();
+  assert.equal(tasks[1].state, "done");
+  assert.equal(status, undefined);
+  assert.equal(sessionTask(), null);
+  assert.equal(choices.length, 0);
   await extension.event("session_shutdown");
+  await extension.event("session_start");
+  assert.equal(status, undefined, "completion stays cleared for this session only");
+  assert.equal(sessionTask(otherEntries), 1);
+  await second.event("session_shutdown");
 });
 
 test("add and tag require pinote 0.4.0 and select only when asked", async () => {
@@ -218,16 +262,24 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
   let current: any = null;
   const calls: string[][] = [];
   const tools = new Map<string, any>();
+  const handlers = new Map<string, any>();
+  let releaseAdd: (() => void) | undefined;
   let status: string | undefined;
   const ctx: any = {
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
-    ui: { setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; } },
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
+      addAutocompleteProvider() {},
+      notify() {},
+    },
   };
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   pinote({
+    appendEntry() {},
     registerCommand() {},
     registerTool: (definition: any) => tools.set(definition.name, definition),
-    on() {},
+    on(name: string, handler: unknown) { handlers.set(name, handler); },
     async exec(command: string, args: string[]) {
       assert.equal(command, "note");
       calls.push(args);
@@ -236,15 +288,20 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
       if (args[1] === "selected") return success(current);
       if (args[1] === "add") {
         const text = args.find((arg) => arg.startsWith("--text="))!.slice("--text=".length);
+        if (releaseAdd) await new Promise<void>((resolve) => { releaseAdd = resolve; });
         const tagArg = args.find((arg) => arg.startsWith("--tag="));
-        const created = {
-          id: 9, text, state: args.includes("--cwd") ? "in_progress" : "active",
+        current = {
+          id: 9, text, state: "active",
           tag: tagArg ? tagArg.slice("--tag=".length) : null, updated_at: "r9",
           agent_notes: {}, markdown: text,
         };
-        if (args.includes("--cwd")) current = created;
-        return success(created);
+        return success(current);
       }
+      if (args[0] === "--no-notify" && args[1] === "start" && current) {
+        current = { ...current, state: "in_progress" };
+        return { code: 0, stdout: "", stderr: "", killed: false };
+      }
+      if (args[1] === "get" && current) return success(current);
       if (args[1] === "tag" && current) {
         current = {
           ...current,
@@ -264,7 +321,7 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
     tools.get("pinote_add").execute("id", { text: "Ship it", tag: "pinote", select: true }, undefined, undefined, ctx),
     /0\.4\.0/,
   );
-  assert.ok(calls.every((args) => args[0] === "--version" || args[1] === "selected"));
+  assert.ok(calls.every((args) => args[0] === "--version"));
   assert.ok(!calls.some((args) => args[1] === "add"), "old CLIs must not receive add");
   cliVersion = "pinote 0.4.0";
   calls.length = 0;
@@ -277,7 +334,8 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
     "id", { text: "Ship it", tag: "pinote", select: true }, undefined, undefined, ctx,
   );
   assert.equal(chosen.details.state, "in_progress");
-  assert.ok(addCalls()[1].includes("--cwd") && addCalls()[1].includes("/tmp/project"));
+  assert.ok(addCalls().every((args) => !args.includes("--cwd")));
+  assert.ok(calls.some((args) => args[0] === "--no-notify" && args[1] === "start" && args[2] === "9"));
   assert.match(status!, /\[pinote\] Ship it/);
   assert.deepEqual((await tools.get("pinote_tags").execute("id", {}, undefined, undefined, ctx)).details, ["pinote"]);
   assert.equal(
@@ -292,4 +350,14 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
     ),
     /not both/,
   );
+  releaseAdd = () => {};
+  const switched = tools.get("pinote_add").execute(
+    "id", { text: "Later", select: true }, undefined, undefined, ctx,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await handlers.get("session_start")({}, ctx);
+  releaseAdd();
+  await assert.rejects(switched, /session changed/);
+  assert.equal((await tools.get("pinote_get").execute("id", {}, undefined, undefined, ctx)).details, null);
+  assert.equal(status, undefined, "a replacement session must not inherit an in-flight add");
 });

@@ -68,22 +68,28 @@ The normal Pi status area shows `📌 [tag] Task title` without replacing other 
 The footer omits the task ID and state and shows only the first line, truncated to 60 terminal columns including the pin and tag.
 The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
 
-Selection is stored per canonical working directory in pinote's database. A new
-Pi session shows that selection; use **Continue** to insert its task-ID prompt.
-Completing, removing, or scheduling a task clears its selections. Switching does
-not complete or reset the previous task. Task status refreshes at session start,
-before/after agent activity, and after commands/tools.
+Each Pi session remembers its own task, including several sessions in one folder.
+Resume restores that session's task; a new session starts unselected and does not import
+an older per-folder selection. Pi saves the session after the first submitted message;
+quitting before that leaves the next launch unselected, while the task stays in progress.
+Use **Continue**
+to insert its task-ID prompt. Completing, removing, or scheduling a task clears it
+from sessions that refresh it. Switching does not complete or reset the previous task.
+Task fields such as `Worktree` and `PR` stay on the task, so sessions can use separate
+worktrees and pull requests. Task status refreshes at session start, before/after
+agent activity, and after commands/tools. The CLI's per-directory `agent selected`
+command is not this session memory.
 
 Agent tools:
 
-- `pinote_get`: read the selected task, or an explicit `id`, including its revision.
-  Omitting `id` returns null when this project has no selected task.
+- `pinote_get`: read this session's selected task, or an explicit `id`, including its revision.
+  Omitting `id` returns null when this session has no selected task.
 - `pinote_update`: supply `id`, `expected_updated_at` from that read, and arbitrary
   `set` label/value pairs or `remove` labels. Updates merge fields, never replace
   the task text or tag. If another process changed the task, read again before retrying.
 - `pinote_tags`: list saved tag names.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
-  selects it for this project; use that only after the user agrees.
+  remembers it for this session only; use that only after the user agrees.
 - `pinote_tag`: set or clear a tag on an active or in-progress task. Read first and
   pass `expected_updated_at`.
 
