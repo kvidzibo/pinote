@@ -149,7 +149,8 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.ok(visibleWidth(status!) <= 60, "entire footer entry is capped in terminal columns");
   assert.match(stripVTControlCharacters(status!), /\.\.\.$/u);
   tasks[1].text = originalText;
-  assert.match(draft, /^Existing draft\n\nPinote task #2/);
+  const prompt = "Read task #2 with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.";
+  assert.equal(draft, `Existing draft\n\n${prompt}`);
   const data = (await extension.tool("pinote_get", {})).details;
   const fields = { PR: "[Fix #42](https://example.org/pr/42)", Next: "Review" };
   const updated = await extension.tool("pinote_update", { id: 2, expected_updated_at: data.updated_at, set: fields });
@@ -164,7 +165,10 @@ test("task selection, handoff, guarded Done and tools survive new sessions witho
   assert.equal(draft, "", "new sessions restore status, not editor contents");
   choices.push("Continue");
   await extension.command();
-  assert.ok(draft.includes(fields.PR));
+  assert.equal(draft, prompt, "Continue inserts only the task-ID prompt, not saved fields");
+  const resumed = (await extension.tool("pinote_get", { id: 2 })).details;
+  assert.equal(resumed.text, originalText);
+  assert.deepEqual(resumed.agent_notes, fields);
   const previousDraft = draft;
   choices.push("Switch task", undefined);
   await extension.command();
