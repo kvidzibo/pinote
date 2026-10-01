@@ -8,24 +8,30 @@ const maxLabelWidth = 24;
 const maxChipWidth = 60;
 const maxUrlLength = 2048;
 const blockedProtocols = new Set(["javascript:", "data:", "vbscript:"]);
-// Code and strong markers only. Single underscores are identifiers, not emphasis.
-const markdown = /`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|!?\[([^\]\n]*)\]\(([^)\s]+)\)|<([a-z][a-z0-9+.-]*:[^>\s]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>\]]+)/giu;
+const control = /[\u0000-\u001f\u007f-\u009f]/u;
 
 export type FooterSegment = { text: string; url?: string };
 export type FooterChip = { segments: FooterSegment[] };
 
 function plain(value: string): string {
-  return stripVTControlCharacters(value).replace(/[\u0000-\u001f\u007f]/gu, "").replace(/\s+/gu, " ").trim();
+  // C1 introducers such as U+009D survive stripVTControlCharacters and can start OSC.
+  return stripVTControlCharacters(value).replace(new RegExp(control, "gu"), "").replace(/\s+/gu, " ").trim();
 }
 
 function clip(value: string, width: number): string {
   return stripVTControlCharacters(truncateToWidth(plain(value), width));
 }
 
+function ownText(notes: Record<string, string>, name: string): string | undefined {
+  if (!Object.hasOwn(notes, name)) return;
+  const value = notes[name];
+  return typeof value === "string" ? value : undefined;
+}
+
 // Any scheme except scriptable or credentialed targets. Reject terminal escapes and oversized serialization.
 function linkTarget(value: string): string | undefined {
   const candidate = value.trim();
-  if (!candidate || candidate.length > maxUrlLength || /[\s\u0000-\u001f\u007f\\<>"`]/u.test(candidate)) return;
+  if (!candidate || candidate.length > maxUrlLength || /[\s\\<>"`]/u.test(candidate) || control.test(candidate)) return;
   let parsed: URL;
   try {
     parsed = new URL(candidate);
@@ -33,39 +39,109 @@ function linkTarget(value: string): string | undefined {
     return;
   }
   if (blockedProtocols.has(parsed.protocol) || parsed.username || parsed.password || !parsed.protocol) return;
-  if (parsed.href.length > maxUrlLength || /[\u0000-\u001f\u007f\\<>"`]/u.test(parsed.href)) return;
+  if (parsed.href.length > maxUrlLength || /[\\<>"`]/u.test(parsed.href) || control.test(parsed.href)) return;
   return parsed.href;
 }
 
 function pushText(segments: FooterSegment[], text: string) {
-  if (!text) return;
+  const cleaned = text.replace(/\*\*|__/gu, "");
+  if (!cleaned) return;
   const last = segments.at(-1);
-  if (last && !last.url) last.text += text;
-  else segments.push({ text });
+  if (last && !last.url) last.text += cleaned;
+  else segments.push({ text: cleaned });
+}
+
+function readCode(source: string, index: number): { text: string; end: number } | undefined {
+  if (source[index] !== "`") return;
+  const end = source.indexOf("`", index + 1);
+  if (end < 0) return;
+  return { text: source.slice(index + 1, end), end: end + 1 };
+}
+
+function readDestination(source: string, start: number): { dest: string; end: number } | undefined {
+  if (source[start] === "<") {
+    const close = source.indexOf(">", start + 1);
+    if (close < 0) return;
+    return { dest: source.slice(start + 1, close), end: close + 1 };
+  }
+  let depth = 0;
+  let end = start;
+  for (; end < source.length; end++) {
+    const char = source[end];
+    if (/\s/u.test(char)) break;
+    if (char === "(") depth++;
+    else if (char === ")") {
+      if (depth === 0) break;
+      depth--;
+    }
+  }
+  if (end === start || depth !== 0) return;
+  return { dest: source.slice(start, end), end };
+}
+
+function readLink(source: string, index: number): { text: string; dest: string; end: number } | undefined {
+  let start = index;
+  if (source[start] === "!") start++;
+  if (source[start] !== "[") return;
+  const labelEnd = source.indexOf("]", start + 1);
+  if (labelEnd < 0 || source[labelEnd + 1] !== "(") return;
+  const dest = readDestination(source, labelEnd + 2);
+  if (!dest || source[dest.end] !== ")") return;
+  return { text: source.slice(start + 1, labelEnd), dest: dest.dest, end: dest.end + 1 };
+}
+
+function readAuto(source: string, index: number): { text: string; dest: string; end: number } | undefined {
+  if (source[index] !== "<") return;
+  const close = source.indexOf(">", index + 1);
+  if (close < 0) return;
+  const dest = source.slice(index + 1, close);
+  if (!/^[a-z][a-z0-9+.-]*:/iu.test(dest)) return;
+  return { text: dest, dest, end: close + 1 };
+}
+
+function readBare(source: string, index: number): { text: string; dest: string; end: number } | undefined {
+  if (index > 0 && /[A-Za-z0-9]/u.test(source[index - 1])) return;
+  const match = /^[a-z][a-z0-9+.-]*:\/\/[^\s<>\]]+/iu.exec(source.slice(index));
+  if (!match) return;
+  const raw = match[0].replace(/[.,;:!?)]+$/u, "");
+  if (!raw) return;
+  return { text: raw, dest: raw, end: index + raw.length };
+}
+
+function emitLink(segments: FooterSegment[], label: string, dest: string) {
+  const text = plain(label).replace(/\*\*|__/gu, "") || plain(dest);
+  if (!text) return;
+  const url = linkTarget(dest);
+  segments.push(url ? { text, url } : { text });
 }
 
 export function renderMarkdown(value: string | undefined): FooterSegment[] {
   const source = plain(value ?? "");
   if (!source) return [];
   const segments: FooterSegment[] = [];
-  let cursor = 0;
-  for (const match of source.matchAll(markdown)) {
-    pushText(segments, source.slice(cursor, match.index));
-    const inline = match[1] ?? match[2] ?? match[3];
-    if (inline !== undefined) pushText(segments, plain(inline));
-    else if (match[5] !== undefined) {
-      const text = plain(match[4] || match[5]);
-      const url = linkTarget(match[5]);
-      if (text) segments.push(url ? { text, url } : { text });
+  let text = "";
+  for (let index = 0; index < source.length;) {
+    const code = readCode(source, index);
+    const link = code ? undefined : readLink(source, index);
+    const auto = code || link ? undefined : readAuto(source, index);
+    const bare = code || link || auto ? undefined : readBare(source, index);
+    const token = link ?? auto ?? bare;
+    if (code) {
+      pushText(segments, text);
+      text = "";
+      pushText(segments, code.text);
+      index = code.end;
+    } else if (token) {
+      pushText(segments, text);
+      text = "";
+      emitLink(segments, token.text, token.dest);
+      index = token.end;
     } else {
-      const raw = (match[6] ?? match[7] ?? "").replace(/[.,;:!?)]+$/u, "");
-      const url = linkTarget(raw);
-      const text = plain(raw);
-      if (text) segments.push(url ? { text, url } : { text });
+      text += source[index];
+      index++;
     }
-    cursor = (match.index ?? 0) + match[0].length;
   }
-  pushText(segments, source.slice(cursor));
+  pushText(segments, text);
   return segments.filter((segment) => segment.text);
 }
 
@@ -93,7 +169,7 @@ export function customFooterChips(notes: Record<string, string> | undefined): Fo
     if (!name || seen.has(name)) continue;
     seen.add(name);
     const label = clip(name, maxLabelWidth);
-    const body = renderMarkdown(notes[name]);
+    const body = renderMarkdown(ownText(notes, name));
     if (!label || !body.length) continue;
     chips.push({ segments: truncateSegments([{ text: `${label}: ` }, ...body], maxChipWidth) });
   }

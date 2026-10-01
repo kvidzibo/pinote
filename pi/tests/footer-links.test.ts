@@ -23,6 +23,11 @@ test("footer shows Markdown bar fields and links any safe scheme", () => {
   assert.equal(renderMarkdown("[Metrics](http://127.0.0.1:3000/d)")[0]?.url, "http://127.0.0.1:3000/d");
   assert.equal(renderMarkdown("[box](file:///tmp/a)")[0]?.url, "file:///tmp/a");
   assert.equal(renderMarkdown("wait `here` **now**").map((part) => part.text).join(""), "wait here now");
+  assert.equal(renderMarkdown("[manual](file:///tmp/a(b).md)")[0]?.url, "file:///tmp/a(b).md");
+  assert.equal(renderMarkdown("**[manual](http://example.com)**").map((part) => part.text).join(""), "manual");
+  assert.equal(renderMarkdown("**[manual](http://example.com)**").some((part) => part.url === "http://example.com/"), true);
+  assert.equal(renderMarkdown("\u009d52;c;SGVsbG8=\u009c").map((part) => part.text).join(""), "52;c;SGVsbG8=");
+  assert.equal(shown({ Bar: "constructor\ntoString" }), "");
 
   const notes = {
     PR: "https://github.com/org/repo/pull/9",
