@@ -37,8 +37,9 @@ function ownText(notes: Record<string, string>, name: string): string | undefine
 
 // Any scheme except scriptable or credentialed targets. Reject terminal escapes and oversized serialization.
 function linkTarget(value: string): string | undefined {
-  const candidate = value.trim();
-  if (!candidate || candidate.length > maxUrlLength || /[\s\\<>"`]/u.test(candidate) || control.test(candidate)) return;
+  // Do not trim or strip first: that can turn a dirty destination into a different URL.
+  if (!value || value.length > maxUrlLength || /[\s\\<>"`]/u.test(value) || control.test(value)) return;
+  const candidate = value;
   let parsed: URL;
   try {
     parsed = new URL(candidate);
@@ -107,10 +108,21 @@ function readAuto(source: string, index: number): { text: string; dest: string; 
 
 function readBare(source: string, index: number): { text: string; dest: string; end: number } | undefined {
   if (index > 0 && /[A-Za-z0-9]/u.test(source[index - 1])) return;
-  const match = /^[a-z][a-z0-9+.-]*:\/\/[^\s<>\]*]+/iu.exec(source.slice(index));
-  if (!match) return;
-  const raw = match[0].replace(/[.,;:!?)]+$/u, "").replace(/__$/u, "");
-  if (!raw) return;
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//iu.exec(source.slice(index));
+  if (!scheme) return;
+  let end = index + scheme[0].length;
+  let depth = 0;
+  for (; end < source.length; end++) {
+    const char = source[end];
+    if (/[\s<>\]*]/u.test(char) || control.test(char)) break;
+    if (char === "(") depth++;
+    else if (char === ")") {
+      if (depth === 0) break;
+      depth--;
+    }
+  }
+  const raw = source.slice(index, end).replace(/[.,;:!?]+$/u, "").replace(/__$/u, "");
+  if (!raw || depth !== 0) return;
   return { text: raw, dest: raw, end: index + raw.length };
 }
 
@@ -122,7 +134,7 @@ function emitLink(segments: FooterSegment[], label: string, dest: string) {
 }
 
 export function renderMarkdown(value: string | undefined): FooterSegment[] {
-  const source = stripVTControlCharacters(value ?? "");
+  const source = value ?? "";
   if (!plain(source)) return [];
   const segments: FooterSegment[] = [];
   let text = "";

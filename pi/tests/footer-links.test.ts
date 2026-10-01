@@ -29,6 +29,9 @@ test("footer shows Markdown bar fields and links any safe scheme", () => {
   assert.equal(renderMarkdown("**https://example.com/path**").find((part) => part.url)?.url, "https://example.com/path");
   assert.equal(renderMarkdown("Review\ncomments").map((part) => part.text).join(""), "Review comments");
   assert.equal(renderMarkdown("[x](https://example.com/a\tb)").some((part) => part.url), false);
+  assert.equal(renderMarkdown("[x](https://example.com/a\t)").some((part) => part.url), false);
+  assert.equal(renderMarkdown("[x](https://example.com/a\x1b[31mb)").some((part) => part.url), false);
+  assert.equal(renderMarkdown("https://en.wikipedia.org/wiki/Function_(mathematics)")[0]?.url, "https://en.wikipedia.org/wiki/Function_(mathematics)");
   assert.equal(renderMarkdown("\u009d52;c;SGVsbG8=\u009c").map((part) => part.text).join(""), "52;c;SGVsbG8=");
   assert.equal(shown({ Bar: "constructor\ntoString" }), "");
 
