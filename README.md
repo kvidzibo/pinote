@@ -80,7 +80,7 @@ above instead. After the first npm publication, `pi install npm:pi-note` will
 replace the local extension installation step; npm itself installs no Python code.
 See the [extension setup guide](pi/README.md#cli-setup-and-upgrades) for troubleshooting.
 
-Selection persists per working directory; arbitrary Markdown handoff fields appear under **Agent** in
+Each Pi session remembers its own task, even in the same folder; arbitrary Markdown handoff fields appear under **Agent** in
 the GTK preview without changing the task text. A GitHub `PR` field adds a footer
 link and configurable merge polling in interactive Pi, with confirmation before
 completion. No cross-machine sync is provided.

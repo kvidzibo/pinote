@@ -75,8 +75,9 @@ characters; empty notes and terminal control characters are rejected.
 
 ### Agent handoffs
 
-`note agent` commands return JSON and never refresh Dunst. Selection is durable
-per canonical working directory; fields belong to the task, not a Pi session.
+`note agent` commands return JSON and never refresh Dunst. `agent select` stores
+one task per canonical working directory for scripts. Pi sessions do not use that
+row; each session remembers its own task. Fields belong to the task, not a session.
 
 ```sh
 note agent select 2 --cwd "$PWD"    # start and select atomically
