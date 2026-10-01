@@ -113,6 +113,8 @@ literal text in the archive/reminders. Completion, removal and scheduling clear
 project selections; restoring does not silently reselect tasks.
 
 The existing `list --json` format is unchanged; use `agent get` for handoff data.
+A valid `PR` field is shown in the Pi footer. `Bar`, one field label per line, adds
+those fields when each value is one https link. Other fields stay on the task only.
 See the [Pi extension](../pi/README.md) for `/pinote`, footer status, and tools.
 New sessions can continue locally; there is no automatic cross-machine sync.
 

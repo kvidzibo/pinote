@@ -12,7 +12,15 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
     else process.env.PINOTE_PR_POLL_SECONDS = oldInterval;
   });
   const url = "https://github.com/Org/Repo/pull/123";
-  const item: WatchedTask = { id: 1, state: "in_progress", updated_at: "r1", agent_notes: { PR: `[Fix #123](${url})` } };
+  const item: WatchedTask = {
+    id: 1, state: "in_progress", updated_at: "r1",
+    agent_notes: {
+      PR: `[Fix #123](${url})`,
+      Dashboard: "[Metrics](https://example.com/d/app)",
+      Next: "Review",
+      Bar: "Dashboard\nNext\nMissing",
+    },
+  };
   for (const PR of [`${url} and ${url}`, "https://evil.test/org/repo/pull/123", `${url}\x1b[31m`, "https://github.com/org/../pull/123"]) {
     assert.equal(taskPR({ ...item, agent_notes: { PR } }), undefined);
   }
@@ -67,8 +75,11 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   watcher.start(ctx);
   await tick(0);
   assert.equal(checks, 1);
-  assert.match(statuses.get("pinote-pr")!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/123\x1b\\PR #123/iu);
-  assert.match(statuses.get("pinote-pr")!, /^\x1b\[34m/);
+  assert.match(statuses.get("pinote-links")!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/123\x1b\\PR #123/iu);
+  assert.match(statuses.get("pinote-links")!, /\x1b\]8;;https:\/\/example.com\/d\/app\x1b\\Dashboard/);
+  assert.doesNotMatch(statuses.get("pinote-links")!, /Next|Review|Missing/);
+  assert.equal(statuses.get("pinote-pr"), undefined, "the old PR status key stays clear");
+  assert.match(statuses.get("pinote-links")!, /^\x1b\[34m/);
   await tick(9999); assert.equal(checks, 1);
   failures = true;
   await tick(1); await tick();
@@ -84,7 +95,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   duringConfirm = undefined;
   await tick();
   assert.equal(completions, 1);
-  assert.equal(statuses.get("pinote-pr"), undefined, "completion immediately hides the PR link");
+  assert.equal(statuses.get("pinote-links"), undefined, "completion immediately hides the PR link");
   const acknowledgedChecks = checks;
   await tick();
   assert.equal(checks, acknowledgedChecks, "do not repeatedly query an acknowledged merge");
@@ -92,7 +103,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
 
   // Reload after completion: selection is gone, but the saved watcher identity remains.
   watcher.start(ctx); await tick(0);
-  assert.equal(statuses.get("pinote-pr"), undefined, "restored completed watches stay hidden");
+  assert.equal(statuses.get("pinote-links"), undefined, "restored completed watches stay hidden");
   assert.equal(confirmations, 2);
 
   // Restore an active selection and resume: persistent session entries suppress the same notice.
@@ -104,9 +115,9 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   state = "OPEN"; await tick(0);
   item.state = "done"; selected = null; state = "MERGED";
   watcher.update(ctx, selected);
-  assert.equal(statuses.get("pinote-pr"), undefined, "selection clearing hides the link before the next poll");
+  assert.equal(statuses.get("pinote-links"), undefined, "selection clearing hides the link before the next poll");
   await tick();
-  assert.equal(statuses.get("pinote-pr"), undefined, "merge polling cannot repaint the retained task");
+  assert.equal(statuses.get("pinote-links"), undefined, "merge polling cannot repaint the retained task");
   assert.match(notices.at(-1)!, /PR #123 was merged and the task is already completed/);
   assert.equal(completions, 1);
   assert.equal(confirmations, 2);
@@ -121,7 +132,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   reply = true; watcher.start(ctx); await tick(0);
   assert.equal(completions, 1, "selection switch during confirmation cannot complete the old task");
   assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 0);
-  assert.equal(statuses.get("pinote-pr"), undefined);
+  assert.equal(statuses.get("pinote-links"), undefined);
 
   duringConfirm = undefined; selected = item;
   let release!: () => void;
@@ -130,7 +141,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   const beforeShutdown = confirmations;
   watcher.stop(); release(); await tick();
   assert.equal(confirmations, beforeShutdown, "late network results cannot prompt after shutdown");
-  assert.equal(statuses.get("pinote-pr"), undefined);
+  assert.equal(statuses.get("pinote-links"), undefined);
   pendingFetch = undefined;
   const stoppedChecks = checks;
   watcher.start({ ...ctx, hasUI: false, mode: "print" }); await tick();
@@ -138,11 +149,11 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   process.env.PINOTE_PR_POLL_SECONDS = "0";
   watcher.start(ctx); watcher.update(ctx, item); await tick();
   assert.equal(checks, stoppedChecks);
-  assert.match(statuses.get("pinote-pr")!, /PR #123/);
+  assert.match(statuses.get("pinote-links")!, /PR #123/);
   item.state = "done"; selected = null;
   watcher.update(ctx, selected); await tick();
   assert.equal(checks, stoppedChecks);
-  assert.equal(statuses.get("pinote-pr"), undefined, "completion hides the link even with polling disabled");
+  assert.equal(statuses.get("pinote-links"), undefined, "completion hides the link even with polling disabled");
 });
 
 test("Kitty tab progress lasts only while merge confirmation needs input", async (t) => {
