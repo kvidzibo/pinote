@@ -100,17 +100,23 @@ user asks to switch. Reuse a saved tag name when it fits.
 
 Agents are guided to keep notes to three short bullets total: relevant outcome,
 blocker, and next action. Replace stale notes; omit narration, repeated task text,
-and routine test logs. Keep PR links in `PR`. This is guidance, not truncation or
-a storage limit.
+and routine test logs. Keep a GitHub pull request in `PR`. To show another footer
+field, set its Markdown value and append its label to `Bar`, one label per line.
+Do not list `PR` in `Bar`. Remove the field and its `Bar` line to drop it. This is
+guidance, not truncation or a storage limit.
 
-Values are Markdown strings; no fields are required. `PR` enables the watcher below:
+Values are Markdown strings; no fields are required. `PR` enables the watcher below.
+`Bar` chooses extra footer fields:
 
 ```markdown
 # Agent
 PR: [Task selection #42](https://github.com/org/repo/pull/42)
+Dashboard: [Metrics](http://127.0.0.1:3000/d/app)
+Next: Address review comments
+Bar: Dashboard
+Next
 Jira: [PROJ-123](https://example.atlassian.net/browse/PROJ-123)
 CWD: `/home/me/project`
-Next: Address review comments
 ```
 
 The GTK preview renders this section using its existing safe Markdown renderer.
@@ -119,12 +125,26 @@ sessions. Labels are case-sensitive (trimmed, Unicode-normalized), at most 64
 characters; values are at most 4096 characters. Maximum 64 fields / 32 KiB JSON
 per task. Use removal rather than empty values.
 
+### Footer links
+
+The selected active or in-progress task can show fields after its title.
+`PR` is always shown when it matches the watcher format below, as **PR #123**.
+`Bar` is a newline-separated list of other field labels. Each listed value is
+Markdown: the footer shows its text, and links in it are clickable for any scheme
+except `javascript:`, `data:`, and `vbscript:`. Credentials, control characters,
+and targets over 2048 characters after serialization are shown as text but not
+linked. Missing labels and the `PR` and `Bar` labels themselves are skipped.
+At most four extra fields are shown, each truncated to 60 columns. Removing a listed
+field hides it even if `Bar` still names it. Terminal OSC 8 support is required
+for clicking links. Pi joins footer statuses on one line, so a narrow terminal can
+ellipsize later fields. Other fields, such as `Jira` and `CWD` in the example, stay
+off the footer unless named in `Bar`.
+
 ### PR merge watcher
 
 Set `PR` with `pinote_update` to one `https://github.com/owner/repo/pull/123` URL
 or Markdown link. The footer adds a clickable, link-coloured **PR #123**, without
-status text. Other hosts, multiple links, and prose are not watched. Terminal
-OSC 8 support is required for clicking links.
+status text. Other hosts, multiple links, and prose are not watched.
 
 Interactive Pi checks only the selected task's PR using authenticated `gh`
 (`gh auth login`). Polling defaults to 60 seconds; launch Pi with

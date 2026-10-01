@@ -7,7 +7,7 @@ import { createPRWatcher } from "./pr-watch.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
 
-const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep PR links in the separate PR field.";
+const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. To show another footer field, set its Markdown value and append its label to Bar, one label per line. Links in that text are clickable. Do not list PR in Bar. Remove the field and its Bar line to drop it. Notes stay off the footer unless named in Bar.";
 const createGuidance = [
   "When the user gives work and no pinote task is selected, propose one note as `[tag] text` and ask before creating it. On no, continue without a note. On yes, call pinote_add with select true so it becomes this session's active task. Never add or select without a yes. If a task is already selected, do not replace it unless the user asks to switch.",
   "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. pinote_tag changes an existing active or in-progress task after pinote_get; pass updated_at. Do not use pinote_update for tags or task text.",
@@ -378,7 +378,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_update",
     label: "Pinote update",
     promptGuidelines: [handoffGuidance],
-    description: "Patch arbitrary agent handoff fields on an explicit pinote task. Read first with pinote_get; pass its updated_at as expected_updated_at. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show it in the footer and watch for merge confirmation in interactive Pi. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
+    description: "Patch arbitrary agent handoff fields on an explicit pinote task. Read first with pinote_get; pass its updated_at as expected_updated_at. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
     parameters: Type.Object({
       id: idSchema,
       expected_updated_at: Type.String({ minLength: 1 }),

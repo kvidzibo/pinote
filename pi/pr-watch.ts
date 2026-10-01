@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { footerChips, footerStatusKey, legacyFooterStatusKey, renderFooterLinks, type FooterChip } from "./footer-links.ts";
 
 export type WatchedTask = {
   id: number;
@@ -60,6 +61,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
   let ctx: ExtensionContext | undefined;
   let watched: WatchedTask | null = null;
   let visiblePR: PR | undefined;
+  let visibleLinks: FooterChip[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller = new AbortController();
   let generation = 0;
@@ -78,11 +80,13 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
     return changed;
   };
   const paint = () => {
-    if (!ctx) return;
-    const pr = visiblePR;
-    ctx.ui.setStatus("pinote-pr", pr
-      ? ctx.ui.theme.fg("mdLink", `\x1b]8;;${pr.url}\x1b\\PR #${pr.number}\x1b]8;;\x1b\\`)
-      : undefined);
+    const current = ctx;
+    if (!current) return;
+    // Clear the old key first so a reload cannot show PR twice.
+    current.ui.setStatus(legacyFooterStatusKey, undefined);
+    current.ui.setStatus(footerStatusKey, renderFooterLinks(
+      visibleLinks, (value) => current.ui.theme.fg("mdLink", value),
+    ));
   };
   const schedule = (delay = interval) => {
     if (!ctx || !interval || running) return;
@@ -95,6 +99,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
     revision++;
     // Display only the active selection, independently of the retained merge watch.
     visiblePR = current && ["active", "in_progress"].includes(current.state) ? taskPR(current) : undefined;
+    visibleLinks = footerChips(current, visiblePR);
     // Completion clears selection. Keep the last task until poll verifies its state.
     const changed = current ? remember(taskPR(current) ? current : null) : false;
     paint();
@@ -216,10 +221,12 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
       controller.abort();
       controller = new AbortController();
       clearTimeout(timer);
-      ctx?.ui.setStatus("pinote-pr", undefined);
+      ctx?.ui.setStatus(legacyFooterStatusKey, undefined);
+      ctx?.ui.setStatus(footerStatusKey, undefined);
       ctx = undefined;
       watched = null;
       visiblePR = undefined;
+      visibleLinks = [];
       running = false;
       warned = false;
     },
