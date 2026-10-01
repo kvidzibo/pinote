@@ -13,9 +13,16 @@ const control = /[\u0000-\u001f\u007f-\u009f]/u;
 export type FooterSegment = { text: string; url?: string };
 export type FooterChip = { segments: FooterSegment[] };
 
+function display(value: string): string {
+  // Keep whitespace so newlines stay word boundaries. Drop other C0/C1 controls;
+  // U+009D survives stripVTControlCharacters and can start OSC.
+  return stripVTControlCharacters(value)
+    .replace(new RegExp(control, "gu"), (char) => /\s/u.test(char) ? " " : "")
+    .replace(/\s+/gu, " ");
+}
+
 function plain(value: string): string {
-  // C1 introducers such as U+009D survive stripVTControlCharacters and can start OSC.
-  return stripVTControlCharacters(value).replace(new RegExp(control, "gu"), "").replace(/\s+/gu, " ").trim();
+  return display(value).trim();
 }
 
 function clip(value: string, width: number): string {
@@ -44,7 +51,7 @@ function linkTarget(value: string): string | undefined {
 }
 
 function pushText(segments: FooterSegment[], text: string) {
-  const cleaned = text.replace(/\*\*|__/gu, "");
+  const cleaned = display(text).replace(/\*\*|__/gu, "");
   if (!cleaned) return;
   const last = segments.at(-1);
   if (last && !last.url) last.text += cleaned;
@@ -68,7 +75,6 @@ function readDestination(source: string, start: number): { dest: string; end: nu
   let end = start;
   for (; end < source.length; end++) {
     const char = source[end];
-    if (/\s/u.test(char)) break;
     if (char === "(") depth++;
     else if (char === ")") {
       if (depth === 0) break;
@@ -101,9 +107,9 @@ function readAuto(source: string, index: number): { text: string; dest: string; 
 
 function readBare(source: string, index: number): { text: string; dest: string; end: number } | undefined {
   if (index > 0 && /[A-Za-z0-9]/u.test(source[index - 1])) return;
-  const match = /^[a-z][a-z0-9+.-]*:\/\/[^\s<>\]]+/iu.exec(source.slice(index));
+  const match = /^[a-z][a-z0-9+.-]*:\/\/[^\s<>\]*]+/iu.exec(source.slice(index));
   if (!match) return;
-  const raw = match[0].replace(/[.,;:!?)]+$/u, "");
+  const raw = match[0].replace(/[.,;:!?)]+$/u, "").replace(/__$/u, "");
   if (!raw) return;
   return { text: raw, dest: raw, end: index + raw.length };
 }
@@ -116,8 +122,8 @@ function emitLink(segments: FooterSegment[], label: string, dest: string) {
 }
 
 export function renderMarkdown(value: string | undefined): FooterSegment[] {
-  const source = plain(value ?? "");
-  if (!source) return [];
+  const source = stripVTControlCharacters(value ?? "");
+  if (!plain(source)) return [];
   const segments: FooterSegment[] = [];
   let text = "";
   for (let index = 0; index < source.length;) {
@@ -142,6 +148,9 @@ export function renderMarkdown(value: string | undefined): FooterSegment[] {
     }
   }
   pushText(segments, text);
+  if (segments[0] && !segments[0].url) segments[0].text = segments[0].text.trimStart();
+  const last = segments.at(-1);
+  if (last && !last.url) last.text = last.text.trimEnd();
   return segments.filter((segment) => segment.text);
 }
 

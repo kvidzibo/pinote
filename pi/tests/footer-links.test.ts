@@ -26,6 +26,9 @@ test("footer shows Markdown bar fields and links any safe scheme", () => {
   assert.equal(renderMarkdown("[manual](file:///tmp/a(b).md)")[0]?.url, "file:///tmp/a(b).md");
   assert.equal(renderMarkdown("**[manual](http://example.com)**").map((part) => part.text).join(""), "manual");
   assert.equal(renderMarkdown("**[manual](http://example.com)**").some((part) => part.url === "http://example.com/"), true);
+  assert.equal(renderMarkdown("**https://example.com/path**").find((part) => part.url)?.url, "https://example.com/path");
+  assert.equal(renderMarkdown("Review\ncomments").map((part) => part.text).join(""), "Review comments");
+  assert.equal(renderMarkdown("[x](https://example.com/a\tb)").some((part) => part.url), false);
   assert.equal(renderMarkdown("\u009d52;c;SGVsbG8=\u009c").map((part) => part.text).join(""), "52;c;SGVsbG8=");
   assert.equal(shown({ Bar: "constructor\ntoString" }), "");
 
