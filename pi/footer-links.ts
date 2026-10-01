@@ -25,7 +25,8 @@ export function httpsTarget(value: string | undefined): string | undefined {
     return;
   }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || !parsed.hostname) return;
-  if (/[\u0000-\u001f\u007f\\<>"`]/u.test(parsed.href)) return;
+  // Percent-encoding can make the click target much longer than the stored text.
+  if (parsed.href.length > maxUrlLength || /[\u0000-\u001f\u007f\\<>"`]/u.test(parsed.href)) return;
   return parsed.href;
 }
 

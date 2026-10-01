@@ -10,6 +10,7 @@ test("footer keeps a structured PR chip and up to four named https links", () =>
   assert.equal(httpsTarget("http://example.com"), undefined);
   assert.equal(httpsTarget("[Metrics](http://example.com)"), undefined);
   assert.equal(httpsTarget(`https://example.com/${"a".repeat(2048)}`), undefined);
+  assert.equal(httpsTarget(`https://example.com/${"é".repeat(1000)}`), undefined);
   assert.equal(httpsTarget("[Metrics](https://example.com/d/app)"), "https://example.com/d/app");
   assert.equal(httpsTarget("https://example.com/d/app"), "https://example.com/d/app");
 

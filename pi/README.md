@@ -131,7 +131,7 @@ The selected active or in-progress task can show clickable chips after its title
 `Bar` is a newline-separated list of other field labels. Each listed value must be
 one https URL, bare or as the only target of a Markdown link; the chip text is the
 field label. Prose, multiple links, credentials, other schemes, URLs over 2048
-characters, missing labels, and the `PR` and `Bar` labels themselves are skipped.
+characters after serialization, missing labels, and the `PR` and `Bar` labels themselves are skipped.
 At most four extra chips are shown, each truncated to 24 columns. Removing a listed
 field hides its chip even if `Bar` still names it. Terminal OSC 8 support is required
 for clicking links. Pi joins footer statuses on one line, so a narrow terminal can
