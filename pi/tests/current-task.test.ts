@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import pinote from "../index.ts";
 
-test("current-task writes abort when selection or branch changes during lookup or the write probe", async () => {
+test("current-task operations reject navigation during reads, write probes and pending writes", async () => {
   const tasks = [1, 2].map((id) => ({
     id, text: `Task ${id}`, state: "in_progress", tag: null, updated_at: "same-revision",
     agent_notes: {}, markdown: `Task ${id}`,
@@ -12,6 +12,7 @@ test("current-task writes abort when selection or branch changes during lookup o
   const tools = new Map<string, any>();
   const events = new Map<string, any>();
   let switchOn: "get" | "probe" | undefined;
+  let navigateDuringWrite: "branch" | "session" | undefined;
   let switchTo = 2;
   let probes = 0;
   let writes = 0;
@@ -39,6 +40,8 @@ test("current-task writes abort when selection or branch changes during lookup o
       assert.equal(args[1], "update");
       writes++;
       Object.assign(task.agent_notes, JSON.parse(args[args.indexOf("--set-json") + 1]));
+      if (navigateDuringWrite === "branch") await switchBranch();
+      if (navigateDuringWrite === "session") await events.get("session_start")({}, ctx);
       return success(task);
     },
   } as any);
@@ -63,5 +66,16 @@ test("current-task writes abort when selection or branch changes during lookup o
   assert.equal(writes, 1);
   assert.deepEqual(tasks[0].agent_notes, { Next: "Saved" });
   assert.deepEqual(tasks[1].agent_notes, {});
+  for (const [navigation, target] of [["branch", 2], ["branch", 1], ["session", 1]] as const) {
+    entries.push({ type: "custom", customType: "pinote-selection", data: { id: 1 } });
+    await events.get("session_tree")({}, ctx);
+    navigateDuringWrite = navigation;
+    switchTo = target;
+    const previousWrites: number = writes;
+    await assert.rejects(update(), /write may have committed/);
+    assert.equal(writes, previousWrites + 1, "a committed write must not be reported as stale success");
+    assert.deepEqual(tasks[1].agent_notes, {}, "navigation must not redirect the pending write to another task");
+  }
+  navigateDuringWrite = undefined;
   await events.get("session_shutdown")({}, ctx);
 });

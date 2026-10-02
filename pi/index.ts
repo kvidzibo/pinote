@@ -395,7 +395,11 @@ export default function (pi: ExtensionAPI) {
       const argv = ["agent", "update", String(current.id), "--expected-updated-at", params.expected_updated_at,
         "--set-json", JSON.stringify(params.set ?? {})];
       for (const label of params.remove ?? []) argv.push(`--remove=${label}`);
-      return toolResult(await writeTask(ctx, signal, argv, current.id, "0.3.0", canRun));
+      const updated = await writeTask(ctx, signal, argv, current.id, "0.3.0", canRun);
+      if (!canRun()) {
+        throw new Error("Pinote operation cancelled: the session or selected task changed. The write may have committed; read the current task before retrying.");
+      }
+      return toolResult(updated);
     },
   });
   pi.registerTool({
