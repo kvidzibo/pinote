@@ -56,11 +56,11 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 
 ## Use
 
-`/pi-note` picks a task, starts it, and adds a short task-ID prompt to the editor:
-“Read the current task (#121) with pinote_get_current and work on it. Ask only if
-blocked. Save progress with pinote_update_current.” The agent fetches current task text and saved handoff fields
-when you submit; they are not copied into the draft. Existing drafts are preserved;
-nothing is submitted automatically.
+`/pi-note` picks a task, marks it in progress, and adds this prompt to the editor:
+“Read the current Pinote task. Summarize your understanding, but don’t start work yet.”
+The agent fetches current task text and saved handoff fields when you submit;
+they are not copied into the draft. The prompt asks for a summary, not implementation.
+Existing drafts are preserved; nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, and **Switch task**.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
@@ -74,7 +74,7 @@ Resume restores that session's task; a new session starts unselected and does no
 an older per-folder selection. Pi saves the session after the first submitted message;
 quitting before that leaves the next launch unselected, while the task stays in progress.
 Use **Continue**
-to insert its task-ID prompt. Completing, removing, or scheduling a task clears it
+to insert the same read-and-summarize prompt. Completing, removing, or scheduling a task clears it
 from sessions that refresh it. Switching does not complete or reset the previous task.
 Task fields such as `Worktree` and `PR` stay on the task, so sessions can use separate
 worktrees and pull requests. Task status refreshes at session start, before/after

@@ -99,7 +99,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
-    const prompt = "Read the current task (#1) with pinote_get_current and work on it. Ask only if blocked. Save progress with pinote_update_current.";
+    const prompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
     assert.equal(draft, `Existing draft\n\n${prompt}`);
     const task = JSON.parse((await get.execute("get", {}, undefined, undefined, ctx)).content[0].text);
     const pr = "[Task selection #42](https://github.com/org/repo/pull/42)";
