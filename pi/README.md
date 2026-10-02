@@ -1,12 +1,13 @@
 # pi-note
 
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
-in Pi: selected-task footer status, `/pi-note`, and agent read/update/add/tag tools.
+in Pi: selected-task footer status, `/pi-note`, and agent current-task read/update,
+add, and tag-listing tools.
 The extension and Python app share a repository but install separately.
 
 ## Install
 
-Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag need **pinote 0.4.0+**.
+Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
 From this checkout, install the extension with `pi install ./pi`, then run
 `/reload` in interactive Pi. Use `/pi-note-setup` if the CLI is missing, or the
 suggested `/pi-note-upgrade` if it is older than the bundled CLI. The planned npm package name is
@@ -56,8 +57,8 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 ## Use
 
 `/pi-note` picks a task, starts it, and adds a short task-ID prompt to the editor:
-“Read task #121 with pinote_get and work on it. Ask only if blocked. Save progress
-with pinote_update.” The agent fetches current task text and saved handoff fields
+“Read the current task (#121) with pinote_get_current and work on it. Ask only if
+blocked. Save progress with pinote_update_current.” The agent fetches current task text and saved handoff fields
 when you submit; they are not copied into the draft. Existing drafts are preserved;
 nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, and **Switch task**.
@@ -82,16 +83,20 @@ command is not this session memory.
 
 Agent tools:
 
-- `pinote_get`: read this session's selected task, or an explicit `id`, including its revision.
-  Omitting `id` returns null when this session has no selected task.
-- `pinote_update`: supply `id`, `expected_updated_at` from that read, and arbitrary
-  `set` label/value pairs or `remove` labels. Updates merge fields, never replace
-  the task text or tag. If another process changed the task, read again before retrying.
+- `pinote_get_current`: read this session's selected task, including its revision.
+  Takes no arguments; returns null when this session has no selected task.
+- `pinote_update_current`: supply `expected_updated_at` from that read and arbitrary
+  `set` label/value pairs or `remove` labels. Updates the selected task only, with no
+  ID argument. Updates merge fields, never replace the task text or tag. Fails if
+  no task is selected or the selection changes during the operation. If another
+  process changed the task, read again before retrying.
 - `pinote_tags`: list saved tag names.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
   remembers it for this session only; use that only after the user agrees.
-- `pinote_tag`: set or clear a tag on an active or in-progress task. Read first and
-  pass `expected_updated_at`.
+
+Version 0.7.0 replaces `pinote_get`/`pinote_update` with these current-task tools
+and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
+or retag existing tasks; use `/pi-note` to select an existing task.
 
 When the user gives work and no task is selected, the agent proposes one note as
 `[tag] text` and asks before creating it. No continues without a note. Yes calls
@@ -142,7 +147,7 @@ off the footer unless named in `Bar`.
 
 ### PR merge watcher
 
-Set `PR` with `pinote_update` to one `https://github.com/owner/repo/pull/123` URL
+Set `PR` with `pinote_update_current` to one `https://github.com/owner/repo/pull/123` URL
 or Markdown link. The footer adds a clickable, link-coloured **PR #123**, without
 status text. Other hosts, multiple links, and prose are not watched.
 

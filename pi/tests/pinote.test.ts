@@ -110,12 +110,13 @@ test("task selection, handoff, guarded Done and tools stay session-local without
     { signal: new AbortController().signal })).items.map((item: any) => item.value).sort();
   assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
   assert.ok(notices.some((message) => message.includes("Run /pi-note-upgrade")));
-  await assert.rejects(extension.tool("pinote_get", { id: 2 }), /requires pinote 0\.3\.0/);
+  await assert.rejects(extension.tool("pinote_get_current", {}), /requires pinote 0\.3\.0/);
+  assert.ok(calls.some((args) => args[0] === "--version"), "unselected current-task reads still probe the CLI version");
   assert.ok(calls.every((args) => args[0] === "--version"), "old CLIs must never receive unknown commands");
   cliVersion = "pinote 0.3.0";
   await extension.event("session_start");
   assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
-  assert.equal((await extension.tool("pinote_get", { id: 2 })).details.id, 2);
+  assert.equal((await extension.tool("pinote_get_current", {})).details, null);
   cliVersion = "pinote 0.4.0";
   await extension.event("session_start");
   assert.equal(status, undefined);
@@ -133,7 +134,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.equal(notices.length, noticeCount, "newer CLI must not trigger an upgrade notice");
   cliVersion = "pinote 0.4.0";
   await extension.event("session_start");
-  assert.equal((await extension.tool("pinote_get", {})).details, null);
+  assert.equal((await extension.tool("pinote_get_current", {})).details, null);
   choices.push(undefined);
   await extension.command();
   assert.equal(sessionTask(), null);
@@ -160,13 +161,13 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.ok(visibleWidth(status!) <= 60, "entire footer entry is capped in terminal columns");
   assert.match(stripVTControlCharacters(status!), /\.\.\.$/u);
   tasks[1].text = originalText;
-  const prompt = "Read task #2 with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.";
+  const prompt = "Read the current task (#2) with pinote_get_current and work on it. Ask only if blocked. Save progress with pinote_update_current.";
   assert.equal(draft, `Existing draft\n\n${prompt}`);
-  const data = (await extension.tool("pinote_get", {})).details;
+  const data = (await extension.tool("pinote_get_current", {})).details;
   const fields = { PR: "[Fix #42](https://example.org/pr/42)", Next: "Review" };
-  const updated = await extension.tool("pinote_update", { id: 2, expected_updated_at: data.updated_at, set: fields });
+  const updated = await extension.tool("pinote_update_current", { expected_updated_at: data.updated_at, set: fields });
   assert.deepEqual(updated.details.agent_notes, fields);
-  await assert.rejects(extension.tool("pinote_update", { id: 2, expected_updated_at: data.updated_at, set: { Next: "stale" } }), /changed elsewhere/);
+  await assert.rejects(extension.tool("pinote_update_current", { expected_updated_at: data.updated_at, set: { Next: "stale" } }), /changed elsewhere/);
   await extension.event("session_shutdown");
   extension = load();
   draft = "";
@@ -177,7 +178,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   choices.push("Continue");
   await extension.command();
   assert.equal(draft, prompt, "Continue inserts only the task-ID prompt, not saved fields");
-  const resumed = (await extension.tool("pinote_get", { id: 2 })).details;
+  const resumed = (await extension.tool("pinote_get_current", {})).details;
   assert.equal(resumed.text, originalText);
   assert.deepEqual(resumed.agent_notes, fields);
   const previousDraft = draft;
@@ -193,11 +194,11 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   beforeChoice = undefined;
 
   const headless = { ...ctx, hasUI: false, mode: "print", ui: undefined };
-  const read = (await extension.tool("pinote_get", { id: 2 }, headless)).details;
-  await extension.tool("pinote_update", { id: 2, expected_updated_at: read.updated_at, remove: ["Next"] }, headless);
+  const read = (await extension.tool("pinote_get_current", {}, headless)).details;
+  await extension.tool("pinote_update_current", { expected_updated_at: read.updated_at, remove: ["Next"] }, headless);
   assert.deepEqual(tasks[1].agent_notes, { PR: fields.PR });
   const aborted = new AbortController(); aborted.abort(new Error("cancelled"));
-  await assert.rejects(extension.tool("pinote_get", { id: 2 }, headless, aborted.signal), /cancelled/);
+  await assert.rejects(extension.tool("pinote_get_current", {}, headless, aborted.signal), /cancelled/);
 
   const otherEntries: Array<{ type: string; customType: string; data: { id: number | null } }> = [];
   let otherStatus: string | undefined;
@@ -220,15 +221,15 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   const firstAgain = load();
   await firstAgain.event("session_start");
   assert.match(status!, /Unicode/);
-  assert.equal((await firstAgain.tool("pinote_get", {})).details.id, 2);
-  assert.equal((await second.tool("pinote_get", {})).details.id, 1);
+  assert.equal((await firstAgain.tool("pinote_get_current", {})).details.id, 2);
+  assert.equal((await second.tool("pinote_get_current", {})).details.id, 1);
   await firstAgain.event("session_shutdown");
   entries.push({ type: "custom", customType: "pinote-selection", data: { id: 1 } });
   await extension.event("session_tree");
-  assert.equal((await extension.tool("pinote_get", {})).details.id, 1, "tree navigation follows the active branch");
+  assert.equal((await extension.tool("pinote_get_current", {})).details.id, 1, "tree navigation follows the active branch");
   entries.push({ type: "custom", customType: "pinote-selection", data: { id: 2 } });
   await extension.event("session_tree");
-  assert.equal((await extension.tool("pinote_get", {})).details.id, 2);
+  assert.equal((await extension.tool("pinote_get_current", {})).details.id, 2);
 
   let releaseChoice!: () => void;
   let enteredChoice!: () => void;
@@ -248,7 +249,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   await switching;
   assert.equal(sessionTask(), 2, "in-flight selection must not be written onto the new branch");
   assert.equal(draft, draftBeforeSwitch);
-  assert.equal((await extension.tool("pinote_get", {})).details.id, 2);
+  assert.equal((await extension.tool("pinote_get_current", {})).details.id, 2);
   delaySelected = undefined;
 
   let release!: () => void;
@@ -278,7 +279,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   await second.event("session_shutdown");
 });
 
-test("add and tag require pinote 0.4.0 and select only when asked", async () => {
+test("add and tag listing require pinote 0.4.0 and select only when asked", async () => {
   let cliVersion = "pinote 0.3.0";
   let current: any = null;
   const calls: string[][] = [];
@@ -306,7 +307,6 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
       calls.push(args);
       if (args[0] === "--version") return { code: 0, stdout: cliVersion, stderr: "", killed: false };
       if (args[1] === "tags") return success(["pinote"]);
-      if (args[1] === "selected") return success(current);
       if (args[1] === "add") {
         const text = args.find((arg) => arg.startsWith("--text="))!.slice("--text=".length);
         if (releaseAdd) await new Promise<void>((resolve) => { releaseAdd = resolve; });
@@ -323,18 +323,10 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
         return { code: 0, stdout: "", stderr: "", killed: false };
       }
       if (args[1] === "get" && current) return success(current);
-      if (args[1] === "tag" && current) {
-        current = {
-          ...current,
-          tag: args.includes("--clear") ? null : args.find((arg) => arg.startsWith("--tag="))!.slice("--tag=".length),
-          updated_at: "r10",
-        };
-        return success(current);
-      }
       return { code: 1, stdout: "", stderr: "unexpected", killed: false };
     },
   } as any);
-  const guidelines = tools.get("pinote_get").promptGuidelines.join("\n");
+  const guidelines = tools.get("pinote_add").promptGuidelines.join("\n");
   assert.match(guidelines, /propose one note as `\[tag\] text`/);
   assert.match(guidelines, /On no, continue without a note/);
   assert.match(guidelines, /select true/);
@@ -359,18 +351,6 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
   assert.ok(calls.some((args) => args[0] === "--no-notify" && args[1] === "start" && args[2] === "9"));
   assert.match(status!, /\[pinote\] Ship it/);
   assert.deepEqual((await tools.get("pinote_tags").execute("id", {}, undefined, undefined, ctx)).details, ["pinote"]);
-  assert.equal(
-    (await tools.get("pinote_tag").execute(
-      "id", { id: 9, expected_updated_at: "r9", clear: true }, undefined, undefined, ctx,
-    )).details.tag,
-    null,
-  );
-  await assert.rejects(
-    tools.get("pinote_tag").execute(
-      "id", { id: 9, expected_updated_at: "r9", tag: "pinote", clear: true }, undefined, undefined, ctx,
-    ),
-    /not both/,
-  );
   releaseAdd = () => {};
   const switched = tools.get("pinote_add").execute(
     "id", { text: "Later", select: true }, undefined, undefined, ctx,
@@ -379,6 +359,6 @@ test("add and tag require pinote 0.4.0 and select only when asked", async () => 
   await handlers.get("session_start")({}, ctx);
   releaseAdd();
   await assert.rejects(switched, /session changed/);
-  assert.equal((await tools.get("pinote_get").execute("id", {}, undefined, undefined, ctx)).details, null);
+  assert.equal((await tools.get("pinote_get_current").execute("id", {}, undefined, undefined, ctx)).details, null);
   assert.equal(status, undefined, "a replacement session must not inherit an in-flight add");
 });
