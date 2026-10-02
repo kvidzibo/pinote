@@ -349,7 +349,7 @@ export default function (pi: ExtensionAPI) {
         const chosen = await startTask(id, canAct);
         if (!chosen || !canAct()) return;
         const draft = ctx.ui.getEditorText();
-        const handoff = `Read the current task (#${chosen.id}) with pinote_get_current and work on it. Ask only if blocked. Save progress with pinote_update_current.`;
+        const handoff = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
         ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
         ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
       } catch (error) {

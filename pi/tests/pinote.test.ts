@@ -161,7 +161,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.ok(visibleWidth(status!) <= 60, "entire footer entry is capped in terminal columns");
   assert.match(stripVTControlCharacters(status!), /\.\.\.$/u);
   tasks[1].text = originalText;
-  const prompt = "Read the current task (#2) with pinote_get_current and work on it. Ask only if blocked. Save progress with pinote_update_current.";
+  const prompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
   assert.equal(draft, `Existing draft\n\n${prompt}`);
   const data = (await extension.tool("pinote_get_current", {})).details;
   const fields = { PR: "[Fix #42](https://example.org/pr/42)", Next: "Review" };
@@ -177,7 +177,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.equal(draft, "", "resumed sessions restore status, not editor contents");
   choices.push("Continue");
   await extension.command();
-  assert.equal(draft, prompt, "Continue inserts only the task-ID prompt, not saved fields");
+  assert.equal(draft, prompt, "Continue inserts only the read-and-summarize prompt, not saved fields");
   const resumed = (await extension.tool("pinote_get_current", {})).details;
   assert.equal(resumed.text, originalText);
   assert.deepEqual(resumed.agent_notes, fields);
