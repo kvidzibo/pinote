@@ -137,12 +137,12 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   await commands.get("pi-note-upgrade").handler("", commandCtx);
   assert.equal(installs, 1);
   assert.match(notices.at(-1)!.message, /Wait until Pi is idle/);
-  await assert.rejects(tools.get("pinote_get").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
+  await assert.rejects(tools.get("pinote_get_current").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
   cliVersion = "pinote 0.4.0";
   finishInstall();
   await setup;
   assert.ok(!taskCalls.some((args) => args.includes("selected") || args.includes(commandCtx.cwd)));
-  assert.equal((await tools.get("pinote_get").execute("get", {}, undefined, undefined, replacementCtx)).details, null);
+  assert.equal((await tools.get("pinote_get_current").execute("get", {}, undefined, undefined, replacementCtx)).details, null);
   await events.get("session_shutdown")({}, replacementCtx);
 });
 
@@ -195,6 +195,6 @@ test("tree navigation during setup restores the active branch", async () => {
   finishInstall();
   await setup;
   assert.match(status!, /Branch task/);
-  assert.equal((await tools.get("pinote_get").execute("get", {}, undefined, undefined, ctx)).details.id, 4);
+  assert.equal((await tools.get("pinote_get_current").execute("get", {}, undefined, undefined, ctx)).details.id, 4);
   await events.get("session_shutdown")({}, ctx);
 });

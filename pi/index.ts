@@ -10,7 +10,7 @@ import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLe
 const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. To show another footer field, set its Markdown value and append its label to Bar, one label per line. Links in that text are clickable. Do not list PR in Bar. Remove the field and its Bar line to drop it. Notes stay off the footer unless named in Bar.";
 const createGuidance = [
   "When the user gives work and no pinote task is selected, propose one note as `[tag] text` and ask before creating it. On no, continue without a note. On yes, call pinote_add with select true so it becomes this session's active task. Never add or select without a yes. If a task is already selected, do not replace it unless the user asks to switch.",
-  "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. pinote_tag changes an existing active or in-progress task after pinote_get; pass updated_at. Do not use pinote_update for tags or task text.",
+  "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. Tags are set when creating tasks with pinote_add; agent tools cannot retag existing tasks. Do not use pinote_update_current for tags or task text.",
 ];
 type Task = {
   id: number;
@@ -24,7 +24,6 @@ type Task = {
 type Summary = Pick<Task, "id" | "text" | "state" | "tag">;
 // The standard Pi footer accepts text, so ship a portable terminal glyph, not a theme icon.
 const noteIcon = readFileSync(new URL("./icons/note.txt", import.meta.url), "utf8").trim();
-const idSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const compatible = "Incompatible note CLI response. Install pinote 0.3.0+ and check note on PATH.";
 const validId = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -118,6 +117,7 @@ export default function (pi: ExtensionAPI) {
   };
   const writeTask = async (
     ctx: ExtensionContext, signal: AbortSignal | undefined, argv: string[], id?: number, minimum = "0.3.0",
+    canRun = () => true,
   ) => {
     if (pending) throw new Error("A pinote operation is already open. Retry after it finishes.");
     const operation = Symbol();
@@ -125,7 +125,7 @@ export default function (pi: ExtensionAPI) {
     const generation = epoch;
     refreshSerial++;
     try {
-      return requiredTask(await run(argv, signal, () => alive && generation === epoch, minimum), id);
+      return requiredTask(await run(argv, signal, () => alive && generation === epoch && canRun(), minimum), id);
     } finally {
       if (pending === operation) pending = undefined;
       if (alive && generation === epoch) await refresh(ctx);
@@ -162,7 +162,8 @@ export default function (pi: ExtensionAPI) {
   };
   const selected = async (_ctx: ExtensionContext, signal?: AbortSignal) => {
     const generation = epoch;
-    const canUse = () => alive && generation === epoch;
+    const branch = branchEpoch;
+    const canUse = () => alive && generation === epoch && branch === branchEpoch;
     await ensureCLI(signal, canUse);
     return currentTask(signal, canUse);
   };
@@ -348,7 +349,7 @@ export default function (pi: ExtensionAPI) {
         const chosen = await startTask(id, canAct);
         if (!chosen || !canAct()) return;
         const draft = ctx.ui.getEditorText();
-        const handoff = `Read task #${chosen.id} with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.`;
+        const handoff = `Read the current task (#${chosen.id}) with pinote_get_current and work on it. Ask only if blocked. Save progress with pinote_update_current.`;
         ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
         ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
       } catch (error) {
@@ -361,38 +362,40 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "pinote_get",
-    label: "Pinote get",
+    name: "pinote_get_current",
+    label: "Pinote get current",
     promptGuidelines: createGuidance,
-    description: "Read a pinote task and its Markdown agent fields/revision. Omit id to read this session's selected task; returns null when none is selected. Supply id to read another task. Use the returned updated_at for pinote_update and pinote_tag.",
-    parameters: Type.Object({ id: Type.Optional(idSchema) }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (params.id !== undefined && !validId(params.id)) throw new Error("id must be a positive safe integer.");
-      const result = params.id === undefined
-        ? await selected(ctx, signal)
-        : requiredTask(await run(["agent", "get", String(params.id)], signal), params.id);
-      return toolResult(result);
+    description: "Read this session's current pinote task and its Markdown agent fields/revision. Returns null when none is selected. No ID argument. Use the returned updated_at for pinote_update_current.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+      return toolResult(await selected(ctx, signal));
     },
   });
   pi.registerTool({
-    name: "pinote_update",
-    label: "Pinote update",
+    name: "pinote_update_current",
+    label: "Pinote update current",
     promptGuidelines: [handoffGuidance],
-    description: "Patch arbitrary agent handoff fields on an explicit pinote task. Read first with pinote_get; pass its updated_at as expected_updated_at. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
+    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
     parameters: Type.Object({
-      id: idSchema,
       expected_updated_at: Type.String({ minLength: 1 }),
       set: Type.Optional(Type.Record(Type.String(), Type.String())),
       remove: Type.Optional(Type.Array(Type.String())),
-    }),
+    }, { additionalProperties: false }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (!validId(params.id) || !text(params.expected_updated_at) || !params.expected_updated_at.trim()) {
-        throw new Error("id and expected_updated_at are required; read the task first.");
+      if (!text(params.expected_updated_at) || !params.expected_updated_at.trim()) {
+        throw new Error("expected_updated_at is required; read the current task first.");
       }
-      const argv = ["agent", "update", String(params.id), "--expected-updated-at", params.expected_updated_at,
+      const generation = epoch;
+      const branch = branchEpoch;
+      const id = selectedId;
+      const canRun = () => alive && generation === epoch && branch === branchEpoch && selectedId === id;
+      const current = await selected(ctx, signal);
+      if (!canRun()) throw new Error("Pinote operation cancelled: the session or selected task changed.");
+      if (!current) throw new Error("No selected pinote task. Select one with /pi-note first.");
+      const argv = ["agent", "update", String(current.id), "--expected-updated-at", params.expected_updated_at,
         "--set-json", JSON.stringify(params.set ?? {})];
       for (const label of params.remove ?? []) argv.push(`--remove=${label}`);
-      return toolResult(await writeTask(ctx, signal, argv, params.id));
+      return toolResult(await writeTask(ctx, signal, argv, current.id, "0.3.0", canRun));
     },
   });
   pi.registerTool({
@@ -442,27 +445,6 @@ export default function (pi: ExtensionAPI) {
         if (pending === operation) pending = undefined;
         if (alive && generation === epoch) await refresh(ctx);
       }
-    },
-  });
-  pi.registerTool({
-    name: "pinote_tag",
-    label: "Pinote tag",
-    description: "Set or clear the tag on an active or in-progress pinote task. Read first with pinote_get and pass updated_at as expected_updated_at. Provide tag or clear true, not both. A stale revision fails without writing. Does not change task text.",
-    parameters: Type.Object({
-      id: idSchema,
-      expected_updated_at: Type.String({ minLength: 1 }),
-      tag: Type.Optional(Type.String({ minLength: 1 })),
-      clear: Type.Optional(Type.Boolean()),
-    }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (!validId(params.id) || !text(params.expected_updated_at) || !params.expected_updated_at.trim()) {
-        throw new Error("id and expected_updated_at are required; read the task first.");
-      }
-      if ((params.tag !== undefined) === (params.clear === true)) throw new Error("Provide tag or clear true, not both.");
-      if (params.tag !== undefined && (!text(params.tag) || !params.tag.trim())) throw new Error("tag must be a non-empty name.");
-      const argv = ["agent", "tag", String(params.id), "--expected-updated-at", params.expected_updated_at];
-      argv.push(params.clear === true ? "--clear" : `--tag=${params.tag}`);
-      return toolResult(await writeTask(ctx, signal, argv, params.id, "0.4.0"));
     },
   });
 }

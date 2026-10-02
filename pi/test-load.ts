@@ -84,18 +84,26 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.deepEqual(suggestions.items.map((item: any) => item.value), ["pi-note"]);
     assert.ok(!notices.some((message) => message.includes("Run /pi-note-upgrade")));
     assert.deepEqual([...extension.tools.keys()].sort(), [
-      "pinote_add", "pinote_get", "pinote_tag", "pinote_tags", "pinote_update",
+      "pinote_add", "pinote_get_current", "pinote_tags", "pinote_update_current",
     ]);
+    const get = extension.tools.get("pinote_get_current").definition;
+    const update = extension.tools.get("pinote_update_current").definition;
+    assert.deepEqual(get.parameters.properties, {});
+    assert.equal(get.parameters.additionalProperties, false);
+    assert.ok(!("id" in update.parameters.properties));
+    assert.equal(update.parameters.additionalProperties, false);
+    assert.equal((await get.execute("unselected", {}, undefined, undefined, ctx)).details, null);
+    await assert.rejects(update.execute("unselected", { expected_updated_at: "unused", set: { Next: "No task" } },
+      undefined, undefined, ctx), /No selected pinote task/);
+    assert.deepEqual(JSON.parse(cli("agent", "get", "1")).agent_notes, {});
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
-    const prompt = "Read task #1 with pinote_get and work on it. Ask only if blocked. Save progress with pinote_update.";
+    const prompt = "Read the current task (#1) with pinote_get_current and work on it. Ask only if blocked. Save progress with pinote_update_current.";
     assert.equal(draft, `Existing draft\n\n${prompt}`);
-    const get = extension.tools.get("pinote_get").definition;
-    const update = extension.tools.get("pinote_update").definition;
     const task = JSON.parse((await get.execute("get", {}, undefined, undefined, ctx)).content[0].text);
     const pr = "[Task selection #42](https://github.com/org/repo/pull/42)";
-    const params = { id: task.id, expected_updated_at: task.updated_at, set: { PR: pr, Next: "Review", "--Flag": "arbitrary label" } };
+    const params = { expected_updated_at: task.updated_at, set: { PR: pr, Next: "Review", "--Flag": "arbitrary label" } };
     const updated = JSON.parse((await update.execute("update", params, undefined, undefined, ctx)).content[0].text);
     assert.equal(updated.agent_notes.PR, pr);
     assert.match(prStatuses.at(-1)!, /PR #42/);
@@ -103,7 +111,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.match(JSON.parse(cli("agent", "get", "1")).markdown, /# Agent/);
     assert.equal(updated.markdown, undefined, "model context must not duplicate structured fields as a Markdown body");
     await assert.rejects(update.execute("stale", params, undefined, undefined, ctx), /changed elsewhere/);
-    const removed = await update.execute("remove", { id: task.id, expected_updated_at: updated.updated_at,
+    const removed = await update.execute("remove", { expected_updated_at: updated.updated_at,
       remove: ["--Flag"] }, undefined, undefined, ctx);
     assert.equal(JSON.parse(removed.content[0].text).agent_notes["--Flag"], undefined);
     const created = JSON.parse((await extension.tools.get("pinote_add").definition.execute(
@@ -112,9 +120,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(created.tag, "pinote");
     assert.deepEqual(JSON.parse((await extension.tools.get("pinote_tags").definition.execute(
       "tags", {}, undefined, undefined, ctx)).content[0].text), ["pinote"]);
-    const cleared = JSON.parse((await extension.tools.get("pinote_tag").definition.execute(
-      "tag", { id: created.id, expected_updated_at: created.updated_at, clear: true }, undefined, undefined, ctx)).content[0].text);
-    assert.equal(cleared.tag, null);
+    assert.equal(JSON.parse((await get.execute("still-current", {}, undefined, undefined, ctx)).content[0].text).id, task.id,
+      "adding without select must preserve the current task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "added tasks must not bind the folder");
     await event(extension, "session_shutdown");
     extension = await load(); // New process-like extension state, same durable database.
@@ -125,8 +132,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     choice = "Continue";
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(draft, prompt);
-    const resumed = JSON.parse((await extension.tools.get("pinote_get").definition.execute(
-      "resume", { id: task.id }, undefined, undefined, ctx)).content[0].text);
+    const resumed = JSON.parse((await extension.tools.get("pinote_get_current").definition.execute(
+      "resume", {}, undefined, undefined, ctx)).content[0].text);
     assert.equal(resumed.text, "Resume the task");
     assert.deepEqual(resumed.agent_notes, { PR: pr, Next: "Review" });
     choice = "Done";
