@@ -96,8 +96,16 @@ Edits and tag changes retain the task ID and record old/new values in history;
   edits made while saving stay in the field. In the fully open view, the list scrolls
   to the newly saved task once it loads. List-refresh errors do not undo a saved task.
 - Shows each matching active note's **first line**, with literal text and wrapping for
-  long first lines. Multiline notes have an **eye/preview button** on the right;
-  single-line notes do not. Preview opens a scrollable, read-only popup with the
+  long first lines. Multiline notes and tasks with agent fields have an **eye/preview
+  button** on the right. A **blue eye with a dot** means an unread agent-field update;
+  its tooltip says **Unread agent update — click to view.** Opening that preview
+  scrolls to **Agent** and marks the displayed update as viewed. Updates arriving
+  while a preview is already open stay unread until it is reopened. Viewing is saved
+  across restarts in `gui-agent-read.json`, separately from task revisions/history;
+  ordinary text, tag, and state changes do not create unread agent updates. Existing
+  agent updates start unread if no viewed state is saved. Removing the last agent
+  field keeps the eye available until viewed, with a short removal explanation.
+  Preview opens a scrollable, read-only popup with the
   full text with basic Markdown: headings, bold/italic, lists, quotes, inline/fenced
   code, and web/email links. Line breaks and blank lines are retained. Select text
   and press **Ctrl+C** to copy the displayed text. Editing and list rows stay literal.
@@ -106,6 +114,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
   **Esc** or clicking outside dismisses the preview without closing the checklist.
   The preview's **pencil icon** opens the editor; viewing alone never changes the task
   or its history. The preview closes if the task leaves the list.
+  Visible tasks completed through Pi, an agent, or the CLI use the same brief green
+  checkmark highlight and fade/collapse as GUI completion (200 ms each), on the next
+  refresh. Removal, scheduling, and filtering never show a completion highlight.
+  Completions are not replayed at startup or when reopening a hidden checklist;
+  disabling GTK animations removes rows immediately.
   Set `markdown_preview = false` below to restore the original plain-text preview.
   Markdown uses the optional `gui` install extra; without its parser, previews stay plain text.
 - Right-clicking note text outlines that row while its context menu or tag submenu

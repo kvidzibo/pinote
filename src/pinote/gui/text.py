@@ -55,7 +55,16 @@ class NotePreview(Gtk.Window):
     # keeps the full preview visible without resizing the bottom-anchored list.
     __gsignals__ = {"closed": (GObject.SignalFlags.RUN_LAST, None, ())}
 
-    def __init__(self, button: Gtk.Button, note: Note, *, markdown: bool = True, on_edit=None):
+    def __init__(
+        self,
+        button: Gtk.Button,
+        note: Note,
+        *,
+        markdown: bool = True,
+        on_edit=None,
+        agent_update: bool = False,
+        on_viewed=None,
+    ):
         super().__init__(
             type=Gtk.WindowType.POPUP,
             transient_for=button.get_toplevel(),
@@ -66,6 +75,11 @@ class NotePreview(Gtk.Window):
         self.note_id = note.id
         self.markdown = markdown
         self.source_text: str | None = None
+        self.view_source = 0
+        self.on_viewed = on_viewed
+        self.opened_agent_event = note.agent_event_id if agent_update else 0
+        self.agent_offset = 0
+        self.removal_event = 0
         self.seat = self.get_display().get_default_seat()
         self.grabbed = False
         self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
@@ -73,7 +87,7 @@ class NotePreview(Gtk.Window):
         self.get_accessible().set_name(f"Preview of note {note.id}")
         self.body = Gtk.Label(xalign=0, yalign=0, selectable=True)
         self.body.connect("activate-link", self._activate_link)
-        self.update(note)
+        self.update(note, agent_update=agent_update)
         self.body.set_line_wrap(True)
         self.body.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.body.set_max_width_chars(40)
@@ -101,6 +115,7 @@ class NotePreview(Gtk.Window):
         self.connect("button-press-event", self._button_press)
         self.connect("grab-broken-event", lambda *_args: self.popdown())
         self.connect("destroy", self._release_grab)
+        self.connect("destroy", self._cancel_view)
 
     def popup(self) -> None:
         owner = self.button.get_toplevel()
@@ -132,6 +147,31 @@ class NotePreview(Gtk.Window):
             return
         self.body.grab_focus()
         self.body.select_region(0, 0)
+        if self.opened_agent_event:
+            self.view_source = GLib.idle_add(self._view_agent)
+
+    def _view_agent(self) -> bool:
+        if not self.get_mapped() or self.agent_event_id != self.opened_agent_event:
+            self.view_source = 0
+            return GLib.SOURCE_REMOVE
+        adjustment = self.scroll.get_vadjustment()
+        if self.body.get_allocated_height() <= 1 or adjustment.get_page_size() <= 1:
+            return GLib.SOURCE_CONTINUE
+        text = self.body.get_text()
+        index = len(text[: self.agent_offset].encode("utf-8"))
+        rect = self.body.get_layout().index_to_pos(index)
+        adjustment.set_value(
+            min(rect.y / Pango.SCALE, adjustment.get_upper() - adjustment.get_page_size())
+        )
+        self.view_source = 0
+        if self.on_viewed is not None:
+            self.on_viewed(self.note_id, self.opened_agent_event)
+        return GLib.SOURCE_REMOVE
+
+    def _cancel_view(self, _window) -> None:
+        if self.view_source:
+            GLib.source_remove(self.view_source)
+            self.view_source = 0
 
     def popdown(self) -> None:
         self.emit("closed")
@@ -167,8 +207,17 @@ class NotePreview(Gtk.Window):
                 LOGGER.warning("Cannot open preview link: %s", exc)
         return True  # Never let GTK launch other URI schemes through its default handler.
 
-    def update(self, note: Note) -> None:
+    def update(self, note: Note, *, agent_update: bool = False) -> None:
+        self.agent_event_id = note.agent_event_id
         source = note.markdown
+        if agent_update and not note.agent_notes:
+            self.removal_event = note.agent_event_id
+        if (
+            not note.agent_notes
+            and self.removal_event == note.agent_event_id
+            and self.removal_event
+        ):
+            source += "\n\n# Agent\nAgent fields were removed."
         if self.source_text == source:
             return  # Compare source, not rendered text, to preserve selection on polls.
         self.source_text = source
@@ -177,3 +226,18 @@ class NotePreview(Gtk.Window):
             self.body.set_text(source)
         else:
             self.body.set_markup(markup)
+        # The appended Agent heading follows the rendered task, not its source
+        # character count (Markdown syntax and Unicode change those offsets).
+        prefix_markup = render_markdown(note.text) if self.markdown else None
+        if prefix_markup:
+            # GtkLabel supports link tags; Pango.parse_markup does not.
+            prefix_label = Gtk.Label()
+            prefix_label.set_markup(prefix_markup)
+            prefix = prefix_label.get_text()
+            prefix_label.destroy()
+        else:
+            prefix = note.text
+        text = self.body.get_text()
+        heading = "\n\nAgent\n" if markup else "\n\n# Agent\n"
+        offset = text.find(heading, max(0, len(prefix) - 2))
+        self.agent_offset = offset + 2 if offset >= 0 else len(prefix)

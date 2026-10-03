@@ -2324,6 +2324,112 @@ def test_markdown_preview_copy_poll_links_and_opt_out(gtk, monkeypatch, markdown
         assert [event["action"] for event in store.history(note.id)] == ["add", "edit"]
 
 
+def test_unread_agent_eye_view_scroll_persistence_and_removal(gtk):
+    with Store(gtk.paths.database) as store:
+        note_id = store.add("Task heading\n" + "Existing details\n" * 50)
+        note = store.update_agent(
+            note_id,
+            {"Outcome": "Ready to review"},
+            [],
+            expected_updated_at=store.get(note_id).updated_at,
+        )
+        original_history = [dict(event) for event in store.history(note_id)]
+    window = gtk.open()
+    row = window.rows[note_id]
+    assert row.unread_agent
+    assert row.preview_button.get_accessible().get_name() == "Unread agent update — click to view."
+    icon, _size = row.preview_button.get_image().get_gicon()
+    assert (
+        icon.get_bytes().get_data()
+        == files("pinote.gui").joinpath("icons", "view-reveal-unread-symbolic.svg").read_bytes()
+    )
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and not row.unread_agent)
+    preview = window.preview
+    assert preview.scroll.get_vadjustment().get_value() > 0
+    wait_until(gtk.glib, lambda: (gtk.paths.data / "gui-agent-read.json").exists())
+    with Store(gtk.paths.database) as store:
+        assert store.get(note_id).updated_at == note.updated_at
+        assert [dict(event) for event in store.history(note_id)] == original_history
+    preview.popdown()
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    window = gtk.open(application)
+    row = window.rows[note_id]
+    assert not row.unread_agent
+    with Store(gtk.paths.database) as store:
+        store.edit(note_id, "Single line", expected_updated_at=store.get(note_id).updated_at)
+        store.update_agent(
+            note_id,
+            {"Outcome": "New result"},
+            [],
+            expected_updated_at=store.get(note_id).updated_at,
+        )
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and row.unread_agent)
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and not row.unread_agent)
+    with Store(gtk.paths.database) as store:
+        latest = store.update_agent(
+            note_id,
+            {"Outcome": "Arrived while viewing"},
+            [],
+            expected_updated_at=store.get(note_id).updated_at,
+        )
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and row.unread_agent)
+    assert window.agent_read.seen[note_id] < latest.agent_event_id
+    window.preview.popdown()
+    with Store(gtk.paths.database) as store:
+        store.update_agent(
+            note_id, {}, ["Outcome"], expected_updated_at=store.get(note_id).updated_at
+        )
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and row.note.agent_notes == {})
+    assert row.unread_agent and row.preview_button.get_visible()
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and not row.unread_agent)
+    assert "Agent fields were removed." in window.preview.body.get_text()
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.preview is not None  # Reading a removal does not dismiss its explanation.
+    window.preview.popdown()
+    assert not row.preview_button.get_visible()
+
+
+@pytest.mark.parametrize("external_action", ["done", "rm", "schedule"])
+def test_external_completion_uses_existing_animation_only_for_done(
+    gtk, animations, cli, external_action
+):
+    with Store(gtk.paths.database) as store:
+        store.add("Completed before launch")
+        store.transition(1, "done")
+        store.add("Changed by another frontend")
+        store.add("Still here")
+    window = gtk.open()
+    assert 1 not in window.rows
+    row = window.rows[2]
+    row.DONE_HOLD_MS = 1000  # Observe the existing hold without a timing-dependent race.
+    result = cli(
+        external_action, "2", *(["2099-01-01 12:00"] if external_action == "schedule" else [])
+    )
+    assert result.returncode == 0, result.stderr
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    if external_action == "done":
+        assert row.exiting and row.get_style_context().has_class("completed")
+        assert row.done.get_active() and not row.done.get_inconsistent()
+        assert window.rows[3].done.get_sensitive()
+    else:
+        assert 2 not in window.rows and not row.get_style_context().has_class("completed")
+    wait_until(gtk.glib, lambda: 2 not in window.rows)
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert set(window.rows) == {3}
+
+
 def test_agent_fields_enable_single_line_preview_and_refresh_links(gtk, monkeypatch):
     from pinote.gui.app import Gtk
 
@@ -2362,7 +2468,13 @@ def test_agent_fields_enable_single_line_preview_and_refresh_links(gtk, monkeypa
             note_id, {}, ["PR", "Next", "Literal &copy;"], expected_updated_at=note.updated_at
         )
     window._poll()
-    wait_until(gtk.glib, lambda: not window.pending and window.preview is None)
+    wait_until(gtk.glib, lambda: not window.pending and row.unread_agent)
+    assert row.preview_button.get_visible()
+    assert window.preview is not None
+    assert "Agent fields were removed." in window.preview.body.get_text()
+    window.preview.popdown()
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and not row.unread_agent)
     assert not row.preview_button.get_visible()
     with Store(gtk.paths.database) as store:
         assert store.get(note_id).text == original.text

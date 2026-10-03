@@ -226,6 +226,45 @@ def test_archive_restore_respects_lock_rolls_back_and_does_not_read_after_save(m
         assert [event["action"] for event in store.history()] == ["add", "rm", "restore"]
 
 
+def test_agent_event_identity_and_completed_id_filtering(model):
+    with Store(model.paths.database) as store:
+        agent = store.add("Agent task")
+        ordinary = store.add("Ordinary task")
+        store.update_agent(
+            agent, {"Result": "one"}, [], expected_updated_at=store.get(agent).updated_at
+        )
+        first_event_id = store.notes()[0].agent_event_id
+        store.update_agent(
+            agent, {"Result": "one"}, [], expected_updated_at=store.get(agent).updated_at
+        )
+        assert store.get(agent).agent_event_id == first_event_id
+        assert first_event_id > 0
+        store.edit(agent, "Edited task", expected_updated_at=store.get(agent).updated_at)
+        store.set_tag(agent, "tag", expected_updated_at=store.get(agent).updated_at)
+        assert store.notes()[0].agent_event_id == first_event_id
+        assert store.get(agent).agent_event_id == first_event_id
+        store.update_agent(agent, {}, ["Result"], expected_updated_at=store.get(agent).updated_at)
+        last_event_id = store.get(agent).agent_event_id
+        assert last_event_id > first_event_id
+        store.transition(agent, "start")
+        store.transition(agent, "done")
+        store.transition(ordinary, "done")
+        removed = store.add("Removed task")
+        store.transition(removed, "rm")
+        active = store.add("Active task")
+        scheduled = store.add("Scheduled task")
+        from datetime import UTC, datetime
+
+        store.schedule(scheduled, datetime(2099, 1, 1, tzinfo=UTC))
+    assert model.completed_ids({agent, ordinary, removed, active, scheduled, 999}) == {
+        agent,
+        ordinary,
+    }
+    assert model.completed_ids(set()) == set()
+    with Store(model.paths.database) as store:
+        assert store.get(agent).agent_event_id == last_event_id
+
+
 def test_application_identity_is_per_canonical_database(model, tmp_path):
     model.paths.data.mkdir()
     alias = tmp_path / "alias"

@@ -27,7 +27,7 @@ from pinote.gui.icons import (  # noqa: E402
 )
 from pinote.gui.model import ReminderModel, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
-from pinote.gui.state import FilterCache  # noqa: E402
+from pinote.gui.state import AgentReadCache, FilterCache  # noqa: E402
 from pinote.gui.tags import TagsWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
@@ -46,6 +46,7 @@ class NoteRow(Gtk.ListBoxRow):
         self.on_action = on_action
         self.deletion_marked = False
         self.exiting = False
+        self.unread_agent = False
         self.pause_source = 0
         self.settings_handler = 0
         self.on_dismissed = None
@@ -132,7 +133,23 @@ class NoteRow(Gtk.ListBoxRow):
         finally:
             self.done.handler_unblock(self.check_handler)
 
-    def update(self, note: Note, *, sensitive: bool) -> None:
+    def update(self, note: Note, *, sensitive: bool, unread_agent: bool | None = None) -> None:
+        if unread_agent is not None and unread_agent != self.unread_agent:
+            self.unread_agent = unread_agent
+            icon = "view-reveal-unread-symbolic" if unread_agent else "view-reveal-symbolic"
+            self.preview_button.set_image(icon_image(icon))
+        description = (
+            "Unread agent update — click to view."
+            if self.unread_agent
+            else f"Preview note {note.id}"
+        )
+        self.preview_button.set_tooltip_text(description)
+        self.preview_button.get_accessible().set_name(description)
+        self.preview_button.get_accessible().set_description(
+            "Show the unread agent update."
+            if self.unread_agent
+            else "Show the full multiline task."
+        )
         if note != self.note or note.state != "active":
             # Only unchanged empty tasks can keep a deletion confirmation.
             self.deletion_marked = False
@@ -156,7 +173,7 @@ class NoteRow(Gtk.ListBoxRow):
             self.reminder_icon.set_tooltip_text(due_text)
         self.reminder_icon.get_accessible().set_description(due_text or "")
         self.reminder_icon.set_visible(due_text is not None)
-        self.preview_button.set_visible("\n" in note.markdown)
+        self.preview_button.set_visible("\n" in note.markdown or self.unread_agent)
         self.preview_button.set_sensitive(not self.exiting)
         sensitive = sensitive and not self.exiting
         self.done.set_sensitive(sensitive)
@@ -288,6 +305,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.draft_revision = 0
         self.draft = DraftCache(model.paths.data / "gui-draft.txt")
         self.filter_cache = FilterCache(model.paths.data / "gui-filter.json")
+        self.agent_read = AgentReadCache(model.paths.data / "gui-agent-read.json")
+        self.agent_read_error: str | None = None
         self.filter_error: str | None = None
         self.draft_source = 0
         self.draft_error: str | None = None
@@ -480,6 +499,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.draft_error = f"Cannot restore the input draft: {exc}"
             self._error(self.draft_error, action=True)
         self.placeholder.set_visible(not self.entry.get_text())
+        try:
+            self.agent_read.load()
+        except (OSError, UnicodeError, ValueError) as exc:
+            self.agent_read_error = f"Cannot restore agent read state: {exc}"
+            self._error(self.agent_read_error, action=True)
         self.entry.get_buffer().connect("changed", self._draft_changed)
         self.entry.connect("activate", lambda _entry: self._add())
         self.add_button.connect("clicked", lambda _button: self._add())
@@ -783,7 +807,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _open_preview(self, note_id: int) -> None:
         row = self.rows.get(note_id)
-        if self.closed or row is None or row.exiting or "\n" not in row.note.markdown:
+        if (
+            self.closed
+            or row is None
+            or row.exiting
+            or ("\n" not in row.note.markdown and not row.unread_agent)
+        ):
             return
         if self.focus_source:
             GLib.source_remove(self.focus_source)
@@ -795,9 +824,45 @@ class ReminderWindow(Gtk.ApplicationWindow):
             row.note,
             markdown=self.config.markdown_preview,
             on_edit=self._edit_preview,
+            agent_update=row.unread_agent,
+            on_viewed=self._agent_viewed,
         )
         self.preview.connect("closed", self._close_preview)
         self.preview.popup()
+
+    def _agent_unread(self, note: Note) -> bool:
+        return note.agent_event_id > self.agent_read.seen.get(note.id, 0)
+
+    def _agent_viewed(self, note_id: int, event_id: int) -> None:
+        if self.closed:
+            return
+        self.agent_read.mark(note_id, event_id)
+        row = self.rows.get(note_id)
+        if row is not None:
+            row.update(
+                row.note,
+                sensitive=not self.action_pending,
+                unread_agent=self._agent_unread(row.note),
+            )
+        self.worker.submit(self._persist_agent_read)
+
+    def _persist_agent_read(self) -> None:
+        try:
+            self.agent_read.save()
+        except (OSError, UnicodeError) as exc:
+            self.agent_read_error = (
+                f"Cannot save agent read state; updates may reappear as unread: {exc}"
+            )
+            LOGGER.error("GUI: %s", self.agent_read_error)
+            if not self.closed:
+                GLib.idle_add(self._show_agent_read_error)
+        else:
+            self.agent_read_error = None
+
+    def _show_agent_read_error(self) -> bool:
+        if not self.closed and self.agent_read_error:
+            self._error(self.agent_read_error, action=True)
+        return GLib.SOURCE_REMOVE
 
     def _close_preview(self, preview: NotePreview) -> None:
         if self.preview is preview:
@@ -1169,7 +1234,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         # No backlog of polls, and no poll can overtake a pending mutation.
         if not self.pending:
-            self._submit(lambda: (self.model.notes(), self.model.tags()), action=None)
+            known_ids = {note.id for note in self.notes_snapshot}
+
+            def snapshot():
+                notes = self.model.notes()
+                missing = known_ids - {note.id for note in notes}
+                return notes, self.model.tags(), self.model.completed_ids(missing)
+
+            self._submit(snapshot, action=None)
         return GLib.SOURCE_CONTINUE
 
     def _keep_entry_height(self, scroll, _allocation) -> None:
@@ -1316,7 +1388,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 if action[1] != "tag":
                     self._render(result.notes, action=action if result.changed else None)
             else:
-                notes, self.tags = result
+                notes, self.tags, completed_ids = result
                 if self.tag_filter is not None:
                     remaining = self.tag_filter & {"", *self.tags}
                     if remaining != self.tag_filter:
@@ -1324,7 +1396,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                         self._remember_filter()
                 if self.creation_tag is not None and self.creation_tag not in self.tags:
                     self._select_creation_tag(None)
-                self._render(notes)
+                self._render(notes, completed_ids=completed_ids)
         except BlockingIOError:
             self._error("Another note command is busy. Try again.", action=mutation)
         except (NoteError, OSError, sqlite3.Error) as exc:
@@ -1354,7 +1426,13 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self._show_filter_error()
         return GLib.SOURCE_REMOVE
 
-    def _render(self, notes: list[Note], *, action: tuple[int, str] | None = None) -> None:
+    def _render(
+        self,
+        notes: list[Note],
+        *,
+        action: tuple[int, str] | None = None,
+        completed_ids: set[int] | None = None,
+    ) -> None:
         progress = {note.id for note in notes if note.state == "in_progress"}
         focused = self._has_checklist_focus()
         if self.loaded_notes and focused:
@@ -1380,6 +1458,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 continue  # A poll must not interrupt or restart a saved click's animation.
             if action and note_id == action[0]:
                 row.dismiss(action[1], self._remove_row)
+            elif completed_ids and note_id in completed_ids:
+                row.dismiss("done", self._remove_row)
             else:
                 self._remove_row(row)
         for note in notes:
@@ -1393,10 +1473,18 @@ class ReminderWindow(Gtk.ApplicationWindow):
             row = self.rows[note.id]
             if row.exiting:
                 row.cancel_dismissal()
-            row.update(note, sensitive=not self.action_pending)
+            unread = self._agent_unread(note)
+            row.update(note, sensitive=not self.action_pending, unread_agent=unread)
             if self.preview is not None and self.preview.note_id == note.id:
-                if "\n" in note.markdown:
-                    self.preview.update(note)
+                if (
+                    "\n" in note.markdown
+                    or unread
+                    or (
+                        self.preview.removal_event
+                        and self.preview.removal_event == note.agent_event_id
+                    )
+                ):
+                    self.preview.update(note, agent_update=unread)
                 else:
                     self._close_preview(self.preview)
         hidden_tasks = bool(self.notes_snapshot) and not notes
@@ -1526,6 +1614,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # latest snapshot on the worker, never re-save a stale editor snapshot.
         self.worker.submit(self._persist_draft)
         self.worker.submit(self._persist_filter)
+        self.worker.submit(self._persist_agent_read)
         # Closing must not silently drop a click queued behind a poll. The
         # bounded worker drains pending operations before the process exits.
         self.worker.shutdown(wait=False)

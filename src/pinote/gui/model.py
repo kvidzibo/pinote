@@ -28,6 +28,17 @@ class ReminderModel:
                     store.activate_due()
             return store.notes()
 
+    def completed_ids(self, note_ids: set[int]) -> set[int]:
+        if not note_ids:
+            return set()
+        with Store(self.paths.database, timeout=0.1) as store:
+            placeholders = ",".join("?" for _ in note_ids)
+            rows = store.connection.execute(
+                f"SELECT id FROM notes WHERE state = 'done' AND id IN ({placeholders})",
+                tuple(note_ids),
+            )
+            return {row[0] for row in rows}
+
     def reminders(self) -> list[Note]:
         with Store(self.paths.database, timeout=0.1) as store:
             return store.scheduled_notes()
