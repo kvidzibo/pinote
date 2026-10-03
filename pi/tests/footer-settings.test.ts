@@ -72,16 +72,19 @@ test("task prompt edits are multiline validated drafts, saved atomically without
   const enter = () => ui.handleInput("\r");
   ui.focused = true;
   down(3); enter();
-  assert.match(ui.render(80).join("\n"), /Shift\+Enter newline/);
+  assert.match(ui.render(80).join("\n"), /Shift\+Enter\/Ctrl\+J newline/);
   ui.handleInput("\x03"); // clear the multiline editor
   enter();
   assert.match(ui.render(80).join("\n"), /nonblank string/);
   ui.handleInput("Review 日本語");
   ui.handleInput("\x1b[13;2u"); // Shift+Enter
   ui.handleInput("Summarize only.");
+  ui.handleInput("\n"); // legacy Ctrl+J also matches confirmation, but must insert a newline
+  ui.handleInput("Wait for approval.");
+  assert.match(ui.render(80).join("\n"), /Task prompt\n/);
   for (const width of [16, 40, 100]) assert.ok(ui.render(width).every((line) => visibleWidth(line) <= width));
   enter();
-  assert.match(ui.render(80).join("\n"), /Task prompt: Review 日本語 Summarize only/);
+  assert.match(ui.render(80).join("\n"), /Task prompt: Review 日本語 Summarize only\. Wait for approval\./);
   assert.deepEqual(config.handoffPrompt, defaultHandoffPrompt, "editing never mutates the supplied config");
   assert.equal(readFileSync(path, "utf8"), document.raw, "applying to draft never writes configuration");
   enter(); ui.handleInput("\x03"); ui.handleInput("Discard this"); ui.handleInput("\x1b");

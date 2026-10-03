@@ -110,7 +110,7 @@ values or unreadable/malformed configuration suppress offers; interactive startu
 warns until you fix the file and reload. No project-local configuration is read.
 
 In `/pi-note → Settings`, select **Task prompt** to edit the text inserted after
-selection or **Continue**. **Shift+Enter** adds a newline; **Enter** applies it to
+selection or **Continue**. **Shift+Enter** or **Ctrl+J** adds a newline; **Enter** applies it to
 the settings draft, **Ctrl+C** clears it, and **Esc** cancels that edit. Select **Save settings** to
 persist it globally; leaving Settings with **Esc** or **Tab** discards the draft.
 Saving never changes existing editor input or submits anything.

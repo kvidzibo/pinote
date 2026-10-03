@@ -143,6 +143,7 @@ export class FooterSettings {
       else if (this.editor) {
         if (matchesKey(data, "ctrl+c")) this.editor.setText("");
         else if (this.matches(data, "tui.select.cancel")) this.editor = undefined;
+        else if (this.matches(data, "tui.input.newLine")) this.editor.handleInput(data);
         else if (this.matches(data, "tui.select.confirm")) {
           this.prompt = parseHandoffPrompt(this.editor.getExpandedText());
           this.editor = undefined;
@@ -170,7 +171,7 @@ export class FooterSettings {
     const lines = [this.theme.fg("accent", "Pinote — Global Settings"), this.theme.fg("dim", "Tasks (Tab) · Settings · Fields")];
     if (this.editor) {
       lines.push(this.theme.fg("accent", "Task prompt"), ...this.editor.render(width),
-        this.theme.fg("dim", "Enter apply · Shift+Enter newline · Ctrl+C clear · Esc cancel"));
+        this.theme.fg("dim", "Enter apply · Shift+Enter/Ctrl+J newline · Ctrl+C clear · Esc cancel"));
     } else if (this.input) {
       lines.push(this.theme.fg("accent", this.input.heading), ...this.input.widget.render(width),
         this.theme.fg("dim", "Enter apply to draft · Esc cancel"));
