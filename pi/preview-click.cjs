@@ -4,12 +4,12 @@ const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const urlPattern = /^pi-note-preview:\/\/([1-9][0-9]*)-([0-9a-f]{8})\/([0-9a-f]{32})\/([1-9][0-9]*)\/([0-9a-f]{32})(?:\/(yes|no))?$/;
+const urlPattern = /^pi-note-preview:\/\/([1-9][0-9]*)-([0-9a-f]{8})\/([0-9a-f]{32})\/([1-9][0-9]*)\/([0-9a-f]{32})(?:\/(yes|no|done))?$/;
 
 function parse(value) {
   if (typeof value !== 'string' || value.length > 180) throw new Error('Preview or suggestion unavailable');
   const m = urlPattern.exec(value);
-  if (!m || m[0] !== value || (m[6] && m[4] !== '1')) throw new Error('Preview or suggestion unavailable');
+  if (!m || m[0] !== value || (m[6] && m[6] !== 'done' && m[4] !== '1')) throw new Error('Preview or suggestion unavailable');
   const pid = Number(m[1]), id = Number(m[4]);
   if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(id) || pid <= 0 || id <= 0) throw new Error('Preview or suggestion unavailable');
   return { pid, tag: m[2], capability: m[3], id, nonce: m[5], choice: m[6] };

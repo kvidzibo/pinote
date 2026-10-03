@@ -15,11 +15,12 @@ export function createPreviewBridge() {
   let ready = false;
   let taskId: number | null = null;
   let callback: ((signal: AbortSignal) => Promise<boolean>) | undefined;
+  let complete: (() => Promise<boolean>) | undefined;
   let nonce: string | undefined;
   let suggestionCallback: ((choice: "yes" | "no") => Promise<boolean>) | undefined;
   let suggestionNonce: string | undefined;
   const clients = new Set<Socket>();
-  const invalidate = () => { taskId = null; callback = undefined; nonce = undefined; };
+  const invalidate = () => { taskId = null; callback = undefined; complete = undefined; nonce = undefined; };
   const invalidateSuggestion = () => { suggestionCallback = undefined; suggestionNonce = undefined; };
   const cleanup = async () => {
     ready = false;
@@ -66,6 +67,17 @@ export function createPreviewBridge() {
             dispatched = true;
             const input = data.toString("utf8");
             const previewMatch = /^preview ([0-9a-f]{32}) ([1-9][0-9]*) ([0-9a-f]{32})\n$/u.exec(input);
+            const doneMatch = /^done ([0-9a-f]{32}) ([1-9][0-9]*) ([0-9a-f]{32})\n$/u.exec(input);
+            if (doneMatch && doneMatch[0] === input && doneMatch[1] === capability && Number(doneMatch[2]) === taskId &&
+                doneMatch[3] === nonce && complete) {
+              const invoke = complete;
+              const requestNonce = nonce;
+              Promise.resolve().then(() => !closed && !request.signal.aborted && nonce === requestNonce && complete === invoke
+                ? invoke() : false)
+                .then((accepted) => { if (!client.destroyed) client.end(accepted === true ? "accepted\n" : "rejected\n"); },
+                  () => { if (!client.destroyed) client.end("rejected\n"); });
+              return;
+            }
             const suggestionMatch = /^(yes|no) ([0-9a-f]{32}) 1 ([0-9a-f]{32})\n$/u.exec(input);
             const id = previewMatch ? Number(previewMatch[2]) : NaN;
             if (previewMatch && previewMatch[0] === input && previewMatch[1] === capability && Number.isSafeInteger(id) &&
@@ -111,17 +123,22 @@ export function createPreviewBridge() {
       })();
       return starting;
     },
-    setTask(id: number | null, preview: (signal: AbortSignal) => Promise<boolean>): void {
+    setTask(id: number | null, preview: (signal: AbortSignal) => Promise<boolean>, done?: () => Promise<boolean>): void {
       if (closed) return;
       if (id !== null && (!Number.isSafeInteger(id) || id <= 0)) throw new Error("Invalid preview task");
       if (id !== taskId) nonce = id === null ? undefined : randomBytes(16).toString("hex");
       taskId = id;
       callback = id === null ? undefined : preview;
+      complete = id === null ? undefined : done;
     },
     invalidate,
     url(): string | undefined {
       if (!ready || closed || !socketPath || taskId === null || !nonce) return;
       return `pi-note-preview://${basename(socketPath, ".sock")}/${capability}/${taskId}/${nonce}`;
+    },
+    doneUrl(): string | undefined {
+      const url = api.url();
+      return url && complete ? `${url}/done` : undefined;
     },
     setSuggestion(suggestion: (choice: "yes" | "no") => Promise<boolean>): void {
       if (closed) return;

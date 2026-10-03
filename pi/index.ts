@@ -1,6 +1,7 @@
-import { getAgentDir, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Editor, Markdown, Text, truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
+import { getAgentDir, getMarkdownTheme, type ExtensionAPI, type ExtensionContext, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Container, Editor, Markdown, Text, truncateToWidth, visibleWidth, type Keybinding } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
@@ -126,6 +127,9 @@ export default function (pi: ExtensionAPI) {
     view.addChild(new Markdown(clean(entry.data.markdown), 0, 0, getMarkdownTheme()));
     return view;
   });
+  const runtimeToken = randomBytes(16).toString("hex");
+  let completionDispatch: { token: string; finish: (accepted: boolean) => void } | undefined;
+  const cancelCompletionDispatch = () => completionDispatch?.finish(false);
   let previewBridge: ReturnType<typeof createPreviewBridge> | undefined;
   let suggestion: { text: string; tag?: string } | undefined;
   let offerDeclined = false;
@@ -266,12 +270,18 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch && serial === refreshSerial) {
         const previewId = current?.id ?? null;
         const previewBranch = branchEpoch;
-        previewBridge?.setTask(previewId, (signal) => alive && generation === epoch && previewBranch === branchEpoch &&
-          selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false));
+        const token = `${runtimeToken}:${generation}:${previewBranch}:${previewId}`;
+        const canClick = () => alive && generation === epoch && previewBranch === branchEpoch && selectedId === previewId;
+        previewBridge?.setTask(previewId, (signal) => canClick() ? preview(ctx, signal) : Promise.resolve(false),
+          () => canClick() ? dispatchCompletion(ctx, token) : Promise.resolve(false));
         const url = previewBridge?.url();
-        // Truncate before linking so the task label, including configured overflow, is clickable.
-        const label = current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, footerConfig.titleWidth, "...") : undefined;
-        ctx.ui.setStatus("pinote", current ? (label && url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label) : suggestionStatus(ctx));
+        const doneUrl = previewBridge?.doneUrl();
+        const link = (label: string, target?: string) => target ? `\x1b]8;;${target}\x07${label}\x1b]8;;\x07` : label;
+        // Keep the completion control ahead of variable text, within the title budget.
+        const control = footerConfig.titleWidth >= 12 ? "✓ Done" : "✓";
+        const budget = footerConfig.titleWidth - visibleWidth(control) - 1;
+        const label = current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, budget, "...") : undefined;
+        ctx.ui.setStatus("pinote", current ? `${link(control, doneUrl)} ${link(label ?? "", url)}` : suggestionStatus(ctx));
         watcher.update(ctx, current);
       }
     } catch {
@@ -285,12 +295,6 @@ export default function (pi: ExtensionAPI) {
     selected,
     footerConfig: () => footerConfig,
     get: async (id) => requiredTask(await run(["agent", "get", String(id)]), id),
-    done: async (current, canAct) => {
-      const result = requiredTask(await run([
-        "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
-      ], undefined, canAct), current.id);
-      if (result.state !== "done") throw new Error(compatible);
-    },
     claim: () => {
       if (pending) return;
       const operation = Symbol();
@@ -327,6 +331,77 @@ export default function (pi: ExtensionAPI) {
       if (pending === operation) pending = undefined;
     }
   };
+  const dispatchCompletion = (ctx: ExtensionContext, token: string): Promise<boolean> => {
+    if (!ctx.isIdle() || pending || completionDispatch) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const finish = (accepted: boolean) => {
+        clearTimeout(timer);
+        if (completionDispatch?.token === token) completionDispatch = undefined;
+        resolve(accepted);
+      };
+      const timer = setTimeout(() => {
+        finish(false);
+        if (alive && activeContext === ctx) ctx.ui.notify("Pinote completion could not start. Use /pi-note-done.", "warning");
+      }, 4000);
+      completionDispatch = { token, finish };
+      try { pi.sendUserMessage(`/pi-note-done ${token}`, { expandPromptTemplates: true }); }
+      catch { finish(false); }
+    });
+  };
+  const completeSelected = async (args: string, ctx: ExtensionCommandContext, expected?: Task) => {
+      const token = args.trim();
+      if (token && (completionDispatch?.token !== token || token !== `${runtimeToken}:${epoch}:${branchEpoch}:${selectedId}`)) {
+        completionDispatch?.finish(false);
+        return;
+      }
+      if (!ctx.hasUI || ctx.mode !== "tui" || pending || !ctx.isIdle()) {
+        completionDispatch?.finish(false);
+        if (ctx.hasUI) ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
+        return;
+      }
+      const operation = Symbol();
+      pending = operation;
+      completionDispatch?.finish(true);
+      const generation = epoch;
+      const branch = branchEpoch;
+      const id = selectedId;
+      const canAct = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
+      try {
+        const current = await currentTask(undefined, canAct);
+        if (!canAct()) return;
+        if (!current) { ctx.ui.notify("Select a task with /pi-note first.", "warning"); return; }
+        if (expected && (current.id !== expected.id || current.updated_at !== expected.updated_at)) {
+          throw new Error("Task changed elsewhere. Reopen /pi-note before completing it.");
+        }
+        refreshSerial++;
+        const completed = requiredTask(await run([
+          "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
+        ], undefined, canAct), current.id);
+        if (completed.state !== "done") throw new Error(compatible);
+        if (!canAct()) throw new Error("The session or selection changed; completion may have committed. Read the task before retrying.");
+        remember(null, branch);
+        // Refresh first, but do not replace a session that changed while reading.
+        await refresh(ctx);
+        if (!alive || generation !== epoch || branch !== branchEpoch || selectedId !== null || !ctx.isIdle()) {
+          throw new Error("Task completed, but the session changed. Start a new session manually.");
+        }
+        // Session replacement invalidates ctx; reload only through the fresh command context.
+        const result = await ctx.newSession({ withSession: async (fresh) => {
+          fresh.ui.setEditorText("");
+          await fresh.reload();
+        } });
+        if (result.cancelled) ctx.ui.notify("Task completed; new session was cancelled.", "warning");
+      } catch (error) {
+        if (alive && generation === epoch) ctx.ui.notify(`Pinote: ${clean(String(error))}`, "error");
+      } finally {
+        if (pending === operation) pending = undefined;
+        if (alive && generation === epoch) await refresh(ctx);
+      }
+  };
+  pi.registerCommand("pi-note-done", {
+    description: "Complete the selected task, start a new session, and reload Pi",
+    handler: (args, ctx) => completeSelected(args, ctx),
+  });
   pi.registerCommand("pi-note-preview", {
     description: "Display the selected task locally without sending it to the model",
     handler: async (args, ctx) => {
@@ -337,6 +412,7 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_start", async (_event, ctx) => {
     setupAbort?.abort();
+    cancelCompletionDispatch();
     // Retire old polling before bridge teardown/startup yields to its scheduled callbacks.
     watcher.stop();
     clearSuggestion(activeContext ?? ctx);
@@ -382,6 +458,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_tree", async (_event, ctx) => {
     if (!alive) return;
     branchEpoch++;
+    cancelCompletionDispatch();
     clearSuggestion(ctx);
     previewBridge?.invalidate();
     const generation = branchEpoch;
@@ -395,6 +472,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => { await refresh(ctx); });
   pi.on("session_shutdown", async (_event, ctx) => {
     setupAbort?.abort();
+    cancelCompletionDispatch();
     clearSuggestion(ctx);
     alive = false;
     activeContext = undefined;
@@ -505,13 +583,8 @@ export default function (pi: ExtensionAPI) {
           if (!action || !canAct()) return;
           if (action === "Settings") { settings = true; continue; }
           if (action === "Done" && current) {
-            refreshSerial++;
-            const completed = requiredTask(await run([
-              "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
-            ], undefined, canAct), current.id);
-            if (completed.state !== "done") throw new Error(compatible);
-            if (currentSession() && branch === branchEpoch) remember(null, branch);
-            if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
+            if (pending === operation) pending = undefined;
+            await completeSelected("", ctx, current);
             return;
           }
           let id: number;
@@ -559,7 +632,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_update_current",
     label: "Pinote update current",
     promptGuidelines: [handoffGuidance],
-    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Read pinote_fields for the user's global field names, labels, link switches, formats, and widths; set those field names when their values are relevant. Fields without values stay hidden. When footer.fields is unset, set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
+    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge notifications in interactive Pi. Read pinote_fields for the user's global field names, labels, link switches, formats, and widths; set those field names when their values are relevant. Fields without values stay hidden. When footer.fields is unset, set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
     parameters: Type.Object({
       expected_updated_at: Type.String({ minLength: 1 }),
       set: Type.Optional(Type.Record(Type.String(), Type.String())),

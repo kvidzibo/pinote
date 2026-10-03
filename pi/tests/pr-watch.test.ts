@@ -3,7 +3,7 @@ import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
 import { createPRWatcher, taskPR, type WatchedTask } from "../pr-watch.ts";
 
-test("current-task PR watcher confirms safely, reports already-done, and stops with the session", async (t) => {
+test("merged PRs notify without completing, and acknowledgements survive resume", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const oldInterval = process.env.PINOTE_PR_POLL_SECONDS;
   process.env.PINOTE_PR_POLL_SECONDS = "10";
@@ -29,11 +29,8 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   let idle = true;
   let failures = false;
   let checks = 0;
-  let completions = 0;
   let confirmations = 0;
   let locked = false;
-  let reply = true;
-  let duringConfirm: (() => void) | undefined;
   let pendingFetch: (() => Promise<void>) | undefined;
   const entries: any[] = [];
   const notices: string[] = [];
@@ -45,7 +42,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
       theme: { fg: (color: string, value: string) => { assert.equal(color, "mdLink"); return `\x1b[34m${value}\x1b[39m`; } },
       setStatus: (key: string, value?: string) => statuses.set(key, value),
       notify: (message: string) => notices.push(message),
-      confirm: async () => { confirmations++; duringConfirm?.(); return reply; },
+      confirm: async () => { confirmations++; throw new Error("unexpected confirmation"); },
     },
   };
   const pi: any = {
@@ -62,11 +59,6 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   const watcher = createPRWatcher(pi, {
     selected: async () => selected && structuredClone(selected),
     get: async (id) => { assert.equal(id, item.id); return structuredClone(item); },
-    done: async (current, canAct) => {
-      assert.ok(canAct());
-      assert.equal(current.updated_at, item.updated_at);
-      completions++; item.state = "done"; selected = null;
-    },
     claim: () => { if (locked) return; locked = true; return () => { locked = false; }; },
     refresh: async () => { watcher.update({ ...ctx }, selected); },
   });
@@ -75,8 +67,8 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   watcher.start(ctx);
   await tick(0);
   assert.equal(checks, 1);
-  assert.match(statuses.get("pinote-links")!, /\x1b\]8;;https:\/\/github.com\/org\/repo\/pull\/123\x1b\\PR #123/iu);
-  assert.match(statuses.get("pinote-links")!, /Dashboard: \x1b\[34m\x1b\]8;;https:\/\/example.com\/d\/app\x1b\\Metrics/);
+  assert.match(statuses.get("pinote-links")!, /\x1b\]8;;https:\/\/github\.com\/org\/repo\/pull\/123\x1b\\PR #123/iu);
+  assert.match(statuses.get("pinote-links")!, /Dashboard: \x1b\[34m\x1b\]8;;https:\/\/example\.com\/d\/app\x1b\\Metrics/);
   assert.match(statuses.get("pinote-links")!, /Next: Review/);
   assert.doesNotMatch(statuses.get("pinote-links")!, /Missing/);
   assert.equal(statuses.get("pinote-pr"), undefined, "the old PR status key stays clear");
@@ -86,62 +78,55 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   await tick(1); await tick();
   assert.equal(notices.length, 1, "failed polls warn once");
   failures = false; state = "MERGED"; idle = false;
-  await tick(); assert.equal(confirmations, 0, "wait for idle");
+  await tick(); assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 0, "wait for idle");
   idle = true; locked = true;
-  await tick(); assert.equal(confirmations, 0, "do not overlap /pinote or tools");
+  await tick(); assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 0, "do not overlap /pinote or tools");
   locked = false;
-  duringConfirm = () => { item.updated_at = "r2"; };
   await tick();
-  assert.equal(completions, 0, "a changed revision needs a new confirmation");
-  duringConfirm = undefined;
-  await tick();
-  assert.equal(completions, 1);
-  assert.equal(statuses.get("pinote-links"), undefined, "completion immediately hides the PR link");
+  const message = "PR #123 was merged. Complete the task with the footer ✓ action or /pi-note-done.";
+  assert.equal(notices.at(-1), message);
+  assert.equal(item.state, "in_progress", "merged PR notification never completes the task");
+  assert.equal(confirmations, 0, "merged PR notification never asks for confirmation");
+  assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 1, "persist one acknowledgement");
   const acknowledgedChecks = checks;
   await tick();
   assert.equal(checks, acknowledgedChecks, "do not repeatedly query an acknowledged merge");
-  assert.equal(confirmations, 2);
+  assert.equal(notices.filter((notice) => notice === message).length, 1);
 
-  // Reload after completion: selection is gone, but the saved watcher identity remains.
+  // Reload with the active task selected: persisted acknowledgement suppresses another notice.
   watcher.start(ctx); await tick(0);
-  assert.equal(statuses.get("pinote-links"), undefined, "restored completed watches stay hidden");
-  assert.equal(confirmations, 2);
+  assert.equal(notices.filter((notice) => notice === message).length, 1);
+  assert.equal(confirmations, 0);
 
-  // Restore an active selection and resume: persistent session entries suppress the same notice.
-  item.state = "in_progress"; selected = item;
+  // Completion clears selection but keeps the watch, including after reload.
+  entries.length = 0; state = "OPEN";
   watcher.start(ctx); await tick(0);
-  assert.equal(confirmations, 2);
-  entries.length = 0;
-  watcher.start(ctx);
-  state = "OPEN"; await tick(0);
-  item.state = "done"; selected = null; state = "MERGED";
+  item.state = "done"; selected = null;
   watcher.update(ctx, selected);
-  assert.equal(statuses.get("pinote-links"), undefined, "selection clearing hides the link before the next poll");
-  await tick();
-  assert.equal(statuses.get("pinote-links"), undefined, "merge polling cannot repaint the retained task");
+  assert.equal(statuses.get("pinote-links"), undefined, "completion immediately hides the PR link");
+  watcher.start(ctx); state = "MERGED"; await tick(0);
   assert.match(notices.at(-1)!, /PR #123 was merged and the task is already completed/);
-  assert.equal(completions, 1);
-  assert.equal(confirmations, 2);
+  assert.equal(statuses.get("pinote-links"), undefined, "retained completed watches never repaint footer links");
+  assert.equal(item.state, "done");
+  assert.equal(confirmations, 0);
 
-  entries.length = 0; item.state = "active"; selected = item; reply = false;
-  watcher.start(ctx); await tick(0); await tick();
-  assert.equal(confirmations, 3, "decline is acknowledged without completing");
-  assert.equal(completions, 1);
-
-  entries.length = 0;
-  duringConfirm = () => { selected = { ...item, id: 2, agent_notes: {} }; };
-  reply = true; watcher.start(ctx); await tick(0);
-  assert.equal(completions, 1, "selection switch during confirmation cannot complete the old task");
-  assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 0);
-  assert.equal(statuses.get("pinote-links"), undefined);
-
-  duringConfirm = undefined; selected = item;
+  // A changed selection during the GitHub request is not acknowledged or notified.
+  entries.length = 0; item.state = "active"; selected = item;
   let release!: () => void;
   pendingFetch = () => new Promise<void>((resolve) => { release = resolve; });
   watcher.start(ctx); await tick(0);
-  const beforeShutdown = confirmations;
+  selected = { ...item, id: 2, agent_notes: {} };
+  release(); await tick();
+  assert.equal(entries.filter((entry) => entry.customType === "pinote-pr-acknowledged").length, 0);
+  assert.equal(notices.filter((notice) => notice === message).length, 1);
+
+  // Late network results cannot notify or persist after shutdown.
+  selected = item;
+  watcher.start(ctx); await tick(0);
+  const beforeShutdownNotices = notices.length;
   watcher.stop(); release(); await tick();
-  assert.equal(confirmations, beforeShutdown, "late network results cannot prompt after shutdown");
+  assert.equal(notices.length, beforeShutdownNotices);
+  assert.equal(confirmations, 0);
   assert.equal(statuses.get("pinote-links"), undefined);
   pendingFetch = undefined;
   const stoppedChecks = checks;
@@ -155,101 +140,4 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
   watcher.update(ctx, selected); await tick();
   assert.equal(checks, stoppedChecks);
   assert.equal(statuses.get("pinote-links"), undefined, "completion hides the link even with polling disabled");
-});
-
-test("Kitty tab progress lasts only while merge confirmation needs input", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-  const oldInterval = process.env.PINOTE_PR_POLL_SECONDS;
-  const oldKitty = process.env.KITTY_WINDOW_ID;
-  const oldTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-  process.env.PINOTE_PR_POLL_SECONDS = "10";
-  process.env.KITTY_WINDOW_ID = "1";
-  Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
-  t.after(() => {
-    if (oldInterval === undefined) delete process.env.PINOTE_PR_POLL_SECONDS;
-    else process.env.PINOTE_PR_POLL_SECONDS = oldInterval;
-    if (oldKitty === undefined) delete process.env.KITTY_WINDOW_ID;
-    else process.env.KITTY_WINDOW_ID = oldKitty;
-    if (oldTTY) Object.defineProperty(process.stdout, "isTTY", oldTTY);
-    else Reflect.deleteProperty(process.stdout, "isTTY");
-  });
-  const writes: string[] = [];
-  const originalWrite = process.stdout.write.bind(process.stdout);
-  t.mock.method(process.stdout, "write", (value: unknown, ...args: unknown[]) => {
-    if (typeof value === "string" && value.startsWith("\x1b]9;4;")) { writes.push(value); return true; }
-    return Reflect.apply(originalWrite, process.stdout, [value, ...args]);
-  });
-  const busy = "\x1b]9;4;3\x1b\\";
-  const clear = "\x1b]9;4;0\x1b\\";
-  const task: WatchedTask = { id: 1, state: "active", updated_at: "r1", agent_notes: { PR: "https://github.com/org/repo/pull/1" } };
-  const entries: any[] = [];
-  let idle = false;
-  let confirmations = 0;
-  let reply!: (value: boolean) => void;
-  let reject!: (error: Error) => void;
-  const ctx: any = {
-    cwd: "/tmp/project", mode: "tui", hasUI: true, isIdle: () => idle,
-    sessionManager: { getBranch: () => entries },
-    ui: {
-      theme: { fg: (_color: string, value: string) => value },
-      setStatus() {}, notify() {},
-      confirm: (_title: string, _message: string, options: { signal: AbortSignal }) => {
-        assert.equal(options.signal.aborted, false);
-        confirmations++;
-        return new Promise<boolean>((resolve, fail) => { reply = resolve; reject = fail; });
-      },
-    },
-  };
-  const watcher = createPRWatcher({
-    appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
-    exec: async () => ({ code: 0, killed: false, stdout: JSON.stringify({ state: "MERGED", url: task.agent_notes.PR }) }),
-  } as any, {
-    selected: async () => task, get: async () => task,
-    done: async () => { throw new Error("declined prompts must not complete tasks"); },
-    claim: () => () => {}, refresh: async () => {},
-  });
-  t.after(() => watcher.stop());
-  const tick = async (ms = 0) => { t.mock.timers.tick(ms); for (let n = 0; n < 12; n++) await setImmediate(); };
-  watcher.start(ctx); await tick();
-  assert.deepEqual(writes, [], "busy Pi must not signal a prompt");
-  idle = true; await tick(10_000);
-  assert.deepEqual(writes, [busy]);
-  await tick(125);
-  assert.deepEqual(writes, [busy, busy], "refresh progress while waiting for input");
-  assert.equal(confirmations, 1);
-  reply(false); await tick();
-  assert.deepEqual(writes, [busy, busy, clear]);
-  await tick(20_000);
-  assert.equal(writes.length, 3, "acknowledged merges never keep or restart progress");
-
-  entries.length = 0;
-  watcher.start(ctx); await tick();
-  const oldReply = reply;
-  watcher.stop();
-  assert.equal(writes.at(-1), clear, "shutdown clears even if the dialog ignores abort");
-  const stopped = writes.length;
-  await tick(1000);
-  assert.equal(writes.length, stopped);
-  watcher.start(ctx); await tick();
-  assert.equal(writes.at(-1), busy);
-  const restarted = writes.length;
-  oldReply(false); await tick();
-  assert.equal(writes.length, restarted, "an old dialog cannot clear a replacement session's indicator");
-  reject(new Error("dialog failed")); await tick();
-  assert.equal(writes.at(-1), clear, "dialog errors also clear progress");
-  watcher.stop();
-
-  for (const terminal of ["other", "redirected"]) {
-    if (terminal === "other") delete process.env.KITTY_WINDOW_ID;
-    else {
-      process.env.KITTY_WINDOW_ID = "1";
-      Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
-    }
-    entries.length = 0;
-    const before: number = writes.length;
-    watcher.start(ctx); await tick();
-    reply(false); await tick();
-    watcher.stop();
-    assert.equal(writes.length, before, "other terminals and redirected stdout get no Kitty sequences");
-  }
 });

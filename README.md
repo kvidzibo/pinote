@@ -141,7 +141,9 @@ Markdown handoff fields appear under **Agent** in the GTK preview without changi
 the task text.
 
 A GitHub `PR` field adds a footer link and configurable merge polling in
-interactive Pi, with confirmation before completion. No cross-machine sync is provided.
+interactive Pi, with passive merge notifications. Its **✓ Done** footer action completes
+the task, starts a new session, and reloads Pi without a completion prompt.
+No cross-machine sync is provided.
 
 ## Important constraints
 

@@ -91,8 +91,8 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
     await click(accept);
     await assert.rejects(click(accept), "repeated yes cannot duplicate notes");
     await assert.rejects(click(dismiss), "cross from accepted suggestion is stale");
-    assert.match(stripVTControlCharacters(status!), /^📌 \[pinote\] Add 日本語/u);
-    assert.doesNotMatch(stripVTControlCharacters(status!), /✓|✕/u);
+    assert.match(stripVTControlCharacters(status!), /^✓ Done 📌 \[pinote\] Add 日本語/u);
+    assert.doesNotMatch(stripVTControlCharacters(status!), /Suggested:|✓ Add|✕/u);
     assert.equal(list().length, 1);
     const chosen = (await get()).details;
     assert.equal(chosen.state, "in_progress");

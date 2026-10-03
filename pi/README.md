@@ -68,8 +68,21 @@ task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows `📌 [tag] Task title` without replacing other footers.
-The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the pin and tag). Overflow ends with `...`.
+The normal Pi status area shows `✓ Done 📌 [tag] Task title` without replacing other footers.
+Click **✓ Done** to complete the selected task, start a fresh unselected session, and reload Pi.
+There is no completion prompt. `/pi-note-done` and the task menu's **Done** do the same thing.
+Pi must be idle with no other Pinote operation open. Completion is revision-guarded;
+failed or stale writes never restart Pi. If another extension cancels the new session,
+the task stays completed and Pi reports the cancellation.
+Starting a new session clears its editor draft; finish or save unfinished input first.
+The reload uses the new session's fresh context, not the retired session.
+
+![Task completion action in Pi's bottom bar](../docs/images/pi-task-completion.png)
+
+The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the completion action, pin and tag). Overflow ends with `...`.
+Small title widths shorten the action to **✓**; `/pi-note-done` remains available
+when links are unavailable or the combined footer is clipped. The action reuses the
+[Kitty preview handler](#display-only-preview); fullscreen Kitty needs **Ctrl+Shift+click**.
 The pin glyph is bundled in `icons/note.txt`; it uses terminal fonts, not a Nerd Font or icon theme.
 
 ### Display-only preview
@@ -336,21 +349,18 @@ Allowed intervals are 10–86400 seconds. Configured links remain visible when p
 Network/authentication failures warn once until recovery and retry next interval.
 No polling runs in print/RPC mode or after Pi exits.
 
-On merge, Pi waits until idle and asks **Mark this task completed?** In Kitty,
-indeterminate progress animates the tab while the prompt awaits input (with Kitty's
-default progress-aware tab title or a working/ready renderer). Progress clears on
-response, cancellation, or shutdown; other terminals and redirected output are untouched.
-Confirmation uses the same guarded CLI Done operation as `/pi-note`; declining leaves
-the task unchanged. If it is already done, Pi says **PR #123 was merged and the task is
-already completed**, without completing it again. Completion clears the selection
-and hides the footer link, even with polling disabled. The background watch remains
-until another task is selected, the link is removed, or Pi exits. Removed/scheduled tasks are no longer watched.
+On merge, Pi waits until idle and shows a passive notification pointing to **✓ Done**
+or `/pi-note-done`. It never opens a completion dialog or completes the task automatically.
+If the task is already done, Pi says **PR #123 was merged and the task is already
+completed**, without completing it again. Completion clears selection and footer
+links, even with polling disabled. Starting a new session retires the old watch.
+Otherwise the background watch remains until another task is selected, the link
+is removed, or Pi exits. Removed/scheduled tasks are no longer watched.
 
 The watched task ID/link and merge acknowledgements are saved in the Pi session,
 so `/reload` and session resume retain completed-task watches without repeating
-acknowledged prompts. A new session can notify again for a
-selected task. Task or PR changes during confirmation cannot complete a different
-task. No completion-hook system is added; this uses Pinote's existing Done flow.
+acknowledged notifications. A new session can notify again for a selected task.
+The footer action is always available for selected tasks, whether or not they have a PR.
 A separate branch-based PR-status extension may show a duplicate link; disable it
 if you only want task-linked PRs.
 

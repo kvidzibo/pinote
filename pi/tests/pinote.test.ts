@@ -44,6 +44,10 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   const ctx: any = {
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
     sessionManager: { getBranch: () => entries },
+    newSession: async (options: any) => {
+      await options.withSession({ ui: ctx.ui, reload: async () => {} });
+      return { cancelled: false };
+    },
     ui: {
       theme: { fg: (_color: string, value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
