@@ -14,7 +14,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { preview: click, socketPathFor } = createRequire(import.meta.url)("../preview-click.cjs");
 
-test("native eye preview renders complete local data but never reaches requests or summaries", async () => {
+test("native task-link preview renders complete local data but never reaches requests or summaries", async () => {
   const temp = mkdtempSync(join(tmpdir(), "pinote-preview-test-"));
   const overrides = {
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
@@ -65,7 +65,9 @@ test("native eye preview renders complete local data but never reaches requests 
     loaded.runtime.appendEntry = (type: string, data: unknown) => session.appendCustomEntry(type, data);
     loaded.runtime.sendMessage = loaded.runtime.sendUserMessage = () => { throw new Error("preview must not send messages"); };
     await event("session_start");
-    assert.match(stripVTControlCharacters(status!), /^👁 📌 \[pinote\] Preview 日本語$/u);
+    assert.match(stripVTControlCharacters(status!), /^📌 \[pinote\] Preview 日本語$/u);
+    assert.equal(status, `\x1b]8;;${link()}\x07📌 [pinote] Preview 日本語\x1b]8;;\x07`,
+      "the entire visible task is linked, without an eye icon or trailing linked whitespace");
     assert.ok(visibleWidth(status!) <= 60);
     const url = link();
     const beforeContext = session.buildSessionContext().messages;

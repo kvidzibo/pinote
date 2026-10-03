@@ -130,7 +130,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(draft, "Existing draft");
     rmSync(config, { recursive: true });
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "👁 📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
     const prompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
     assert.equal(draft, `Existing draft\n\n${prompt}`);
@@ -163,7 +163,11 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     extension = await load(); // Reload rereads footer config without changing task data.
     draft = "";
     await event(extension, "session_start");
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "👁 📌 [Untagged] Resum...");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume ...");
+    const linkedTitle = /^\x1b\]8;;[^\x07]+\x07([^\x07]*)\x1b\]8;;\x07$/u.exec(statuses.at(-1)!);
+    assert.ok(linkedTitle, "the task link encloses the entire truncated status");
+    assert.equal(stripVTControlCharacters(linkedTitle[1]), "📌 [Untagged] Resume ...",
+      "overflow remains inside the task link, allowing truncation's ANSI style resets");
     assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "#42 · Next: R...");
     const configuredFields = (await extension.tools.get("pinote_fields").definition.execute(
       "fields", {}, undefined, undefined, ctx)).details;
@@ -182,7 +186,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     writeFileSync(config, '{"footer":{"titleWidth":false}}');
     extension = await load();
     await event(extension, "session_start");
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "👁 📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume the task");
     assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "PR #42");
     assert.match(notices.at(-1)!, /using default Pinote footer settings/);
     // Exercise configuration through the real loader/CLI, including edits without reload.
