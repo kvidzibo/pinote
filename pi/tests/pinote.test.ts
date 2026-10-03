@@ -58,8 +58,9 @@ test("task selection, handoff, guarded Done and tools stay session-local without
           resolve(choice === "pick" ? "Continue" : choice); return;
         }
         if (choice === "save-fields") {
-          resolve({ titleWidth: 60, fieldWidth: 30, maxFields: 4,
-            fields: [{ name: "Next", label: "", link: false, format: "<value>" }] }); return;
+          resolve({ footer: { titleWidth: 60, fieldWidth: 30, maxFields: 4,
+            fields: [{ name: "Next", label: "", link: false, format: "<value>" }] },
+            handoffPrompt: "Read the current Pinote task. Summarize your understanding, but don’t start work yet." }); return;
         }
         if (choice === "older") { resolve(1); return; }
         picker.handleInput(choice === "pick" ? "\r" : "\x1b");

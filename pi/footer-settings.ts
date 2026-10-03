@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Input, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { defaultFooterField, parseFooterConfig, type FooterConfig, type FooterField } from "./footer-config.ts";
+import { Editor, Input, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { defaultFooterField, parseFooterConfig, parseHandoffPrompt, type PinoteSettings, type FooterConfig, type FooterField } from "./footer-config.ts";
 
 type Matches = (data: string, action: string) => boolean;
 type Row = { label: string; action: () => void };
@@ -38,10 +38,13 @@ export class TaskMenu {
 
 export class FooterSettings {
   private draft: FooterConfig;
+  private prompt: string;
+  private editor?: Editor;
+  private createEditor: () => Editor;
   private knownFields: string[];
   private theme: Theme;
   private matches: Matches;
-  private done: (result: FooterConfig | "tasks" | undefined) => void;
+  private done: (result: PinoteSettings | "tasks" | undefined) => void;
   private requestRender: () => void;
   private index = 0;
   private field?: FooterField;
@@ -49,15 +52,21 @@ export class FooterSettings {
   private error = "";
   private hasFocus = false;
 
-  constructor(config: FooterConfig, knownFields: string[], theme: Theme, matches: Matches,
-    done: (result: FooterConfig | "tasks" | undefined) => void, requestRender: () => void) {
-    this.draft = structuredClone(config);
+  constructor(config: PinoteSettings, knownFields: string[], theme: Theme, matches: Matches,
+    done: (result: PinoteSettings | "tasks" | undefined) => void, requestRender: () => void, createEditor: () => Editor) {
+    this.draft = structuredClone(config.footer);
+    this.prompt = config.handoffPrompt;
+    this.createEditor = createEditor;
     this.draft.fields ??= [];
     this.knownFields = [...new Set(knownFields)].filter((name) => name !== "Bar");
     this.theme = theme; this.matches = matches; this.done = done; this.requestRender = requestRender;
   }
   get focused() { return this.hasFocus; }
-  set focused(value: boolean) { this.hasFocus = value; if (this.input) this.input.widget.focused = value; }
+  set focused(value: boolean) {
+    this.hasFocus = value;
+    if (this.input) this.input.widget.focused = value;
+    if (this.editor) this.editor.focused = value;
+  }
 
   private ask(heading: string, value: string, apply: (value: string) => void) {
     const widget = new Input();
@@ -80,6 +89,12 @@ export class FooterSettings {
         this.draft = parseFooterConfig({ footer: candidate });
       }),
     }));
+    rows.push({ label: `Task prompt: ${display(this.prompt)}`, action: () => {
+      this.editor = this.createEditor();
+      this.editor.disableSubmit = true;
+      this.editor.setText(this.prompt);
+      this.editor.focused = this.hasFocus;
+    } });
     const configured = this.draft.fields!.map((field) => field.name);
     for (const name of [...configured, ...this.knownFields.filter((name) => !configured.includes(name))]) {
       rows.push({ label: `Field: ${display(name)}${configured.includes(name) ? "" : " (not configured)"}`, action: () => this.edit(name) });
@@ -87,7 +102,7 @@ export class FooterSettings {
     rows.push({ label: "+ Add field", action: () => this.ask("Field name", "", (value) => {
       const field = this.validate(defaultFooterField(value));
       this.edit(field.name);
-    }) }, { label: "Save settings", action: () => this.done(parseFooterConfig({ footer: this.draft })) },
+    }) }, { label: "Save settings", action: () => this.done({ footer: parseFooterConfig({ footer: this.draft }), handoffPrompt: parseHandoffPrompt(this.prompt) }) },
     { label: "Return to tasks", action: () => this.done("tasks") });
     return rows;
   }
@@ -126,7 +141,15 @@ export class FooterSettings {
     this.error = "";
     try {
       if (isTab(data)) this.done("tasks");
-      else if (this.input) {
+      else if (this.editor) {
+        if (matchesKey(data, "ctrl+c")) this.editor.setText("");
+        else if (this.matches(data, "tui.select.cancel")) this.editor = undefined;
+        else if (this.matches(data, "tui.input.newLine")) this.editor.handleInput(data);
+        else if (this.matches(data, "tui.select.confirm")) {
+          this.prompt = parseHandoffPrompt(this.editor.getExpandedText());
+          this.editor = undefined;
+        } else this.editor.handleInput(data);
+      } else if (this.input) {
         if (this.matches(data, "tui.select.cancel")) this.input = undefined;
         else if (this.matches(data, "tui.select.confirm")) {
           const input = this.input;
@@ -147,7 +170,10 @@ export class FooterSettings {
   }
   render(width: number) {
     const lines = [this.theme.fg("accent", "Pinote — Global Settings"), this.theme.fg("dim", "Tasks (Tab) · Settings · Fields")];
-    if (this.input) {
+    if (this.editor) {
+      lines.push(this.theme.fg("accent", "Task prompt"), ...this.editor.render(width),
+        this.theme.fg("dim", "Enter apply · Shift+Enter/Ctrl+J newline · Ctrl+C clear · Esc cancel"));
+    } else if (this.input) {
       lines.push(this.theme.fg("accent", this.input.heading), ...this.input.widget.render(width),
         this.theme.fg("dim", "Enter apply to draft · Esc cancel"));
     } else {
@@ -164,7 +190,7 @@ export class FooterSettings {
     lines.push(this.theme.fg("dim", "Tab: tasks, discard draft · Save settings: persist globally"));
     return lines.map((line) => truncateToWidth(line, width));
   }
-  invalidate() { this.input?.widget.invalidate(); }
+  invalidate() { this.input?.widget.invalidate(); this.editor?.invalidate(); }
 }
 
 export function withSettingsTab<T extends { handleInput?(data: string): void; render(width: number): string[]; invalidate(): void; focused?: boolean }>(

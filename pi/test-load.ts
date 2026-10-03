@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
-import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, getKeybindings } from "@earendil-works/pi-tui";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
@@ -46,10 +46,17 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       addAutocompleteProvider: (wrapper: any) => autocompleteWrappers.push(wrapper),
       confirm: async () => { throw new Error("compatible setup must not ask for confirmation"); },
       custom: async (factory: any) => new Promise((resolve) => {
-        const picker = factory({ requestRender() {} }, ctx.ui.theme, {
-          matches: (data: string, action: string) => (data === "\r" && action === "tui.select.confirm") ||
-            (data === "\x1b[B" && action === "tui.select.down"),
+        const picker = factory({ terminal: { rows: 24 }, requestRender() {} }, ctx.ui.theme, {
+          matches: (data: string, action: string) => getKeybindings().matches(data, action as any),
         }, resolve);
+        if (picker.render(100).join("\n").includes("Global Settings")) {
+          for (let i = 0; i < 3; i++) picker.handleInput("\x1b[B");
+          picker.handleInput("\r"); picker.handleInput("\x03");
+          picker.handleInput("\x1b[200~Read the selected task.\nExplain Settings 日本語; wait.\x1b[201~");
+          picker.handleInput("\r");
+          while (!picker.render(100).some((line: string) => line === "> Save settings")) picker.handleInput("\x1b[B");
+          picker.handleInput("\r"); return;
+        }
         if (picker.render(100).join("\n").includes("Continue")) {
           const index = ["Continue", "Done", "Switch task", "Settings"].indexOf(choice === "pick" ? "Continue" : choice);
           for (let i = 0; i < index; i++) picker.handleInput("\x1b[B");
@@ -187,6 +194,18 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     draft = "";
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(draft, prompt, "a missing key keeps the default");
+    choice = "Settings";
+    draft = "Preserve existing input";
+    const beforeSettings = JSON.parse(cli("agent", "get", "1"));
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.equal(draft, "Preserve existing input");
+    assert.deepEqual(JSON.parse(cli("agent", "get", "1")), beforeSettings);
+    assert.match(notices.at(-1)!, /Global Pinote settings saved/);
+    const savedPrompt = "Read the selected task.\nExplain Settings 日本語; wait.";
+    assert.equal(JSON.parse(readFileSync(config, "utf8")).handoffPrompt, savedPrompt);
+    choice = "Continue";
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.equal(draft, `Preserve existing input\n\n${savedPrompt}`, "Settings prompt applies without reload");
     const beforeInvalid = JSON.parse(cli("agent", "get", "1"));
     const selectionsBeforeInvalid = entries.filter((entry) => entry.customType === "pinote-selection").length;
     const configNotices = notices.length;

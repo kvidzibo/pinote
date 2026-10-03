@@ -1,11 +1,11 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
+import { Editor, truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
-import { defaultFooterConfig, effectiveFooterFields, loadFooterConfig, readFooterDocument, saveFooterConfig, type FooterConfig } from "./footer-config.ts";
+import { defaultFooterConfig, defaultHandoffPrompt, effectiveFooterFields, loadFooterConfig, parseHandoffPrompt, readFooterDocument, saveFooterConfig, type FooterConfig, type PinoteSettings } from "./footer-config.ts";
 import { FooterSettings, TaskMenu, withSettingsTab } from "./footer-settings.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
@@ -40,7 +40,6 @@ const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-
 const firstLine = (task: Summary) => clean(task.text.split("\n", 1)[0]).replace(/\s+/gu, " ").trim();
 const title = (task: Summary) => truncateToWidth(`#${task.id} ${firstLine(task)}`, 60);
 
-const defaultHandoffPrompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
 function readConfig(): Record<string, unknown> {
   const path = join(getAgentDir(), "pi-note.json");
   let raw: string;
@@ -77,12 +76,7 @@ function creationGuidance(): { guidelines: string[]; error?: string } {
 
 function handoffPrompt(): string {
   const config = readConfig();
-  const path = join(getAgentDir(), "pi-note.json");
-  if (!("handoffPrompt" in config)) return defaultHandoffPrompt;
-  if (!text(config.handoffPrompt) || !config.handoffPrompt.trim()) {
-    throw new Error(`handoffPrompt in ${path} must be a nonblank string without control characters (except tabs/newlines).`);
-  }
-  return config.handoffPrompt;
+  return "handoffPrompt" in config ? parseHandoffPrompt(config.handoffPrompt) : defaultHandoffPrompt;
 }
 
 function parse(raw: string): unknown {
@@ -360,7 +354,7 @@ export default function (pi: ExtensionAPI) {
   registerInstallCommand("pi-note-upgrade");
 
   pi.registerCommand("pi-note", {
-    description: "Continue, complete, switch tasks, or edit global footer settings (Tab)",
+    description: "Continue, complete, switch tasks, or edit global settings (Tab)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
       if (args.trim()) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
@@ -381,14 +375,24 @@ export default function (pi: ExtensionAPI) {
         while (canAct()) {
           if (settings) {
             const document = readFooterDocument();
-            const config = { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) };
-            const edited = await ctx.ui.custom<FooterConfig | "tasks" | undefined>((tui, theme, kb, done) =>
+            const root = document.raw === null ? {} : JSON.parse(document.raw);
+            const config: PinoteSettings = {
+              footer: { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) },
+              handoffPrompt: "handoffPrompt" in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt,
+            };
+            const edited = await ctx.ui.custom<PinoteSettings | "tasks" | undefined>((tui, theme, kb, done) =>
               new FooterSettings(config, Object.keys(current?.agent_notes ?? {}).filter((name) => name !== "Bar"),
-                theme, (data, action) => kb.matches(data, action as Keybinding), done, () => tui.requestRender()));
+                theme, (data, action) => kb.matches(data, action as Keybinding), done, () => tui.requestRender(),
+                () => new Editor(tui, {
+                  borderColor: (line) => theme.fg("accent", line),
+                  selectList: { selectedPrefix: (line) => theme.fg("accent", line), selectedText: (line) => theme.fg("accent", line),
+                    description: (line) => theme.fg("muted", line), scrollInfo: (line) => theme.fg("dim", line),
+                    noMatch: (line) => theme.fg("warning", line) },
+                })));
             if (!canAct() || edited === undefined) return;
             if (edited === "tasks") { settings = false; continue; }
-            footerConfig = saveFooterConfig(edited, document.raw);
-            ctx.ui.notify("Global Pinote footer settings saved.", "info");
+            footerConfig = saveFooterConfig(edited.footer, document.raw, edited.handoffPrompt);
+            ctx.ui.notify("Global Pinote settings saved.", "info");
             return;
           }
           const action = current
