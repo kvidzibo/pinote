@@ -1,21 +1,51 @@
 {
   "name": "pi-note",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
-  "keywords": ["pi-package", "tasks", "notes"],
-  "engines": { "node": ">=22.19.0" },
+  "keywords": [
+    "pi-package",
+    "tasks",
+    "notes"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kvidzibo/pinote.git",
     "directory": "pi"
   },
   "homepage": "https://github.com/kvidzibo/pinote/tree/main/pi#readme",
-  "bugs": { "url": "https://github.com/kvidzibo/pinote/issues" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
-  "files": ["index.ts", "pr-watch.ts", "footer-links.ts", "footer-config.ts", "footer-settings.ts", "task-picker.ts", "setup.ts", "preview-bridge.ts", "preview-click.cjs", "icons", "kitty", "README.md", "LICENSE"],
-  "pi": { "extensions": ["./index.ts"] },
+  "bugs": {
+    "url": "https://github.com/kvidzibo/pinote/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "files": [
+    "index.ts",
+    "pr-watch.ts",
+    "footer-links.ts",
+    "footer-config.ts",
+    "footer-settings.ts",
+    "task-picker.ts",
+    "task-suggestion.ts",
+    "setup.ts",
+    "preview-bridge.ts",
+    "preview-click.cjs",
+    "icons",
+    "kitty",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "test:unit": "node --test --experimental-strip-types tests/*.test.ts",
