@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Editor, getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { defaultFooterField, defaultHandoffPrompt, parseHandoffPrompt, saveFooterConfig, readFooterDocument, type FooterConfig, type PinoteSettings } from "../footer-config.ts";
-import { FooterSettings, TaskMenu, withSettingsTab } from "../footer-settings.ts";
+import { FooterSettings, TaskMenu, withSettingsTab, type SettingsResult } from "../footer-settings.ts";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ const createEditor = () => new Editor({ terminal: { rows: 24 }, requestRender() 
 test("global field settings autosave blank labels, PR formatting, links, add, remove and Tab", () => {
   const config: FooterConfig = { titleWidth: 60, fieldWidth: 60, maxFields: 4, fields: [defaultFooterField("PR")] };
   const original = structuredClone(config);
-  let result: "tasks" | undefined;
+  let result: SettingsResult;
   let saved: PinoteSettings | undefined;
   const ui = new FooterSettings({ footer: config, handoffPrompt: defaultHandoffPrompt }, ["PR", "Next"], theme, matches,
     (value) => { result = value; }, () => {}, createEditor, (value) => { saved = value; });
@@ -64,6 +64,26 @@ test("global field settings autosave blank labels, PR formatting, links, add, re
   wrapper.handleInput("\t"); assert.equal(tabbed, true);
 });
 
+test("root action options follow Add field without shifting existing configuration rows", () => {
+  let result: string | undefined;
+  const actions = ["preview", "done", "yes", "no", "setup", "upgrade"] as const;
+  const ui = new FooterSettings({ footer: { titleWidth: 60, fieldWidth: 60, maxFields: 4, fields: [] }, handoffPrompt: defaultHandoffPrompt },
+    [], theme, matches, (value) => { result = value; }, () => {}, createEditor, () => {},
+    actions.slice(0, 2).map((result) => ({ label: `Action ${result}`, result })));
+  const rows = ui.render(100).join("\n");
+  assert.ok(rows.indexOf("+ Add field") < rows.indexOf("Action preview"));
+  assert.ok(rows.indexOf("Action done") < rows.indexOf("Return to tasks"));
+  assert.match(rows, /Title width: 60/);
+  assert.match(rows, /Task prompt:/);
+  for (const action of actions) {
+    const current = new FooterSettings({ footer: { titleWidth: 60, fieldWidth: 60, maxFields: 4, fields: [] }, handoffPrompt: defaultHandoffPrompt },
+      [], theme, matches, (value) => { result = value; }, () => {}, createEditor, () => {}, [{ label: `Action ${action}`, result: action }]);
+    for (let i = 0; i < 5; i++) current.handleInput("\x1b[B");
+    current.handleInput("\r");
+    assert.equal(result, action);
+  }
+});
+
 test("task prompt edits autosave validated multiline text atomically without touching other settings", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "pi-note-prompt-"));
   const oldDirectory = process.env.PI_CODING_AGENT_DIR;
@@ -77,7 +97,7 @@ test("task prompt edits autosave validated multiline text atomically without tou
   writeFileSync(path, JSON.stringify({ taskOfferPolicy: "never", other: 9 }));
   const document = readFooterDocument();
   const config = { footer: { ...document.config, fields: [] }, handoffPrompt: defaultHandoffPrompt };
-  let result: "tasks" | undefined;
+  let result: SettingsResult;
   let savedSettings: PinoteSettings | undefined;
   let expectedRaw = document.raw;
   const save = (settings: PinoteSettings) => {

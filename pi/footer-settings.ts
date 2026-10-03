@@ -4,6 +4,9 @@ import { defaultFooterField, parseFooterConfig, parseHandoffPrompt, type PinoteS
 
 type Matches = (data: string, action: string) => boolean;
 type Row = { label: string; action: () => void };
+export type SettingsAction = "preview" | "done" | "yes" | "no" | "setup" | "upgrade";
+export type SettingsResult = "tasks" | SettingsAction | undefined;
+export type SettingsOption = { label: string; result: SettingsAction };
 const isTab = (data: string) => matchesKey(data, "tab") || matchesKey(data, "shift+tab");
 const display = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ");
 const actions = ["Continue", "Done", "Switch task", "Settings"];
@@ -44,7 +47,9 @@ export class FooterSettings {
   private knownFields: string[];
   private theme: Theme;
   private matches: Matches;
-  private done: (result: "tasks" | undefined) => void;
+  private done: (result: SettingsResult) => void;
+  private options: SettingsOption[];
+  private configurationError?: string;
   private save: (settings: PinoteSettings) => void;
   private requestRender: () => void;
   private index = 0;
@@ -54,8 +59,10 @@ export class FooterSettings {
   private hasFocus = false;
 
   constructor(config: PinoteSettings, knownFields: string[], theme: Theme, matches: Matches,
-    done: (result: "tasks" | undefined) => void, requestRender: () => void, createEditor: () => Editor,
-    save: (settings: PinoteSettings) => void) {
+    done: (result: SettingsResult) => void, requestRender: () => void, createEditor: () => Editor,
+    save: (settings: PinoteSettings) => void, options: SettingsOption[] = [], configurationError?: string) {
+    this.options = options;
+    this.configurationError = configurationError;
     this.draft = structuredClone(config.footer);
     this.prompt = config.handoffPrompt;
     this.createEditor = createEditor;
@@ -97,7 +104,12 @@ export class FooterSettings {
     this.field = structuredClone(this.draft.fields!.find((field) => field.name === name) ?? defaultFooterField(name));
     this.index = 0; this.error = "";
   }
+  private actionRows(): Row[] {
+    return [...this.options.map(({ label, result }) => ({ label, action: () => this.done(result) })),
+      { label: "Return to tasks", action: () => this.done("tasks") }];
+  }
   private rootRows(): Row[] {
+    if (this.configurationError) return this.actionRows();
     const rows: Row[] = (["titleWidth", "fieldWidth", "maxFields"] as const).map((key) => ({
       label: `${{ titleWidth: "Title width", fieldWidth: "Default field width", maxFields: "Max fields" }[key]}: ${this.draft[key]}`,
       action: () => this.ask(key, String(this.draft[key]), (value) => {
@@ -123,8 +135,8 @@ export class FooterSettings {
         this.persistField(field);
         this.index = 0;
       }
-    }) },
-    { label: "Return to tasks", action: () => this.done("tasks") });
+    }) });
+    rows.push(...this.actionRows());
     return rows;
   }
   private fieldRows(): Row[] {
@@ -183,6 +195,7 @@ export class FooterSettings {
   }
   render(width: number) {
     const lines = [this.theme.fg("accent", "Pinote — Global Settings"), this.theme.fg("dim", "Tasks (Tab) · Settings · Fields")];
+    if (this.configurationError) lines.push(this.theme.fg("warning", this.configurationError));
     if (this.editor) {
       lines.push(this.theme.fg("accent", "Task prompt"), ...this.editor.render(width),
         this.theme.fg("dim", "Enter save · Shift+Enter/Ctrl+J newline · Ctrl+C clear · Esc cancel edit"));
@@ -197,10 +210,11 @@ export class FooterSettings {
       lines.push(...rows.slice(start, start + 8).map((row, offset) => offset + start === this.index
         ? this.theme.fg("accent", `> ${row.label}`) : `  ${row.label}`));
       if (rows.length > 8) lines.push(this.theme.fg("dim", `${this.index + 1}/${rows.length}`));
-      lines.push(this.theme.fg("dim", "↑↓ navigate · Enter edit · Esc back"));
+      lines.push(this.theme.fg("dim", "↑↓ navigate · Enter select · Esc back"));
     }
     if (this.error) lines.push(this.theme.fg("error", this.error));
-    lines.push(this.theme.fg("dim", "Changes save automatically · Tab: tasks"));
+    lines.push(this.theme.fg("dim", this.configurationError
+      ? "Fix pi-note.json to edit settings · Tab: tasks" : "Changes save automatically · Tab: tasks"));
     return lines.map((line) => truncateToWidth(line, width));
   }
   invalidate() { this.input?.widget.invalidate(); this.editor?.invalidate(); }

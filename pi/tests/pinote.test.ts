@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import pinote from "../index.ts";
-import { CombinedAutocompleteProvider, getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,7 +27,6 @@ test("task selection, handoff, guarded Done and tools stay session-local without
     for (const entry of sessionEntries) if (entry.customType === "pinote-selection") id = entry.data.id;
     return id;
   };
-  const autocompleteWrappers: Array<(current: any) => any> = [];
   let failSelection = false;
   let beforeChoice: (() => void) | undefined;
   let delaySelected: (() => Promise<void>) | undefined;
@@ -48,7 +47,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
       theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       notify: (value: string) => { notices.push(value); },
-      addAutocompleteProvider: (wrapper: any) => autocompleteWrappers.push(wrapper),
+      addAutocompleteProvider: () => {},
       getEditorText: () => draft,
       setEditorText: (value: string) => { draft = value; },
       custom: async (factory: any) => new Promise((resolve) => {
@@ -123,6 +122,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
       },
     } as any);
     return {
+      commands,
       command: () => commands.get("pi-note").handler("", session),
       event: (name: string) => events.get(name)({}, session),
       tool: (name: string, params: object, context = session, signal?: AbortSignal) =>
@@ -130,36 +130,26 @@ test("task selection, handoff, guarded Done and tools stay session-local without
     };
   }
   let extension = load();
+  assert.deepEqual([...extension.commands.keys()], ["pi-note"]);
   await extension.event("session_start");
   assert.match(status!, /unavailable/);
-  const current = new CombinedAutocompleteProvider(
-    ["pi-note", "pi-note-setup", "pi-note-upgrade"].map((name) => ({ name })), "/tmp");
-  const menu = autocompleteWrappers.at(-1)!(current);
-  const menuNames = async () => (await menu.getSuggestions(["/pi-note"], 0, 8,
-    { signal: new AbortController().signal })).items.map((item: any) => item.value).sort();
-  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
-  assert.ok(notices.some((message) => message.includes("Run /pi-note-upgrade")));
+  assert.ok(!notices.some((message) => /\/pi-note-(?:setup|upgrade|done|preview|yes|no)/u.test(message)));
   await assert.rejects(extension.tool("pinote_get_current", {}), /requires pinote 0\.3\.0/);
   assert.ok(calls.some((args) => args[0] === "--version"), "unselected current-task reads still probe the CLI version");
   assert.ok(calls.every((args) => args[0] === "--version"), "old CLIs must never receive unknown commands");
   cliVersion = "pinote 0.3.0";
   await extension.event("session_start");
-  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
   assert.equal((await extension.tool("pinote_get_current", {})).details, null);
   cliVersion = "pinote 0.4.0";
   await extension.event("session_start");
   assert.equal(status, undefined);
-  assert.deepEqual(await menuNames(), ["pi-note"]);
   cliVersion = "";
   await extension.event("session_start");
-  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-setup"]);
   cliVersion = "pinote 0.2.9";
   await extension.event("session_start");
-  assert.deepEqual(await menuNames(), ["pi-note", "pi-note-upgrade"]);
   cliVersion = "pinote 1.0.0";
   const noticeCount = notices.length;
   await extension.event("session_start");
-  assert.deepEqual(await menuNames(), ["pi-note"]);
   assert.equal(notices.length, noticeCount, `newer CLI must not trigger an upgrade notice: ${JSON.stringify(notices)}`);
   cliVersion = "pinote 0.4.0";
   await extension.event("session_start");

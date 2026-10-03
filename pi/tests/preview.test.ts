@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { preview: click, socketPathFor } = createRequire(import.meta.url)("../preview-click.cjs");
@@ -44,7 +44,18 @@ test("native task-link preview renders complete local data but never reaches req
     cwd, hasUI: true, mode: "tui", isIdle: () => idle, sessionManager: session,
     ui: { theme, setStatus: (key: string, value: string) => { if (key === "pinote") status = value; },
       notify() {}, addAutocompleteProvider() {}, getEditorText: () => draft,
-      setEditorText: (value: string) => { draft = value; } },
+      setEditorText: (value: string) => { draft = value; },
+      custom: async (factory: any) => new Promise((resolve) => {
+        const component = factory({ requestRender() {} }, theme,
+          { matches: (data: string, action: string) => getKeybindings().matches(data, action as any) }, resolve);
+        if (!stripVTControlCharacters(component.render(100).join("\n")).includes("Global Settings")) {
+          component.handleInput("\t"); return;
+        }
+        for (let i = 0; i < 100 && !component.render(100).some((line: string) =>
+          stripVTControlCharacters(line).startsWith("> Preview task")); i++) component.handleInput("\x1b[B");
+        assert.ok(component.render(100).some((line: string) => stripVTControlCharacters(line).startsWith("> Preview task")));
+        component.handleInput("\r");
+      }) },
   };
   const event = async (name: string) => {
     for (const handler of extension.handlers.get(name) ?? []) await handler({}, ctx);
@@ -99,8 +110,12 @@ test("native task-link preview renders complete local data but never reaches req
     await assert.rejects(click(url));
     assert.equal(previews().length, 1);
     idle = true;
-    await extension.commands.get("pi-note-preview").handler("", ctx);
-    assert.equal(previews().length, 2, "keyboard fallback uses the same display-only path");
+    const brokenConfig = join(overrides.PI_CODING_AGENT_DIR, "pi-note.json");
+    mkdirSync(overrides.PI_CODING_AGENT_DIR, { recursive: true });
+    writeFileSync(brokenConfig, '{"handoffPrompt":""}');
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.equal(previews().length, 2, "Settings preview works even with invalid preferences");
+    rmSync(brokenConfig);
     await event("session_tree");
     await assert.rejects(click(url), "a stale branch link must not preview a new branch");
     await click(link());
@@ -144,7 +159,8 @@ setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},ar
     let completion: Promise<void> | undefined;
     loaded.runtime.sendUserMessage = (message: string, options: any) => {
       assert.equal(options.expandPromptTemplates, true);
-      completion = extension.commands.get("pi-note-done").handler(message.slice("/pi-note-done ".length), ctx);
+      assert.match(message, /^\/pi-note [a-f0-9:]+$/u);
+      completion = extension.commands.get("pi-note").handler(message.slice("/pi-note ".length), ctx);
     };
     ctx.reload = () => { throw new Error("cannot reload a stale command context"); };
     ctx.newSession = async (options: any) => {

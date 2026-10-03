@@ -9,10 +9,9 @@ The extension and Python app share a repository but install separately.
 
 Requires Pi 0.99.1+, Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
 From this checkout, install the extension with `pi install ./pi`, then run
-`/reload` in interactive Pi. Use `/pi-note-setup` if the CLI is missing, or the
-suggested `/pi-note-upgrade` if it is older than the bundled CLI. The planned npm package name is
-`pi-note`; after its first release use `pi install npm:pi-note` instead.
-It is not published yet. npm installation does not run Python installers.
+`/reload` in interactive Pi. The planned npm package name is `pi-note`; after its
+first release use `pi install npm:pi-note` instead. It is not published yet. npm
+installation does not run Python installers.
 
 ### CLI setup and upgrades
 
@@ -20,21 +19,19 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
 restart Pi with `uv` on PATH. At startup the extension checks `note --version`
 against its bundled CLI version (currently 0.4.0), without network requests:
 
-- Missing/unrecognized CLI: show `/pi-note-setup` in the slash-command menu.
-- Older CLI: show and suggest `/pi-note-upgrade`.
-- Equal/newer CLI: hide both commands; no upgrade notification.
+- Missing/unrecognized CLI: `/pi-note` opens Settings directly, where **Install CLI** is available.
+- Older CLI: `/pi-note` opens Settings directly, where **Upgrade CLI** is available.
+- Equal/newer CLI: neither installation action is shown; no upgrade notification.
 
-Both commands ask before installing into uv's isolated tool environment.
-The menu refreshes after setup/upgrade; restart Pi or `/reload` after external
-CLI changes. Manually typing either command rechecks the version and never
-reinstalls an equal/newer CLI or intentionally downgrades it.
+Install and upgrade recheck the CLI version and ask before installing into uv's
+isolated tool environment. Restart Pi or `/reload` after external CLI changes;
+installation actions never reinstall an equal/newer CLI or intentionally downgrade it.
 Python 3.11+ is required; uv can download a suitable interpreter when missing.
-The command downloads a pinned GitHub source archive and build dependencies,
+Installation downloads a pinned GitHub source archive and build dependencies,
 not a similarly named PyPI package. It does not install GTK dependencies, edit
 shell configuration, or change tasks. This checks the Python CLI bundled with
 the installed extension, not the latest npm/GitHub release. Update the extension
-first to receive a newer bundled CLI. `/pi-note-setup --upgrade` is replaced by
-`/pi-note-upgrade`.
+first to receive a newer bundled CLI.
 
 Back up your database before upgrading and update an optional GUI separately.
 For checkout development, use `uv tool install --reinstall .` at the repo root
@@ -45,7 +42,8 @@ put that directory before older `note` executables on PATH, and restart Pi.
 Check `note --version`, then restart Pi or `/reload`. Network/build failures and
 conflicting executables are reported without forcibly overwriting another
 installer's commands. Fix the reported cause and retry; installs time out after
-three minutes. Setup/upgrade commands are hidden while installation runs.
+three minutes. Installation actions are unavailable while installation runs.
+Setup hints direct users to `/pi-note` → Settings.
 Missing uv is reported with its installation link, not installed
 automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
 and still requires separate system dependencies.
@@ -56,15 +54,20 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 
 ## Use
 
-`/pi-note` picks a task, marks it in progress, and adds this default prompt to the editor:
+When the CLI is ready and no task is selected, `/pi-note` opens the task picker.
+It marks the chosen task in progress and adds this default prompt to the editor:
 “Read the current Pinote task. Summarize your understanding, but don’t start work yet.”
+If the CLI is missing or older than the bundled version, `/pi-note` opens Settings
+directly so the relevant CLI installation action remains accessible. **Tab** opens
+Settings from the picker or task view; **Tab** from Settings returns to tasks.
 The agent fetches current task text and saved handoff fields when you submit;
 they are not copied into the draft. The default prompt asks for a summary, not implementation.
 Existing drafts are preserved; nothing is submitted automatically.
-With a selected task it offers **Continue**, **Done**, **Switch task**, and **Settings**.
-Press **Tab** from the task menu or picker to open global settings; Tab
-returns to tasks, keeping saved changes. Settings also lists fields found on the current
-task, so existing values can be configured without creating another task.
+With a selected task, `/pi-note` offers **Continue**, **Done**, **Switch task**, and
+**Settings**. Settings provides **Preview task**, **Complete task (new session)**,
+**Accept suggestion**, and **Dismiss suggestion** when applicable, plus
+**Install CLI** or **Upgrade CLI** only when needed. Settings also lists fields found
+on the current task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
@@ -72,8 +75,8 @@ The normal Pi status area shows selected-task controls and title without replaci
 
 ### Display-only preview
 
-Run `/pi-note-preview` to print the selected task's full Markdown text and saved
-agent fields in the transcript. The preview is labeled **display only · not sent
+Use **Preview task** in Settings to print the selected task's full Markdown text
+and saved agent fields in the transcript. The preview is labeled **display only · not sent
 to model**: it is a local custom session entry, excluded from subsequent model
 requests, compaction and branch summaries. It survives session resume but does not
 modify the note, editor draft or task selection, and never starts a model call.
@@ -100,8 +103,8 @@ Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the task text; 
 fullscreen mode, use **Ctrl+Shift+click** so Kitty handles the link instead of
 Pi's system URL opener. The helper sends only an authenticated selection
 identifier, never note content or a model prompt. Stale links after task switching, tree navigation, reload or session exit
-are rejected. Other terminals can use `/pi-note-preview`; if the socket cannot
-start, the task remains visible without a link and that command remains available.
+are rejected. The **Preview task** Settings action is also available when the
+socket cannot start; the task remains visible without a link.
 
 Each Pi session remembers its own task, including several sessions in one folder.
 Resume restores that session's task; a new session starts unselected and does not import
@@ -152,8 +155,11 @@ field needs no `/reload`. Its value is literal text, not a prompt template; use
 `\n` in JSON strings for multiple lines. It must be a nonblank string without control
 characters other than tabs and newlines. A missing file or key uses the default.
 Invalid/unreadable configuration reports an error without starting/switching a
-task or changing the editor. **Done** and agent tools are unaffected. This is
-user-level configuration only; project-local files are not read.
+task or changing the editor. Menu **Done**, footer completion, and agent tools are
+unaffected. If configuration is invalid or unreadable, Settings shows only task,
+suggestion, and CLI actions; repair `pi-note.json` before editing preferences.
+Invalid configuration is never replaced with defaults. This is user-level
+configuration only; project-local files are not read.
 
 ### Agent tools
 
@@ -193,13 +199,13 @@ asking in chat. The pin footer shows a pending suggestion, distinct from a selec
 
 - Muted **✕** dismisses without creating a note; further offers are suppressed until a new session.
 - Accent **+** creates, starts, and selects the suggested task.
-- Green **✓** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and `/pi-note-done` do the same.
+- Green **✓** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and **Complete task** in Settings do the same.
 
 Done occupies the former ✕ position, not the + position, so clicking Add twice cannot accidentally complete the new task. The selected row removes the former + cell's padding. The selected task's title is a separate preview link.
 
 The configured `footer.titleWidth` bounds the entire row (default 60 columns). Controls stay first; the tag is dropped before truncating the first-line title with `...`. Tiny widths hide controls (pin only). Pi can still clip the combined status row on narrow terminals.
 
-Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are `/pi-note-no`, `/pi-note-yes`, and `/pi-note-done`. No action submits input or starts an agent turn. Add and Dismiss preserve editor drafts; Done clears the new session's editor, so save unfinished input before completing a task.
+Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. The Settings actions **Accept suggestion** and **Dismiss suggestion** perform the corresponding footer actions. No action submits input or starts an agent turn. Add and Dismiss preserve editor drafts; **Complete task** starts a clean session and reloads Pi, discarding the editor draft, so save unfinished input before completing a task.
 
 Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed. Failed or stale writes never restart Pi. If another extension cancels the new session, the task remains completed and Pi reports the cancellation. The reload runs through the new session's fresh context; retired contexts are not reused.
 
