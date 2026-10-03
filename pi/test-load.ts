@@ -192,3 +192,89 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("personal task-offer policies reach the native prompt without disabling explicit tools", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "pi-note-offers-"));
+  const overrides = {
+    PI_CODING_AGENT_DIR: join(temp, "pi"),
+    PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
+    XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
+    PINOTE_PR_POLL_SECONDS: "0",
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pi-note-test-bus",
+  };
+  const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, overrides);
+  const cwd = join(temp, "project");
+  const config = join(overrides.PI_CODING_AGENT_DIR, "pi-note.json");
+  mkdirSync(cwd);
+  mkdirSync(dirname(config));
+  const notices: string[] = [];
+  const ctx: any = {
+    cwd, mode: "tui", hasUI: true, isIdle: () => true,
+    sessionManager: { getBranch: () => [] },
+    ui: { setStatus() {}, addAutocompleteProvider() {}, notify: (message: string) => notices.push(message) },
+  };
+  const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+  const { loadExtensions } = await import(pathToFileURL(join(dirname(piEntry), "core/extensions/loader.js")).href);
+  const { buildSystemPrompt } = await import(pathToFileURL(join(dirname(piEntry), "core/system-prompt.js")).href);
+  let extension: any;
+  try {
+    const cases = [
+      { raw: undefined, policy: "always" },
+      { raw: "{}", policy: "always" },
+      { raw: '{"handoffPrompt":"Custom handoff"}', policy: "always" },
+      ...["always", "github-remote", "never"].map((policy) => ({ raw: JSON.stringify({ taskOfferPolicy: policy }), policy })),
+      ...["sometimes", null, false, 1, {}, []].map((taskOfferPolicy) => ({ raw: JSON.stringify({ taskOfferPolicy }), policy: "never", invalid: true })),
+      ...["{", "null", "[]"].map((raw) => ({ raw, policy: "never", invalid: true })),
+      { raw: "directory", policy: "never", invalid: true },
+    ];
+    for (const scenario of cases) {
+      rmSync(config, { recursive: true, force: true });
+      if (scenario.raw === "directory") mkdirSync(config);
+      else if (scenario.raw !== undefined) writeFileSync(config, scenario.raw);
+      const result = await loadExtensions([join(root, "index.ts")], cwd);
+      assert.deepEqual(result.errors, []);
+      extension = result.extensions[0];
+      const definitions: any[] = [...extension.tools.values()].map((tool: any) => tool.definition);
+      assert.deepEqual(definitions.map((tool) => tool.name).sort(), [
+        "pinote_add", "pinote_get_current", "pinote_tags", "pinote_update_current",
+      ]);
+      const add = extension.tools.get("pinote_add").definition;
+      assert.deepEqual(add.promptGuidelines, extension.tools.get("pinote_get_current").definition.promptGuidelines);
+      const prompt = buildSystemPrompt({ cwd,
+        selectedTools: definitions.map((tool) => tool.name),
+        toolGuidelines: Object.fromEntries(definitions.map((tool) => [tool.name, tool.promptGuidelines ?? []])),
+      });
+      assert.match(prompt, /Never add or select without a yes/);
+      assert.match(prompt, /existing.*selection|task is already selected/);
+      if (scenario.policy === "never") {
+        assert.match(prompt, /Do not offer to create a pinote task/);
+        assert.doesNotMatch(prompt, /propose one note/);
+      } else {
+        assert.match(prompt, /propose one note as `\[tag\] text`/);
+        if (scenario.policy === "github-remote") {
+          assert.match(prompt, /first verify with Git.*URL host is github\.com \(HTTPS or SSH\)/);
+          assert.match(prompt, /Local paths, other hosts, and GitHub-looking URL paths do not qualify/);
+          assert.match(prompt, /explicit user requests to create one remain allowed/);
+        } else assert.doesNotMatch(prompt, /first verify with Git/);
+      }
+      const before = notices.length;
+      for (const handler of extension.handlers.get("session_start") ?? []) await handler({}, ctx);
+      assert.equal(notices.slice(before).some((message) => message.includes("task offers disabled")), "invalid" in scenario);
+      if (scenario.raw === '{"taskOfferPolicy":"never"}') {
+        const added = await add.execute("explicit", { text: "Explicit request" }, undefined, undefined, ctx);
+        assert.equal(added.details.text, "Explicit request");
+        assert.equal(added.details.state, "active");
+      }
+      for (const handler of extension.handlers.get("session_shutdown") ?? []) await handler({}, ctx);
+      extension = undefined;
+    }
+  } finally {
+    if (extension) for (const handler of extension.handlers.get("session_shutdown") ?? []) await handler({}, ctx);
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(temp, { recursive: true, force: true });
+  }
+});

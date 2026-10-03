@@ -9,10 +9,13 @@ import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
 
 const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. To show another footer field, set its Markdown value and append its label to Bar, one label per line. Links in that text are clickable. Do not list PR in Bar. Remove the field and its Bar line to drop it. Notes stay off the footer unless named in Bar.";
-const createGuidance = [
-  "When the user gives work and no pinote task is selected, propose one note as `[tag] text` and ask before creating it. On no, continue without a note. On yes, call pinote_add with select true so it becomes this session's active task. Never add or select without a yes. If a task is already selected, do not replace it unless the user asks to switch.",
-  "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. Tags are set when creating tasks with pinote_add; agent tools cannot retag existing tasks. Do not use pinote_update_current for tags or task text.",
-];
+const offerGuidance = {
+  always: "When the user gives work and no pinote task is selected, propose one note as `[tag] text` and ask before creating it.",
+  "github-remote": "When the user gives work and no pinote task is selected, first verify with Git that the current repository has a remote whose URL host is github.com (HTTPS or SSH). Only then propose one note as `[tag] text` and ask before creating it. Local paths, other hosts, and GitHub-looking URL paths do not qualify. If no GitHub remote is verified, do not offer a task; explicit user requests to create one remain allowed.",
+  never: "Do not offer to create a pinote task. Create one only when the user explicitly requests it.",
+};
+const consentGuidance = "On no, continue without a note. On yes, call pinote_add with select true so it becomes this session's active task. Never add or select without a yes. If a task is already selected, do not replace it unless the user asks to switch.";
+const tagGuidance = "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. Tags are set when creating tasks with pinote_add; agent tools cannot retag existing tasks. Do not use pinote_update_current for tags or task text.";
 type Task = {
   id: number;
   text: string;
@@ -36,18 +39,43 @@ const firstLine = (task: Summary) => clean(task.text.split("\n", 1)[0]).replace(
 const title = (task: Summary) => truncateToWidth(`#${task.id} ${firstLine(task)}`, 60);
 
 const defaultHandoffPrompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
-function handoffPrompt(): string {
+function readConfig(): Record<string, unknown> {
   const path = join(getAgentDir(), "pi-note.json");
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return defaultHandoffPrompt;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
     throw new Error(`Cannot read ${path}. Check the pi-note configuration.`);
   }
   let config: unknown;
   try { config = JSON.parse(raw); } catch { throw new Error(`Invalid JSON in ${path}.`); }
   if (!record(config)) throw new Error(`Expected a JSON object in ${path}.`);
+  return config;
+}
+
+function creationGuidance(): { guidelines: string[]; error?: string } {
+  let policy: keyof typeof offerGuidance = "always";
+  let error: string | undefined;
+  try {
+    const config = readConfig();
+    if ("taskOfferPolicy" in config) {
+      const value = config.taskOfferPolicy;
+      if (value !== "always" && value !== "github-remote" && value !== "never") {
+        throw new Error(`taskOfferPolicy in ${join(getAgentDir(), "pi-note.json")} must be always, github-remote, or never.`);
+      }
+      policy = value;
+    }
+  } catch (cause) {
+    policy = "never";
+    error = cause instanceof Error ? cause.message : String(cause);
+  }
+  return { guidelines: [`${offerGuidance[policy]} ${consentGuidance}`, tagGuidance], error };
+}
+
+function handoffPrompt(): string {
+  const config = readConfig();
+  const path = join(getAgentDir(), "pi-note.json");
   if (!("handoffPrompt" in config)) return defaultHandoffPrompt;
   if (!text(config.handoffPrompt) || !config.handoffPrompt.trim()) {
     throw new Error(`handoffPrompt in ${path} must be a nonblank string without control characters (except tabs/newlines).`);
@@ -90,6 +118,7 @@ function toolResult(value: Task | null) {
 }
 
 export default function (pi: ExtensionAPI) {
+  const { guidelines: createGuidance, error: offerConfigError } = creationGuidance();
   let alive = true;
   let epoch = 0;
   let refreshSerial = 0;
@@ -248,6 +277,7 @@ export default function (pi: ExtensionAPI) {
     const generation = epoch;
     cliState = undefined;
     if (ctx.hasUI && ctx.mode === "tui") {
+      if (offerConfigError) ctx.ui.notify(`Pinote task offers disabled: ${clean(offerConfigError)} Fix the configuration and /reload.`, "warning");
       ctx.ui.addAutocompleteProvider((current) => cliMenu(current, () => setupAbort ? undefined : cliState));
     }
     // Keep the setup lock until its aborted subprocess has actually settled.
