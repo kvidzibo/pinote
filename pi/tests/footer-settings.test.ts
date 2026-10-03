@@ -81,6 +81,14 @@ test("task prompt edits are multiline validated drafts, saved atomically without
   ui.handleInput("Summarize only.");
   ui.handleInput("\n"); // legacy Ctrl+J also matches confirmation, but must insert a newline
   ui.handleInput("Wait for approval.");
+  const keybindings = getKeybindings();
+  const originalBindings = keybindings.getUserBindings();
+  try {
+    keybindings.setUserBindings({ ...originalBindings, "tui.input.submit": "ctrl+enter" });
+    const beforeSubmit = ui.render(80);
+    ui.handleInput("\x1b[13;5u"); // a remapped Editor submit must not clear the draft
+    assert.deepEqual(ui.render(80), beforeSubmit);
+  } finally { keybindings.setUserBindings(originalBindings); }
   assert.match(ui.render(80).join("\n"), /Task prompt\n/);
   for (const width of [16, 40, 100]) assert.ok(ui.render(width).every((line) => visibleWidth(line) <= width));
   enter();

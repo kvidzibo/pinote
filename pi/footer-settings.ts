@@ -91,6 +91,7 @@ export class FooterSettings {
     }));
     rows.push({ label: `Task prompt: ${display(this.prompt)}`, action: () => {
       this.editor = this.createEditor();
+      this.editor.disableSubmit = true;
       this.editor.setText(this.prompt);
       this.editor.focused = this.hasFocus;
     } });
