@@ -106,9 +106,9 @@ and selected tasks. Run `/reload` after changing this setting. Invalid policy
 values or unreadable/malformed configuration suppress offers; interactive startup
 warns until you fix the file and reload. No project-local configuration is read.
 
-Both task selection and **Continue** read this file each time; no `/reload` is
-needed after edits. The value is literal text, not a prompt template; use `\n`
-in JSON strings for multiple lines. It must be a nonblank string without control
+Task selection and **Continue** reread `handoffPrompt` each time; changing that
+field needs no `/reload`. Its value is literal text, not a prompt template; use
+`\n` in JSON strings for multiple lines. It must be a nonblank string without control
 characters other than tabs and newlines. A missing file or key uses the default.
 Invalid/unreadable configuration reports an error without starting/switching a
 task or changing the editor. **Done** and agent tools are unaffected. This is
