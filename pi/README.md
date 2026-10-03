@@ -333,6 +333,7 @@ Interactive Pi checks only the selected task's PR using authenticated `gh`
 (`gh auth login`). Polling defaults to 60 seconds; launch Pi with
 `PINOTE_PR_POLL_SECONDS=120 pi` to change it, or `0` to disable polling.
 Allowed intervals are 10–86400 seconds. Configured links remain visible when polling is disabled.
+Each GitHub request times out after 30 seconds.
 Network/authentication failures warn once until recovery and retry next interval.
 No polling runs in print/RPC mode or after Pi exits.
 

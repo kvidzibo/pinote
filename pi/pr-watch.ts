@@ -135,7 +135,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
       const same = () => valid() && watched !== null && taskPR(watched)?.url === pr.url && watched.id === candidate.id;
       if (acknowledged.has(key)) return;
       const result = await pi.exec("gh", ["pr", "view", pr.url, "--json", "state,url"], {
-        cwd: context.cwd, timeout: 10_000, signal,
+        cwd: context.cwd, timeout: 30_000, signal,
       });
       if (!same()) return;
       if (result.code !== 0 || result.killed) throw new Error("GitHub CLI failed");

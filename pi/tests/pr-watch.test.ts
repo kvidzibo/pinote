@@ -54,7 +54,7 @@ test("current-task PR watcher confirms safely, reports already-done, and stops w
       checks++;
       assert.equal(command, "gh");
       assert.deepEqual(args, ["pr", "view", url, "--json", "state,url"]);
-      assert.equal(opts.timeout, 10_000);
+      assert.equal(opts.timeout, 30_000);
       await pendingFetch?.();
       return { code: failures ? 1 : 0, stdout: JSON.stringify({ state, url: url.toLowerCase() }), killed: false };
     },
