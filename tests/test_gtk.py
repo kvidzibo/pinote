@@ -2397,14 +2397,23 @@ def test_single_line_titles_keep_truncated_text_in_preview(gtk):
     assert row.body.get_text() == long_title and not row.body.get_use_markup()
     click_button(gtk, window, row.preview_button)
     wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
-    assert window.preview.body.get_text() == long_title
-    window.preview.popdown()
-    wait_until(gtk.glib, lambda: window.preview is None)
+    preview = window.preview
+    assert preview.body.get_text() == long_title
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.preview is preview and preview.get_mapped()
+    updated_title = long_title + " Updated."
     with Store(gtk.paths.database) as store:
         note = store.get(3)
         assert note.text == long_title
         assert [event["action"] for event in store.history(3)] == ["add"]
-        store.edit(3, "Now short", expected_updated_at=note.updated_at)
+        store.edit(3, updated_title, expected_updated_at=note.updated_at)
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and row.note.text == updated_title)
+    assert window.preview is preview and preview.get_mapped()
+    assert preview.body.get_text() == updated_title
+    with Store(gtk.paths.database) as store:
+        store.edit(3, "Now short", expected_updated_at=store.get(3).updated_at)
     window._poll()
     wait_until(
         gtk.glib,
@@ -2412,6 +2421,7 @@ def test_single_line_titles_keep_truncated_text_in_preview(gtk):
     )
     assert row.body.get_layout().get_line_count() == 1
     assert not row.body.get_layout().is_ellipsized()
+    assert window.preview is None and not preview.get_visible()
 
 
 def test_multiline_entry_and_read_only_preview(gtk):

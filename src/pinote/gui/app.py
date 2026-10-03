@@ -1617,13 +1617,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             unread = self._agent_unread(note)
             row.update(note, sensitive=not self.action_pending, unread_agent=unread)
             if self.preview is not None and self.preview.note_id == note.id:
-                if (
-                    "\n" in note.markdown
-                    or unread
-                    or (
-                        self.preview.removal_event
-                        and self.preview.removal_event == note.agent_event_id
-                    )
+                if row.has_preview() or (
+                    self.preview.removal_event and self.preview.removal_event == note.agent_event_id
                 ):
                     self.preview.update(note, agent_update=unread)
                 else:
