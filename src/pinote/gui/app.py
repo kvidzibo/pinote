@@ -338,7 +338,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pinote-gui")
         # A Dunst-sized popup, not a conventional application with a title bar.
         self.set_decorated(False)
-        self.set_resizable(False)
+        self.set_resizable(True)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_keep_above(True)
         self.set_role("pinote-reminders")
@@ -563,6 +563,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self._update_controls()
 
         self.connect("key-press-event", self._on_key_press)
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
+        self.connect("button-press-event", self._begin_resize)
+        self.connect("motion-notify-event", self._resize_cursor)
         self.connect("size-allocate", self._queue_geometry)
         for list_box, scroll in (
             (self.list_box, self.scroll),
@@ -652,6 +655,32 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self._arrange_rows()
         return GLib.SOURCE_REMOVE
 
+    def _resize_edge(self, event):
+        x = event.x_root - self.get_position()[0]
+        if 0 <= x <= 6:
+            return Gdk.WindowEdge.WEST
+        if self.get_allocated_width() - 6 <= x <= self.get_allocated_width():
+            return Gdk.WindowEdge.EAST
+        return None
+
+    def _resize_cursor(self, _window, event) -> bool:
+        native = self.get_window()
+        if native is not None:
+            name = "ew-resize" if self._resize_edge(event) is not None else "default"
+            cursor = Gdk.Cursor.new_from_name(self.get_display(), name)
+            native.set_cursor(cursor)
+        return False
+
+    def _begin_resize(self, _window, event) -> bool:
+        edge = self._resize_edge(event)
+        if event.button != 1 or edge is None:
+            return False
+        # The WM grab can consume button-release, including a click without a drag.
+        # Preserve the panel's normal click-to-type behavior before handing it off.
+        self.entry.grab_focus()
+        self.begin_resize_drag(edge, event.button, int(event.x_root), int(event.y_root), event.time)
+        return True
+
     def _queue_geometry(self, *_args) -> None:
         if not self.closed and not self.geometry_source:
             self.geometry_source = GLib.idle_add(self._sync_geometry)
@@ -668,7 +697,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         ):
             self.entry_scroll.set_min_content_height(0)
         current = tuple(self.get_position())
-        height = self.get_size().height
+        size = self.get_size()
+        height = size.height
         if (
             not self._initial_placement
             and self._configured_geometry
@@ -685,6 +715,17 @@ class ReminderWindow(Gtk.ApplicationWindow):
         for scroll, limit in limits.items():
             if scroll.get_max_content_height() != limit:
                 scroll.set_max_content_height(limit)
+        # Resizable GTK windows retain their allocated height unless explicitly
+        # resized. Lock only height to the content request, leaving width to the user.
+        width = size.width
+        desired_height = self.get_child().get_preferred_height_for_width(width)[1]
+        hints = Gdk.Geometry()
+        hints.min_height = hints.max_height = desired_height
+        hints.min_width = self.get_child().get_preferred_width()[0]
+        hints.max_width = 2_147_483_647
+        self.set_geometry_hints(None, hints, Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE)
+        if height != desired_height:
+            self.resize(width, desired_height)
         position = (self.anchor_x, max(area.y, self.anchor_bottom - height))
         # Compare with the same snapshot used to update the anchor. A fresh
         # query can see a later manual move and undo it before its event arrives.

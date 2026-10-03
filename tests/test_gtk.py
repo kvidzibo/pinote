@@ -223,7 +223,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         window.menu_button,
     ]
     assert window.entry_box.get_allocated_width() > 350
-    assert not window.get_resizable()
+    assert window.get_resizable()
     assert window.get_size().width == 420
     # Full-width input plus a separate tag/action toolbar.
     assert window.get_size().height < 175
@@ -257,6 +257,70 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     with Store(gtk.paths.database) as store:
         assert len(store.notes()) == 3
         assert len(store.history()) == 3
+
+
+def test_horizontal_edge_resize_preserves_width_and_automatic_height(gtk):
+    with Store(gtk.paths.database) as store:
+        for _ in range(3):
+            store.add("A long task title " * 8)
+    window = gtk.open()
+    initial_height = window.get_size().height
+    initial_text_width = window.rows[1].body.get_allocated_width()
+    bottom = window.anchor_bottom
+
+    def drag_edge(left, delta, width):
+        x, y = window.get_position()
+        x += 2 if left else window.get_size().width - 2
+        y += window.get_size().height // 2
+        subprocess.run(
+            ["xdotool", "mousemove", str(x), str(y), "mousedown", "1"],
+            env=gtk.env,
+            check=True,
+            timeout=5,
+        )
+        wait_until(gtk.glib, lambda: True)
+        subprocess.run(
+            ["xdotool", "mousemove", str(x + delta), str(y + 30)],
+            env=gtk.env,
+            check=True,
+            timeout=5,
+        )
+        wait_until(gtk.glib, lambda: window.get_size().width == width)
+        subprocess.run(["xdotool", "mouseup", "1"], env=gtk.env, check=True, timeout=5)
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.geometry_source
+                and window.get_size().height == initial_height
+                and window.get_position()[1] + window.get_size().height == bottom
+            ),
+        )
+
+    assert window.get_size().width == 420
+    drag_edge(False, 50, 470)
+    wait_until(
+        gtk.glib, lambda: window.rows[1].body.get_allocated_width() >= initial_text_width + 50
+    )
+    drag_edge(True, 100, 370)
+    left = window.get_position()[0]
+    assert left == 125
+    window.entry.set_text("Several lines\nof draft text\nto grow upward")
+    wait_until(gtk.glib, lambda: window.get_size().height > initial_height)
+    window.entry.set_text("")
+    wait_until(gtk.glib, lambda: window.get_size().height == initial_height)
+    with Store(gtk.paths.database) as store:
+        for note in store.notes():
+            store.transition(note.id, "rm")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and window.get_size().height < initial_height)
+    assert window.get_size().width == 370
+    assert window.get_position()[0] == left
+    assert window.get_position()[1] + window.get_size().height == bottom
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    reopened = gtk.open(application)
+    assert reopened.get_size().width == 420
 
 
 def test_minimise_cycle_and_context_state_icons(gtk):
