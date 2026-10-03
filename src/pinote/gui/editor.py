@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import Future
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import gi
@@ -16,6 +18,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
+from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.icons import icon_button  # noqa: E402
 from pinote.gui.placement import place_child  # noqa: E402
 
@@ -40,6 +43,10 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.schedule_only = schedule_only
         self.closed = False
         self.saving = False
+        self.draft: DraftCache | None = None
+        self.draft_source = 0
+        self.draft_revision = 0
+        self.draft_load_failed = False
         self.set_role("pinote-editor")
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
@@ -106,16 +113,25 @@ class NoteEditor(Gtk.ApplicationWindow):
             )
             self.entry.get_accessible().set_name("Task text")
             self.entry.get_accessible().set_description(
-                "Enter inserts a newline; Ctrl+Enter saves. Escape cancels."
+                "Enter inserts a newline; Ctrl+Enter saves. Escape closes and keeps the draft."
             )
-            self.entry.get_buffer().set_text(note.text)
+            self.entry.get_buffer().set_text(self._restore_draft(note))
+            hint = Gtk.Label(label="Edits are kept as a draft until saved.", xalign=0)
+            hint.get_style_context().add_class("dim-label")
+            layout.pack_start(hint, False, False, 0)
             scroll = Gtk.ScrolledWindow()
             scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             scroll.get_style_context().add_class("task-entry")
             scroll.add(self.entry)
             layout.pack_start(scroll, True, True, 0)
         controls = Gtk.Box(spacing=8, halign=Gtk.Align.END)
-        self.cancel_button = icon_button("window-close-symbolic", "Cancel")
+        if self.draft is not None:
+            self.discard_button = icon_button("edit-delete-symbolic", "Discard draft")
+            self.discard_button.connect("clicked", lambda _button: self._discard_draft())
+            controls.add(self.discard_button)
+        self.cancel_button = icon_button(
+            "window-close-symbolic", "Close editor (keep draft)" if self.draft else "Cancel"
+        )
         self.save_button = icon_button(
             "preferences-system-notifications-symbolic"
             if schedule_only
@@ -124,14 +140,107 @@ class NoteEditor(Gtk.ApplicationWindow):
         )
         self.cancel_button.connect("clicked", lambda _button: self.close())
         self.save_button.connect("clicked", lambda _button: self._save())
+        if self.draft_load_failed:
+            self.entry.set_editable(False)
+            self.save_button.set_sensitive(False)
         controls.add(self.cancel_button)
         controls.add(self.save_button)
         layout.pack_start(controls, False, False, 0)
         self.connect("key-press-event", self._key_press)
         self.connect("delete-event", lambda *_args: self.saving)
         self.connect("destroy", self._on_destroy)
+        if self.draft is not None:
+            self.entry.get_buffer().connect("changed", self._draft_changed)
         self.show_all()
         self.entry.grab_focus()
+
+    def _restore_draft(self, note: Note) -> str:
+        self.draft = self.owner.edit_drafts.get(note.id)
+        try:
+            if self.draft is None:
+                self.draft = DraftCache(
+                    self.owner.model.paths.data / "gui-edit-drafts" / f"{note.id}.json"
+                )
+                payload = self.draft.load()
+            else:
+                payload = self.draft.snapshot()
+            if not payload:
+                self.owner.edit_drafts[note.id] = self.draft
+                return note.text
+            data = json.loads(payload)
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"updated_at", "original_text", "text"}
+                or any(not isinstance(value, str) for value in data.values())
+            ):
+                raise ValueError("Invalid edit-draft record")
+            self.owner.edit_drafts[note.id] = self.draft
+            if data["updated_at"] != note.updated_at and data["text"].strip() == note.text:
+                # A previous process committed the edit before clearing its cache.
+                self.draft.update("")
+                self.owner.worker.submit(self._persist_draft)
+                return note.text
+            self.draft_revision = self.draft.update(payload)
+            self.note = replace(note, text=data["original_text"], updated_at=data["updated_at"])
+            if self.note.updated_at != note.updated_at:
+                self._error(
+                    "This task changed elsewhere. Draft restored; copy it before discarding "
+                    "the draft and reopening the latest task."
+                )
+            return data["text"]
+        except (OSError, UnicodeError, ValueError) as exc:
+            self.draft_load_failed = True
+            self.owner.edit_drafts.pop(note.id, None)
+            self._error(f"Cannot restore the edit draft: {exc}. Close and retry, or discard it.")
+            return note.text
+
+    def _draft_changed(self, _buffer) -> None:
+        if self.closed or self.draft_load_failed:
+            return
+        buffer = self.entry.get_buffer()
+        text = buffer.get_text(*buffer.get_bounds(), True)
+        payload = (
+            json.dumps(
+                {"updated_at": self.note.updated_at, "original_text": self.note.text, "text": text},
+                ensure_ascii=False,
+            )
+            if text != self.note.text
+            else ""
+        )
+        self.draft_revision = self.draft.update(payload)
+        if not self.draft_source:
+            self.draft_source = GLib.timeout_add(250, self._queue_draft_save)
+
+    def _queue_draft_save(self) -> bool:
+        self.draft_source = 0
+        self.owner.worker.submit(self._persist_draft)
+        return GLib.SOURCE_REMOVE
+
+    def _persist_draft(self) -> None:
+        if self.draft_load_failed:
+            return
+        try:
+            self.draft.save()
+        except (OSError, UnicodeError) as exc:
+            message = f"Cannot save the edit draft; it may be lost on restart: {exc}"
+            LOGGER.error("GUI editor: %s", message)
+            if not self.owner.closed:
+                GLib.idle_add(self._show_draft_error, message)
+
+    def _show_draft_error(self, message: str) -> bool:
+        if not self.owner.closed:
+            if self.closed:
+                self.owner._error(message, action=True)
+            else:
+                self._error(message)
+        return GLib.SOURCE_REMOVE
+
+    def _discard_draft(self) -> None:
+        if not self.closed and not self.saving:
+            self.draft_load_failed = False
+            self.draft.update("")
+            self.owner.edit_drafts[self.note.id] = self.draft
+            self.destroy()
 
     def _key_press(self, _window, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:
@@ -154,10 +263,12 @@ class NoteEditor(Gtk.ApplicationWindow):
         controls = [self.entry, self.save_button, self.cancel_button]
         if self.schedule_only:
             controls.extend((self.hour, self.minute))
+        if self.draft is not None:
+            controls.append(self.discard_button)
         return controls
 
     def _save(self) -> None:
-        if self.closed or self.saving:
+        if self.closed or self.saving or self.draft_load_failed:
             return
         if self.schedule_only:
             self.hour.update()
@@ -187,8 +298,12 @@ class NoteEditor(Gtk.ApplicationWindow):
                 return self.owner.model.schedule(self.note, value)
             if self.tag_only:
                 return self.owner.model.set_tag(self.note, value)
-            return self.owner.model.edit(self.note, value)
+            result = self.owner.model.edit(self.note, value)
+            self.draft.submitted(draft_revision)
+            self._persist_draft()  # Cache failure must not disguise a committed edit.
+            return result
 
+        draft_revision = self.draft_revision
         self.saving = True
         for control in self._controls():
             control.set_sensitive(False)
@@ -237,6 +352,12 @@ class NoteEditor(Gtk.ApplicationWindow):
 
     def _on_destroy(self, _window) -> None:
         self.closed = True
+        if self.draft_source:
+            GLib.source_remove(self.draft_source)
+            self.draft_source = 0
+        if self.draft is not None:
+            # Run after accepted edits, so their cleared draft cannot be resurrected.
+            self.owner.worker.submit(self._persist_draft)
         if self.owner.editor is self:
             self.owner.editor = None
         if not self.owner.closed:

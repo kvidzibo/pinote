@@ -181,6 +181,7 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         if self.closed or self.action_pending or row is None:
             return
         note = row.note
+        self.owner._dismiss_feedback()
         self.action_pending = True
         self._update_controls()
         self._submit(lambda: getattr(self.model, self.action_method)(note), note_id=note_id)
@@ -190,16 +191,28 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
         future = self.owner.worker.submit(operation)
 
         def completed(result):
-            if self.closed:
+            if self.owner.closed:
                 self.owner._finish_after_close(result)
             else:
                 GLib.idle_add(self._finish, result, note_id)
 
         future.add_done_callback(completed)
 
+    def _notify_restored(self, note_id: int) -> None:
+        note = next((note for note in self._notes if note.id == note_id), None)
+        if note is not None and not self.owner.closed:
+            self.owner._task_saved(note_id, "Restored", note.tag)
+
     def _finish(self, future: Future, note_id: int | None) -> bool:
         if self.closed:
-            self.owner._finish_after_close(future)
+            try:
+                result = future.result()
+            except Exception:
+                self.owner._finish_after_close(future)
+            else:
+                if note_id is not None and result and not self.owner.closed:
+                    self._notify_restored(note_id)
+                    self.owner._poll()
             return GLib.SOURCE_REMOVE
         self.pending -= 1
         mutation = note_id is not None
@@ -209,6 +222,7 @@ class SavedTasksWindow(Gtk.ApplicationWindow):
             result = future.result()
             if mutation:
                 if result:
+                    self._notify_restored(note_id)
                     # The save is committed: remove its button before refreshing,
                     # even if that read fails. Never invite a duplicate restore.
                     self._notes = [note for note in self._notes if note.id != note_id]

@@ -63,6 +63,7 @@ class NoteRow(Gtk.ListBoxRow):
         self.revealer.add(content)
         self.connect("destroy", lambda _row: self._clear_animation())
         self.done = Gtk.CheckButton(valign=Gtk.Align.START)
+        self.done.set_always_show_image(True)
         self.check_handler = self.done.connect("clicked", self._check_clicked)
         self.done.connect("button-press-event", self._check_pressed)
         self.done.connect("button-release-event", lambda _button, event: event.button == 3)
@@ -131,6 +132,13 @@ class NoteRow(Gtk.ListBoxRow):
         try:
             self.done.set_inconsistent(progress)
             self.done.set_active(active)
+            marked = self.deletion_marked and not self.exiting
+            if self.done.get_mode() == marked:
+                self.done.set_mode(not marked)
+                image = icon_image("edit-delete-symbolic") if marked else None
+                self.done.set_image(image)
+                if image is not None:
+                    image.show()
         finally:
             self.done.handler_unblock(self.check_handler)
 
@@ -206,6 +214,7 @@ class NoteRow(Gtk.ListBoxRow):
                 )
             self.done.get_accessible().set_name(name)
             self.done.get_accessible().set_description(description)
+            self.done.set_tooltip_text(description)
 
     def dismiss(self, action: str, on_dismissed) -> None:
         """Called only after a successful mutation removes this note from the snapshot."""
@@ -288,6 +297,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.tags: list[str] = []
         self.notes_snapshot: list[Note] = []
         self.reveal_note_id: int | None = None
+        self.saved_feedback: tuple[int, str, str | None] | None = None
+        self.feedback_snapshot: list[Note] | None = None
+        self.added_tag: str | None = None
         self.geometry_source = 0
         self.focus_source = 0
         self.pin_source = 0
@@ -305,6 +317,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.action_pending = False
         self.draft_revision = 0
         self.draft = DraftCache(model.paths.data / "gui-draft.txt")
+        self.edit_drafts: dict[int, DraftCache] = {}
         self.filter_cache = FilterCache(model.paths.data / "gui-filter.json")
         self.agent_read = AgentReadCache(model.paths.data / "gui-agent-read.json")
         self.agent_read_error: str | None = None
@@ -386,6 +399,21 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
         self.composer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.composer.get_style_context().add_class("composer")
+        self.feedback = Gtk.Box(spacing=6)
+        self.feedback.set_no_show_all(True)
+        self.feedback_text = Gtk.Label(xalign=0, wrap=True, hexpand=True)
+        self.feedback_text.set_max_width_chars(34)
+        self.feedback_text.get_style_context().add_class("dim-label")
+        self.feedback_show = icon_button("view-reveal-symbolic", "Show saved task")
+        self.feedback_show.connect("clicked", lambda _button: self._show_saved_task())
+        self.feedback_close = icon_button("window-close-symbolic", "Dismiss task feedback")
+        self.feedback_close.connect("clicked", lambda _button: self._dismiss_feedback())
+        self.feedback.pack_start(self.feedback_text, True, True, 0)
+        self.feedback.pack_start(self.feedback_show, False, False, 0)
+        self.feedback.pack_start(self.feedback_close, False, False, 0)
+        for child in self.feedback.get_children():
+            child.show_all()
+        self.composer.pack_start(self.feedback, False, False, 0)
         self.input_row = Gtk.Box(spacing=6)
         self.toolbar = Gtk.Box(spacing=6)
         self.tag_button = Gtk.MenuButton(valign=Gtk.Align.CENTER)
@@ -1340,6 +1368,58 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.notice.show()
         return GLib.SOURCE_REMOVE
 
+    def _task_saved(self, note_id: int, verb: str, tag: str | None) -> None:
+        self.saved_feedback = (note_id, verb, tag)
+        # The confirmed task is active; the checklist may still show its pre-write state.
+        self.feedback_snapshot = self.notes_snapshot
+        self._update_feedback()
+
+    def _update_feedback(self) -> None:
+        if self.saved_feedback is None:
+            self.feedback.hide()
+            return
+        note_id, verb, tag = self.saved_feedback
+        note = None
+        if self.notes_snapshot is not self.feedback_snapshot:
+            note = next((note for note in self.notes_snapshot if note.id == note_id), None)
+            if note is None:
+                self._dismiss_feedback()
+                return
+            tag = note.tag
+            self.saved_feedback = (note_id, verb, tag)
+        filtered = self.tag_filter is not None and (tag or "") not in self.tag_filter
+        collapsed = self.view_mode == 2 or (
+            self.view_mode == 1 and (note is None or note.state != "in_progress")
+        )
+        if not filtered and not collapsed:
+            self._dismiss_feedback()
+            return
+        reason = "current filter" if filtered else "collapsed view"
+        self.feedback_text.set_text(f"{verb} — hidden by {reason}.")
+        description = "Show saved task" if verb == "Saved" else "Show restored task"
+        self.feedback_show.set_tooltip_text(description)
+        self.feedback_show.get_accessible().set_name(description)
+        self.feedback.show()
+
+    def _dismiss_feedback(self) -> None:
+        self.saved_feedback = None
+        self.feedback_snapshot = None
+        self.feedback.hide()
+
+    def _show_saved_task(self) -> None:
+        if self.closed or self.saved_feedback is None:
+            return
+        note_id = self.saved_feedback[0]
+        self._dismiss_feedback()
+        self.view_mode = 0
+        self.minimise_button.set_image(icon_image("view-collapse-symbolic"))
+        self.minimise_button.set_tooltip_text("Show only in-progress notes")
+        self.minimise_button.get_accessible().set_name("Show only in-progress notes")
+        self._set_filter(None)
+        self.reveal_note_id = note_id
+        self._queue_geometry()
+        self._poll()
+
     def _update_add_button(self) -> None:
         self.add_button.set_sensitive(
             not self.closed and not self.action_pending and bool(self.entry.get_text().strip())
@@ -1356,8 +1436,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
             return
         self.action_pending = True
         self._update_controls()
+        self._dismiss_feedback()
         revision = self.draft_revision
         tag = self.creation_tag
+        self.added_tag = tag
 
         def add():
             note_id = self.model.add(text, tag=tag) if tag else self.model.add(text)
@@ -1429,6 +1511,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             result = future.result()
             if draft_revision is not None:
                 self.reveal_note_id = result
+                self._task_saved(result, "Saved", self.added_tag)
                 # The add is committed. Never erase edits made while it was
                 # queued, even when the user edited back to identical text.
                 if self.draft_revision == draft_revision:
@@ -1599,6 +1682,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             list_box.get_accessible().set_name(
                 f"{name}, {count} active {'note' if count == 1 else 'notes'}"
             )
+        self._update_feedback()
         self._queue_geometry()
 
     def _remove_row(self, row: NoteRow) -> None:

@@ -201,6 +201,11 @@ IDs, tags, scheduled times, agent fields, project selections, or history.
   user and separate from tasks/history. It is saved about every 250 ms while editing
   and flushed on normal close; an abrupt termination may lose the latest edits.
   Draft read/write errors appear in the GUI and log. Drafts are plain text, not encrypted.
+- Existing-task edit drafts: `gui-edit-drafts/ID.json` beside `notes.db`, private to
+  the current user. They retain the original task revision and edited text, separately
+  from tasks/history. Saved about every 250 ms and flushed on close; Save or Discard
+  clears that task's draft. Restarting preserves drafts, including empty text and
+  whitespace; abrupt termination may lose the latest edits. Drafts are not encrypted.
 - GUI tag filter: `gui-filter.json` beside `notes.db`, private to the current user.
   Saved when changed and flushed on close; this is separate from the new-task tag selection.
 - Viewed agent updates: `gui-agent-read.json` beside `notes.db`, private to the current
@@ -221,7 +226,8 @@ sent to your desktop daemon and may also remain in Dunst's own history, so avoid
 secrets in notes. Database and exports are not encrypted.
 
 For a complete backup, close the GUI, stop running `note` commands, and copy
-`notes.db` plus `gui-draft.txt`, `gui-filter.json`, and `gui-agent-read.json` if present;
+`notes.db` plus `gui-draft.txt`, `gui-edit-drafts/`, `gui-filter.json`, and
+`gui-agent-read.json` if present;
 restore them while pinote is stopped.
 Do not copy a live database mid-write. Keep personal data and exports out of Git.
 If storing copies inside a checkout, use its ignored `exports/` and `backups/`

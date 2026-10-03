@@ -212,7 +212,8 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
         )
     assert not hasattr(window, "undo_button") and not hasattr(window, "close_button")
     assert not window.menu.get_visible()
-    assert window.composer.get_children() == [window.input_row, window.toolbar]
+    assert window.composer.get_children() == [window.feedback, window.input_row, window.toolbar]
+    assert not window.feedback.get_visible()
     assert window.input_row.get_children() == [window.entry_box, window.add_button]
     assert window.toolbar.get_children()[0] is window.tag_button
     assert window.toolbar.get_children()[2:] == [
@@ -955,7 +956,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         assert not window.rows[1].get_style_context().has_class("context-target")
         editor = window.editor
         buffer = editor.entry.get_buffer()
-        assert buffer.get_text(*buffer.get_bounds(), True) == "Original\nFull details"
+        assert buffer.get_text(*buffer.get_bounds(), True) == (
+            "<b>Edited 🐦</b>\n\nFull changed details" if save else "Original\nFull details"
+        )
         buffer.set_text("<b>Edited 🐦</b>\n\nFull changed details")
         click_button(gtk, editor, editor.save_button if save else editor.cancel_button)
         wait_until(gtk.glib, lambda: window.editor is None and not window.pending)
@@ -1274,6 +1277,94 @@ def test_edit_and_new_tag_errors_keep_input_and_reject_stale_revision(gtk, tag_o
     wait_until(gtk.glib, lambda: window.editor is None)
 
 
+@pytest.mark.parametrize(
+    "action", ["add", "restore", "restore-close", "stale-restore", "failed-add", "stale-checklist"]
+)
+@pytest.mark.parametrize("hidden_by", ["filter", "collapsed", "visible"])
+def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
+    gtk, monkeypatch, action, hidden_by
+):
+    with Store(gtk.paths.database) as store:
+        store.add("Visible Work task", tag="Work")
+        store.add("Archived Personal task", tag="Personal")
+        store.transition(2, "start" if action == "stale-checklist" else "rm")
+    window = gtk.open()
+    if action == "stale-checklist":
+        with Store(gtk.paths.database) as store:
+            store.transition(2, "rm")
+        # Keep the pre-archive progress snapshot until the restore's own refresh.
+        gtk.glib.source_remove(window.refresh_source)
+        window.refresh_source = gtk.glib.timeout_add(60000, window._poll)
+    window._set_filter(frozenset({"Work"}) if hidden_by == "filter" else None)
+    if hidden_by == "collapsed":
+        window._cycle_view(None)
+    current_filter, current_view = window.tag_filter, window.view_mode
+    window.entry.set_text("Keep unrelated input")
+    if action in {"add", "failed-add"}:
+        window._select_creation_tag("Personal")
+        if action == "failed-add":
+            with display_lock(gtk.paths):
+                window._add()
+                wait_until(gtk.glib, lambda: not window.pending and window.notice.get_visible())
+        else:
+            window._add()
+            wait_until(gtk.glib, lambda: not window.pending and len(window.notes_snapshot) == 2)
+        note_id, verb = 3, "Saved"
+    else:
+        window._open_archive()
+        archive = window.archive_window
+        wait_until(gtk.glib, lambda: not archive.pending and 2 in archive.rows)
+        if action == "stale-restore":
+            with Store(gtk.paths.database) as store:
+                store.transition(2, "restore")
+        if action == "restore-close":
+            entered, release = threading.Event(), threading.Event()
+            original = archive.model.restore
+
+            def slow_restore(note):
+                entered.set()
+                assert release.wait(timeout=3)
+                return original(note)
+
+            monkeypatch.setattr(archive.model, "restore", slow_restore)
+            archive._restore(2)
+            assert entered.wait(timeout=2)
+            archive.close()
+            threading.Timer(0.1, release.set).start()
+        else:
+            archive._restore(2)
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.pending
+                and any(note.id == 2 and note.state == "active" for note in window.notes_snapshot)
+            ),
+        )
+        note_id, verb = 2, "Restored"
+    assert window.tag_filter == current_filter and window.view_mode == current_view
+    if action in {"failed-add", "stale-restore"} or hidden_by == "visible":
+        assert not window.feedback.get_visible()
+        assert window.saved_feedback is None
+    else:
+        assert window.feedback.get_visible()
+        reason = "current filter" if hidden_by == "filter" else "collapsed view"
+        assert window.feedback_text.get_text() == f"{verb} — hidden by {reason}."
+        assert (
+            window.feedback_show.get_tooltip_text()
+            == window.feedback_show.get_accessible().get_name()
+        )
+        assert window.tag_filter == current_filter
+        draft = window.entry.get_text()
+        window.feedback_show.clicked()
+        wait_until(gtk.glib, lambda: note_id in window.rows and window.reveal_note_id is None)
+        assert window.tag_filter is None and window.view_mode == 0
+        assert window.entry.get_text() == draft
+        assert window.creation_tag == ("Personal" if action == "add" else None)
+        assert not window.feedback.get_visible() and window.saved_feedback is None
+        window._set_filter(current_filter)
+        assert not window.feedback.get_visible()  # No historical success replay.
+
+
 def test_committed_edit_closes_editor_even_if_list_refresh_fails(gtk, monkeypatch):
     with Store(gtk.paths.database) as store:
         store.add("Original")
@@ -1349,6 +1440,13 @@ def test_checkbox_opposite_clicks_return_to_empty_before_marking_or_starting(gtk
     assert row.get_style_context().has_class("deletion-marked")
     assert row.done.get_accessible().get_name() == "Cancel deletion of note 1"
     assert "Right-click again to delete" in row.done.get_accessible().get_description()
+    assert row.done.get_tooltip_text() == row.done.get_accessible().get_description()
+    assert not row.done.get_mode()
+    icon, _size = row.done.get_image().get_gicon()
+    assert icon.get_bytes().get_data() == (
+        files("pinote.gui").joinpath("icons", "edit-delete-symbolic.svg").read_bytes()
+    )
+    assert row.done.get_allocated_width() <= 26
     color = row.body.get_style_context().get_color(Gtk.StateFlags.NORMAL)
     assert (color.red, color.green, color.blue) == pytest.approx((240 / 255, 163 / 255, 174 / 255))
     window._poll()
@@ -1359,6 +1457,7 @@ def test_checkbox_opposite_clicks_return_to_empty_before_marking_or_starting(gtk
     click_button(gtk, window, row.done)
     wait_until(gtk.glib, lambda: not row.deletion_marked)
     assert not row.get_style_context().has_class("deletion-marked")
+    assert row.done.get_mode() and row.done.get_image() is None
     assert not row.done.get_active() and not row.done.get_inconsistent()
     assert not row.get_style_context().has_class("in-progress")
     assert row.note.state == "active"
@@ -1477,7 +1576,7 @@ def test_stale_progress_click_never_overrides_external_change(
         assert [e["action"] for e in store.history()] == ["add", "start", external_action]
 
 
-def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
+def test_only_action_controls_have_tooltips_on_ordinary_notes(gtk):
     with Store(gtk.paths.database) as store:
         store.add("No hover popup")
     window = gtk.open()
@@ -1488,12 +1587,16 @@ def test_only_action_icons_have_tooltips_on_ordinary_notes(gtk):
         window.minimise_button,
         window.rows[1].preview_button,
         window.show_all_button,
+        window.feedback_show,
+        window.feedback_close,
     }
     widgets = [window]
     while widgets:
         widget = widgets.pop()
         if widget in actions:
             assert widget.get_tooltip_text() == widget.get_accessible().get_name()
+        elif widget is window.rows[1].done:
+            assert widget.get_tooltip_text() == widget.get_accessible().get_description()
         elif widget is window.tag_button:
             assert widget.get_tooltip_text() == (
                 "Tag for new tasks: Untagged. Right-click to clear."
@@ -3743,6 +3846,199 @@ def test_close_finishes_an_already_clicked_mutation(gtk, cli, monkeypatch):
     with Store(gtk.paths.database) as store:
         assert store.notes() == []
         assert [event["action"] for event in store.history()] == ["add", "start", "done"]
+
+
+@pytest.mark.parametrize(
+    "finish",
+    [
+        "close",
+        "crash",
+        "empty",
+        "discard",
+        "save",
+        "failed-save",
+        "stale",
+        "save-close",
+        "read-retry",
+        "discard-read-failure",
+    ],
+)
+def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, finish, monkeypatch):
+    original = "Original\nTask details"
+    draft = "  Unfinished <edit> café ☕\n\nDetails\twith whitespace  \n"
+    with Store(gtk.paths.database) as store:
+        store.add(original)
+        store.add("Other task")
+    script = textwrap.dedent("""
+        import json
+        import os
+        import sys
+        import threading
+        from pinote.gui import main
+        from pinote.gui.app import Gio, GLib
+
+        finish, draft = sys.argv[1:]
+        started = acted = False
+
+        def edit_and_close():
+            global started, acted
+            app = Gio.Application.get_default()
+            window = next((w for w in app.get_windows() if hasattr(w, "rows")), None)
+            if window is None or window.pending:
+                return True
+            if not started:
+                window._open_editor(window.rows[1].note)
+                editor = window.editor
+                editor.entry.get_buffer().set_text("" if finish == "empty" else draft)
+                started = True
+            editor = window.editor
+            if finish == "crash":
+                if not editor.draft.path.exists():
+                    return True
+                if json.loads(editor.draft.path.read_text())["text"] != draft:
+                    return True
+                os._exit(0)
+            if not acted:
+                acted = True
+                if finish == "discard":
+                    editor.discard_button.clicked()
+                elif finish in {"save", "failed-save", "save-close"}:
+                    original_edit = window.model.edit
+                    if finish == "failed-save":
+                        def failed_edit(*_args):
+                            raise OSError("test edit failure")
+                        window.model.edit = failed_edit
+                    elif finish == "save-close":
+                        entered, release = threading.Event(), threading.Event()
+                        def slow_edit(*args):
+                            entered.set()
+                            assert release.wait(timeout=3)
+                            return original_edit(*args)
+                        window.model.edit = slow_edit
+                    editor.save_button.clicked()
+                    if finish == "save-close":
+                        assert entered.wait(timeout=2)
+                        threading.Timer(0.2, release.set).start()
+                        window.close()
+                        return False
+            if finish == "save" and window.editor is not None:
+                return True
+            if finish == "failed-save" and editor.saving:
+                return True
+            window.close()  # Flush even before the 250 ms autosave fires.
+            return False
+
+        GLib.timeout_add(20, edit_and_close)
+        status = main([])
+        assert started
+        raise SystemExit(status)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script, finish, draft],
+        env=gtk.env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    saved = draft.strip() if finish in {"save", "save-close"} else original
+    with Store(gtk.paths.database) as store:
+        assert store.get(1).text == saved
+        assert [event["action"] for event in store.history(1)] == (
+            ["add", "edit"] if finish in {"save", "save-close"} else ["add"]
+        )
+        if finish == "stale":
+            store.edit(1, "Newer task text", expected_updated_at=store.get(1).updated_at)
+            saved = "Newer task text"
+    window = gtk.open()
+    window._open_editor(window.rows[2].note)
+    other = window.editor
+    assert other.entry.get_buffer().get_text(*other.entry.get_buffer().get_bounds(), True) == (
+        "Other task"
+    )
+    other.cancel_button.clicked()
+    wait_until(gtk.glib, lambda: window.editor is None)
+    if finish in {"read-retry", "discard-read-failure"}:
+        from pinote.gui.draft import DraftCache
+
+        with monkeypatch.context() as patch:
+
+            def denied(_cache):
+                raise PermissionError("temporarily unreadable draft")
+
+            patch.setattr(DraftCache, "load", denied)
+            window._open_editor(window.rows[1].note)
+            editor = window.editor
+            assert 1 not in window.edit_drafts
+            assert "Cannot restore" in editor.error_text.get_text()
+            assert not editor.entry.get_editable() and not editor.save_button.get_sensitive()
+            editor._save()  # Keyboard/programmatic submission must be blocked too.
+            if finish == "read-retry":
+                editor.cancel_button.clicked()
+                wait_until(gtk.glib, lambda: window.editor is None)
+                assert json.loads(editor.draft.path.read_text())["text"] == draft
+            else:
+                entered, release = threading.Event(), threading.Event()
+
+                def block_worker():
+                    entered.set()
+                    assert release.wait(timeout=3)
+
+                blocked = window.worker.submit(block_worker)
+                assert entered.wait(timeout=2)
+                editor.discard_button.clicked()
+        if finish == "discard-read-failure":
+            try:
+                # Disk deletion is still queued; reopening must use the cleared cache.
+                assert json.loads(editor.draft.path.read_text())["text"] == draft
+                window._open_editor(window.rows[1].note)
+                editor = window.editor
+                buffer = editor.entry.get_buffer()
+                assert buffer.get_text(*buffer.get_bounds(), True) == saved
+                editor.cancel_button.clicked()
+                wait_until(gtk.glib, lambda: window.editor is None)
+            finally:
+                release.set()
+                blocked.result(timeout=3)
+            window.worker.submit(lambda: None).result(timeout=3)
+    window._open_editor(window.rows[1].note)
+    editor = window.editor
+    buffer = editor.entry.get_buffer()
+    expected = (
+        saved
+        if finish in {"discard", "save", "save-close", "discard-read-failure"}
+        else ("" if finish == "empty" else draft)
+    )
+    assert buffer.get_text(*buffer.get_bounds(), True) == expected
+    if finish not in {"discard", "save", "save-close", "discard-read-failure"}:
+        assert json.loads(editor.draft.path.read_text())["text"] == expected
+        assert editor.draft.path.stat().st_mode & 0o777 == 0o600
+        assert editor.draft.path.parent.stat().st_mode & 0o777 == 0o700
+    else:
+        assert not editor.draft.path.exists()
+    if finish == "stale":
+        assert "changed elsewhere" in editor.error_text.get_text()
+        editor.save_button.clicked()
+        wait_until(gtk.glib, lambda: not editor.saving)
+        assert "changed elsewhere" in editor.error_text.get_text()
+        with Store(gtk.paths.database) as store:
+            assert store.get(1).text == saved
+        editor.discard_button.clicked()
+        window._open_editor(window.rows[1].note)
+        buffer = window.editor.entry.get_buffer()
+        assert buffer.get_text(*buffer.get_bounds(), True) == saved
+    elif finish in {"close", "crash", "failed-save", "read-retry"}:
+        # Reopening within the process also reuses the latest in-memory draft.
+        buffer.set_text(draft + "New edits")
+        editor.cancel_button.clicked()
+        wait_until(gtk.glib, lambda: window.editor is None)
+        window._open_editor(window.rows[1].note)
+        editor = window.editor
+        buffer = editor.entry.get_buffer()
+        assert buffer.get_text(*buffer.get_bounds(), True) == draft + "New edits"
+        editor.save_button.clicked()
+        wait_until(gtk.glib, lambda: window.editor is None)
+        assert not editor.draft.path.exists()
 
 
 @pytest.mark.parametrize("finish", ["close", "crash", "clear", "submit", "edit", "failed-submit"])
