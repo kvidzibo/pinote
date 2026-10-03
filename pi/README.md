@@ -56,10 +56,10 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 
 ## Use
 
-`/pi-note` picks a task, marks it in progress, and adds this prompt to the editor:
+`/pi-note` picks a task, marks it in progress, and adds this default prompt to the editor:
 “Read the current Pinote task. Summarize your understanding, but don’t start work yet.”
 The agent fetches current task text and saved handoff fields when you submit;
-they are not copied into the draft. The prompt asks for a summary, not implementation.
+they are not copied into the draft. The default prompt asks for a summary, not implementation.
 Existing drafts are preserved; nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, and **Switch task**.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
@@ -74,14 +74,33 @@ Resume restores that session's task; a new session starts unselected and does no
 an older per-folder selection. Pi saves the session after the first submitted message;
 quitting before that leaves the next launch unselected, while the task stays in progress.
 Use **Continue**
-to insert the same read-and-summarize prompt. Completing, removing, or scheduling a task clears it
+to insert the same configured prompt. Completing, removing, or scheduling a task clears it
 from sessions that refresh it. Switching does not complete or reset the previous task.
 Task fields such as `Worktree` and `PR` stay on the task, so sessions can use separate
 worktrees and pull requests. Task status refreshes at session start, before/after
 agent activity, and after commands/tools. The CLI's per-directory `agent selected`
 command is not this session memory.
 
-Agent tools:
+### Handoff prompt configuration
+
+Set `handoffPrompt` in `~/.pi/agent/pi-note.json` (or in the agent directory set
+by `PI_CODING_AGENT_DIR`):
+
+```json
+{
+  "handoffPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet."
+}
+```
+
+Both task selection and **Continue** read this file each time; no `/reload` is
+needed after edits. The value is literal text, not a prompt template; use `\n`
+in JSON strings for multiple lines. It must be a nonblank string without control
+characters other than tabs and newlines. A missing file or key uses the default.
+Invalid/unreadable configuration reports an error without starting/switching a
+task or changing the editor. **Done** and agent tools are unaffected. This is
+user-level configuration only; project-local files are not read.
+
+### Agent tools
 
 - `pinote_get_current`: read this session's selected task, including its revision.
   Takes no arguments; returns null when this session has no selected task.

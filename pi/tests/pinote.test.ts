@@ -3,8 +3,19 @@ import { test } from "node:test";
 import pinote from "../index.ts";
 import { CombinedAutocompleteProvider, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-test("task selection, handoff, guarded Done and tools stay session-local without submission", async () => {
+test("task selection, handoff, guarded Done and tools stay session-local without submission", async (t) => {
+  const agentDir = mkdtempSync(join(tmpdir(), "pi-note-unit-"));
+  const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(() => {
+    if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+    rmSync(agentDir, { recursive: true, force: true });
+  });
   const tasks = [
     { id: 1, text: "Older task", state: "active", tag: null, updated_at: "r1", agent_notes: {} as Record<string, string>, markdown: "Older task" },
     { id: 2, text: "Unicode 日本語 task\nHidden details", state: "active", tag: null, updated_at: "r2", agent_notes: {} as Record<string, string>, markdown: "Unicode 日本語 task" },
