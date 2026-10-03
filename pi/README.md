@@ -91,9 +91,10 @@ protocol pi-note-preview
 action launch --type=background node /home/me/AI/pinote/pi/preview-click.cjs ${URL}
 ```
 
-Reload Kitty with **Ctrl+Shift+F5**, then click (or Alt+click) the eye. The helper
-sends only an authenticated selection identifier, never note content or a model
-prompt. Stale links after task switching, tree navigation, reload or session exit
+Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the eye; in
+fullscreen mode, use **Ctrl+Shift+click** so Kitty handles the link instead of
+Pi's system URL opener. The helper sends only an authenticated selection
+identifier, never note content or a model prompt. Stale links after task switching, tree navigation, reload or session exit
 are rejected. Other terminals can use `/pi-note-preview`; if the socket cannot
 start, the eye is omitted and that command remains available.
 

@@ -252,8 +252,8 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch && serial === refreshSerial) {
         const previewId = current?.id ?? null;
         const previewBranch = branchEpoch;
-        previewBridge?.setTask(previewId, () => alive && generation === epoch && previewBranch === branchEpoch &&
-          selectedId === previewId ? preview(ctx) : Promise.resolve(false));
+        previewBridge?.setTask(previewId, (signal) => alive && generation === epoch && previewBranch === branchEpoch &&
+          selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false));
         const url = previewBridge?.url();
         // Keep the eye outside title truncation, including the minimum title width.
         const eye = url ? `\x1b]8;;${url}\x07${eyeIcon}\x1b]8;;\x07 ` : "";
@@ -286,16 +286,22 @@ export default function (pi: ExtensionAPI) {
     },
     refresh,
   });
-  const preview = async (ctx: ExtensionContext): Promise<boolean> => {
+  const preview = async (ctx: ExtensionContext, requestSignal?: AbortSignal): Promise<boolean> => {
     if (!ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || !validId(selectedId)) return false;
     const generation = epoch;
     const branch = branchEpoch;
     const id = selectedId;
     const operation = Symbol();
     pending = operation;
-    const canUse = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
+    // Complete before the bridge's 5s and helper's 6s deadlines; disconnection cancels reads too.
+    const controller = new AbortController();
+    const deadline = Date.now() + 4000;
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const signal = requestSignal ? AbortSignal.any([requestSignal, controller.signal]) : controller.signal;
+    const canUse = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle() &&
+      !signal.aborted && Date.now() < deadline;
     try {
-      const current = await currentTask(undefined, canUse);
+      const current = await currentTask(signal, canUse);
       if (!current || !canUse()) return false;
       // Custom entries are rendered locally, never conversation messages or compaction input.
       pi.appendEntry(previewType, { id: current.id, markdown: current.markdown });
@@ -304,6 +310,7 @@ export default function (pi: ExtensionAPI) {
       if (canUse()) ctx.ui.notify(`Pinote preview: ${clean(String(error))}`, "error");
       return false;
     } finally {
+      clearTimeout(timer);
       if (pending === operation) pending = undefined;
     }
   };

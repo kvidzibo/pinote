@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
+import { createConnection } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { test } from "node:test";
@@ -103,6 +104,35 @@ test("native eye preview renders complete local data but never reaches requests 
     assert.equal(previews().length, 3);
     await assert.rejects(click(link().replace(/\/[0-9a-f]{32}\//, `/${"0".repeat(32)}/`)));
     assert.throws(() => socketPathFor(`${link()}\n`));
+    // Reproduce a 1s version probe + 4.5s successful task read, exceeding the socket's 5s deadline.
+    const shimDir = join(temp, "slow-cli");
+    mkdirSync(shimDir);
+    writeFileSync(join(shimDir, "note"), `#!${process.execPath}\nconst {execFile}=require('node:child_process');
+const argv=process.argv.slice(2);
+setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},argv,{encoding:'utf8'},(err,out,stderr)=>{
+  process.stdout.write(out);process.stderr.write(stderr);process.exitCode=err?1:0;
+}),argv[0]==='--version'?1000:4500);\n`, { mode: 0o755 });
+    const fastPath = process.env.PATH;
+    process.env.PATH = `${shimDir}:${fastPath}`;
+    const beforeSlow = previews().length;
+    const started = Date.now();
+    await assert.rejects(click(link()), "slow reads must be rejected before the transport expires");
+    assert.ok(Date.now() - started < 5500);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    assert.equal(previews().length, beforeSlow, "a timed-out read must never append later");
+    const match = /^pi-note-preview:\/\/[^/]+\/([^/]+)\/([^/]+)\/([^/]+)$/u.exec(link())!;
+    const disconnected = createConnection(socketPathFor(link()));
+    await new Promise<void>((resolve, reject) => {
+      disconnected.once("error", reject);
+      disconnected.once("connect", () => {
+        disconnected.write(`preview ${match[1]} ${match[2]} ${match[3]}\n`);
+        setTimeout(() => { disconnected.destroy(); resolve(); }, 250);
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    process.env.PATH = fastPath;
+    await click(link());
+    assert.equal(previews().length, beforeSlow + 1, "disconnect must promptly cancel and release the preview operation");
     assert.equal(draft, "Keep my draft");
     assert.deepEqual(JSON.parse(cli("agent", "get", "1")), before, "preview never mutates task data");
     const lastUrl = link();

@@ -14,7 +14,7 @@ export function createPreviewBridge() {
   let closed = false;
   let ready = false;
   let taskId: number | null = null;
-  let callback: (() => Promise<boolean>) | undefined;
+  let callback: ((signal: AbortSignal) => Promise<boolean>) | undefined;
   let nonce: string | undefined;
   const clients = new Set<Socket>();
   const invalidate = () => { taskId = null; callback = undefined; nonce = undefined; };
@@ -49,9 +49,10 @@ export function createPreviewBridge() {
         socketPath = join(dir, `${process.pid}-${randomBytes(4).toString("hex")}.sock`);
         const instance = createServer((client) => {
           clients.add(client);
+          const request = new AbortController();
           client.on("error", () => client.destroy());
-          client.on("close", () => clients.delete(client));
-          client.setTimeout(5000, () => client.destroy());
+          client.on("close", () => { request.abort(); clients.delete(client); });
+          client.setTimeout(5000, () => { request.abort(); client.destroy(); });
           let data = Buffer.alloc(0);
           let dispatched = false;
           client.on("data", (chunk) => {
@@ -66,7 +67,7 @@ export function createPreviewBridge() {
             if (!match || match[0] !== input || match[1] !== capability || !Number.isSafeInteger(id) ||
                 id !== taskId || match[3] !== nonce || !callback) { client.end("rejected\n"); return; }
             const invoke = callback;
-            Promise.resolve().then(() => !closed && taskId === id && nonce === match[3] ? invoke() : false)
+            Promise.resolve().then(() => !closed && !request.signal.aborted && taskId === id && nonce === match[3] ? invoke(request.signal) : false)
               .then((accepted) => { if (!client.destroyed) client.end(accepted === true ? "accepted\n" : "rejected\n"); },
                 () => { if (!client.destroyed) client.end("rejected\n"); });
           });
@@ -89,7 +90,7 @@ export function createPreviewBridge() {
       })();
       return starting;
     },
-    setTask(id: number | null, preview: () => Promise<boolean>): void {
+    setTask(id: number | null, preview: (signal: AbortSignal) => Promise<boolean>): void {
       if (closed) return;
       if (id !== null && (!Number.isSafeInteger(id) || id <= 0)) throw new Error("Invalid preview task");
       if (id !== taskId) nonce = id === null ? undefined : randomBytes(16).toString("hex");
