@@ -241,7 +241,7 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert not row.reminder_icon.get_visible()
     assert not row.preview_button.get_visible()
     assert "right-click to mark for deletion" in row.done.get_accessible().get_description()
-    assert row.body.get_line_wrap()
+    assert not row.body.get_line_wrap()
     font = row.body.get_pango_context().get_font_description()
     assert "Hack Nerd Font Mono" in font.get_family()
     assert font.get_size() == 9 * 1024
@@ -1684,12 +1684,12 @@ def test_non_button_click_focuses_entry_without_copying(gtk, target):
         assert all(event["action"] == "add" for event in store.history())
 
 
-@pytest.mark.parametrize("first,last", [(0, 16), (16, 0), (0, 45)])
+@pytest.mark.parametrize("first,last", [(0, 16), (16, 0), (0, 29)])
 def test_drag_selection_copies_literal_unicode_on_release_then_focuses_entry(gtk, first, last):
     from pinote.gui.app import Gdk, Gtk, Pango
 
-    # First logical lines still wrap; dragging across that wrap must copy literally.
-    text = "Copy 🐦 <literal> " + "wrapped text " * 3 + "\nhidden details"
+    # Visible single-line titles must still support literal Unicode selection.
+    text = "Copy 🐦 <literal> visible text\nhidden details"
     with Store(gtk.paths.database) as store:
         store.add(text)
     window = gtk.open()
@@ -1875,9 +1875,13 @@ def test_manual_move_before_initial_placement_ack_is_preserved(gtk, monkeypatch)
 
 
 def test_notice_grows_up_and_shrinks_without_moving_bottom(gtk):
+    # Single-line rows need a larger visible budget to fill the monitor height.
+    config = Path(os.environ["XDG_CONFIG_HOME"]) / "pinote" / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("[gui]\nmax_visible_notes = 100\n")
     with Store(gtk.paths.database) as store:
-        for index in range(35):
-            store.add(f"Reminder {index}: " + "wrapped " * 80)
+        for index in range(100):
+            store.add(f"Reminder {index}")
     window = gtk.open()
     initial_height = window.get_size().height
     initial_scroll = window.scroll.get_allocated_height()
@@ -2365,6 +2369,59 @@ def test_preview_edit_and_composer_drag_handle(gtk):
     assert window.get_position() == (start[0] + 70, start[1] - 40)
     window.entry.set_text("Still editable")
     assert window.entry.get_text() == "Still editable"
+
+
+def test_single_line_titles_keep_truncated_text_in_preview(gtk):
+    from pinote.gui.app import Pango
+
+    title = "Enable Kitty clicks for Pinote previews"
+    details = "Context, URLs, and commands belong below the title."
+    long_title = ("A very long literal task title 🐦 & <b>not markup</b> " * 8).strip()
+    with Store(gtk.paths.database) as store:
+        store.add("Short title")
+        store.add(f"{title}\n\n{details}")
+        store.add(long_title)
+    window = gtk.open()
+    row = window.rows[3]
+    wait_until(
+        gtk.glib,
+        lambda: row.body.get_layout().is_ellipsized() and row.preview_button.get_visible(),
+    )
+    for item in window.rows.values():
+        assert item.body.get_layout().get_line_count() == 1
+        assert item.body.get_ellipsize() == Pango.EllipsizeMode.END
+        assert item.get_allocated_height() <= 30
+    assert not window.rows[1].preview_button.get_visible()
+    assert window.rows[2].body.get_text() == title
+    assert window.rows[2].preview_button.get_visible()
+    assert row.body.get_text() == long_title and not row.body.get_use_markup()
+    click_button(gtk, window, row.preview_button)
+    wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
+    preview = window.preview
+    assert preview.body.get_text() == long_title
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert window.preview is preview and preview.get_mapped()
+    updated_title = long_title + " Updated."
+    with Store(gtk.paths.database) as store:
+        note = store.get(3)
+        assert note.text == long_title
+        assert [event["action"] for event in store.history(3)] == ["add"]
+        store.edit(3, updated_title, expected_updated_at=note.updated_at)
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and row.note.text == updated_title)
+    assert window.preview is preview and preview.get_mapped()
+    assert preview.body.get_text() == updated_title
+    with Store(gtk.paths.database) as store:
+        store.edit(3, "Now short", expected_updated_at=store.get(3).updated_at)
+    window._poll()
+    wait_until(
+        gtk.glib,
+        lambda: row.body.get_text() == "Now short" and not row.preview_button.get_visible(),
+    )
+    assert row.body.get_layout().get_line_count() == 1
+    assert not row.body.get_layout().is_ellipsized()
+    assert window.preview is None and not preview.get_visible()
 
 
 def test_multiline_entry_and_read_only_preview(gtk):

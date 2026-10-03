@@ -77,8 +77,9 @@ class NoteRow(Gtk.ListBoxRow):
         self.body = Gtk.Label(
             label=note.text.split("\n", 1)[0], xalign=0, yalign=0, selectable=True
         )
-        self.body.set_line_wrap(True)
-        self.body.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.body.set_single_line_mode(True)
+        self.body.set_ellipsize(Pango.EllipsizeMode.END)
+        self.body.connect("size-allocate", lambda *_args: self._update_preview_visibility())
         self.body.set_max_width_chars(42)
         self.body.set_hexpand(True)
         self.body.set_margin_top(3)
@@ -95,9 +96,19 @@ class NoteRow(Gtk.ListBoxRow):
         content.pack_start(self.reminder_icon, False, False, 0)
         self.preview_button = icon_button("view-reveal-symbolic", f"Preview note {note.id}")
         self.preview_button.set_no_show_all(True)
-        self.preview_button.get_accessible().set_description("Show the full multiline task.")
+        self.preview_button.get_accessible().set_description("Show the full task.")
         self.preview_button.connect("clicked", lambda _button: on_preview(note.id))
         content.pack_start(self.preview_button, False, False, 0)
+
+    def has_preview(self) -> bool:
+        return (
+            "\n" in self.note.markdown
+            or self.unread_agent
+            or self.body.get_layout().is_ellipsized()
+        )
+
+    def _update_preview_visibility(self) -> None:
+        self.preview_button.set_visible(self.has_preview())
 
     def _check_clicked(self, _button) -> None:
         if self.done.get_sensitive() and not self.exiting:
@@ -155,9 +166,7 @@ class NoteRow(Gtk.ListBoxRow):
         self.preview_button.set_tooltip_text(description)
         self.preview_button.get_accessible().set_name(description)
         self.preview_button.get_accessible().set_description(
-            "Show the unread agent update."
-            if self.unread_agent
-            else "Show the full multiline task."
+            "Show the unread agent update." if self.unread_agent else "Show the full task."
         )
         if note != self.note or note.state != "active":
             # Only unchanged empty tasks can keep a deletion confirmation.
@@ -182,7 +191,7 @@ class NoteRow(Gtk.ListBoxRow):
             self.reminder_icon.set_tooltip_text(due_text)
         self.reminder_icon.get_accessible().set_description(due_text or "")
         self.reminder_icon.set_visible(due_text is not None)
-        self.preview_button.set_visible("\n" in note.markdown or self.unread_agent)
+        self._update_preview_visibility()
         self.preview_button.set_sensitive(not self.exiting)
         sensitive = sensitive and not self.exiting
         self.done.set_sensitive(sensitive)
@@ -836,12 +845,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _open_preview(self, note_id: int) -> None:
         row = self.rows.get(note_id)
-        if (
-            self.closed
-            or row is None
-            or row.exiting
-            or ("\n" not in row.note.markdown and not row.unread_agent)
-        ):
+        if self.closed or row is None or row.exiting or not row.has_preview():
             return
         if self.focus_source:
             GLib.source_remove(self.focus_source)
@@ -1613,13 +1617,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             unread = self._agent_unread(note)
             row.update(note, sensitive=not self.action_pending, unread_agent=unread)
             if self.preview is not None and self.preview.note_id == note.id:
-                if (
-                    "\n" in note.markdown
-                    or unread
-                    or (
-                        self.preview.removal_event
-                        and self.preview.removal_event == note.agent_event_id
-                    )
+                if row.has_preview() or (
+                    self.preview.removal_event and self.preview.removal_event == note.agent_event_id
                 ):
                     self.preview.update(note, agent_update=unread)
                 else:

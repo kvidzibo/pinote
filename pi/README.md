@@ -181,6 +181,9 @@ When allowed by `taskOfferPolicy`, the agent proposes one note as `[tag] text`
 and asks before creating it. No continues without a note. Yes calls
 `pinote_add` with `select: true`. An existing selection is not replaced unless the
 user asks to switch. Reuse a saved tag name when it fits.
+Task text starts with a short, action-oriented title (aim for at most 60 characters).
+Put context, URLs, commands, and acceptance criteria after a blank line; the title
+should not contain implementation details. This is agent guidance, not a storage limit.
 
 Agents are guided to keep notes to three short bullets total: relevant outcome,
 blocker, and next action. Replace stale notes; omit narration, repeated task text,
