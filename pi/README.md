@@ -68,9 +68,7 @@ task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows `📌 [tag] Task title` without replacing other footers.
-The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the pin and tag). Overflow ends with `...`.
-The pin glyph is bundled in `icons/note.txt`; it uses terminal fonts, not a Nerd Font or icon theme.
+The normal Pi status area shows selected-task controls and title without replacing other footers. The footer omits the task ID and state and shows only the first line, bounded by `footer.titleWidth` (default 60 terminal columns including the pin, controls, tag and title). Overflow ends with `...`. The title remains clickable for preview; task controls are separate. At very small widths controls are hidden (pin only). The pin and controls are bundled in `icons/note.txt`, `icons/check.txt`, `icons/cross.txt`, and `icons/add.txt`; they use terminal fonts, not a Nerd Font or icon theme.
 
 ### Display-only preview
 
@@ -186,32 +184,26 @@ When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
 asking in chat. The pin footer shows a pending suggestion, distinct from a selected task:
 
 ```text
-📌 Suggested: ✓ Add  ✕ Dismiss · [tag] Task title...
+📌 ✕  + · [tag] Task title...
+📌 ✓    · [tag] Task title...
 ```
 
-![Suggested task beside the footer pin](../docs/images/pi-task-suggestion.png)
+![Suggested task controls](../docs/images/pi-task-suggestion.png)
+![Selected task with Done control](../docs/images/pi-task-selected.png)
 
-- **✓ Add** creates the note, starts it, and selects it for this session.
-- **✕ Dismiss** hides the suggestion without creating a note; further offers are suppressed
-  until a new session or reload.
+- Muted **✕** dismisses without creating a note; further offers are suppressed until a new session or reload.
+- Accent **+** creates, starts, and selects the suggested task.
+- Green **✓** completes the selected task and clears the selection on success.
 
-The configured `footer.titleWidth` bounds the whole suggestion (default 60 columns).
-Controls precede the variable text so long titles cannot push them off the right edge.
-The tag is omitted when space is tight; the first-line title truncates with `...`.
-Smaller budgets shorten controls to ✓ and ✕; tiny budgets show only the suggestion cue.
-Pi can still clip the combined status row on narrow terminals; use the commands below
-if the controls are not visible. Accepting replaces the suggestion with the selected task.
+Done occupies the former ✕ position, not the + position, so clicking Add twice cannot accidentally complete the new task. The former + cell stays blank. The selected task's title is a separate preview link.
 
-Neither action submits input or starts an agent turn; editor drafts stay unchanged.
-The icons reuse the [Kitty preview handler](#display-only-preview), with no additional
-configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are
-`/pi-note-yes` and `/pi-note-no`, including when clickable links are unavailable.
-An existing suggestion is retained rather than replaced. Selection, tree navigation,
-reload and shutdown invalidate its links; repeated acceptance cannot duplicate a note.
-A busy Pinote operation blocks acceptance; retry after it finishes. On an error, check
-`/pi-note` before retrying, because a write may already have committed.
-Noninteractive agents still ask in chat before using `pinote_add` with `select: true`.
-An existing selection is not replaced unless the user asks to switch. Reuse a saved
+The configured `footer.titleWidth` bounds the entire row (default 60 columns). Controls stay first; the tag is dropped before truncating the first-line title with `...`. Tiny widths hide controls (pin only). Pi can still clip the combined status row on narrow terminals.
+
+Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are `/pi-note-no`, `/pi-note-yes`, and `/pi-note-done`. No action submits input or starts an agent turn; editor drafts stay unchanged.
+
+Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed.
+
+An existing suggestion is retained rather than replaced. Selection, tree navigation, reload and shutdown invalidate its links; repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
 tag name when it fits.
 Task text starts with a short, action-oriented title (aim for at most 60 characters).
 Put context, URLs, commands, and acceptance criteria after a blank line; the title

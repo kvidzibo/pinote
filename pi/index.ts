@@ -10,7 +10,7 @@ import { FooterSettings, TaskMenu, withSettingsTab } from "./footer-settings.ts"
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
 import { createPreviewBridge } from "./preview-bridge.ts";
-import { renderSuggestion } from "./task-suggestion.ts";
+import { renderSuggestion, renderSelectedTask } from "./task-suggestion.ts";
 
 const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. Read pinote_fields to learn the user's globally configured footer field names and presentation. Populate those fields with meaningful task values when relevant using pinote_update_current; fields without values stay hidden. Footer fields and widths are chosen by the user's pi-note.json config. Set configured fields with Markdown values; links are clickable. When footer.fields is unset, Bar selects labels, one per line. Do not list PR in Bar. Remove a field to hide it. Do not modify config without user approval.";
 const offerGuidance = {
@@ -18,7 +18,7 @@ const offerGuidance = {
   "github-remote": "When the user gives work and no pinote task is selected, first verify with Git that the current repository has a remote whose URL host is github.com (HTTPS or SSH). Only then use pinote_propose to show one suggested `[tag] task` in the bottom bar instead of asking in chat. In noninteractive modes, ask before creating it. Local paths, other hosts, and GitHub-looking URL paths do not qualify. If no GitHub remote is verified, do not offer a task; explicit user requests to create one remain allowed.",
   never: "Do not offer to create a pinote task. Create one only when the user explicitly requests it.",
 };
-const consentGuidance = "The suggestion bar's check creates, starts and selects the note; its cross dismisses it. Continue the requested work while the suggestion is pending; do not ask again in chat or create a note yourself. On a chat no, continue without a note; on a chat yes, call pinote_add with select true. Never add or select without consent. If a task is already selected, do not replace it unless the user asks to switch.";
+const consentGuidance = "The suggestion bar's plus creates, starts and selects the note; its cross dismisses it. Continue the requested work while the suggestion is pending; do not ask again in chat or create a note yourself. On a chat no, continue without a note; on a chat yes, call pinote_add with select true. Never add or select without consent. If a task is already selected, do not replace it unless the user asks to switch.";
 const titleGuidance = "Start task text with a short, action-oriented summary (aim for at most 60 characters). Put context, URLs, commands, and acceptance criteria after a blank line. Never put implementation details in the title.";
 const tagGuidance = "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. Tags are set when creating tasks with pinote_add; agent tools cannot retag existing tasks. Do not use pinote_update_current for tags or task text.";
 type Task = {
@@ -228,7 +228,7 @@ export default function (pi: ExtensionAPI) {
     const current = task(await run(["agent", "get", String(id)], signal, canUse));
     if (!canUse() || selectedId !== id) return null;
     if (!current || current.id !== id || !["active", "in_progress"].includes(current.state)) {
-      if (canUse() && selectedId === id) remember(null);
+      if (!pending && canUse() && selectedId === id) remember(null);
       return null;
     }
     return current;
@@ -267,11 +267,14 @@ export default function (pi: ExtensionAPI) {
         const previewId = current?.id ?? null;
         const previewBranch = branchEpoch;
         previewBridge?.setTask(previewId, (signal) => alive && generation === epoch && previewBranch === branchEpoch &&
-          selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false));
-        const url = previewBridge?.url();
-        // Truncate before linking so the task label, including configured overflow, is clickable.
-        const label = current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, footerConfig.titleWidth, "...") : undefined;
-        ctx.ui.setStatus("pinote", current ? (label && url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label) : suggestionStatus(ctx));
+          selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false), current ? {
+            revision: current.updated_at,
+            invoke: () => alive && generation === epoch && previewBranch === branchEpoch && selectedId === previewId
+              ? completeTask(ctx, current) : Promise.resolve(false),
+          } : undefined);
+        ctx.ui.setStatus("pinote", current ? renderSelectedTask(current, footerConfig.titleWidth, ctx.ui.theme, {
+          preview: previewBridge?.url(), done: previewBridge?.doneUrl(),
+        }) : suggestionStatus(ctx));
         watcher.update(ctx, current);
       }
     } catch {
@@ -327,6 +330,45 @@ export default function (pi: ExtensionAPI) {
       if (pending === operation) pending = undefined;
     }
   };
+  const completeTask = async (ctx: ExtensionContext, displayed?: Task): Promise<boolean> => {
+    if (!alive || !ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || setupAbort || !validId(selectedId)) return false;
+    const generation = epoch;
+    const branch = branchEpoch;
+    const id = selectedId;
+    const operation = Symbol();
+    pending = operation;
+    refreshSerial++;
+    const canAct = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
+    let wrote = false;
+    try {
+      const current = displayed ?? await currentTask(undefined, canAct);
+      if (!current || current.id !== id || !canAct()) return false;
+      const completed = requiredTask(await run([
+        "agent", "done", String(id), "--expected-updated-at", current.updated_at,
+      ], undefined, canAct), id);
+      wrote = true;
+      if (completed.state !== "done") throw new Error(compatible);
+      if (!canAct()) throw new Error("The session or selection changed. Completion may have committed; read the task before retrying.");
+      remember(null, branch);
+      ctx.ui.notify(`Pinote #${id} completed.`, "info");
+      return true;
+    } catch (error) {
+      if (alive && generation === epoch) ctx.ui.notify(
+        `Pinote completion: ${clean(String(error))}${wrote ? " Check the task before retrying." : ""}`, "error");
+      return false;
+    } finally {
+      if (pending === operation) pending = undefined;
+      if (alive && generation === epoch) await refresh(ctx);
+    }
+  };
+  pi.registerCommand("pi-note-done", {
+    description: "Complete the selected task (same as the footer ✓)",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI || ctx.mode !== "tui") return;
+      if (args.trim()) { ctx.ui.notify("Usage: /pi-note-done", "warning"); return; }
+      if (!await completeTask(ctx)) ctx.ui.notify("Select a task and wait until Pi is idle and Pinote is available before completing it.", "warning");
+    },
+  });
   pi.registerCommand("pi-note-preview", {
     description: "Display the selected task locally without sending it to the model",
     handler: async (args, ctx) => {
@@ -649,7 +691,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
   pi.registerCommand("pi-note-yes", {
-    description: "Create, start and select the suggested task (same as ✓)",
+    description: "Create, start and select the suggested task (same as +)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
       if (args.trim() || !await respondToSuggestion("yes", ctx)) ctx.ui.notify("No available suggestion, or a Pinote operation is busy. Retry when it finishes.", "warning");
@@ -666,7 +708,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_propose",
     label: "Pinote suggest task",
     promptGuidelines: createGuidance,
-    description: "Show a suggested task beside the pin icon in the footer, without creating it or asking in chat. ✓ creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. An existing suggestion is retained; a dismissed offer is not repeated. In noninteractive modes ask in chat, then use pinote_add only after consent.",
+    description: "Show a suggested task beside the pin icon in the footer, without creating it or asking in chat. + creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. An existing suggestion is retained; a dismissed offer is not repeated. In noninteractive modes ask in chat, then use pinote_add only after consent.",
     parameters: Type.Object({
       text: Type.String({ minLength: 1, description: "Short action-oriented title, then optional details after a blank line." }),
       tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
@@ -717,7 +759,7 @@ export default function (pi: ExtensionAPI) {
       pending = operation;
       refreshSerial++;
       const canAct = () => alive && generation === epoch && branch === branchEpoch && pending === operation && selectedId === previousSelection;
-      // Chat consent consumes the same suggestion as clicking ✓, even if start fails.
+      // Chat consent consumes the same suggestion as clicking +, even if start fails.
       clearSuggestion(ctx);
       try {
         const created = requiredTask(await run(argv, signal, canAct, "0.4.0"));

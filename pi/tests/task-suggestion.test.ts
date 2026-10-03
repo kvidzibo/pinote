@@ -9,12 +9,12 @@ import { stripVTControlCharacters } from "node:util";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderSuggestion } from "../task-suggestion.ts";
+import { renderSuggestion, renderSelectedTask } from "../task-suggestion.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { preview: click } = createRequire(import.meta.url)("../preview-click.cjs");
 
-test("native suggestion bar requires consent, selects once, and rejects stale clicks without submitting", async () => {
+test("native suggestion and completion controls require consent and reject stale clicks without submitting", async () => {
   const temp = mkdtempSync(join(tmpdir(), "pinote-suggestion-test-"));
   const overrides = {
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
@@ -38,8 +38,9 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
   let status: string | undefined;
   const draft = "Keep my draft";
   const notices: string[] = [];
+  let idle = false;
   const ctx: any = {
-    cwd, hasUI: true, mode: "tui", isIdle: () => false, sessionManager: session,
+    cwd, hasUI: true, mode: "tui", isIdle: () => idle, sessionManager: session,
     ui: { theme,
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       setWidget() { throw new Error("suggestions must use the pin footer, not a separate widget"); },
@@ -67,32 +68,43 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
     await event("agent_end");
     assert.equal(status, proposedStatus, "agent activity must retain the suggestion in the pin footer");
     assert.equal(list().length, 0, "proposing must not create a task");
-    assert.match(stripVTControlCharacters(status!), /^📌 Suggested: ✓ Add  ✕ Dismiss · \[pinote\] Add 日本語/u);
+    assert.match(stripVTControlCharacters(status!), /^📌 ✕\u00a0\u00a0\+ · \[pinote\] Add 日本語/u);
     assert.ok(visibleWidth(status!) <= 60, "uses the configured footer title budget");
     for (const width of [0, 1, 3, 4, 5, 12, 18, 20, 30, 40, 72]) {
       const line = renderSuggestion({ text: "Add 日本語 suggested-task confirmation bar", tag: "pinote" }, width, theme, {});
       const plain = stripVTControlCharacters(line);
       assert.ok(visibleWidth(line) <= width, `fits ${width} columns`);
-      if (plain.includes("✓")) assert.match(plain, /Suggested:.*✓.*✕/u);
-      if (width >= 30) assert.match(plain, /✓ Add.*✕ Dismiss/u);
+      if (plain.includes("+")) assert.match(plain, /✕.*\+/u);
+      if (width >= 30) assert.match(plain, /✕\u00a0\u00a0\+/u);
+      const selectedLine = renderSelectedTask({ text: "Add 日本語 suggested-task confirmation bar", tag: "pinote" }, width, theme, {});
+      assert.ok(visibleWidth(selectedLine) <= width);
+      if (width >= 30) {
+        const selectedPlain = stripVTControlCharacters(selectedLine);
+        assert.equal(visibleWidth(plain.split("✕")[0]), visibleWidth(selectedPlain.split("✓")[0]));
+        assert.equal(visibleWidth(plain.split(" · ")[0]), visibleWidth(selectedPlain.split(" · ")[0]));
+        // Match Pi's default-footer ASCII-space sanitization, not just raw status text.
+        const sanitized = line.replace(/ +/gu, " ").trim();
+        const selectedSanitized = selectedLine.replace(/ +/gu, " ").trim();
+        assert.equal(visibleWidth(sanitized.split(" · ")[0]), visibleWidth(selectedSanitized.split(" · ")[0]));
+      }
     }
     const longTag = renderSuggestion({ text: "Meaningful title", tag: "x".repeat(64) }, 60, theme, {});
     assert.match(stripVTControlCharacters(longTag), / · Meaningful title$/u);
     assert.doesNotMatch(stripVTControlCharacters(longTag), /xxx/u);
-    const [yes, no] = links();
+    const [no, yes] = links();
     await propose("Do not replace an existing proposal");
-    assert.deepEqual(links(), [yes, no]);
+    assert.deepEqual(links(), [no, yes]);
     await assert.rejects(click(yes.replace(/\/[0-9a-f]{32}\//, `/${"0".repeat(32)}/`)));
     await event("session_tree");
     assert.equal(status, undefined);
     await assert.rejects(click(yes));
     await propose();
-    const [accept, dismiss] = links();
+    const [dismiss, accept] = links();
     await click(accept);
     await assert.rejects(click(accept), "repeated yes cannot duplicate notes");
     await assert.rejects(click(dismiss), "cross from accepted suggestion is stale");
-    assert.match(stripVTControlCharacters(status!), /^📌 \[pinote\] Add 日本語/u);
-    assert.doesNotMatch(stripVTControlCharacters(status!), /✓|✕/u);
+    assert.match(stripVTControlCharacters(status!), /^📌 ✓\u00a0\u00a0\u00a0 · \[pinote\] Add 日本語/u);
+    assert.doesNotMatch(stripVTControlCharacters(status!), /\+|✕/u);
     assert.equal(list().length, 1);
     const chosen = (await get()).details;
     assert.equal(chosen.state, "in_progress");
@@ -104,9 +116,9 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
     await event("session_tree");
     await propose("Decline this one");
     const rejected = links();
-    await click(rejected[1]);
+    await click(rejected[0]);
     assert.equal(status, undefined);
-    await assert.rejects(click(rejected[0]));
+    await assert.rejects(click(rejected[1]));
     assert.equal(list().length, 1, "dismissal must not write a note");
     assert.equal((await get()).details, null);
     assert.match((await propose()).details.status, /dismissed/);
@@ -143,6 +155,31 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     assert.equal(status, undefined);
     await assert.rejects(click(finalLinks[0]));
     assert.equal(list().length, 3);
+
+    // Completion uses the displayed revision and a different click cell from Add.
+    await event("session_start");
+    session.appendCustomEntry("pinote-selection", { id: chosen.id });
+    await event("session_tree");
+    const staleDone = links()[0];
+    await assert.rejects(click(staleDone), "cannot complete while the agent is active");
+    idle = true;
+    cli("agent", "update", String(chosen.id), "--expected-updated-at", chosen.updated_at,
+      "--set-json", JSON.stringify({ Next: "Changed externally" }));
+    await assert.rejects(click(staleDone), "cannot complete an externally revised task");
+    assert.equal(JSON.parse(cli("agent", "get", String(chosen.id))).state, "in_progress");
+    const branchDone = links()[0];
+    await event("session_tree");
+    await assert.rejects(click(branchDone), "branch changes invalidate completion links");
+    const done = links()[0];
+    await click(done);
+    await assert.rejects(click(done), "repeated completion is rejected");
+    assert.equal(JSON.parse(cli("agent", "get", String(chosen.id))).state, "done");
+    assert.equal((await get()).details, null);
+    assert.equal(status, undefined);
+    session.appendCustomEntry("pinote-selection", { id: 2 });
+    await event("session_tree");
+    await extension.commands.get("pi-note-done").handler("", ctx);
+    assert.equal(JSON.parse(cli("agent", "get", "2")).state, "done", "keyboard completion uses the guarded path");
     assert.equal(draft, "Keep my draft");
     assert.deepEqual(session.buildSessionContext().messages, [], "no model-context message or prompt is added");
   } finally {
