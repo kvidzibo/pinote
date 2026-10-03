@@ -9,7 +9,7 @@ no Python runtime dependencies; the GUI is a separate process, not a service.
 
 ![Pinote GTK checklist on Linux/i3: tagged tasks, an amber in-progress task, and the task input and filter controls.](docs/images/linux-checklist.png)
 
-*The optional GTK checklist on Linux/i3, using sample tasks.*
+*GTK checklist on Linux/i3 with sample tasks.*
 
 **Desktop workflow:** capture → start → edit → complete. Completed tasks remain
 recoverable from Archive.
@@ -72,45 +72,76 @@ note history 3                          # inspect retained history
 note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 ```
 
-In the GUI, add with **Enter** or **+**; right-click task text to change its state,
-edit, tag, or schedule it. Unfinished new-task input and task edits are restored
-when reopened; edits remain drafts until saved. The minimise button cycles all notes, in-progress only,
-and bottom-bar-only views. The bottom menu opens reminders, the archive, and tag management.
-Tags stay saved even without tasks; use the tag dropdown below the input to tag new tasks.
-The separate funnel control selects one or more tags to view together and shows the matching task count.
-Full commands,
-Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md).
+### GUI controls
+
+- **Add:** press **Enter** or **+**. Unfinished input is restored when reopened.
+- **Task actions:** right-click task text to change its state, edit, tag, or schedule
+  it. Unfinished edits are restored when reopened and remain drafts until saved.
+- **Views:** the minimise button cycles all notes, in-progress only, and
+  bottom-bar-only views.
+- **Menus:** the bottom menu opens reminders, the archive, and tag management.
+- **Tags:** the dropdown below the input tags new tasks. Tags stay saved even
+  without tasks.
+- **Filters:** the separate funnel control selects one or more tags to view
+  together and shows the matching task count.
+
+For full commands, Markdown import/export, and scheduling rules, see the
+[CLI and data guide](docs/usage.md).
 
 ### Pi integration
 
-![Pi's task menu and selected-task footer with a PR link, above the same task's GTK preview with saved Agent fields.](docs/images/pi-integration.png)
+<img src="docs/images/pi-integration.png" width="700" alt="Pi's task menu and selected-task footer with a PR link, above the same task's GTK preview with saved Agent fields.">
 
-*Real Pi and GTK captures with sample data and a fictitious PR; no model request
-was sent. Capture a task → select it in Pi → retain handoff details → complete it.*
+*Pi and GTK captures with sample data and a fictitious PR; no model request was sent.*
+
+**Pi workflow:** capture a task → select it in Pi → retain handoff details → complete it.
 
 The optional [pi-note extension](pi/README.md) adds selected-task status,
 `/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent current-task
 read/update, add, and tag-listing tools.
-By default, with no selected task, the agent proposes one note and tag and asks before
-creating and selecting it. [Personal configuration](pi/README.md#personal-configuration)
-can restrict offers to GitHub-backed repositories or disable them.
-Install from this checkout with `pi install ./pi`, then run `/reload`. At startup Pi compares the
-installed CLI with the bundled version, without a network check. It shows
-`/pi-note-setup` only for a missing/unrecognized CLI, or suggests `/pi-note-upgrade`
-for an older CLI; both are hidden when current or newer.
-Setup/upgrade requires [uv](https://docs.astral.sh/uv/getting-started/installation/),
-asks before installing a pinned CLI in an isolated environment, and can download
-Python 3.11+. Equal/newer CLIs are left untouched. Keep uv's tool bin
-directory on PATH and restart Pi after PATH changes. GTK remains optional and
-separate. For local Python development, install the checkout using the command
-above instead. After the first npm publication, `pi install npm:pi-note` will
-replace the local extension installation step; npm itself installs no Python code.
+
+#### Install the extension
+
+From this checkout:
+
+```sh
+pi install ./pi
+```
+
+Then run `/reload` in Pi. After the first npm publication, `pi install npm:pi-note`
+will replace the local extension installation step; npm itself installs no Python code.
+
+#### CLI setup and upgrades
+
+At startup Pi compares the installed CLI with the bundled version, without a
+network check:
+
+- **Missing/unrecognized CLI:** shows `/pi-note-setup`.
+- **Older CLI:** suggests `/pi-note-upgrade`.
+- **Current/newer CLI:** hides both commands and leaves the CLI untouched.
+
+Setup/upgrade requires [uv](https://docs.astral.sh/uv/getting-started/installation/)
+and asks before installing a pinned CLI in an isolated environment. It can
+also download Python 3.11+.
+
+Keep uv's tool bin directory on `PATH` and restart Pi after PATH changes. GTK
+remains optional and separate. For local Python development, install the checkout
+using the command in [Install](#install) instead.
+
 See the [extension setup guide](pi/README.md#cli-setup-and-upgrades) for troubleshooting.
 
-Each Pi session remembers its own task, even in the same folder; arbitrary Markdown handoff fields appear under **Agent** in
-the GTK preview without changing the task text. A GitHub `PR` field adds a footer
-link and configurable merge polling in interactive Pi, with confirmation before
-completion. No cross-machine sync is provided.
+#### Tasks and handoff details
+
+By default, with no selected task, the agent proposes one note and tag and asks
+before creating and selecting it. [Personal configuration](pi/README.md#personal-configuration)
+can restrict offers to GitHub-backed repositories or disable them.
+
+Each Pi session remembers its own task, even in the same folder. Arbitrary
+Markdown handoff fields appear under **Agent** in the GTK preview without changing
+the task text.
+
+A GitHub `PR` field adds a footer link and configurable merge polling in
+interactive Pi, with confirmation before completion. No cross-machine sync is provided.
 
 ## Important constraints
 
@@ -125,13 +156,19 @@ completion. No cross-machine sync is provided.
 - Notes default to `~/.local/share/pinote/notes.db`; logs to
   `~/.local/state/pinote/app.log` (XDG overrides supported). Data stays local but
   is **not encrypted**, and desktop notifications may remain in Dunst history.
-- Markdown exports are **not backups**: they omit IDs, tags, schedules, agent fields,
-  project selections, and history.
-  Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
-  `gui-edit-drafts/`, `gui-filter.json`, and `gui-agent-read.json`.
-  [Backup and upgrade details](docs/usage.md#data-privacy-and-backup).
-- Back up before upgrading; update both CLI and GUI installations together.
-  Older versions cannot read schema 6. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
+
+### Backups and upgrades
+
+**Markdown exports are not backups:** they omit IDs, tags, schedules, agent fields,
+project selections, and history.
+
+Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
+`gui-edit-drafts/`, `gui-filter.json`, and `gui-agent-read.json`.
+See [backup details](docs/usage.md#data-privacy-and-backup).
+
+Back up before upgrading, and update both CLI and GUI installations together.
+Older versions cannot read schema 6. See the
+[upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
 
 ## Validation
 
