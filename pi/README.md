@@ -171,6 +171,10 @@ user-level configuration only; project-local files are not read.
   populating relevant values with `pinote_update_current`. Empty/missing values
   stay hidden; this tool does not edit configuration.
 - `pinote_tags`: list saved tag names.
+- `pinote_propose`: show a nonmodal suggested-task bar below the input without
+  creating a note. Optional `tag`; full text is retained, but the bar shows only
+  its title. Requires a TUI with no selected task. The agent continues your work
+  while the suggestion awaits your choice.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
   remembers it for this session only; use that only after the user agrees.
 
@@ -178,10 +182,24 @@ Version 0.7.0 replaces `pinote_get`/`pinote_update` with these current-task tool
 and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
 or retag existing tasks; use `/pi-note` to select an existing task.
 
-When allowed by `taskOfferPolicy`, the agent proposes one note as `[tag] text`
-and asks before creating it. No continues without a note. Yes calls
-`pinote_add` with `select: true`. An existing selection is not replaced unless the
-user asks to switch. Reuse a saved tag name when it fits.
+When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
+asking in chat. A bar below the input shows `[tag] Task title  ✓  ✕`:
+
+- **✓** creates the note, starts it, and selects it for this session.
+- **✕** hides the suggestion without creating a note; further offers are suppressed
+  until a new session or reload.
+
+Neither action submits input or starts an agent turn; editor drafts stay unchanged.
+The icons reuse the [Kitty preview handler](#display-only-preview), with no additional
+configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are
+`/pi-note-yes` and `/pi-note-no`, including when clickable links are unavailable.
+An existing suggestion is retained rather than replaced. Selection, tree navigation,
+reload and shutdown invalidate its links; repeated acceptance cannot duplicate a note.
+A busy Pinote operation blocks acceptance; retry after it finishes. On an error, check
+`/pi-note` before retrying, because a write may already have committed.
+Noninteractive agents still ask in chat before using `pinote_add` with `select: true`.
+An existing selection is not replaced unless the user asks to switch. Reuse a saved
+tag name when it fits.
 Task text starts with a short, action-oriented title (aim for at most 60 characters).
 Put context, URLs, commands, and acceptance criteria after a blank line; the title
 should not contain implementation details. This is agent guidance, not a storage limit.

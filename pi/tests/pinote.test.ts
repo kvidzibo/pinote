@@ -366,8 +366,8 @@ test("add and tag listing require pinote 0.4.0 and select only when asked", asyn
     },
   } as any);
   const guidelines = tools.get("pinote_add").promptGuidelines.join("\n");
-  assert.match(guidelines, /propose one note as `\[tag\] text`/);
-  assert.match(guidelines, /On no, continue without a note/);
+  assert.match(guidelines, /use pinote_propose.*bottom bar instead of asking in chat/);
+  assert.match(guidelines, /On a chat no, continue without a note/);
   assert.match(guidelines, /select true/);
   await assert.rejects(
     tools.get("pinote_add").execute("id", { text: "Ship it", tag: "pinote", select: true }, undefined, undefined, ctx),
