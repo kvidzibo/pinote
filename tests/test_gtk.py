@@ -547,16 +547,18 @@ def test_visible_filter_count_and_empty_state_recovery(gtk):
     click_button(gtk, window, window.filter_button)
     wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
     choices = window.visible_filter_menu.get_children()
-    assert [item.get_accessible().get_name() for item in choices] == [
+    assert [item.get_accessible().get_name() for item in choices if item.get_child()] == [
         "Untagged (0)",
-        "All (1)",
         "Work (1)",
+        "Select all tags",
+        "Clear selection",
     ]
     pointer_at(gtk, choices[0].get_toplevel(), choices[0], 8, 8)
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
-    click_button(gtk, choices[0].get_toplevel(), choices[0])
-    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({""}) and not window.rows)
+    clear = choices[-1]
+    click_button(gtk, clear.get_toplevel(), clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset() and not window.rows)
     assert window.filter_count.get_text() == "(0)"
     assert window.show_all_button.get_mapped()
     with Store(gtk.paths.database) as store:
@@ -647,7 +649,11 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
             click_button(gtk, window, window.filter_button)
             wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
         menu = window.visible_filter_menu
-        item = next(child for child in menu.get_children() if child.filter_tag == label)
+        item = next(
+            child
+            for child in menu.get_children()
+            if isinstance(child, Gtk.CheckMenuItem) and child.filter_tag == label
+        )
         assert isinstance(item, Gtk.CheckMenuItem) and not item.get_draw_as_radio()
         pointer_at(gtk, item.get_toplevel(), item, 12, 12)
         ready = time.monotonic() + 0.6
@@ -657,11 +663,9 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
         assert window.filter_count.get_text() == f"({len(visible)})"
         assert window.creation_tag == "Other" and window.entry.get_text() == "Keep this draft"
         for child in menu.get_children():
-            active = (
-                selected is None
-                if child.filter_tag is None
-                else selected is not None and child.filter_tag in selected
-            )
+            if not isinstance(child, Gtk.CheckMenuItem):
+                continue
+            active = selected is None or child.filter_tag in selected
             assert child.get_active() == active
             assert child.get_style_context().has_class("selected-tag") == active
         if menu.get_mapped():
@@ -682,7 +686,38 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
     toggle("Personal", frozenset(), set())
     assert window.filter_label.get_text() == "No tags"
     assert window.show_all_button.get_visible()
-    toggle(None, None, {1, 2, 3, 4})
+
+    def action(label, selected, visible):
+        click_button(gtk, window, window.filter_button)
+        wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
+        menu = window.visible_filter_menu
+        item = next(
+            child for child in menu.get_children() if child.get_accessible().get_name() == label
+        )
+        assert not isinstance(item, Gtk.CheckMenuItem)
+        assert item.get_tooltip_text() == label
+        assert isinstance(item.get_child(), Gtk.Image)
+        pointer_at(gtk, item.get_toplevel(), item, 8, 8)
+        ready = time.monotonic() + 0.6
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+        click_button(gtk, item.get_toplevel(), item)
+        wait_until(gtk.glib, lambda: window.tag_filter == selected and set(window.rows) == visible)
+        for child in menu.get_children():
+            if isinstance(child, Gtk.CheckMenuItem):
+                active = selected is None or child.filter_tag in selected
+                assert child.get_active() == active
+                assert child.get_style_context().has_class("selected-tag") == active
+        assert window.creation_tag == "Other" and window.entry.get_text() == "Keep this draft"
+        if menu.get_mapped():
+            menu.popdown()
+        wait_until(gtk.glib, lambda: not window.geometry_source)
+
+    action("Select all tags", None, {1, 2, 3, 4})
+    action("Select all tags", None, {1, 2, 3, 4})
+    assert window.filter_label.get_text() == "All"
+    toggle("Work", frozenset({"", "Other", "Personal"}), {1, 3, 4})
+    action("Clear selection", frozenset(), set())
+    action("Clear selection", frozenset(), set())
     toggle("Work", frozenset({"Work"}), {2})
     with Store(gtk.paths.database) as store:
         assert len(store.history()) == 5  # Filtering never mutates tasks.
@@ -700,16 +735,21 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     window = gtk.open()
     assert window.tag_filter == frozenset({""}) and set(window.rows) == {1}
     window._prepare_filters()
-    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
+    assert [
+        item.get_accessible().get_name()
+        for item in window.filter_menu.get_children()
+        if item.get_child()
+    ] == [
         "Untagged (1)",
-        "All (2)",
         "Archived (0)",
         "Work (1)",
+        "Select all tags",
+        "Clear selection",
     ]
     for item in window.filter_menu.get_children():
-        assert isinstance(item, Gtk.CheckMenuItem)
-        assert not item.get_draw_as_radio()
-        assert isinstance(item.get_child().image, Gtk.Image)
+        if isinstance(item, Gtk.CheckMenuItem):
+            assert not item.get_draw_as_radio()
+            assert isinstance(item.get_child().image, Gtk.Image)
     assert window.filter_menu.get_children()[0].get_style_context().has_class("selected-tag")
     window.entry.set_text("Unfinished new task")
 
@@ -799,12 +839,17 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert window.empty.get_text() == "No tasks match this filter."
     filter_by("Personal 🐦 (1)")
     assert set(window.rows) == {1}
-    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
+    assert [
+        item.get_accessible().get_name()
+        for item in window.filter_menu.get_children()
+        if item.get_child()
+    ] == [
         "Untagged (0)",
-        "All (2)",
         "Archived (0)",
         "Personal 🐦 (1)",
         "Work (1)",
+        "Select all tags",
+        "Clear selection",
     ]
     window._select_creation_tag("Personal 🐦")
     window.entry.emit("activate")
@@ -819,13 +864,14 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     ]
     select(tags, "Work (1)")
     wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {4})
-    filter_by("All (3)")
+    filter_by("Select all tags")
     assert set(window.rows) == {1, 2, 4}
     select(tag_menu(1), "Untagged (0)")
     wait_until(gtk.glib, lambda: not window.pending and window.rows[1].note.tag is None)
+    filter_by("Clear selection")
     filter_by("Untagged (1)")
     assert set(window.rows) == {1}
-    filter_by("All (3)")
+    filter_by("Select all tags")
     context(2)
     target = window.rows[2]
     assert target.get_style_context().has_class("in-progress")
@@ -841,12 +887,17 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert window.context_menu is None
     assert not target.get_style_context().has_class("context-target")
     window._prepare_filters()
-    assert [item.get_accessible().get_name() for item in window.filter_menu.get_children()] == [
+    assert [
+        item.get_accessible().get_name()
+        for item in window.filter_menu.get_children()
+        if item.get_child()
+    ] == [
         "Untagged (1)",
-        "All (2)",
         "Archived (0)",
         "Personal 🐦 (1)",
         "Work (0)",
+        "Select all tags",
+        "Clear selection",
     ]
     application = window.get_application()
     window.close()
