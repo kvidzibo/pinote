@@ -25,7 +25,7 @@ from pinote.gui.icons import (  # noqa: E402
     icon_menu_item,
     tag_menu_item,
 )
-from pinote.gui.model import ReminderModel, application_id  # noqa: E402
+from pinote.gui.model import ReminderModel, TransitionResult, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.state import AgentReadCache, FilterCache  # noqa: E402
 from pinote.gui.tags import TagsWindow  # noqa: E402
@@ -1335,14 +1335,20 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if self._has_checklist_focus():
                 self.deferred_progress.add(note_id)
         self._update_controls()
-        self._submit(
-            lambda: (
+        known_ids = {note.id for note in self.notes_snapshot}
+
+        def transition():
+            result = (
                 self.model.transition(note_id, action, expected_state=expected_state)
                 if expected_state is not None
                 else self.model.transition(note_id, action)
-            ),
-            action=(note_id, action),
-        )
+            )
+            # This snapshot can see another frontend's completion before polling.
+            # Never turn the clicked task's stale no-op into success feedback.
+            missing = known_ids - {note.id for note in result.notes} - {note_id}
+            return TransitionResult(result.notes, result.changed, self.model.completed_ids(missing))
+
+        self._submit(transition, action=(note_id, action))
 
     def _submit(
         self, operation, *, action: tuple[int, str] | None, draft_revision: int | None = None
@@ -1386,7 +1392,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self.entry.grab_focus()
             elif action:
                 if action[1] != "tag":
-                    self._render(result.notes, action=action if result.changed else None)
+                    self._render(
+                        result.notes,
+                        action=action if result.changed else None,
+                        completed_ids=result.completed_ids,
+                    )
             else:
                 notes, self.tags, completed_ids = result
                 if self.tag_filter is not None:

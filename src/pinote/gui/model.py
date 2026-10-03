@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from pinote.paths import Paths, display_lock
@@ -15,6 +15,7 @@ from pinote.store import Note, NoteError, Store
 class TransitionResult:
     notes: list[Note]
     changed: bool
+    completed_ids: set[int] = field(default_factory=set)
 
 
 class ReminderModel:

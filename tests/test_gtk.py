@@ -2400,8 +2400,9 @@ def test_unread_agent_eye_view_scroll_persistence_and_removal(gtk):
 
 
 @pytest.mark.parametrize("external_action", ["done", "rm", "schedule"])
+@pytest.mark.parametrize("refresh", ["poll", "mutation"])
 def test_external_completion_uses_existing_animation_only_for_done(
-    gtk, animations, cli, external_action
+    gtk, animations, cli, external_action, refresh
 ):
     with Store(gtk.paths.database) as store:
         store.add("Completed before launch")
@@ -2410,13 +2411,18 @@ def test_external_completion_uses_existing_animation_only_for_done(
         store.add("Still here")
     window = gtk.open()
     assert 1 not in window.rows
+    gtk.glib.source_remove(window.refresh_source)
+    window.refresh_source = gtk.glib.timeout_add(60_000, window._poll)
     row = window.rows[2]
     row.DONE_HOLD_MS = 1000  # Observe the existing hold without a timing-dependent race.
     result = cli(
         external_action, "2", *(["2099-01-01 12:00"] if external_action == "schedule" else [])
     )
     assert result.returncode == 0, result.stderr
-    window._poll()
+    if refresh == "poll":
+        window._poll()
+    else:
+        activate_note_action(window.rows[3], "start")
     wait_until(gtk.glib, lambda: not window.pending)
     if external_action == "done":
         assert row.exiting and row.get_style_context().has_class("completed")
