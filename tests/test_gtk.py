@@ -703,6 +703,60 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     assert not menu.get_mapped()
     with Store(gtk.paths.database) as store:
         assert len(store.history()) == 8  # Filtering and opening Tags write no task history.
+        for index in range(80):
+            store.create_tag(f"Unused {index:02}")
+    window.tags_window.close()
+    wait_until(gtk.glib, lambda: window.tags_window is None)
+    window._poll()
+    wait_until(gtk.glib, lambda: len(window.tags) == 82)
+    # Without a window manager, closing the modal leaves X focus on the root window.
+    subprocess.run(
+        ["xdotool", "windowfocus", "--sync", str(window.get_window().get_xid())],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: menu.get_mapped())
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    subprocess.run(["xdotool", "key", "End", "Up"], env=gtk.env, check=True, timeout=5)
+    work = next(item for item in menu.get_children() if getattr(item, "filter_tag", None) == "Work")
+    first = menu.get_children()[0]
+    wait_until(
+        gtk.glib,
+        lambda: (
+            menu.get_selected_item() is work
+            and first.translate_coordinates(menu.get_toplevel(), 0, 0)[1] < 0
+        ),
+    )  # Selection can settle before the scrolling bin moves.
+    click(work)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Work"}))
+    assert menu.get_mapped()
+    select_all, clear = menu.get_children()[-2:]
+    click(clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
+    assert menu.get_mapped()
+    click(select_all)
+    wait_until(gtk.glib, lambda: window.tag_filter is None)
+    assert menu.get_mapped()
+    pointer_at(gtk, work.get_toplevel(), work, 12, 12, "click", "3")
+    wait_until(
+        gtk.glib, lambda: window.tags_window is not None and window.tags_window.selected == "Work"
+    )
+    window.tags_window.close()
+    wait_until(gtk.glib, lambda: window.tags_window is None)
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    pointer_at(gtk, window.filter_item.get_toplevel(), window.filter_item, 8, 8, "mousedown", "1")
+    wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
+    untagged = window.filter_menu.get_children()[0]
+    pointer_at(gtk, untagged.get_toplevel(), untagged, 12, 12)
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    subprocess.run(["xdotool", "mouseup", "1"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.tag_filter is not None and "" not in window.tag_filter)
+    assert window.filter_menu.get_mapped() and window.menu.get_mapped()
 
 
 def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
@@ -882,6 +936,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         wait_until(gtk.glib, lambda: window.menu.get_mapped())
         subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
         wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
+        for item in window.filter_menu.get_children():
+            if isinstance(item, Gtk.CheckMenuItem):
+                assert item.progress_count.get_mapped()
         previous = window.tag_filter
         select(window.filter_menu, label)
         wait_until(gtk.glib, lambda: window.tag_filter != previous)

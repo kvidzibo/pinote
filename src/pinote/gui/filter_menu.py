@@ -13,15 +13,20 @@ class FilterMenu(Gtk.Menu):
         self.pressed_item = None
 
     def _item_at(self, event):
-        origin = self.get_window().get_origin()
+        popup = self.get_toplevel()
+        origin = popup.get_window().get_origin()
         x, y = event.x_root - origin.x, event.y_root - origin.y
+        if not (0 <= x < popup.get_allocated_width() and 0 <= y < popup.get_allocated_height()):
+            return None
         for item in self.get_children():
             allocation = item.get_allocation()
+            # Menu children live in a scrolling bin; allocations alone ignore its offset.
+            left, top = item.translate_coordinates(popup, 0, 0)
             if (
                 item.get_sensitive()
                 and not isinstance(item, Gtk.SeparatorMenuItem)
-                and allocation.x <= x < allocation.x + allocation.width
-                and allocation.y <= y < allocation.y + allocation.height
+                and left <= x < left + allocation.width
+                and top <= y < top + allocation.height
             ):
                 return item
         return None
@@ -40,10 +45,16 @@ class FilterMenu(Gtk.Menu):
 
     def do_button_release_event(self, event):
         pressed, self.pressed_item = self.pressed_item, None
-        if event.button == 1 and pressed is not None:
-            if self._item_at(event) is pressed:
-                pressed.activate()
-            return True
+        if event.button == 1:
+            item = self._item_at(event)
+            if pressed is not None:
+                if item is pressed:
+                    item.activate()
+                return True
+            # A submenu can receive only the release of a press-drag from its parent.
+            if item is not None and item is self.get_selected_item():
+                item.activate()
+                return True
         return Gtk.Menu.do_button_release_event(self, event)
 
     def do_activate_current(self, _force_hide):

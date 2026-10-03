@@ -899,8 +899,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             badge.pack_start(icon_image("media-playback-start-symbolic"), False, False, 0)
             badge.pack_start(item.progress_count, False, False, 0)
             item.get_child().pack_end(badge, False, False, 8)
+            badge.show_all()
+            # append assigns GTK's scrolling-bin parent window when rebuilding a realized menu.
+            menu.append(item)
             menu.attach(item, 0, 2, index, index + 1)
-        menu.attach(Gtk.SeparatorMenuItem(), 0, 2, len(choices), len(choices) + 1)
+        separator = Gtk.SeparatorMenuItem()
+        separator.show()
+        menu.append(separator)
+        menu.attach(separator, 0, 2, len(choices), len(choices) + 1)
         for column, (icon, label, selected) in enumerate(
             (
                 ("edit-select-all-symbolic", "Select all tags", None),
@@ -912,6 +918,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 "activate",
                 lambda _item, selected=selected: self._set_filter(selected, close_menu=False),
             )
+            menu.append(item)
             menu.attach(item, column, column + 1, len(choices) + 1, len(choices) + 2)
         self._sync_filter_menu(menu)
 
