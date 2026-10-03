@@ -130,14 +130,34 @@ test("native suggestion and completion controls require consent and reject stale
     assert.deepEqual(session.getBranch().filter((entry: any) => entry.customType === "pinote-suggestion").at(-1).data,
       { suggestion: { text: "Add 日本語 suggested-task confirmation bar\n\nPreserve details", tag: "pinote" } });
     await assert.rejects(click(staleSuggestion[1]), "reload invalidates the old capability, not the proposal");
+    const previous = links();
+    await extension.tools.get("pinote_propose").definition.execute("replace", {
+      text: "A better pending task\n\nReplacement details", tag: "pi",
+    }, undefined, undefined, ctx);
+    const replacement = links();
+    assert.notDeepEqual(replacement, previous, "replacement rotates consent links");
+    assert.match(stripVTControlCharacters(status!), /\[pi\] A better pending task/u);
+    assert.equal(list().length, 0, "replacement requires consent before creation");
+    await assert.rejects(click(previous[0]), "old dismissal cannot clear the replacement");
+    await assert.rejects(click(previous[1]), "old acceptance cannot create either proposal");
+    assert.deepEqual(links(), replacement);
+    const replacementStatus = stripVTControlCharacters(status!);
+    await event("session_shutdown");
+    await load();
+    await event("session_start");
+    assert.equal(stripVTControlCharacters(status!), replacementStatus, "reload restores the replacement");
+    assert.deepEqual(session.getBranch().filter((entry: any) => entry.customType === "pinote-suggestion").at(-1).data,
+      { suggestion: { text: "A better pending task\n\nReplacement details", tag: "pi" } });
+    await assert.rejects(click(replacement[1]), "reload invalidates replacement links");
     const [no, yes] = links();
-    await propose("Do not replace an existing proposal");
-    assert.deepEqual(links(), [no, yes]);
     await assert.rejects(click(yes.replace(/\/[0-9a-f]{32}\//, `/${"0".repeat(32)}/`)));
     await event("session_tree");
     assert.equal(status, undefined);
     await assert.rejects(click(yes));
+    await propose("Obsolete proposal");
+    const obsolete = links();
     await propose();
+    await assert.rejects(click(obsolete[1]), "replaced proposal cannot be accepted");
     const [dismiss, accept] = links();
     await click(accept);
     await assert.rejects(click(accept), "repeated yes cannot duplicate notes");
@@ -149,7 +169,7 @@ test("native suggestion and completion controls require consent and reject stale
     const chosen = (await get()).details;
     assert.equal(chosen.state, "in_progress");
     assert.equal(chosen.tag, "pinote");
-    assert.match(chosen.text, /\n\nPreserve details$/);
+    assert.equal(chosen.text, "Add 日本語 suggested-task confirmation bar\n\nPreserve details", "acceptance creates the latest proposal with full details");
     assert.match(notices.at(-1)!, /created and selected/);
     assert.equal(draft, "Keep my draft", "accepting a suggestion preserves the editor");
     await event("session_shutdown");

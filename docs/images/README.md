@@ -13,6 +13,8 @@ and no prompt was submitted to a provider.
 - `pi-task-suggestion.png` and `pi-task-selected.png`: pi-note 0.15.1 bold controls
   and compact selected-task spacing, cropped from isolated Kitty captures with
   synthetic data and no model request.
+- `pi-task-replacement.png`: pi-note 0.17.0 after replacing an unaccepted
+  suggestion, cropped from isolated Kitty with temporary app data and no model request.
 
 When refreshing these assets, use the [GUI development environment](../development.md)
 and an isolated Xvfb display, private D-Bus and private i3 socket. Use temporary
