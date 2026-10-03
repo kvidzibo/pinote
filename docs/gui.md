@@ -73,8 +73,10 @@ Edits and tag changes retain the task ID and record old/new values in history;
 
 ### Behavior
 
-- Compact, borderless dark popup: 420 px wide, 9 pt monospace text, no title/header
-  bar, and one checkbox/text row per note—no trash button. Reminder bells show relative-time
+- Compact, borderless dark popup: 420 px wide by default, 9 pt monospace text, no title/header
+  bar, and one checkbox/text row per note—no trash button. Drag either side edge to resize
+  horizontally; height remains automatic. The width is kept until you close the window;
+  reopening restores the default. Reminder bells show relative-time
   tooltips (for example, **Due 2 hours ago**). The bottom edge stays fixed while the window grows
   upward as notes are added and shrinks as they are removed. The visible-note limit is
   configurable (default **10**); extra notes scroll. In-progress tasks have a separate
