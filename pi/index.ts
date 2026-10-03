@@ -7,9 +7,9 @@ import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { updateTaskFooter, clearTaskFooter } from "./footer-status.ts";
 import { defaultFooterConfig, defaultHandoffPrompt, effectiveFooterFields, loadFooterConfig, parseHandoffPrompt, readFooterDocument, saveFooterConfig, type FooterConfig, type PinoteSettings } from "./footer-config.ts";
-import { FooterSettings, TaskMenu, withSettingsTab } from "./footer-settings.ts";
+import { FooterSettings, TaskMenu, withSettingsTab, type SettingsOption, type SettingsResult } from "./footer-settings.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
-import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
+import { bundledCLIVersion, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
 import { createPreviewBridge } from "./preview-bridge.ts";
 import { renderSuggestion, renderSelectedTask } from "./task-suggestion.ts";
 
@@ -179,7 +179,7 @@ export default function (pi: ExtensionAPI) {
     if (!alive || generation !== epoch || setupAbort) return;
     cliState = action;
     if (suggest && action === "upgrade") {
-      ctx.ui.notify(`Pinote CLI ${bundledCLIVersion} is bundled with this extension. Run /pi-note-upgrade to update your older CLI.`, "info");
+      ctx.ui.notify(`Pinote CLI ${bundledCLIVersion} is bundled with this extension. Open /pi-note → Settings → Upgrade CLI to update your older CLI.`, "info");
     }
   };
 
@@ -306,7 +306,7 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch && serial === refreshSerial) {
         previewBridge?.invalidate();
         clearTaskFooter(ctx);
-        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${ctx.ui.theme.bold(noteIcon)} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
+        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${ctx.ui.theme.bold(noteIcon)} Pinote unavailable · /pi-note → Settings`);
       }
     }
   };
@@ -349,10 +349,10 @@ export default function (pi: ExtensionAPI) {
       };
       const timer = setTimeout(() => {
         finish(false);
-        if (alive && activeContext === ctx) ctx.ui.notify("Pinote completion could not start. Use /pi-note-done.", "warning");
+        if (alive && activeContext === ctx) ctx.ui.notify("Pinote completion could not start. Open /pi-note → Settings → Complete task.", "warning");
       }, 4000);
       completionDispatch = { token, selection, task: displayed, started: () => clearTimeout(timer), finish };
-      try { pi.sendUserMessage(`/pi-note-done ${token}`, { expandPromptTemplates: true }); }
+      try { pi.sendUserMessage(`/pi-note ${token}`, { expandPromptTemplates: true }); }
       catch { finish(false); }
     });
   };
@@ -404,18 +404,6 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch) await refresh(ctx);
     }
   };
-  pi.registerCommand("pi-note-done", {
-    description: "Complete the selected task, start a clean session, and reload Pi",
-    handler: (args, ctx) => completeSelected(args, ctx),
-  });
-  pi.registerCommand("pi-note-preview", {
-    description: "Display the selected task locally without sending it to the model",
-    handler: async (args, ctx) => {
-      if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim()) { ctx.ui.notify("Usage: /pi-note-preview", "warning"); return; }
-      if (!await preview(ctx)) ctx.ui.notify("Select a task with /pi-note and wait until Pi is idle before previewing.", "warning");
-    },
-  });
   pi.on("session_start", async (_event, ctx) => {
     setupAbort?.abort();
     cancelCompletionDispatch();
@@ -445,7 +433,6 @@ export default function (pi: ExtensionAPI) {
     cliState = undefined;
     if (ctx.hasUI && ctx.mode === "tui") {
       if (offerConfigError) ctx.ui.notify(`Pinote task offers disabled: ${clean(offerConfigError)} Fix the configuration and /reload.`, "warning");
-      ctx.ui.addAutocompleteProvider((current) => cliMenu(current, () => setupAbort ? undefined : cliState));
     }
     if (ctx.hasUI && ctx.mode === "tui") {
       const bridge = createPreviewBridge();
@@ -455,7 +442,7 @@ export default function (pi: ExtensionAPI) {
       } catch {
         await bridge.stop();
         if (previewBridge === bridge) previewBridge = undefined;
-        ctx.ui.notify("Pinote task link unavailable; use /pi-note-preview.", "warning");
+        ctx.ui.notify("Pinote task link unavailable; open /pi-note → Settings → Preview task.", "warning");
       }
     }
     if (!alive || generation !== epoch) return;
@@ -500,51 +487,49 @@ export default function (pi: ExtensionAPI) {
     if (bridge) await bridge.stop();
   });
 
-  const registerInstallCommand = (name: "pi-note-setup" | "pi-note-upgrade") => pi.registerCommand(name, {
-    description: name === "pi-note-setup" ? "Install the missing Python CLI with uv" : "Upgrade an older Python CLI to the bundled version",
-    handler: async (args, ctx) => {
-      if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim()) {
-        ctx.ui.notify(`Usage: /${name}`, "warning");
-        return;
+  const installCLI = async (upgrade: boolean, ctx: ExtensionCommandContext) => {
+    if (!ctx.hasUI || ctx.mode !== "tui") return;
+    if (pending || !ctx.isIdle()) {
+      ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
+      return;
+    }
+    const operation = Symbol();
+    pending = operation;
+    const generation = epoch;
+    const controller = new AbortController();
+    setupAbort = controller;
+    clearTaskFooter(ctx);
+    const currentSession = () => alive && generation === epoch;
+    try {
+      await setupCLI(pi, ctx, upgrade,
+        () => currentSession() && ctx.isIdle(), controller.signal);
+    } catch (error) {
+      if (currentSession()) ctx.ui.notify(`Pinote setup: ${clean(String(error))}`, "error");
+    } finally {
+      if (pending === operation) pending = undefined;
+      if (setupAbort === controller) setupAbort = undefined;
+      const latestContext = activeContext ?? (currentSession() ? ctx : undefined);
+      if (alive && latestContext) {
+        const generation = epoch;
+        await checkCLI(latestContext, !currentSession());
+        if (!alive || generation !== epoch || setupAbort) return;
+        await refresh(latestContext);
       }
-      if (pending || !ctx.isIdle()) {
-        ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
-        return;
-      }
-      const operation = Symbol();
-      pending = operation;
-      const generation = epoch;
-      const controller = new AbortController();
-      setupAbort = controller;
-      clearTaskFooter(ctx);
-      const currentSession = () => alive && generation === epoch;
-      try {
-        await setupCLI(pi, ctx, name === "pi-note-upgrade",
-          () => currentSession() && ctx.isIdle(), controller.signal);
-      } catch (error) {
-        if (currentSession()) ctx.ui.notify(`Pinote setup: ${clean(String(error))}`, "error");
-      } finally {
-        if (pending === operation) pending = undefined;
-        if (setupAbort === controller) setupAbort = undefined;
-        const latestContext = activeContext ?? (currentSession() ? ctx : undefined);
-        if (alive && latestContext) {
-          const generation = epoch;
-          await checkCLI(latestContext, !currentSession());
-          if (!alive || generation !== epoch || setupAbort) return;
-          await refresh(latestContext);
-        }
-      }
-    },
-  });
-  registerInstallCommand("pi-note-setup");
-  registerInstallCommand("pi-note-upgrade");
+    }
+  };
 
   pi.registerCommand("pi-note", {
     description: "Continue, complete, switch tasks, or edit global settings (Tab)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim()) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
+      // Footer completion needs a command context, but no extra slash command.
+      // Only the current one-use capability may dispatch; stale tokens remain inert.
+      const token = args.trim();
+      if (/^[a-f0-9]{32}:\d+:\d+:\d+:[a-f0-9]{16}$/u.test(token)) {
+        await completeSelected(token, ctx);
+        return;
+      }
+      if (token) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
       if (pending || !ctx.isIdle()) {
         ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
         return;
@@ -556,10 +541,16 @@ export default function (pi: ExtensionAPI) {
       const currentSession = () => alive && generation === epoch;
       const canAct = () => currentSession() && ctx.isIdle() && branch === branchEpoch;
       try {
-        const current = await selected(ctx);
+        await checkCLI(ctx);
         if (!canAct()) return;
-        let settings = false;
+        const current = cliState === "ready" ? await selected(ctx) : null;
+        if (!canAct()) return;
+        let settings = cliState !== "ready";
         while (canAct()) {
+          if (!settings && cliState !== "ready") {
+            ctx.ui.notify(setupHint, "warning");
+            return;
+          }
           if (settings) {
             const document = readFooterDocument();
             const root = document.raw === null ? {} : JSON.parse(document.raw);
@@ -568,7 +559,19 @@ export default function (pi: ExtensionAPI) {
               handoffPrompt: "handoffPrompt" in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt,
             };
             let expectedRaw = document.raw;
-            const edited = await ctx.ui.custom<"tasks" | undefined>((tui, theme, kb, done) =>
+            const options: SettingsOption[] = [
+              ...(current ? [
+                { label: "Preview task", result: "preview" as const },
+                { label: "Complete task (new session)", result: "done" as const },
+              ] : []),
+              ...(suggestion ? [
+                { label: "Accept suggestion", result: "yes" as const },
+                { label: "Dismiss suggestion", result: "no" as const },
+              ] : []),
+              ...(cliState === "setup" ? [{ label: "Install CLI", result: "setup" as const }]
+                : cliState === "upgrade" ? [{ label: "Upgrade CLI", result: "upgrade" as const }] : []),
+            ];
+            const edited = await ctx.ui.custom<SettingsResult>((tui, theme, kb, done) =>
               new FooterSettings(config, Object.keys(current?.agent_notes ?? {}).filter((name) => name !== "Bar"),
                 theme, (data, action) => kb.matches(data, action as Keybinding), done, () => tui.requestRender(),
                 () => new Editor(tui, {
@@ -582,10 +585,17 @@ export default function (pi: ExtensionAPI) {
                   expectedRaw = saved.raw;
                   footerConfig = saved.config;
                   void refresh(ctx);
-                }));
+                }, options));
             if (!canAct() || edited === undefined) return;
-            settings = false;
-            continue;
+            if (edited === "tasks") { settings = false; continue; }
+            if (!options.some((option) => option.result === edited)) return;
+            if (pending === operation) pending = undefined;
+            if (edited === "preview") {
+              if (!await preview(ctx)) ctx.ui.notify("The task is no longer available for preview.", "warning");
+            } else if (edited === "done") await completeSelected("", ctx, current ?? undefined);
+            else if (edited === "yes" || edited === "no") await respondToSuggestion(edited, ctx);
+            else await installCLI(edited === "upgrade", ctx);
+            return;
           }
           const action = current
             ? await ctx.ui.custom<string | undefined>((tui, theme, kb, done) =>
@@ -733,20 +743,6 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch) await refresh(ctx);
     }
   };
-  pi.registerCommand("pi-note-yes", {
-    description: "Create, start and select the suggested task (same as +)",
-    handler: async (args, ctx) => {
-      if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim() || !await respondToSuggestion("yes", ctx)) ctx.ui.notify("No available suggestion, or a Pinote operation is busy. Retry when it finishes.", "warning");
-    },
-  });
-  pi.registerCommand("pi-note-no", {
-    description: "Dismiss the suggested task without creating a note (same as ✕)",
-    handler: async (args, ctx) => {
-      if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim() || !await respondToSuggestion("no", ctx)) ctx.ui.notify("No available suggestion. Usage: /pi-note-no", "warning");
-    },
-  });
   pi.registerTool({
     name: "pinote_propose",
     label: "Pinote suggest task",

@@ -4,6 +4,9 @@ import { defaultFooterField, parseFooterConfig, parseHandoffPrompt, type PinoteS
 
 type Matches = (data: string, action: string) => boolean;
 type Row = { label: string; action: () => void };
+export type SettingsAction = "preview" | "done" | "yes" | "no" | "setup" | "upgrade";
+export type SettingsResult = "tasks" | SettingsAction | undefined;
+export type SettingsOption = { label: string; result: SettingsAction };
 const isTab = (data: string) => matchesKey(data, "tab") || matchesKey(data, "shift+tab");
 const display = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ");
 const actions = ["Continue", "Done", "Switch task", "Settings"];
@@ -44,7 +47,8 @@ export class FooterSettings {
   private knownFields: string[];
   private theme: Theme;
   private matches: Matches;
-  private done: (result: "tasks" | undefined) => void;
+  private done: (result: SettingsResult) => void;
+  private options: SettingsOption[];
   private save: (settings: PinoteSettings) => void;
   private requestRender: () => void;
   private index = 0;
@@ -54,8 +58,9 @@ export class FooterSettings {
   private hasFocus = false;
 
   constructor(config: PinoteSettings, knownFields: string[], theme: Theme, matches: Matches,
-    done: (result: "tasks" | undefined) => void, requestRender: () => void, createEditor: () => Editor,
-    save: (settings: PinoteSettings) => void) {
+    done: (result: SettingsResult) => void, requestRender: () => void, createEditor: () => Editor,
+    save: (settings: PinoteSettings) => void, options: SettingsOption[] = []) {
+    this.options = options;
     this.draft = structuredClone(config.footer);
     this.prompt = config.handoffPrompt;
     this.createEditor = createEditor;
@@ -123,8 +128,9 @@ export class FooterSettings {
         this.persistField(field);
         this.index = 0;
       }
-    }) },
-    { label: "Return to tasks", action: () => this.done("tasks") });
+    }) });
+    rows.push(...this.options.map(({ label, result }) => ({ label, action: () => this.done(result) })),
+      { label: "Return to tasks", action: () => this.done("tasks") });
     return rows;
   }
   private fieldRows(): Row[] {
@@ -197,7 +203,7 @@ export class FooterSettings {
       lines.push(...rows.slice(start, start + 8).map((row, offset) => offset + start === this.index
         ? this.theme.fg("accent", `> ${row.label}`) : `  ${row.label}`));
       if (rows.length > 8) lines.push(this.theme.fg("dim", `${this.index + 1}/${rows.length}`));
-      lines.push(this.theme.fg("dim", "↑↓ navigate · Enter edit · Esc back"));
+      lines.push(this.theme.fg("dim", "↑↓ navigate · Enter select · Esc back"));
     }
     if (this.error) lines.push(this.theme.fg("error", this.error));
     lines.push(this.theme.fg("dim", "Changes save automatically · Tab: tasks"));

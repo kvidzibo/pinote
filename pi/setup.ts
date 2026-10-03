@@ -1,11 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripVTControlCharacters } from "node:util";
-import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 
 // Immutable source: the Python app is not yet published to PyPI.
 export const cliSource = "https://github.com/kvidzibo/pinote/archive/1597baf60bff8bc96893be40781f152a001623d1.tar.gz";
 export const bundledCLIVersion = "0.4.0";
-export const setupHint = "Use /pi-note-setup for a missing CLI or /pi-note-upgrade for an older CLI; note must be on PATH.";
+export const setupHint = "Open /pi-note → Settings to install or upgrade the CLI; note must be on PATH.";
 export type CLIAction = "setup" | "upgrade" | "ready";
 
 export function cliAction(version: string): CLIAction {
@@ -27,23 +26,6 @@ export async function detectCLI(pi: ExtensionAPI, signal?: AbortSignal): Promise
   } catch { return "setup"; }
 }
 
-export function cliMenu(current: AutocompleteProvider, action: () => CLIAction | undefined): AutocompleteProvider {
-  return {
-    triggerCharacters: current.triggerCharacters,
-    async getSuggestions(...args) {
-      const suggestions = await current.getSuggestions(...args);
-      if (!suggestions || !/^\/\S*$/u.test(suggestions.prefix)) return suggestions;
-      const items = suggestions.items.filter(({ value }) => {
-        const name = value.replace(/^\//u, "");
-        return name === "pi-note-setup" ? action() === "setup"
-          : name === "pi-note-upgrade" ? action() === "upgrade" : true;
-      });
-      return items.length ? { ...suggestions, items } : null;
-    },
-    applyCompletion: (...args) => current.applyCompletion(...args),
-    shouldTriggerFileCompletion: (...args) => current.shouldTriggerFileCompletion?.(...args) ?? true,
-  };
-}
 export function versionAtLeast(version: string, minimum: string): boolean {
   const match = /^pinote (\d+)\.(\d+)\.(\d+)$/u.exec(version.trim());
   if (!match) return false;
@@ -72,7 +54,7 @@ export async function setupCLI(
     ctx.ui.notify(`Pinote CLI is ready (bundled version ${bundledCLIVersion} or newer). Use /pi-note.`, "info");
     return;
   }
-  const command = action === "upgrade" ? "/pi-note-upgrade" : "/pi-note-setup";
+  const command = `/pi-note → Settings → ${action === "upgrade" ? "Upgrade CLI" : "Install CLI"}`;
   if (upgrade !== (action === "upgrade")) {
     ctx.ui.notify(`Use ${command} ${action === "upgrade" ? "to upgrade the older CLI" : "to install the missing CLI"}.`, "info");
     return;

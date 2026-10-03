@@ -2,10 +2,25 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setupCLI, cliSource, cliAction } from "../setup.ts";
 import pinote from "../index.ts";
+import { getKeybindings } from "@earendil-works/pi-tui";
 
 const context = (confirm: () => Promise<boolean>) => ({
   ui: { confirm, notify: (message: string, level: string) => notices.push({ message, level }) },
 } as any);
+const settingsUI = (action: string) => ({
+  theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
+  custom: async (factory: any) => new Promise((resolve) => {
+    const component = factory({ requestRender() {} }, { fg: (_color: string, value: string) => value },
+      { matches: (data: string, binding: string) => getKeybindings().matches(data, binding as any) }, resolve);
+    const rows = component.render(100).join("\n");
+    assert.ok(rows.includes(action), `settings offers ${action}`);
+    assert.ok(!rows.includes(action === "Install CLI" ? "Upgrade CLI" : "Install CLI"));
+    const row = component.render(100).findIndex((line: string) => line.includes(action)) - 2;
+    assert.ok(row >= 0);
+    for (let i = 0; i < row; i++) component.handleInput("\x1b[B");
+    component.handleInput("\r");
+  }),
+});
 let notices: Array<{ message: string; level: string }> = [];
 
 test("setup CLI gates installation and uses the immutable uv source", async (t) => {
@@ -45,7 +60,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   calls.length = 0;
   results = [{ code: 0, stdout: "pinote 0.2.9" }];
   await setupCLI(pi, context(async () => true), false, active, signal);
-  assert.match(notices.at(-1)!.message, /pi-note-upgrade/);
+  assert.match(notices.at(-1)!.message, /\/pi-note.*Settings.*Upgrade CLI/);
   assert.deepEqual(calls.at(-1), { command: "note", args: ["--version"] });
   calls.length = 0;
   results = [{ code: 0, stdout: "pinote 1.0.0" }];
@@ -118,9 +133,18 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
     },
   } as any);
   const commandCtx: any = { ...ctx, mode: "tui", hasUI: true, isIdle: () => true,
-    sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, theme: { bold: (value: string) => value }, setStatus() {}, addAutocompleteProvider() {} } };
+    sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, ...settingsUI("Upgrade CLI"), setStatus() {}, addAutocompleteProvider() {} } };
+  assert.deepEqual([...commands.keys()], ["pi-note"]);
+  // Missing and incompatible CLIs must reach Settings without task commands.
+  cliVersion = "";
+  const missingCtx = { ...commandCtx, ui: { ...commandCtx.ui, ...settingsUI("Install CLI"), confirm: async () => false } };
+  await events.get("session_start")({}, missingCtx);
+  await commands.get("pi-note").handler("", missingCtx);
+  assert.equal(installs, 0, "declining setup must not install");
+  assert.equal(taskCalls.length, 0, "missing CLIs never receive task commands");
+  cliVersion = "pinote 0.2.0";
   await events.get("session_start")({}, commandCtx);
-  const setup = commands.get("pi-note-upgrade").handler("", commandCtx);
+  const setup = commands.get("pi-note").handler("", commandCtx);
   await installing;
   const replacementCtx = { ...commandCtx, cwd: "/tmp/replacement-project" };
   await events.get("session_start")({}, replacementCtx);
@@ -129,7 +153,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   await Promise.resolve();
   assert.equal(taskCalls.length, countWhileInstalling, "PR polls stay paused during setup");
   assert.ok(!notices.some(({ message }) => message.includes("PR check failed")));
-  await commands.get("pi-note-upgrade").handler("", commandCtx);
+  await commands.get("pi-note").handler("", commandCtx);
   assert.equal(installs, 1);
   assert.match(notices.at(-1)!.message, /Wait until Pi is idle/);
   await assert.rejects(tools.get("pinote_get_current").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
@@ -179,12 +203,12 @@ test("tree navigation during setup restores the active branch", async () => {
     sessionManager: { getBranch: () => entries },
     ui: {
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
-      notify() {}, addAutocompleteProvider() {}, confirm: async () => true,
+      ...settingsUI("Upgrade CLI"), notify() {}, addAutocompleteProvider() {}, confirm: async () => true,
       theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
     },
   };
   await events.get("session_start")({}, ctx);
-  const setup = commands.get("pi-note-upgrade").handler("", ctx);
+  const setup = commands.get("pi-note").handler("", ctx);
   await installing;
   entries.push({ type: "custom", customType: "pinote-selection", data: { id: 4 } });
   await events.get("session_tree")({}, ctx);

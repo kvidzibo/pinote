@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { renderSuggestion, renderSelectedTask } from "../task-suggestion.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,6 +41,7 @@ test("native suggestion and completion controls require consent and reject stale
   let replacements = 0;
   let reloads = 0;
   const notices: string[] = [];
+  let settingsChoice = "Accept suggestion";
   let idle = false;
   const ctx: any = {
     cwd, hasUI: true, mode: "tui", isIdle: () => idle, sessionManager: session,
@@ -54,7 +55,18 @@ test("native suggestion and completion controls require consent and reject stale
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       setWidget() { throw new Error("suggestions must use the pin footer, not a separate widget"); },
       notify: (value: string) => notices.push(value), addAutocompleteProvider() {},
-      getEditorText: () => draft, setEditorText() { throw new Error("must preserve draft"); } },
+      getEditorText: () => draft, setEditorText() { throw new Error("must preserve draft"); },
+      custom: async (factory: any) => new Promise((resolve) => {
+        const component = factory({ requestRender() {} }, theme,
+          { matches: (data: string, action: string) => getKeybindings().matches(data, action as any) }, resolve);
+        if (!stripVTControlCharacters(component.render(100).join("\n")).includes("Global Settings")) {
+          component.handleInput("\t"); return;
+        }
+        const row = component.render(100).findIndex((line: string) => line.includes(settingsChoice)) - 2;
+        assert.ok(row >= 0, `settings offers ${settingsChoice}`);
+        for (let i = 0; i < row; i++) component.handleInput("\x1b[B");
+        component.handleInput("\r");
+      }) },
   };
   const event = async (name: string, data: object = {}) => {
     for (const handler of extension.handlers.get(name) ?? []) await handler(data, ctx);
@@ -69,8 +81,8 @@ test("native suggestion and completion controls require consent and reject stale
     loaded.runtime.sendMessage = () => { throw new Error("must not start agent turns"); };
     loaded.runtime.sendUserMessage = (message: string, options: any) => {
       assert.equal(options.expandPromptTemplates, true);
-      assert.match(message, /^\/pi-note-done [a-f0-9:]+$/u, "footer sends only its registered completion command");
-      completion = extension.commands.get("pi-note-done").handler(message.slice("/pi-note-done ".length), ctx);
+      assert.match(message, /^\/pi-note [a-f0-9:]+$/u, "footer dispatches a private token through the sole command");
+      completion = extension.commands.get("pi-note").handler(message.slice("/pi-note ".length), ctx);
     };
   };
   try {
@@ -169,7 +181,11 @@ test("native suggestion and completion controls require consent and reject stale
     await event("session_start", { reason: "fork" });
     assert.equal(status, undefined);
     await propose("Keyboard fallback");
-    await extension.commands.get("pi-note-yes").handler("", ctx);
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.equal(list().length, 1, "Settings waits for the agent to be idle");
+    idle = true;
+    await extension.commands.get("pi-note").handler("", ctx);
+    idle = false;
     assert.equal(list().length, 2);
     assert.equal((await get()).details.state, "in_progress");
     session.appendCustomEntry("pinote-selection", { id: null });
@@ -223,7 +239,8 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     assert.equal(status, undefined);
     session.appendCustomEntry("pinote-selection", { id: 2 });
     await event("session_tree");
-    await extension.commands.get("pi-note-done").handler("", ctx);
+    settingsChoice = "Complete task (new session)";
+    await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "2")).state, "done", "keyboard completion uses the guarded path");
     assert.equal(draft, "", "completion clears only the new session's editor");
     assert.equal(replacements, 2);
