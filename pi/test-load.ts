@@ -17,7 +17,6 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
-    PINOTE_PR_POLL_SECONDS: "0",
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pi-note-test-bus",
   });
   delete process.env.DISPLAY;
@@ -35,6 +34,10 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   const ctx = {
     cwd, mode: "tui", hasUI: true, isIdle: () => true,
     sessionManager: { getSessionId: () => "load-test", getBranch: () => entries },
+    newSession: async (options: any) => {
+      await options.withSession({ ui: ctx.ui, reload: async () => {} });
+      return { cancelled: false };
+    },
     ui: {
       theme: { fg: (_color: string, value: string) => value },
       setStatus: (key: string, value?: string) => {
@@ -140,7 +143,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     const updated = JSON.parse((await update.execute("update", params, undefined, undefined, ctx)).content[0].text);
     assert.equal(updated.agent_notes.PR, pr);
     assert.match(prStatuses.at(-1)!, /PR #42/);
-    assert.equal(entries.at(-1).customType, "pinote-pr-watched");
+    assert.ok(!entries.some((entry) => entry.customType === "pinote-pr-watched"), "PR fields never start or persist a GitHub watch");
     assert.match(JSON.parse(cli("agent", "get", "1")).markdown, /# Agent/);
     assert.equal(updated.markdown, undefined, "model context must not duplicate structured fields as a Markdown body");
     await assert.rejects(update.execute("stale", params, undefined, undefined, ctx), /changed elsewhere/);
@@ -248,7 +251,6 @@ test("personal task-offer policies reach the native prompt without disabling exp
     PI_CODING_AGENT_DIR: join(temp, "pi"),
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
-    PINOTE_PR_POLL_SECONDS: "0",
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pi-note-test-bus",
   };
   const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));

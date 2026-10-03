@@ -20,7 +20,7 @@ test("native suggestion and completion controls require consent and reject stale
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
-    PINOTE_PR_POLL_SECONDS: "0", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-suggestion-bus",
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-suggestion-bus",
   };
   const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
   Object.assign(process.env, overrides);
@@ -33,31 +33,48 @@ test("native suggestion and completion controls require consent and reject stale
   const { SessionManager } = await native("core/session-manager.js");
   initTheme("dark", false);
   const { theme } = await native("modes/interactive/theme/theme.js");
-  const session = SessionManager.create(cwd, join(temp, "sessions"));
+  let session = SessionManager.create(cwd, join(temp, "sessions"));
   let extension: any;
   let status: string | undefined;
-  const draft = "Keep my draft";
+  let draft = "Keep my draft";
+  let completion: Promise<void> | undefined;
+  let replacements = 0;
+  let reloads = 0;
   const notices: string[] = [];
   let idle = false;
   const ctx: any = {
     cwd, hasUI: true, mode: "tui", isIdle: () => idle, sessionManager: session,
+    newSession: async (options: any) => {
+      replacements++;
+      await options.withSession({ ui: { setEditorText: (value: string) => { draft = value; } },
+        reload: async () => { reloads++; } });
+      return { cancelled: false };
+    },
     ui: { theme,
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       setWidget() { throw new Error("suggestions must use the pin footer, not a separate widget"); },
       notify: (value: string) => notices.push(value), addAutocompleteProvider() {},
       getEditorText: () => draft, setEditorText() { throw new Error("must preserve draft"); } },
   };
-  const event = async (name: string) => {
-    for (const handler of extension.handlers.get(name) ?? []) await handler({}, ctx);
+  const event = async (name: string, data: object = {}) => {
+    for (const handler of extension.handlers.get(name) ?? []) await handler(data, ctx);
   };
   const links = () => [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m: any) => m[1]);
   const list = () => JSON.parse(cli("list", "--json"));
-  try {
+  const load = async () => {
     const loaded = await loadExtensions([join(root, "index.ts")], cwd);
     assert.deepEqual(loaded.errors, []);
     extension = loaded.extensions[0];
     loaded.runtime.appendEntry = (type: string, data: unknown) => session.appendCustomEntry(type, data);
-    loaded.runtime.sendMessage = loaded.runtime.sendUserMessage = () => { throw new Error("must not start agent turns"); };
+    loaded.runtime.sendMessage = () => { throw new Error("must not start agent turns"); };
+    loaded.runtime.sendUserMessage = (message: string, options: any) => {
+      assert.equal(options.expandPromptTemplates, true);
+      assert.match(message, /^\/pi-note-done [a-f0-9:]+$/u, "footer sends only its registered completion command");
+      completion = extension.commands.get("pi-note-done").handler(message.slice("/pi-note-done ".length), ctx);
+    };
+  };
+  try {
+    await load();
     await event("session_start");
     const propose = (text = "Add 日本語 suggested-task confirmation bar") => extension.tools.get("pinote_propose").definition.execute(
       "suggest", { text: `${text}\n\nPreserve details`, tag: "pinote" }, undefined, undefined, ctx);
@@ -91,6 +108,15 @@ test("native suggestion and completion controls require consent and reject stale
     const longTag = renderSuggestion({ text: "Meaningful title", tag: "x".repeat(64) }, 60, theme, {});
     assert.match(stripVTControlCharacters(longTag), / · Meaningful title$/u);
     assert.doesNotMatch(stripVTControlCharacters(longTag), /xxx/u);
+    const staleSuggestion = links();
+    await event("session_shutdown");
+    await load();
+    await event("session_start");
+    assert.equal(stripVTControlCharacters(status!), stripVTControlCharacters(proposedStatus!), "reload restores the pending suggestion and its controls");
+    assert.equal(list().length, 0, "restoring a suggestion never creates a task");
+    assert.deepEqual(session.getBranch().filter((entry: any) => entry.customType === "pinote-suggestion").at(-1).data,
+      { suggestion: { text: "Add 日本語 suggested-task confirmation bar\n\nPreserve details", tag: "pinote" }, declined: false });
+    await assert.rejects(click(staleSuggestion[1]), "reload invalidates the old capability, not the proposal");
     const [no, yes] = links();
     await propose("Do not replace an existing proposal");
     assert.deepEqual(links(), [no, yes]);
@@ -111,6 +137,12 @@ test("native suggestion and completion controls require consent and reject stale
     assert.equal(chosen.tag, "pinote");
     assert.match(chosen.text, /\n\nPreserve details$/);
     assert.match(notices.at(-1)!, /created and selected/);
+    assert.equal(draft, "Keep my draft", "accepting a suggestion preserves the editor");
+    await event("session_shutdown");
+    await load();
+    await event("session_start");
+    assert.doesNotMatch(stripVTControlCharacters(status!), /\+/u, "reload never resurrects accepted consent");
+    assert.equal(list().length, 1);
     await assert.rejects(propose(), /already selected/);
     session.appendCustomEntry("pinote-selection", { id: null });
     await event("session_tree");
@@ -123,7 +155,17 @@ test("native suggestion and completion controls require consent and reject stale
     assert.equal((await get()).details, null);
     assert.match((await propose()).details.status, /dismissed/);
     assert.equal(status, undefined, "do not nag after cross");
+    await event("session_shutdown");
+    await load();
     await event("session_start");
+    assert.equal(status, undefined, "reload never resurrects a dismissed proposal");
+    assert.match((await propose()).details.status, /dismissed/);
+    session = SessionManager.create(cwd, join(temp, "sessions"));
+    ctx.sessionManager = session;
+    // Forking an ancestor proposal must not restore consent consumed in the parent.
+    session.appendCustomEntry("pinote-suggestion", { suggestion: { text: "Already accepted in the parent" }, declined: false });
+    await event("session_start", { reason: "fork" });
+    assert.equal(status, undefined);
     await propose("Keyboard fallback");
     await extension.commands.get("pi-note-yes").handler("", ctx);
     assert.equal(list().length, 2);
@@ -172,6 +214,7 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     await assert.rejects(click(branchDone), "branch changes invalidate completion links");
     const done = links()[0];
     await click(done);
+    await completion;
     await assert.rejects(click(done), "repeated completion is rejected");
     assert.equal(JSON.parse(cli("agent", "get", String(chosen.id))).state, "done");
     assert.equal((await get()).details, null);
@@ -180,7 +223,9 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     await event("session_tree");
     await extension.commands.get("pi-note-done").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "2")).state, "done", "keyboard completion uses the guarded path");
-    assert.equal(draft, "Keep my draft");
+    assert.equal(draft, "", "completion clears only the new session's editor");
+    assert.equal(replacements, 2);
+    assert.equal(reloads, 2);
     assert.deepEqual(session.buildSessionContext().messages, [], "no model-context message or prompt is added");
   } finally {
     if (extension) await event("session_shutdown");

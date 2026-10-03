@@ -20,7 +20,7 @@ test("native task-link preview renders complete local data but never reaches req
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
-    PINOTE_PR_POLL_SECONDS: "0", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-preview-bus",
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-preview-bus",
   };
   const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
   Object.assign(process.env, overrides);
@@ -139,7 +139,27 @@ setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},ar
     assert.equal(draft, "Keep my draft");
     assert.deepEqual(JSON.parse(cli("agent", "get", "1")), before, "preview never mutates task data");
     const lastUrl = link();
-    await event("session_shutdown");
+    const doneUrl = [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m) => m[1]).find((url) => url.endsWith("/done"))!;
+    const lifecycle: string[] = [];
+    let completion: Promise<void> | undefined;
+    loaded.runtime.sendUserMessage = (message: string, options: any) => {
+      assert.equal(options.expandPromptTemplates, true);
+      completion = extension.commands.get("pi-note-done").handler(message.slice("/pi-note-done ".length), ctx);
+    };
+    ctx.reload = () => { throw new Error("cannot reload a stale command context"); };
+    ctx.newSession = async (options: any) => {
+      lifecycle.push("new");
+      assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
+      assert.equal(session.getBranch().at(-1).data.id, null);
+      await event("session_shutdown");
+      await options.withSession({ ui: ctx.ui, reload: async () => { lifecycle.push("reload"); } });
+      return { cancelled: false };
+    };
+    await click(doneUrl);
+    await completion;
+    assert.deepEqual(lifecycle, ["new", "reload"]);
+    assert.equal(draft, "", "the replacement session starts with an empty editor");
+    await assert.rejects(click(doneUrl));
     await assert.rejects(click(lastUrl));
   } finally {
     if (extension) await event("session_shutdown");

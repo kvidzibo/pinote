@@ -97,12 +97,6 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   let cliVersion = "pinote 0.2.0";
   const taskCalls: string[][] = [];
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const savedPoll = process.env.PINOTE_PR_POLL_SECONDS;
-  process.env.PINOTE_PR_POLL_SECONDS = "60";
-  t.after(() => {
-    if (savedPoll === undefined) delete process.env.PINOTE_PR_POLL_SECONDS;
-    else process.env.PINOTE_PR_POLL_SECONDS = savedPoll;
-  });
   pinote({
     registerEntryRenderer() {},
     registerCommand: (name: string, command: any) => commands.set(name, command),

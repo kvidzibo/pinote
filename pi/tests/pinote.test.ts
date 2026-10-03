@@ -10,12 +10,8 @@ import { join } from "node:path";
 test("task selection, handoff, guarded Done and tools stay session-local without submission", async (t) => {
   const agentDir = mkdtempSync(join(tmpdir(), "pi-note-unit-"));
   const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const savedPollSeconds = process.env.PINOTE_PR_POLL_SECONDS;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.PINOTE_PR_POLL_SECONDS = "60";
   t.after(() => {
-    if (savedPollSeconds === undefined) delete process.env.PINOTE_PR_POLL_SECONDS;
-    else process.env.PINOTE_PR_POLL_SECONDS = savedPollSeconds;
     if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
     rmSync(agentDir, { recursive: true, force: true });
@@ -44,6 +40,10 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   const ctx: any = {
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
     sessionManager: { getBranch: () => entries },
+    newSession: async (options: any) => {
+      await options.withSession({ ui: ctx.ui, reload: async () => {} });
+      return { cancelled: false };
+    },
     ui: {
       theme: { fg: (_color: string, value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
@@ -161,8 +161,6 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   await extension.event("session_start");
   assert.deepEqual(await menuNames(), ["pi-note"]);
   assert.equal(notices.length, noticeCount, `newer CLI must not trigger an upgrade notice: ${JSON.stringify(notices)}`);
-  // Keep polling active above to catch stale startup warnings, but isolate the delayed fake reads below.
-  process.env.PINOTE_PR_POLL_SECONDS = "0";
   cliVersion = "pinote 0.4.0";
   await extension.event("session_start");
   assert.equal((await extension.tool("pinote_get_current", {})).details, null);

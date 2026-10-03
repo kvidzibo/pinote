@@ -191,19 +191,19 @@ asking in chat. The pin footer shows a pending suggestion, distinct from a selec
 ![Suggested task controls](../docs/images/pi-task-suggestion.png)
 ![Selected task with Done control](../docs/images/pi-task-selected.png)
 
-- Muted **✕** dismisses without creating a note; further offers are suppressed until a new session or reload.
+- Muted **✕** dismisses without creating a note; further offers are suppressed until a new session.
 - Accent **+** creates, starts, and selects the suggested task.
-- Green **✓** completes the selected task and clears the selection on success.
+- Green **✓** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and `/pi-note-done` do the same.
 
 Done occupies the former ✕ position, not the + position, so clicking Add twice cannot accidentally complete the new task. The former + cell stays blank. The selected task's title is a separate preview link.
 
 The configured `footer.titleWidth` bounds the entire row (default 60 columns). Controls stay first; the tag is dropped before truncating the first-line title with `...`. Tiny widths hide controls (pin only). Pi can still clip the combined status row on narrow terminals.
 
-Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are `/pi-note-no`, `/pi-note-yes`, and `/pi-note-done`. No action submits input or starts an agent turn; editor drafts stay unchanged.
+Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are `/pi-note-no`, `/pi-note-yes`, and `/pi-note-done`. No action submits input or starts an agent turn. Add and Dismiss preserve editor drafts; Done clears the new session's editor, so save unfinished input before completing a task.
 
-Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed.
+Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed. Failed or stale writes never restart Pi. If another extension cancels the new session, the task remains completed and Pi reports the cancellation. The reload runs through the new session's fresh context; retired contexts are not reused.
 
-An existing suggestion is retained rather than replaced. Selection, tree navigation, reload and shutdown invalidate its links; repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
+An existing suggestion is retained rather than replaced. Pending suggestions survive `/reload` and session resume, including their full text and tag; new links replace stale capabilities. Accepted or dismissed suggestions never reappear on reload. New sessions and forks start without a suggestion; selecting a task or navigating the tree clears it. Suggestion state is local, display-only session metadata, not model context. Pi saves the session after the first submitted message; quitting before that can still lose unsaved session state. Repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
 tag name when it fits.
 Task text starts with a short, action-oriented title (aim for at most 60 characters).
 Put context, URLs, commands, and acceptance criteria after a blank line; the title
@@ -217,7 +217,7 @@ list, append its label to `Bar`, one label per line. Do not list `PR` in `Bar`.
 Agents use `pinote_update_current`; there is no separate `add_to_bottom_bar` tool.
 This is guidance, not truncation or a storage limit.
 
-Values are Markdown strings; no fields are required. `PR` enables the watcher below.
+Values are Markdown strings; no fields are required. `PR` can display a clickable link without GitHub polling.
 `Bar` chooses extra footer fields unless configuration overrides it:
 
 ```markdown
@@ -314,40 +314,18 @@ Pi's final ellipsis is plain text; click the remaining task text to preview it.
 This extension does not replace other footers. Other fields, such as `Jira` and
 `CWD` in the example, stay off the footer unless selected.
 
-### PR merge watcher
+### PR links without polling
 
-Set `PR` with `pinote_update_current` to one `https://github.com/owner/repo/pull/123` URL
-or Markdown link. Legacy footer settings show a clickable **PR #123**; global
-field settings can change or hide that presentation without disabling the watcher.
-Other hosts, multiple links, and prose are not watched.
+Set `PR` with `pinote_update_current` to one `https://github.com/owner/repo/pull/123`
+URL or Markdown link. Legacy footer settings show clickable **PR #123**; global
+field settings can change or hide it. PR and other field links are rendered locally
+for the active selection and disappear when that selection is cleared.
 
-Interactive Pi checks only the selected task's PR using authenticated `gh`
-(`gh auth login`). Polling defaults to 60 seconds; launch Pi with
-`PINOTE_PR_POLL_SECONDS=120 pi` to change it, or `0` to disable polling.
-Allowed intervals are 10–86400 seconds. Configured links remain visible when polling is disabled.
-Network/authentication failures warn once until recovery and retry next interval.
-No polling runs in print/RPC mode or after Pi exits.
+Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on
+PR merges. No GitHub authentication is required. `PINOTE_PR_POLL_SECONDS` is no
+longer used. Other separately installed Pi PR/Git extensions are unaffected.
 
-On merge, Pi waits until idle and asks **Mark this task completed?** In Kitty,
-indeterminate progress animates the tab while the prompt awaits input (with Kitty's
-default progress-aware tab title or a working/ready renderer). Progress clears on
-response, cancellation, or shutdown; other terminals and redirected output are untouched.
-Confirmation uses the same guarded CLI Done operation as `/pi-note`; declining leaves
-the task unchanged. If it is already done, Pi says **PR #123 was merged and the task is
-already completed**, without completing it again. Completion clears the selection
-and hides the footer link, even with polling disabled. The background watch remains
-until another task is selected, the link is removed, or Pi exits. Removed/scheduled tasks are no longer watched.
-
-The watched task ID/link and merge acknowledgements are saved in the Pi session,
-so `/reload` and session resume retain completed-task watches without repeating
-acknowledged prompts. A new session can notify again for a
-selected task. Task or PR changes during confirmation cannot complete a different
-task. No completion-hook system is added; this uses Pinote's existing Done flow.
-A separate branch-based PR-status extension may show a duplicate link; disable it
-if you only want task-linked PRs.
-
-Task data stays local except for GitHub status requests. Tools work without a TUI,
-but `/pi-note` needs an idle TUI.
+Tools work without a TUI, but `/pi-note` needs an idle TUI.
 This package does not synchronize databases or paths between machines. Note text
 and fields loaded into Pi are sent to the configured model when used as context;
 avoid secrets. Agent commands do not send desktop notifications.

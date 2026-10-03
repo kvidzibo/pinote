@@ -1,10 +1,11 @@
-import { getAgentDir, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, getMarkdownTheme, type ExtensionAPI, type ExtensionContext, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, Editor, Markdown, Text, truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
-import { createPRWatcher } from "./pr-watch.ts";
+import { updateTaskFooter, clearTaskFooter } from "./footer-status.ts";
 import { defaultFooterConfig, defaultHandoffPrompt, effectiveFooterFields, loadFooterConfig, parseHandoffPrompt, readFooterDocument, saveFooterConfig, type FooterConfig, type PinoteSettings } from "./footer-config.ts";
 import { FooterSettings, TaskMenu, withSettingsTab } from "./footer-settings.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
@@ -126,13 +127,37 @@ export default function (pi: ExtensionAPI) {
     view.addChild(new Markdown(clean(entry.data.markdown), 0, 0, getMarkdownTheme()));
     return view;
   });
+  const runtimeToken = randomBytes(16).toString("hex");
+  let completionDispatch: {
+    token: string; selection: string; task: Task; started: () => void; finish: (accepted: boolean) => void;
+  } | undefined;
+  const cancelCompletionDispatch = () => completionDispatch?.finish(false);
   let previewBridge: ReturnType<typeof createPreviewBridge> | undefined;
+  const suggestionType = "pinote-suggestion";
   let suggestion: { text: string; tag?: string } | undefined;
   let offerDeclined = false;
-  const clearSuggestion = (ctx: ExtensionContext) => {
+  const saveSuggestion = () => pi.appendEntry(suggestionType, { suggestion: suggestion ?? null, declined: offerDeclined });
+  const clearSuggestion = (ctx: ExtensionContext, persist = true) => {
+    const hadSuggestion = suggestion !== undefined;
     previewBridge?.clearSuggestion();
-    if (suggestion && ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
+    if (hadSuggestion && ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
     suggestion = undefined;
+    if (persist && hadSuggestion) saveSuggestion();
+  };
+  const restoreSuggestion = (ctx: ExtensionContext) => {
+    suggestion = undefined;
+    offerDeclined = false;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type !== "custom" || entry.customType !== suggestionType) continue;
+      const data = entry.data;
+      if (!record(data) || typeof data.declined !== "boolean") continue;
+      const value = data.suggestion;
+      suggestion = record(value) && text(value.text) && value.text.trim() &&
+        (value.tag === undefined || (text(value.tag) && value.tag.trim() && value.tag.length <= 64))
+        ? { text: value.text, ...(value.tag === undefined ? {} : { tag: value.tag as string }) } : undefined;
+      offerDeclined = data.declined;
+    }
+    if (selectedId !== null || offerDeclined) suggestion = undefined;
   };
   let alive = true;
   let epoch = 0;
@@ -270,38 +295,21 @@ export default function (pi: ExtensionAPI) {
           selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false), current ? {
             revision: current.updated_at,
             invoke: () => alive && generation === epoch && previewBranch === branchEpoch && selectedId === previewId
-              ? completeTask(ctx, current) : Promise.resolve(false),
+              ? dispatchCompletion(ctx, current, `${runtimeToken}:${generation}:${previewBranch}:${previewId}`) : Promise.resolve(false),
           } : undefined);
         ctx.ui.setStatus("pinote", current ? renderSelectedTask(current, footerConfig.titleWidth, ctx.ui.theme, {
           preview: previewBridge?.url(), done: previewBridge?.doneUrl(),
         }) : suggestionStatus(ctx));
-        watcher.update(ctx, current);
+        updateTaskFooter(ctx, current, footerConfig);
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
         previewBridge?.invalidate();
+        clearTaskFooter(ctx);
         ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${noteIcon} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
       }
     }
   };
-  const watcher = createPRWatcher(pi, {
-    selected,
-    footerConfig: () => footerConfig,
-    get: async (id) => requiredTask(await run(["agent", "get", String(id)]), id),
-    done: async (current, canAct) => {
-      const result = requiredTask(await run([
-        "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
-      ], undefined, canAct), current.id);
-      if (result.state !== "done") throw new Error(compatible);
-    },
-    claim: () => {
-      if (pending) return;
-      const operation = Symbol();
-      pending = operation;
-      return () => { if (pending === operation) pending = undefined; };
-    },
-    refresh,
-  });
   const preview = async (ctx: ExtensionContext, requestSignal?: AbortSignal): Promise<boolean> => {
     if (!ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || !validId(selectedId)) return false;
     const generation = epoch;
@@ -330,44 +338,75 @@ export default function (pi: ExtensionAPI) {
       if (pending === operation) pending = undefined;
     }
   };
-  const completeTask = async (ctx: ExtensionContext, displayed?: Task): Promise<boolean> => {
-    if (!alive || !ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || setupAbort || !validId(selectedId)) return false;
+  const dispatchCompletion = (ctx: ExtensionContext, displayed: Task, selection: string): Promise<boolean> => {
+    if (!ctx.isIdle() || pending || completionDispatch) return Promise.resolve(false);
+    const token = `${selection}:${randomBytes(8).toString("hex")}`;
+    return new Promise((resolve) => {
+      const finish = (accepted: boolean) => {
+        clearTimeout(timer);
+        if (completionDispatch?.token === token) completionDispatch = undefined;
+        resolve(accepted);
+      };
+      const timer = setTimeout(() => {
+        finish(false);
+        if (alive && activeContext === ctx) ctx.ui.notify("Pinote completion could not start. Use /pi-note-done.", "warning");
+      }, 4000);
+      completionDispatch = { token, selection, task: displayed, started: () => clearTimeout(timer), finish };
+      try { pi.sendUserMessage(`/pi-note-done ${token}`, { expandPromptTemplates: true }); }
+      catch { finish(false); }
+    });
+  };
+  const completeSelected = async (args: string, ctx: ExtensionCommandContext, displayed?: Task) => {
+    const token = args.trim();
+    const request = token ? completionDispatch : undefined;
+    if (token && (request?.token !== token || request.selection !== `${runtimeToken}:${epoch}:${branchEpoch}:${selectedId}`)) return;
+    if (!alive || !ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || setupAbort || !validId(selectedId)) {
+      request?.finish(false);
+      if (ctx.hasUI) ctx.ui.notify("Select a task and wait until Pi is idle and the Pinote operation has finished.", "warning");
+      return;
+    }
     const generation = epoch;
     const branch = branchEpoch;
     const id = selectedId;
     const operation = Symbol();
     pending = operation;
+    request?.started();
     refreshSerial++;
     const canAct = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
     let wrote = false;
     try {
-      const current = displayed ?? await currentTask(undefined, canAct);
-      if (!current || current.id !== id || !canAct()) return false;
+      const current = request?.task ?? displayed ?? await currentTask(undefined, canAct);
+      if (!current || current.id !== id || !canAct()) return;
       const completed = requiredTask(await run([
         "agent", "done", String(id), "--expected-updated-at", current.updated_at,
       ], undefined, canAct), id);
       wrote = true;
       if (completed.state !== "done") throw new Error(compatible);
       if (!canAct()) throw new Error("The session or selection changed. Completion may have committed; read the task before retrying.");
+      request?.finish(true);
       remember(null, branch);
-      ctx.ui.notify(`Pinote #${id} completed.`, "info");
-      return true;
+      await refresh(ctx);
+      if (!alive || generation !== epoch || branch !== branchEpoch || selectedId !== null || !ctx.isIdle()) {
+        throw new Error("Task completed, but the session changed. Start a new session manually.");
+      }
+      // Only a fresh command context may clear the new editor and reload the runtime.
+      const result = await ctx.newSession({ withSession: async (fresh) => {
+        fresh.ui.setEditorText("");
+        await fresh.reload();
+      } });
+      if (result.cancelled) ctx.ui.notify("Task completed; new session was cancelled.", "warning");
     } catch (error) {
       if (alive && generation === epoch) ctx.ui.notify(
         `Pinote completion: ${clean(String(error))}${wrote ? " Check the task before retrying." : ""}`, "error");
-      return false;
     } finally {
+      request?.finish(false);
       if (pending === operation) pending = undefined;
       if (alive && generation === epoch) await refresh(ctx);
     }
   };
   pi.registerCommand("pi-note-done", {
-    description: "Complete the selected task (same as the footer ✓)",
-    handler: async (args, ctx) => {
-      if (!ctx.hasUI || ctx.mode !== "tui") return;
-      if (args.trim()) { ctx.ui.notify("Usage: /pi-note-done", "warning"); return; }
-      if (!await completeTask(ctx)) ctx.ui.notify("Select a task and wait until Pi is idle and Pinote is available before completing it.", "warning");
-    },
+    description: "Complete the selected task, start a clean session, and reload Pi",
+    handler: (args, ctx) => completeSelected(args, ctx),
   });
   pi.registerCommand("pi-note-preview", {
     description: "Display the selected task locally without sending it to the model",
@@ -379,10 +418,9 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_start", async (_event, ctx) => {
     setupAbort?.abort();
-    // Retire old polling before bridge teardown/startup yields to its scheduled callbacks.
-    watcher.stop();
-    clearSuggestion(activeContext ?? ctx);
-    offerDeclined = false;
+    cancelCompletionDispatch();
+    clearTaskFooter(activeContext ?? ctx);
+    clearSuggestion(activeContext ?? ctx, false);
     alive = false;
     epoch++;
     branchEpoch++;
@@ -394,6 +432,13 @@ export default function (pi: ExtensionAPI) {
     alive = true;
     activeContext = ctx;
     selectedId = readSelection(ctx);
+    restoreSuggestion(ctx);
+    if (_event.reason === "new" || _event.reason === "fork") {
+      // A fork may include an ancestor proposal whose consent was consumed elsewhere.
+      clearSuggestion(ctx, false);
+      offerDeclined = false;
+      if (ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === suggestionType)) saveSuggestion();
+    }
     footerConfig = loadFooterConfig((message) => {
       if (ctx.hasUI) ctx.ui.notify(message, "warning");
     });
@@ -418,13 +463,16 @@ export default function (pi: ExtensionAPI) {
     if (!setupAbort) pending = undefined;
     await checkCLI(ctx, true);
     if (!alive || generation !== epoch) return;
-    if (!setupAbort) watcher.start(ctx);
+    if (suggestion) previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
     await refresh(ctx);
   });
   pi.on("session_tree", async (_event, ctx) => {
     if (!alive) return;
     branchEpoch++;
-    clearSuggestion(ctx);
+    cancelCompletionDispatch();
+    clearSuggestion(ctx, false);
+    // Never resurrect an already consumed proposal by navigating behind its tombstone.
+    saveSuggestion();
     previewBridge?.invalidate();
     const generation = branchEpoch;
     const id = readSelection(ctx);
@@ -437,14 +485,15 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => { await refresh(ctx); });
   pi.on("session_shutdown", async (_event, ctx) => {
     setupAbort?.abort();
-    clearSuggestion(ctx);
+    cancelCompletionDispatch();
+    clearSuggestion(ctx, false);
     alive = false;
     activeContext = undefined;
     selectedId = null;
     epoch++;
     branchEpoch++;
     refreshSerial++;
-    watcher.stop();
+    clearTaskFooter(ctx);
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
     const bridge = previewBridge;
     previewBridge = undefined;
@@ -468,7 +517,7 @@ export default function (pi: ExtensionAPI) {
       const generation = epoch;
       const controller = new AbortController();
       setupAbort = controller;
-      watcher.stop();
+      clearTaskFooter(ctx);
       const currentSession = () => alive && generation === epoch;
       try {
         await setupCLI(pi, ctx, name === "pi-note-upgrade",
@@ -483,7 +532,6 @@ export default function (pi: ExtensionAPI) {
           const generation = epoch;
           await checkCLI(latestContext, !currentSession());
           if (!alive || generation !== epoch || setupAbort) return;
-          watcher.start(latestContext);
           await refresh(latestContext);
         }
       }
@@ -547,13 +595,8 @@ export default function (pi: ExtensionAPI) {
           if (!action || !canAct()) return;
           if (action === "Settings") { settings = true; continue; }
           if (action === "Done" && current) {
-            refreshSerial++;
-            const completed = requiredTask(await run([
-              "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
-            ], undefined, canAct), current.id);
-            if (completed.state !== "done") throw new Error(compatible);
-            if (currentSession() && branch === branchEpoch) remember(null, branch);
-            if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
+            if (pending === operation) pending = undefined;
+            await completeSelected("", ctx, current);
             return;
           }
           let id: number;
@@ -601,7 +644,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_update_current",
     label: "Pinote update current",
     promptGuidelines: [handoffGuidance],
-    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Read pinote_fields for the user's global field names, labels, link switches, formats, and widths; set those field names when their values are relevant. Fields without values stay hidden. When footer.fields is unset, set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
+    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer. Pinote does not poll GitHub or prompt on PR merges. Read pinote_fields for the user's global field names, labels, link switches, formats, and widths; set those field names when their values are relevant. Fields without values stay hidden. When footer.fields is unset, set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
     parameters: Type.Object({
       expected_updated_at: Type.String({ minLength: 1 }),
       set: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -727,6 +770,7 @@ export default function (pi: ExtensionAPI) {
       if (offerDeclined) return result("dismissed; continue without a note and do not offer again");
       if (suggestion) return result("pending; existing suggestion retained, continue work without asking again");
       suggestion = { text: params.text, ...(params.tag === undefined ? {} : { tag: params.tag.trim() }) };
+      saveSuggestion();
       previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
       ctx.ui.setStatus("pinote", suggestionStatus(ctx));
       return result("pending; user can click ✓ to add and select or ✕ to dismiss, continue work without asking again");

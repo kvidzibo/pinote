@@ -140,8 +140,10 @@ Each Pi session remembers its own task, even in the same folder. Arbitrary
 Markdown handoff fields appear under **Agent** in the GTK preview without changing
 the task text.
 
-A GitHub `PR` field adds a footer link and configurable merge polling in
-interactive Pi, with confirmation before completion. No cross-machine sync is provided.
+A GitHub `PR` field adds a clickable footer link; Pinote does not poll GitHub or
+prompt on PR merges. Pending suggestions survive `/reload`. The footer **✓**
+completes the task, starts a clean session, and reloads Pi. No cross-machine sync
+is provided.
 
 ## Important constraints
 
