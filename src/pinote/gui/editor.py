@@ -46,6 +46,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.draft: DraftCache | None = None
         self.draft_source = 0
         self.draft_revision = 0
+        self.draft_load_failed = False
         self.set_role("pinote-editor")
         self.set_decorated(False)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
@@ -139,6 +140,9 @@ class NoteEditor(Gtk.ApplicationWindow):
         )
         self.cancel_button.connect("clicked", lambda _button: self.close())
         self.save_button.connect("clicked", lambda _button: self._save())
+        if self.draft_load_failed:
+            self.entry.set_editable(False)
+            self.save_button.set_sensitive(False)
         controls.add(self.cancel_button)
         controls.add(self.save_button)
         layout.pack_start(controls, False, False, 0)
@@ -157,11 +161,11 @@ class NoteEditor(Gtk.ApplicationWindow):
                 self.draft = DraftCache(
                     self.owner.model.paths.data / "gui-edit-drafts" / f"{note.id}.json"
                 )
-                self.owner.edit_drafts[note.id] = self.draft
                 payload = self.draft.load()
             else:
                 payload = self.draft.snapshot()
             if not payload:
+                self.owner.edit_drafts[note.id] = self.draft
                 return note.text
             data = json.loads(payload)
             if (
@@ -170,6 +174,7 @@ class NoteEditor(Gtk.ApplicationWindow):
                 or any(not isinstance(value, str) for value in data.values())
             ):
                 raise ValueError("Invalid edit-draft record")
+            self.owner.edit_drafts[note.id] = self.draft
             if data["updated_at"] != note.updated_at and data["text"].strip() == note.text:
                 # A previous process committed the edit before clearing its cache.
                 self.draft.update("")
@@ -184,11 +189,13 @@ class NoteEditor(Gtk.ApplicationWindow):
                 )
             return data["text"]
         except (OSError, UnicodeError, ValueError) as exc:
-            self._error(f"Cannot restore the edit draft: {exc}")
+            self.draft_load_failed = True
+            self.owner.edit_drafts.pop(note.id, None)
+            self._error(f"Cannot restore the edit draft: {exc}. Close and retry, or discard it.")
             return note.text
 
     def _draft_changed(self, _buffer) -> None:
-        if self.closed:
+        if self.closed or self.draft_load_failed:
             return
         buffer = self.entry.get_buffer()
         text = buffer.get_text(*buffer.get_bounds(), True)
@@ -210,6 +217,8 @@ class NoteEditor(Gtk.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _persist_draft(self) -> None:
+        if self.draft_load_failed:
+            return
         try:
             self.draft.save()
         except (OSError, UnicodeError) as exc:
@@ -228,6 +237,7 @@ class NoteEditor(Gtk.ApplicationWindow):
 
     def _discard_draft(self) -> None:
         if not self.closed and not self.saving:
+            self.draft_load_failed = False
             self.draft.update("")
             self.destroy()
 
@@ -257,7 +267,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         return controls
 
     def _save(self) -> None:
-        if self.closed or self.saving:
+        if self.closed or self.saving or self.draft_load_failed:
             return
         if self.schedule_only:
             self.hour.update()

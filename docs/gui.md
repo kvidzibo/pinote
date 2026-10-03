@@ -135,7 +135,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   change tasks or history. Editing keeps the task's ID, tag, and progress state.
   Failed saves keep the draft. If the task changed elsewhere, the recovered draft
   cannot overwrite it: copy the draft, discard it, then reopen the latest task to
-  reconcile your changes. Tag-name and reminder dialogs do not cache unfinished input.
+  reconcile your changes. If a draft cannot be read, the editor stays read-only
+  without replacing it; close and retry after fixing the error, or explicitly discard
+  the unreadable draft. Tag-name and reminder dialogs do not cache unfinished input.
 - **Right-click note text → Tag →** choose a tag, **New tag…**, or **Untagged** to
   clear it. Each task has at most one tag. New names matching a saved tag ignoring
   case reuse its spelling: entering **pi** when **Pi** exists saves **Pi**. Names are

@@ -298,7 +298,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.notes_snapshot: list[Note] = []
         self.reveal_note_id: int | None = None
         self.saved_feedback: tuple[int, str, str | None] | None = None
-        self.feedback_seen = False
+        self.feedback_snapshot: list[Note] | None = None
         self.added_tag: str | None = None
         self.geometry_source = 0
         self.focus_source = 0
@@ -1370,7 +1370,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _task_saved(self, note_id: int, verb: str, tag: str | None) -> None:
         self.saved_feedback = (note_id, verb, tag)
-        self.feedback_seen = False
+        # The confirmed task is active; the checklist may still show its pre-write state.
+        self.feedback_snapshot = self.notes_snapshot
         self._update_feedback()
 
     def _update_feedback(self) -> None:
@@ -1378,14 +1379,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.feedback.hide()
             return
         note_id, verb, tag = self.saved_feedback
-        note = next((note for note in self.notes_snapshot if note.id == note_id), None)
-        if note is not None:
+        note = None
+        if self.notes_snapshot is not self.feedback_snapshot:
+            note = next((note for note in self.notes_snapshot if note.id == note_id), None)
+            if note is None:
+                self._dismiss_feedback()
+                return
             tag = note.tag
-            self.feedback_seen = True
             self.saved_feedback = (note_id, verb, tag)
-        elif self.feedback_seen:
-            self._dismiss_feedback()
-            return
         filtered = self.tag_filter is not None and (tag or "") not in self.tag_filter
         collapsed = self.view_mode == 2 or (
             self.view_mode == 1 and (note is None or note.state != "in_progress")
@@ -1402,6 +1403,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _dismiss_feedback(self) -> None:
         self.saved_feedback = None
+        self.feedback_snapshot = None
         self.feedback.hide()
 
     def _show_saved_task(self) -> None:

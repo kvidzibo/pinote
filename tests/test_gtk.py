@@ -1278,7 +1278,7 @@ def test_edit_and_new_tag_errors_keep_input_and_reject_stale_revision(gtk, tag_o
 
 
 @pytest.mark.parametrize(
-    "action", ["add", "restore", "restore-close", "stale-restore", "failed-add"]
+    "action", ["add", "restore", "restore-close", "stale-restore", "failed-add", "stale-checklist"]
 )
 @pytest.mark.parametrize("hidden_by", ["filter", "collapsed", "visible"])
 def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
@@ -1287,8 +1287,14 @@ def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
     with Store(gtk.paths.database) as store:
         store.add("Visible Work task", tag="Work")
         store.add("Archived Personal task", tag="Personal")
-        store.transition(2, "rm")
+        store.transition(2, "start" if action == "stale-checklist" else "rm")
     window = gtk.open()
+    if action == "stale-checklist":
+        with Store(gtk.paths.database) as store:
+            store.transition(2, "rm")
+        # Keep the pre-archive progress snapshot until the restore's own refresh.
+        gtk.glib.source_remove(window.refresh_source)
+        window.refresh_source = gtk.glib.timeout_add(60000, window._poll)
     window._set_filter(frozenset({"Work"}) if hidden_by == "filter" else None)
     if hidden_by == "collapsed":
         window._cycle_view(None)
@@ -1327,7 +1333,13 @@ def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
             threading.Timer(0.1, release.set).start()
         else:
             archive._restore(2)
-        wait_until(gtk.glib, lambda: not window.pending and len(window.notes_snapshot) == 2)
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.pending
+                and any(note.id == 2 and note.state == "active" for note in window.notes_snapshot)
+            ),
+        )
         note_id, verb = 2, "Restored"
     assert window.tag_filter == current_filter and window.view_mode == current_view
     if action in {"failed-add", "stale-restore"} or hidden_by == "visible":
@@ -3837,9 +3849,20 @@ def test_close_finishes_an_already_clicked_mutation(gtk, cli, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "finish", ["close", "crash", "empty", "discard", "save", "failed-save", "stale", "save-close"]
+    "finish",
+    [
+        "close",
+        "crash",
+        "empty",
+        "discard",
+        "save",
+        "failed-save",
+        "stale",
+        "save-close",
+        "read-retry",
+    ],
 )
-def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, finish):
+def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, finish, monkeypatch):
     original = "Original\nTask details"
     draft = "  Unfinished <edit> café ☕\n\nDetails\twith whitespace  \n"
     with Store(gtk.paths.database) as store:
@@ -3934,6 +3957,24 @@ def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, f
     )
     other.cancel_button.clicked()
     wait_until(gtk.glib, lambda: window.editor is None)
+    if finish == "read-retry":
+        from pinote.gui.draft import DraftCache
+
+        with monkeypatch.context() as patch:
+
+            def denied(_cache):
+                raise PermissionError("temporarily unreadable draft")
+
+            patch.setattr(DraftCache, "load", denied)
+            window._open_editor(window.rows[1].note)
+            editor = window.editor
+            assert 1 not in window.edit_drafts
+            assert "Cannot restore" in editor.error_text.get_text()
+            assert not editor.entry.get_editable() and not editor.save_button.get_sensitive()
+            editor._save()  # Keyboard/programmatic submission must be blocked too.
+            editor.cancel_button.clicked()
+            wait_until(gtk.glib, lambda: window.editor is None)
+            assert json.loads(editor.draft.path.read_text())["text"] == draft
     window._open_editor(window.rows[1].note)
     editor = window.editor
     buffer = editor.entry.get_buffer()
@@ -3960,7 +4001,7 @@ def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, f
         window._open_editor(window.rows[1].note)
         buffer = window.editor.entry.get_buffer()
         assert buffer.get_text(*buffer.get_bounds(), True) == saved
-    elif finish in {"close", "crash", "failed-save"}:
+    elif finish in {"close", "crash", "failed-save", "read-retry"}:
         # Reopening within the process also reuses the latest in-memory draft.
         buffer.set_text(draft + "New edits")
         editor.cancel_button.clicked()
