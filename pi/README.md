@@ -61,7 +61,10 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 The agent fetches current task text and saved handoff fields when you submit;
 they are not copied into the draft. The default prompt asks for a summary, not implementation.
 Existing drafts are preserved; nothing is submitted automatically.
-With a selected task it offers **Continue**, **Done**, and **Switch task**.
+With a selected task it offers **Continue**, **Done**, **Switch task**, and **Settings**.
+Press **Tab** from the task menu or picker to open global footer settings; Tab
+returns to tasks without saving. Settings also lists fields found on the current
+task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
@@ -123,6 +126,10 @@ user-level configuration only; project-local files are not read.
   ID argument. Updates merge fields, never replace the task text or tag. Fails if
   no task is selected or the selection changes during the operation. If another
   process changed the task, read again before retrying.
+- `pinote_fields`: read the user's global footer definitions (names, display labels,
+  links, formats, widths), even without a task. Agents should read this before
+  populating relevant values with `pinote_update_current`. Empty/missing values
+  stay hidden; this tool does not edit configuration.
 - `pinote_tags`: list saved tag names.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
   remembers it for this session only; use that only after the user agrees.
@@ -175,7 +182,11 @@ Add `footer` to `~/.pi/agent/pi-note.json` (or `pi-note.json` under
     "titleWidth": 40,
     "fieldWidth": 30,
     "maxFields": 4,
-    "fields": ["Dashboard", { "label": "Next", "width": 24 }]
+    "fields": [
+      { "name": "PR", "label": "", "link": true, "format": "#<number>" },
+      { "name": "Dashboard", "label": "Dashboard", "link": true, "format": "<value>" },
+      { "name": "Next", "label": "", "link": false, "format": "<value>", "width": 24 }
+    ]
   }
 }
 ```
@@ -183,12 +194,32 @@ Add `footer` to `~/.pi/agent/pi-note.json` (or `pi-note.json` under
 Widths are terminal columns, including icons/tags or field labels, and must be
 integers from 3 to 1000. Defaults: `titleWidth: 60`, `fieldWidth: 60`,
 `maxFields: 4` (allowed 0–64). Each field can override `fieldWidth` with `width`.
-`fields` selects labels in order, regardless of a task's `Bar`; absent/`null`
-uses `Bar` for compatibility. `[]` or `maxFields: 0` hides all extra fields, not
-`PR`. Missing/reserved (`PR`, `Bar`) and duplicate labels are skipped. Up to 64
-labels are accepted, using the task's case-sensitive, trimmed NFC labels.
+`fields` selects task field names in order, regardless of a task's `Bar`.
+Names are case-sensitive, trimmed and NFC-normalized, at most 64 characters;
+`Bar` is reserved and duplicate names are rejected. Up to 64 definitions are
+accepted. Missing/blank values do not display and do not consume the field limit.
+`[]` or `maxFields: 0` hides configured fields, including PR.
 
-Run `/reload` after editing footer settings; they are also reread on session start.
+In `/pi-note → Settings`, **Add field** adds a global display definition, not a
+task value. Select any field to edit **Link**, **Label**, **Format**, and **Width**.
+Label starts as the field name; clear it for no prefix. Link off displays plain
+text without a clickable link. **Save** persists the draft; cancellation leaves
+configuration untouched. Saves preserve unrelated settings (`handoffPrompt`,
+`taskOfferPolicy`) and reject configuration changes made while the dialog was open.
+Concurrent saves use `pi-note.json.lock`; remove stale locks only when no save is
+running. Symlinked configuration must be edited manually; saves never replace the link.
+
+Formats support `<value>` (Markdown display text), `<url>` (one safe link target),
+and `<number>` (a GitHub PR number or numeric field value). With a blank label,
+PR format `#<number>` displays `#123`; Link on makes it clickable. An unavailable
+placeholder hides the field. The template is literal text, not executable code
+or Markdown. Default format is `<value>`, or `#<number>` for PR.
+String definitions and the older `{ "label": "Next", "width": 24 }` form still
+work. Absent/`null` fields retain the legacy automatic PR link plus `Bar` fields;
+the first Settings save turns this legacy list into explicit global definitions.
+
+Settings saves apply immediately in this Pi session. Run `/reload` after manual
+footer edits or in other running sessions; settings are also reread on session start.
 Invalid footer configuration warns and uses footer defaults; missing files silently
 use defaults. This does not validate or change `handoffPrompt`, which is read
 separately on selection/Continue as described above.
@@ -198,12 +229,13 @@ without approval. Task values still come from `pinote_update_current`.
 ### Footer links
 
 The selected active or in-progress task can show fields after its title.
-`PR` is always shown when it matches the watcher format below, as **PR #123**.
-Configured `fields`, or otherwise `Bar`, selects other field labels. Each listed value is
+Legacy configuration automatically shows a valid `PR` as **PR #123**.
+With an explicit field list, PR presentation is configured like any other field.
+Configured `fields`, or otherwise `Bar`, selects field names. Each listed value is
 Markdown: the footer shows its text, and links in it are clickable for any scheme
 except `javascript:`, `data:`, and `vbscript:`. Credentials, control characters,
 and targets over 2048 characters after serialization are shown as text but not
-linked. Missing labels and the `PR` and `Bar` labels themselves are skipped.
+linked. `Bar` itself is never displayed.
 By default, at most four extra fields are shown, each truncated to 60 columns.
 Overflow ends with `...`, including cuts between Markdown/link segments. Removing
 a listed field hides it even if configuration or `Bar` still names it. Terminal
@@ -215,13 +247,14 @@ this extension does not replace other footers. Other fields, such as `Jira` and
 ### PR merge watcher
 
 Set `PR` with `pinote_update_current` to one `https://github.com/owner/repo/pull/123` URL
-or Markdown link. The footer adds a clickable, link-coloured **PR #123**, without
-status text. Other hosts, multiple links, and prose are not watched.
+or Markdown link. Legacy footer settings show a clickable **PR #123**; global
+field settings can change or hide that presentation without disabling the watcher.
+Other hosts, multiple links, and prose are not watched.
 
 Interactive Pi checks only the selected task's PR using authenticated `gh`
 (`gh auth login`). Polling defaults to 60 seconds; launch Pi with
 `PINOTE_PR_POLL_SECONDS=120 pi` to change it, or `0` to disable polling.
-Allowed intervals are 10–86400 seconds. The selected task's link remains visible when polling is disabled.
+Allowed intervals are 10–86400 seconds. Configured links remain visible when polling is disabled.
 Network/authentication failures warn once until recovery and retry next interval.
 No polling runs in print/RPC mode or after Pi exits.
 

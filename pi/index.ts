@@ -1,15 +1,16 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
-import { defaultFooterConfig, loadFooterConfig } from "./footer-config.ts";
+import { defaultFooterConfig, effectiveFooterFields, loadFooterConfig, readFooterDocument, saveFooterConfig, type FooterConfig } from "./footer-config.ts";
+import { FooterSettings, TaskMenu, withSettingsTab } from "./footer-settings.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
 
-const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. Footer fields and widths are chosen by the user's pi-note.json config. Set configured fields with Markdown values; links are clickable. When footer.fields is unset, Bar selects labels, one per line. Do not list PR in Bar. Remove a field to hide it. Do not modify config without user approval.";
+const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. Read pinote_fields to learn the user's globally configured footer field names and presentation. Populate those fields with meaningful task values when relevant using pinote_update_current; fields without values stay hidden. Footer fields and widths are chosen by the user's pi-note.json config. Set configured fields with Markdown values; links are clickable. When footer.fields is unset, Bar selects labels, one per line. Do not list PR in Bar. Remove a field to hide it. Do not modify config without user approval.";
 const offerGuidance = {
   always: "When the user gives work and no pinote task is selected, propose one note as `[tag] text` and ask before creating it.",
   "github-remote": "When the user gives work and no pinote task is selected, first verify with Git that the current repository has a remote whose URL host is github.com (HTTPS or SSH). Only then propose one note as `[tag] text` and ask before creating it. Local paths, other hosts, and GitHub-looking URL paths do not qualify. If no GitHub remote is verified, do not offer a task; explicit user requests to create one remain allowed.",
@@ -359,7 +360,7 @@ export default function (pi: ExtensionAPI) {
   registerInstallCommand("pi-note-upgrade");
 
   pi.registerCommand("pi-note", {
-    description: "Continue, complete, or switch the selected pinote task",
+    description: "Continue, complete, switch tasks, or edit global footer settings (Tab)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
       if (args.trim()) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
@@ -376,39 +377,59 @@ export default function (pi: ExtensionAPI) {
       try {
         const current = await selected(ctx);
         if (!canAct()) return;
-        const action = current
-          ? await ctx.ui.select(`Pinote — ${taskState(current)} ${taskTag(current)} ${title(current)}`, ["Continue", "Done", "Switch task"])
-          : "Switch task";
-        if (!action || !canAct()) return;
-        if (action === "Done" && current) {
+        let settings = false;
+        while (canAct()) {
+          if (settings) {
+            const document = readFooterDocument();
+            const config = { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) };
+            const edited = await ctx.ui.custom<FooterConfig | "tasks" | undefined>((tui, theme, kb, done) =>
+              new FooterSettings(config, Object.keys(current?.agent_notes ?? {}).filter((name) => name !== "Bar"),
+                theme, (data, action) => kb.matches(data, action as Keybinding), done, () => tui.requestRender()));
+            if (!canAct() || edited === undefined) return;
+            if (edited === "tasks") { settings = false; continue; }
+            footerConfig = saveFooterConfig(edited, document.raw);
+            ctx.ui.notify("Global Pinote footer settings saved.", "info");
+            return;
+          }
+          const action = current
+            ? await ctx.ui.custom<string | undefined>((tui, theme, kb, done) =>
+              new TaskMenu(`Pinote — ${taskState(current)} ${taskTag(current)} ${title(current)}`,
+                theme, (data, action) => kb.matches(data, action as Keybinding), done, () => tui.requestRender()))
+            : "Switch task";
+          if (!action || !canAct()) return;
+          if (action === "Settings") { settings = true; continue; }
+          if (action === "Done" && current) {
+            refreshSerial++;
+            const completed = requiredTask(await run([
+              "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
+            ], undefined, canAct), current.id);
+            if (completed.state !== "done") throw new Error(compatible);
+            if (currentSession() && branch === branchEpoch) remember(null, branch);
+            if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
+            return;
+          }
+          let id: number;
+          if (action === "Continue" && current) {
+            id = current.id;
+          } else if (action === "Switch task") {
+            const tasks = taskList(await run(["list", "--json"]));
+            if (!canAct()) return;
+            const choice = await ctx.ui.custom<number | "Settings" | undefined>((tui, theme, kb, done) =>
+              withSettingsTab(new TaskPicker(tasks, theme, (data, action) => kb.matches(data, action),
+                done, () => tui.requestRender()), () => done("Settings"), theme, () => tui.requestRender()));
+            if (choice === undefined || !canAct()) return;
+            if (choice === "Settings") { settings = true; continue; }
+            id = choice;
+          } else return;
+          const handoff = handoffPrompt();
           refreshSerial++;
-          const completed = requiredTask(await run([
-            "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
-          ], undefined, canAct), current.id);
-          if (completed.state !== "done") throw new Error(compatible);
-          if (currentSession() && branch === branchEpoch) remember(null, branch);
-          if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
+          const chosen = await startTask(id, canAct);
+          if (!chosen || !canAct()) return;
+          const draft = ctx.ui.getEditorText();
+          ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
+          ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
           return;
         }
-        const handoff = handoffPrompt();
-        let id: number;
-        if (action === "Continue" && current) {
-          id = current.id;
-        } else if (action === "Switch task") {
-          const tasks = taskList(await run(["list", "--json"]));
-          if (!canAct()) return;
-          if (!tasks.length) { ctx.ui.notify("No active pinote tasks.", "info"); return; }
-          const choice = await ctx.ui.custom<number | undefined>((tui, theme, kb, done) =>
-            new TaskPicker(tasks, theme, (data, action) => kb.matches(data, action), done, () => tui.requestRender()));
-          if (choice === undefined || !canAct()) return;
-          id = choice;
-        } else return;
-        refreshSerial++;
-        const chosen = await startTask(id, canAct);
-        if (!chosen || !canAct()) return;
-        const draft = ctx.ui.getEditorText();
-        ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
-        ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
       } catch (error) {
         if (currentSession()) ctx.ui.notify(`Pinote: ${clean(error instanceof Error ? error.message : String(error))}`, "error");
       } finally {
@@ -432,7 +453,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_update_current",
     label: "Pinote update current",
     promptGuidelines: [handoffGuidance],
-    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Visible extra fields and widths come from the user's pi-note.json footer config. When footer.fields is unset, set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
+    description: "Patch arbitrary agent handoff fields on this session's current pinote task. No ID argument. Read first with pinote_get_current; pass its updated_at as expected_updated_at. Fails when no task is selected or the selection changes during the operation. set merges label/value pairs without replacing other fields or task text; values are Markdown, e.g. PR: [Fix #42](https://github.com/org/repo/pull/42). Set PR to one GitHub pull-request URL or Markdown link to show PR #N in the footer and watch for merge confirmation in interactive Pi. Read pinote_fields for the user's global field names, labels, link switches, formats, and widths; set those field names when their values are relevant. Fields without values stay hidden. When footer.fields is unset, set Bar to newline-separated field labels to show those Markdown fields in the footer; links in the text are clickable. remove deletes named fields. A stale revision fails; read again before retrying. Does not complete the task or change its tag.",
     parameters: Type.Object({
       expected_updated_at: Type.String({ minLength: 1 }),
       set: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -457,6 +478,18 @@ export default function (pi: ExtensionAPI) {
         throw new Error("Pinote operation cancelled: the session or selected task changed. The write may have committed; read the current task before retrying.");
       }
       return toolResult(updated);
+    },
+  });
+  pi.registerTool({
+    name: "pinote_fields",
+    label: "Pinote footer fields",
+    promptGuidelines: ["Read pinote_fields before updating handoff fields to learn which global fields the user wants populated. Use pinote_update_current for meaningful values; omit empty or irrelevant fields. Do not edit global configuration without user approval."],
+    description: "Read the user's global Pinote footer field definitions, including source names, display labels, link switches, formats, and widths. Use these names in pinote_update_current set to populate relevant task values. Fields without values are not displayed. Works without a selected task; does not modify configuration or task data.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      const config = loadFooterConfig((message) => { if (ctx.hasUI) ctx.ui.notify(message, "warning"); });
+      const value = { ...config, fields: effectiveFooterFields(config), legacy_bar: config.fields === null };
+      return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value };
     },
   });
   pi.registerTool({

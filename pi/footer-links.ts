@@ -1,6 +1,6 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
-import { defaultFooterConfig, type FooterConfig, type FooterField } from "./footer-config.ts";
+import { defaultFooterConfig, defaultFooterField, type FooterConfig, type FooterField } from "./footer-config.ts";
 
 export const footerStatusKey = "pinote-links";
 export const legacyFooterStatusKey = "pinote-pr";
@@ -181,23 +181,42 @@ function truncateSegments(segments: readonly FooterSegment[], width: number): Fo
   return kept;
 }
 
+function fieldSegments(field: FooterField, value: string | undefined): FooterSegment[] {
+  if (!value?.trim()) return [];
+  const original = renderMarkdown(value);
+  const urls = [...new Set(original.flatMap((part) => part.url ? [part.url] : []))];
+  const url = urls.length === 1 ? urls[0] : undefined;
+  const number = url && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/([1-9][0-9]*)\/?$/u.exec(url)?.[1]
+    || (/^[0-9]+$/u.test(value.trim()) ? value.trim() : undefined);
+  if (field.format.includes("<number>") && !number || field.format.includes("<url>") && !url) return [];
+  let body: FooterSegment[];
+  if (field.format === "<value>") body = original;
+  else {
+    const shown = plain(field.format.replace(/<(value|number|url)>/gu, (_match, key: string) =>
+      ({ value: original.map((part) => part.text).join(""), number: number ?? "", url: url ?? "" })[key as "value" | "number" | "url"]));
+    body = shown ? [url ? { text: shown, url } : { text: shown }] : [];
+  }
+  if (!field.link) body = body.map((part) => ({ text: part.text }));
+  if (!body.length) return [];
+  const label = clip(field.label, maxLabelWidth);
+  return [...(label ? [{ text: `${label}: ` }] : []), ...body];
+}
+
 export function customFooterChips(
   notes: Record<string, string> | undefined, config: FooterConfig = defaultFooterConfig,
 ): FooterChip[] {
   if (!notes) return [];
   const chips: FooterChip[] = [];
-  const seen = new Set(["PR", "Bar"]);
-  const fields: FooterField[] = config.fields ?? (notes.Bar ?? "").split("\n").map((label) => ({ label }));
+  const seen = new Set(config.fields === null ? ["PR", "Bar"] : ["Bar"]);
+  const fields: FooterField[] = config.fields ?? (notes.Bar ?? "").split("\n").map(defaultFooterField);
   for (const field of fields) {
     if (chips.length >= config.maxFields) break;
-    const name = field.label.normalize("NFC").trim();
+    const name = field.name.normalize("NFC").trim();
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    const label = clip(name, maxLabelWidth);
-    const body = renderMarkdown(ownText(notes, name));
-    if (!label || !body.length) continue;
-    const fieldWidth = field.width ?? config.fieldWidth;
-    chips.push({ segments: truncateSegments([{ text: `${label}: ` }, ...body], fieldWidth) });
+    const segments = fieldSegments(field, ownText(notes, name));
+    if (!segments.length) continue;
+    chips.push({ segments: truncateSegments(segments, field.width ?? config.fieldWidth) });
   }
   return chips;
 }
@@ -209,7 +228,7 @@ export function footerChips(
 ): FooterChip[] {
   if (!task || !["active", "in_progress"].includes(task.state)) return [];
   return [
-    ...(pr ? [{ segments: [{ text: `PR #${pr.number}`, url: pr.url }] }] : []),
+    ...(config.fields === null && pr ? [{ segments: [{ text: `PR #${pr.number}`, url: pr.url }] }] : []),
     ...customFooterChips(task.agent_notes, config),
   ];
 }
