@@ -139,7 +139,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   scheduled, or archived tasks are available for reuse. Tags remain saved even when unused.
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;
-  scheduled-only and archived-only tags show **(0)**. Counts use the latest loaded list.
+  scheduled-only and archived-only tags show **(0)**. In filter lists, the play icon and
+  adjacent number show how many tasks on each tag are in progress. Counts use the latest loaded list.
 - Task tags sit after the note text as muted labels; hover to read a truncated tag.
   In-progress tasks keep neutral text, with a subtle row tint and amber checkbox.
   Tag names use a tag icon in task labels, the archive, reminders, and tag-management
@@ -161,7 +162,10 @@ Edits and tag changes retain the task ID and record old/new values in history;
   tasks matching **any** selected tag appear in both sections. Click a checked tag to remove it;
   with no tags checked, no tasks match. The **Select all tags** button (stacked checkboxes)
   checks every tag, including **Untagged**, and shows every active task. Unchecking a tag
-  then excludes just that tag. The **Clear selection** button (×) unchecks all tags.
+  then excludes just that tag. The **Clear selection** button (funnel with ×) unchecks all tags.
+  Both buttons sit side by side below the tags. Selecting tags or either button keeps the
+  list open; click outside (or press **Esc**) to dismiss it. Right-click a tag to open
+  **Manage tags** with that tag selected for editing; **Untagged** opens the list without a selection.
   **Bottom menu → Filter by tag →** offers the same checkboxes and buttons.
   This is separate from the tag icon on the left, which assigns tags to new tasks.
   The filter is saved in `gui-filter.json` beside the database and restored on restart.

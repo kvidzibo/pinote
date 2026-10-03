@@ -631,6 +631,134 @@ def test_tag_filter_persists_across_restarts_and_tracks_registry_changes(gtk):
     assert window.tag_filter is None  # Missing-tag fallback itself is persisted.
 
 
+def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Untagged task")
+        store.add("Work task", tag="Work")
+        store.add("Personal task", tag="Personal")
+        store.transition(3, "start")
+        store.add("Completed work", tag="Work")
+        store.transition(4, "start")
+        store.transition(4, "done")
+    window = gtk.open()
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
+    menu = window.visible_filter_menu
+    tags = {
+        item.filter_tag: item for item in menu.get_children() if isinstance(item, Gtk.CheckMenuItem)
+    }
+    select_all, clear = menu.get_children()[-2:]
+    wait_until(gtk.glib, lambda: clear.get_allocated_width() > 1)
+    assert select_all.get_allocation().y == clear.get_allocation().y
+    assert select_all.get_allocation().x < clear.get_allocation().x
+    assert {tag: item.progress_count.get_text() for tag, item in tags.items()} == {
+        "": "0",
+        "Personal": "1",
+        "Work": "0",
+    }
+
+    def click(item):
+        pointer_at(gtk, item.get_toplevel(), item, 8, 8)
+        ready = time.monotonic() + 0.6
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+        click_button(gtk, item.get_toplevel(), item)
+
+    click(tags["Work"])
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Work"}))
+    assert menu.get_mapped()
+    click(tags[""])
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"Work"}))
+    assert menu.get_mapped()
+    click(select_all)
+    wait_until(gtk.glib, lambda: window.tag_filter is None)
+    assert menu.get_mapped()
+    click(clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
+    assert menu.get_mapped()
+    subprocess.run(["xdotool", "key", "Home", "Return"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({""}))
+    assert menu.get_mapped()
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "start")
+    window._poll()
+    wait_until(gtk.glib, lambda: tags["Work"].progress_count.get_text() == "1")
+    assert "1 in-progress tasks" in tags["Work"].get_accessible().get_description()
+    assert menu.get_mapped()
+    subprocess.run(
+        ["xdotool", "mousemove", "10", "10", "click", "1"], env=gtk.env, check=True, timeout=5
+    )
+    wait_until(gtk.glib, lambda: not menu.get_mapped())
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: menu.get_mapped())
+    work = next(item for item in menu.get_children() if getattr(item, "filter_tag", None) == "Work")
+    selected = window.tag_filter
+    pointer_at(gtk, work.get_toplevel(), work, 12, 12, "click", "3")
+    wait_until(
+        gtk.glib, lambda: window.tags_window is not None and window.tags_window.selected == "Work"
+    )
+    assert window.tags_window.entry.get_text() == "Work"
+    assert window.tag_filter == selected
+    assert not menu.get_mapped()
+    with Store(gtk.paths.database) as store:
+        assert len(store.history()) == 8  # Filtering and opening Tags write no task history.
+        for index in range(80):
+            store.create_tag(f"Unused {index:02}")
+    window.tags_window.close()
+    wait_until(gtk.glib, lambda: window.tags_window is None)
+    window._poll()
+    wait_until(gtk.glib, lambda: len(window.tags) == 82)
+    # Without a window manager, closing the modal leaves X focus on the root window.
+    subprocess.run(
+        ["xdotool", "windowfocus", "--sync", str(window.get_window().get_xid())],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: menu.get_mapped())
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    subprocess.run(["xdotool", "key", "End", "Up"], env=gtk.env, check=True, timeout=5)
+    work = next(item for item in menu.get_children() if getattr(item, "filter_tag", None) == "Work")
+    first = menu.get_children()[0]
+    wait_until(
+        gtk.glib,
+        lambda: (
+            menu.get_selected_item() is work
+            and first.translate_coordinates(menu.get_toplevel(), 0, 0)[1] < 0
+        ),
+    )  # Selection can settle before the scrolling bin moves.
+    click(work)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Work"}))
+    assert menu.get_mapped()
+    select_all, clear = menu.get_children()[-2:]
+    click(clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
+    assert menu.get_mapped()
+    click(select_all)
+    wait_until(gtk.glib, lambda: window.tag_filter is None)
+    assert menu.get_mapped()
+    pointer_at(gtk, work.get_toplevel(), work, 12, 12, "click", "3")
+    wait_until(
+        gtk.glib, lambda: window.tags_window is not None and window.tags_window.selected == "Work"
+    )
+    window.tags_window.close()
+    wait_until(gtk.glib, lambda: window.tags_window is None)
+    click_button(gtk, window, window.menu_button)
+    wait_until(gtk.glib, lambda: window.menu.get_mapped())
+    pointer_at(gtk, window.filter_item.get_toplevel(), window.filter_item, 8, 8, "mousedown", "1")
+    wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
+    untagged = window.filter_menu.get_children()[0]
+    pointer_at(gtk, untagged.get_toplevel(), untagged, 12, 12)
+    ready = time.monotonic() + 0.6
+    wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+    subprocess.run(["xdotool", "mouseup", "1"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.tag_filter is not None and "" not in window.tag_filter)
+    assert window.filter_menu.get_mapped() and window.menu.get_mapped()
+
+
 def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
     from pinote.gui.app import Gtk
 
@@ -668,8 +796,8 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
             active = selected is None or child.filter_tag in selected
             assert child.get_active() == active
             assert child.get_style_context().has_class("selected-tag") == active
-        if menu.get_mapped():
-            menu.popdown()
+        assert menu.get_mapped()
+        menu.deactivate()
         wait_until(gtk.glib, lambda: not window.geometry_source)
 
     toggle("Work", frozenset({"", "Work"}), {1, 2})
@@ -708,8 +836,8 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
                 assert child.get_active() == active
                 assert child.get_style_context().has_class("selected-tag") == active
         assert window.creation_tag == "Other" and window.entry.get_text() == "Keep this draft"
-        if menu.get_mapped():
-            menu.popdown()
+        assert menu.get_mapped()
+        menu.deactivate()
         wait_until(gtk.glib, lambda: not window.geometry_source)
 
     action("Select all tags", None, {1, 2, 3, 4})
@@ -808,11 +936,15 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         wait_until(gtk.glib, lambda: window.menu.get_mapped())
         subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
         wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
+        for item in window.filter_menu.get_children():
+            if isinstance(item, Gtk.CheckMenuItem):
+                assert item.progress_count.get_mapped()
         previous = window.tag_filter
         select(window.filter_menu, label)
         wait_until(gtk.glib, lambda: window.tag_filter != previous)
-        if window.menu.get_mapped():
-            window.menu.popdown()
+        assert window.filter_menu.get_mapped()
+        window.filter_menu.deactivate()
+        window.menu.deactivate()
         wait_until(gtk.glib, lambda: not window.menu.get_mapped())
 
     for save in (False, True):
