@@ -306,7 +306,7 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch && serial === refreshSerial) {
         previewBridge?.invalidate();
         clearTaskFooter(ctx);
-        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${noteIcon} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
+        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${ctx.ui.theme.bold(noteIcon)} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
       }
     }
   };

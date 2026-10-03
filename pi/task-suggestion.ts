@@ -11,11 +11,11 @@ const add = readFileSync(new URL("./icons/add.txt", import.meta.url), "utf8").tr
 const gap = "\u00a0";
 const link = (label: string, url?: string) => url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label;
 type Task = { text: string; tag?: string | null };
-type Colors = Pick<Theme, "fg">;
+type Colors = Pick<Theme, "fg" | "bold">;
 
 function renderTask(task: Task, width: number, theme: Colors, prefix: string, previewUrl?: string): string {
   // All controls or none: never let a narrow budget reveal only one pending choice.
-  if (visibleWidth(prefix) > width) return truncateToWidth(pin, width, "");
+  if (visibleWidth(prefix) > width) return truncateToWidth(theme.bold(pin), width, "");
   const remaining = width - visibleWidth(prefix) - 3; // separator: " · "
   if (remaining < 4) return prefix.trimEnd();
   const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x1f\x7f-\x9f]/gu, " ").replace(/\s+/gu, " ").trim();
@@ -30,12 +30,12 @@ function renderTask(task: Task, width: number, theme: Colors, prefix: string, pr
 
 export function renderSuggestion(task: Task, width: number, theme: Colors, urls: { yes?: string; no?: string }): string {
   return renderTask(task, width, theme,
-    `${pin} ${theme.fg("muted", link(cross, urls.no))}${gap.repeat(2)}${theme.fg("accent", link(add, urls.yes))}`);
+    `${theme.bold(pin)} ${theme.fg("muted", link(theme.bold(cross), urls.no))}${gap.repeat(2)}${theme.fg("accent", link(theme.bold(add), urls.yes))}`);
 }
 
 export function renderSelectedTask(task: Task, width: number, theme: Colors, urls: { preview?: string; done?: string }): string {
-  // Reserve the former '+' cell: accepting twice at the same position cannot click Done.
+  // Done stays in the former '✕' cell, never the Add cell.
   return renderTask(task, width, theme,
-    `${pin} ${theme.fg("success", link(check, urls.done))}${gap.repeat(visibleWidth(cross) + 2 + visibleWidth(add) - visibleWidth(check))}`,
+    `${theme.bold(pin)} ${theme.fg("success", link(theme.bold(check), urls.done))}`,
     urls.preview);
 }

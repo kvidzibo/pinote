@@ -86,6 +86,7 @@ test("native suggestion and completion controls require consent and reject stale
     assert.equal(status, proposedStatus, "agent activity must retain the suggestion in the pin footer");
     assert.equal(list().length, 0, "proposing must not create a task");
     assert.match(stripVTControlCharacters(status!), /^📌 ✕\u00a0\u00a0\+ · \[pinote\] Add 日本語/u);
+    for (const icon of ["📌", "✕", "+"]) assert.ok(status!.includes(theme.bold(icon)), `${icon} is bold`);
     assert.ok(visibleWidth(status!) <= 60, "uses the configured footer title budget");
     for (const width of [0, 1, 3, 4, 5, 12, 18, 20, 30, 40, 72]) {
       const line = renderSuggestion({ text: "Add 日本語 suggested-task confirmation bar", tag: "pinote" }, width, theme, {});
@@ -98,11 +99,11 @@ test("native suggestion and completion controls require consent and reject stale
       if (width >= 30) {
         const selectedPlain = stripVTControlCharacters(selectedLine);
         assert.equal(visibleWidth(plain.split("✕")[0]), visibleWidth(selectedPlain.split("✓")[0]));
-        assert.equal(visibleWidth(plain.split(" · ")[0]), visibleWidth(selectedPlain.split(" · ")[0]));
+        assert.match(selectedPlain, /^📌 ✓ · /u);
         // Match Pi's default-footer ASCII-space sanitization, not just raw status text.
         const sanitized = line.replace(/ +/gu, " ").trim();
         const selectedSanitized = selectedLine.replace(/ +/gu, " ").trim();
-        assert.equal(visibleWidth(sanitized.split(" · ")[0]), visibleWidth(selectedSanitized.split(" · ")[0]));
+        assert.equal(visibleWidth(sanitized.split(" · ")[0]) - visibleWidth(selectedSanitized.split(" · ")[0]), 3);
       }
     }
     const longTag = renderSuggestion({ text: "Meaningful title", tag: "x".repeat(64) }, 60, theme, {});
@@ -129,7 +130,8 @@ test("native suggestion and completion controls require consent and reject stale
     await click(accept);
     await assert.rejects(click(accept), "repeated yes cannot duplicate notes");
     await assert.rejects(click(dismiss), "cross from accepted suggestion is stale");
-    assert.match(stripVTControlCharacters(status!), /^📌 ✓\u00a0\u00a0\u00a0 · \[pinote\] Add 日本語/u);
+    assert.match(stripVTControlCharacters(status!), /^📌 ✓ · \[pinote\] Add 日本語/u);
+    for (const icon of ["📌", "✓"]) assert.ok(status!.includes(theme.bold(icon)), `${icon} is bold`);
     assert.doesNotMatch(stripVTControlCharacters(status!), /\+|✕/u);
     assert.equal(list().length, 1);
     const chosen = (await get()).details;
