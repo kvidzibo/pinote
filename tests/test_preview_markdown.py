@@ -8,6 +8,12 @@ def test_multiline_task_title_is_preview_heading_only(monkeypatch):
     )
     assert preview_markdown.render_markdown(source) is None
     assert preview_markdown.render_markdown("Single line", title=True) is None
+    assert preview_markdown.render_markdown("Title\n[ref]: https://example.org", title=True) == (
+        '<span size="x-large" weight="bold">Title</span>\n[ref]: https://example.org'
+    )
+    assert preview_markdown.render_markdown("**Title\nDetails**", title=True) == (
+        '<b><span size="x-large" weight="bold">Title</span>\nDetails</b>'
+    )
     for explicit in ("## Heading\nDetails", "Heading\n=======\nDetails", "```\ncode\n```"):
         assert preview_markdown.render_markdown(explicit, title=True) == (
             preview_markdown.render_markdown(explicit)
