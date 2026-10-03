@@ -156,8 +156,10 @@ field needs no `/reload`. Its value is literal text, not a prompt template; use
 characters other than tabs and newlines. A missing file or key uses the default.
 Invalid/unreadable configuration reports an error without starting/switching a
 task or changing the editor. Menu **Done**, footer completion, and agent tools are
-unaffected. This is
-user-level configuration only; project-local files are not read.
+unaffected. If configuration is invalid or unreadable, Settings shows only task,
+suggestion, and CLI actions; repair `pi-note.json` before editing preferences.
+Invalid configuration is never replaced with defaults. This is user-level
+configuration only; project-local files are not read.
 
 ### Agent tools
 

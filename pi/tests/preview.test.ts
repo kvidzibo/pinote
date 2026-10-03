@@ -51,9 +51,9 @@ test("native task-link preview renders complete local data but never reaches req
         if (!stripVTControlCharacters(component.render(100).join("\n")).includes("Global Settings")) {
           component.handleInput("\t"); return;
         }
-        const row = component.render(100).findIndex((line: string) => line.includes("Preview task")) - 2;
-        assert.ok(row >= 0);
-        for (let i = 0; i < row; i++) component.handleInput("\x1b[B");
+        for (let i = 0; i < 100 && !component.render(100).some((line: string) =>
+          stripVTControlCharacters(line).startsWith("> Preview task")); i++) component.handleInput("\x1b[B");
+        assert.ok(component.render(100).some((line: string) => stripVTControlCharacters(line).startsWith("> Preview task")));
         component.handleInput("\r");
       }) },
   };
@@ -110,8 +110,12 @@ test("native task-link preview renders complete local data but never reaches req
     await assert.rejects(click(url));
     assert.equal(previews().length, 1);
     idle = true;
+    const brokenConfig = join(overrides.PI_CODING_AGENT_DIR, "pi-note.json");
+    mkdirSync(overrides.PI_CODING_AGENT_DIR, { recursive: true });
+    writeFileSync(brokenConfig, '{"handoffPrompt":""}');
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(previews().length, 2, "keyboard fallback uses the same display-only path");
+    assert.equal(previews().length, 2, "Settings preview works even with invalid preferences");
+    rmSync(brokenConfig);
     await event("session_tree");
     await assert.rejects(click(url), "a stale branch link must not preview a new branch");
     await click(link());

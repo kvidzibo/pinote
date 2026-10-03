@@ -552,13 +552,22 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           if (settings) {
-            const document = readFooterDocument();
-            const root = document.raw === null ? {} : JSON.parse(document.raw);
-            const config: PinoteSettings = {
-              footer: { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) },
-              handoffPrompt: "handoffPrompt" in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt,
-            };
-            let expectedRaw = document.raw;
+            let config: PinoteSettings = { footer: { ...defaultFooterConfig, fields: [] }, handoffPrompt: defaultHandoffPrompt };
+            let expectedRaw: string | null = null;
+            let configurationError: string | undefined;
+            try {
+              const document = readFooterDocument();
+              const root = document.raw === null ? {} : JSON.parse(document.raw);
+              config = {
+                footer: { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) },
+                handoffPrompt: "handoffPrompt" in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt,
+              };
+              expectedRaw = document.raw;
+            } catch (error) {
+              // Broken preferences must not strand task actions or CLI recovery.
+              // Offer actions only; never save defaults over invalid user data.
+              configurationError = clean(error instanceof Error ? error.message : String(error));
+            }
             const options: SettingsOption[] = [
               ...(current ? [
                 { label: "Preview task", result: "preview" as const },
@@ -581,11 +590,12 @@ export default function (pi: ExtensionAPI) {
                     noMatch: (line) => theme.fg("warning", line) },
                 }), (updated) => {
                   if (!canAct()) throw new Error("This session changed. Reopen settings before editing.");
+                  if (configurationError) throw new Error(configurationError);
                   const saved = saveFooterConfig(updated.footer, expectedRaw, updated.handoffPrompt);
                   expectedRaw = saved.raw;
                   footerConfig = saved.config;
                   void refresh(ctx);
-                }, options));
+                }, options, configurationError));
             if (!canAct() || edited === undefined) return;
             if (edited === "tasks") { settings = false; continue; }
             if (!options.some((option) => option.result === edited)) return;

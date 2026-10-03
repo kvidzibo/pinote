@@ -3,6 +3,9 @@ import { test } from "node:test";
 import { setupCLI, cliSource, cliAction } from "../setup.ts";
 import pinote from "../index.ts";
 import { getKeybindings } from "@earendil-works/pi-tui";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const context = (confirm: () => Promise<boolean>) => ({
   ui: { confirm, notify: (message: string, level: string) => notices.push({ message, level }) },
@@ -163,6 +166,59 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.ok(!taskCalls.some((args) => args.includes("selected") || args.includes(commandCtx.cwd)));
   assert.equal((await tools.get("pinote_get_current").execute("get", {}, undefined, undefined, replacementCtx)).details, null);
   await events.get("session_shutdown")({}, replacementCtx);
+});
+
+test("CLI recovery remains accessible without overwriting invalid settings", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-note-recovery-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = directory;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const path = join(directory, "pi-note.json");
+  for (const version of ["", "pinote 0.2.0"]) {
+    for (const raw of ['{"handoffPrompt":""}', '{"footer":{"titleWidth":false}}', '{']) {
+      writeFileSync(path, raw);
+      const commands = new Map<string, any>();
+      const events = new Map<string, any>();
+      let confirmations = 0;
+      pinote({
+        registerEntryRenderer() {}, registerTool() {},
+        registerCommand: (name: string, command: any) => commands.set(name, command),
+        on: (name: string, handler: any) => events.set(name, handler),
+        exec: async (command: string, args: string[]) => {
+          assert.deepEqual(args, ["--version"], "recovery never invokes task commands or installs without consent");
+          return { code: 0, stdout: command === "note" ? version : "uv 0.6" };
+        },
+      } as any);
+      const ctx: any = {
+        mode: "tui", hasUI: true, isIdle: () => true,
+        sessionManager: { getBranch: () => [] },
+        ui: {
+          theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
+          notify() {}, setStatus() {},
+          confirm: async () => { confirmations++; return false; },
+          custom: async (factory: any) => new Promise((resolve) => {
+            const component = factory({ requestRender() {} }, ctx.ui.theme,
+              { matches: (data: string, binding: string) => getKeybindings().matches(data, binding as any) }, resolve);
+            const rows = component.render(100).join("\n");
+            assert.match(rows, /Fix pi-note\.json to edit settings/);
+            assert.ok(rows.includes(version ? "Upgrade CLI" : "Install CLI"));
+            assert.doesNotMatch(rows, /Title width:|Add field/);
+            component.handleInput("\r");
+          }),
+        },
+      };
+      await events.get("session_start")({}, ctx);
+      try {
+        await commands.get("pi-note").handler("", ctx);
+        assert.equal(confirmations, 1, "CLI installation confirmation is reachable");
+        assert.equal(readFileSync(path, "utf8"), raw);
+      } finally { await events.get("session_shutdown")({}, ctx); }
+    }
+  }
 });
 
 test("tree navigation during setup restores the active branch", async () => {
