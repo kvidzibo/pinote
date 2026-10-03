@@ -27,33 +27,44 @@ def is_safe_link(uri: str) -> bool:
     )
 
 
-def _inline(nodes: list[SyntaxTreeNode]) -> str:
-    result = []
-    for node in nodes:
-        kind = node.type
-        if kind in {"softbreak", "hardbreak"}:
-            result.append("\n")
-        elif kind == "code_inline":
-            result.append(_CODE.format(escape(node.content)))
-        elif kind == "image":
-            result.append(escape(f"[Image: {node.content}]"))
-        elif kind in {"strong", "em"}:
-            tag = "b" if kind == "strong" else "i"
-            result.append(f"<{tag}>{_inline(node.children)}</{tag}>")
-        elif kind == "link":
-            label = _inline(node.children)
-            uri = str(node.attrs.get("href", ""))
-            if is_safe_link(uri):
-                result.append(
-                    f'<a href="{escape(uri)}"><span foreground="#8ab4f8">{label}</span></a>'
-                )
+def _inline(nodes: list[SyntaxTreeNode], *, title: bool = False) -> str:
+    first_line = title
+
+    def render(nodes: list[SyntaxTreeNode]) -> str:
+        nonlocal first_line
+        result = []
+        for node in nodes:
+            kind = node.type
+            if kind in {"softbreak", "hardbreak"}:
+                first_line = False
+                result.append("\n")
+            elif kind in {"strong", "em"}:
+                tag = "b" if kind == "strong" else "i"
+                result.append(f"<{tag}>{render(node.children)}</{tag}>")
+            elif kind == "link":
+                label = render(node.children)
+                uri = str(node.attrs.get("href", ""))
+                if is_safe_link(uri):
+                    result.append(
+                        f'<a href="{escape(uri)}"><span foreground="#8ab4f8">{label}</span></a>'
+                    )
+                else:
+                    result.append(f"{label} ({escape(uri)})")
+            elif node.children and kind != "image":
+                result.append(render(node.children))
             else:
-                result.append(f"{label} ({escape(uri)})")
-        elif node.children:
-            result.append(_inline(node.children))
-        else:
-            result.append(escape(node.content))
-    return "".join(result)
+                if kind == "code_inline":
+                    markup = _CODE.format(escape(node.content))
+                elif kind == "image":
+                    markup = escape(f"[Image: {node.content}]")
+                else:
+                    markup = escape(node.content)
+                if first_line and markup:
+                    markup = f'<span size="x-large" weight="bold">{markup}</span>'
+                result.append(markup)
+        return "".join(result)
+
+    return render(nodes)
 
 
 @dataclass
@@ -66,7 +77,7 @@ class _Block:
         self.markup = first + self.markup.replace("\n", "\n" + rest)
 
 
-def _blocks(nodes: list[SyntaxTreeNode]) -> list[_Block]:
+def _blocks(nodes: list[SyntaxTreeNode], *, title: bool = False) -> list[_Block]:
     result = []
     for node in nodes:
         kind = node.type
@@ -92,7 +103,9 @@ def _blocks(nodes: list[SyntaxTreeNode]) -> list[_Block]:
             elif kind == "hr":
                 markup = "────────────"
             else:
-                markup = _inline(node.children)
+                markup = _inline(
+                    node.children, title=title and kind == "paragraph" and node.map[0] == 0
+                )
                 if kind == "heading":
                     size = {"h1": "x-large", "h2": "large"}.get(node.tag, "medium")
                     markup = f'<span size="{size}" weight="bold">{markup}</span>'
@@ -100,21 +113,30 @@ def _blocks(nodes: list[SyntaxTreeNode]) -> list[_Block]:
     return result
 
 
-def render_markdown(text: str) -> str | None:
+def render_markdown(
+    text: str, *, title: bool = False, compact_from: int | None = None
+) -> str | None:
     """Return escaped, allowlisted GTK markup, or None for the literal preview.
 
-    Source line maps keep blank lines and ordinary multiline notes intact. The
-    parser is confined here so removing the optional extra needs no data migration.
+    Source line maps keep blank lines and ordinary multiline notes intact. With
+    title=True, an ordinary task starts with a display-only H1. The
+    compact_from removes inter-block blank gaps starting at that source line.
+    The parser is confined here so removing the optional extra needs no data migration.
     """
     if MarkdownIt is None:
         return None
     parser = MarkdownIt("commonmark", {"html": False})
-    blocks = _blocks(SyntaxTreeNode(parser.parse(text)).children)
+    # Style the existing inline tree, rather than reparsing a generated heading:
+    # reparsing can turn visible body lines into invisible reference definitions.
+    blocks = _blocks(SyntaxTreeNode(parser.parse(text)).children, title=title)
     result = []
     previous_end = None
     for block in blocks:
         if previous_end is not None:
-            result.append("\n" * max(1, block.start - previous_end + 1))
+            gap = max(1, block.start - previous_end + 1)
+            if compact_from is not None and block.start >= compact_from:
+                gap = 1
+            result.append("\n" * gap)
         result.append(block.markup)
         previous_end = block.end
     markup = "".join(result)

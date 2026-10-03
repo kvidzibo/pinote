@@ -109,7 +109,7 @@ rejected; use `--remove` instead. Conflicting set/remove labels are rejected.
 
 Use the returned `updated_at` for updates, tagging, and completion; a stale revision fails
 without changing anything. Fields are retained as history snapshots and displayed
-under `# Agent` in terminal listings and the GTK Markdown preview. The task editor
+under `## Agent` in terminal listings and the GTK Markdown preview. The task editor
 edits only task text, leaving agent fields intact. Fields also remain visible as
 literal text in the archive/reminders. Completion, removal and scheduling clear
 project selections; restoring does not silently reselect tasks.

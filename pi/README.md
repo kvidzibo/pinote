@@ -216,7 +216,7 @@ Values are Markdown strings; no fields are required. `PR` enables the watcher be
 `Bar` chooses extra footer fields unless configuration overrides it:
 
 ```markdown
-# Agent
+## Agent
 PR: [Task selection #42](https://github.com/org/repo/pull/42)
 Dashboard: [Metrics](http://127.0.0.1:3000/d/app)
 Next: Address review comments
