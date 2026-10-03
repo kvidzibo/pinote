@@ -239,6 +239,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         if not self.closed and not self.saving:
             self.draft_load_failed = False
             self.draft.update("")
+            self.owner.edit_drafts[self.note.id] = self.draft
             self.destroy()
 
     def _key_press(self, _window, event) -> bool:

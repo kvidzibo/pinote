@@ -3860,6 +3860,7 @@ def test_close_finishes_an_already_clicked_mutation(gtk, cli, monkeypatch):
         "stale",
         "save-close",
         "read-retry",
+        "discard-read-failure",
     ],
 )
 def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, finish, monkeypatch):
@@ -3957,7 +3958,7 @@ def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, f
     )
     other.cancel_button.clicked()
     wait_until(gtk.glib, lambda: window.editor is None)
-    if finish == "read-retry":
+    if finish in {"read-retry", "discard-read-failure"}:
         from pinote.gui.draft import DraftCache
 
         with monkeypatch.context() as patch:
@@ -3972,19 +3973,44 @@ def test_task_edit_draft_survives_restart_without_overwriting_newer_tasks(gtk, f
             assert "Cannot restore" in editor.error_text.get_text()
             assert not editor.entry.get_editable() and not editor.save_button.get_sensitive()
             editor._save()  # Keyboard/programmatic submission must be blocked too.
-            editor.cancel_button.clicked()
-            wait_until(gtk.glib, lambda: window.editor is None)
-            assert json.loads(editor.draft.path.read_text())["text"] == draft
+            if finish == "read-retry":
+                editor.cancel_button.clicked()
+                wait_until(gtk.glib, lambda: window.editor is None)
+                assert json.loads(editor.draft.path.read_text())["text"] == draft
+            else:
+                entered, release = threading.Event(), threading.Event()
+
+                def block_worker():
+                    entered.set()
+                    assert release.wait(timeout=3)
+
+                blocked = window.worker.submit(block_worker)
+                assert entered.wait(timeout=2)
+                editor.discard_button.clicked()
+        if finish == "discard-read-failure":
+            try:
+                # Disk deletion is still queued; reopening must use the cleared cache.
+                assert json.loads(editor.draft.path.read_text())["text"] == draft
+                window._open_editor(window.rows[1].note)
+                editor = window.editor
+                buffer = editor.entry.get_buffer()
+                assert buffer.get_text(*buffer.get_bounds(), True) == saved
+                editor.cancel_button.clicked()
+                wait_until(gtk.glib, lambda: window.editor is None)
+            finally:
+                release.set()
+                blocked.result(timeout=3)
+            window.worker.submit(lambda: None).result(timeout=3)
     window._open_editor(window.rows[1].note)
     editor = window.editor
     buffer = editor.entry.get_buffer()
     expected = (
         saved
-        if finish in {"discard", "save", "save-close"}
+        if finish in {"discard", "save", "save-close", "discard-read-failure"}
         else ("" if finish == "empty" else draft)
     )
     assert buffer.get_text(*buffer.get_bounds(), True) == expected
-    if finish not in {"discard", "save", "save-close"}:
+    if finish not in {"discard", "save", "save-close", "discard-read-failure"}:
         assert json.loads(editor.draft.path.read_text())["text"] == expected
         assert editor.draft.path.stat().st_mode & 0o777 == 0o600
         assert editor.draft.path.parent.stat().st_mode & 0o777 == 0o700
