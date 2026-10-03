@@ -9,6 +9,7 @@ import { stripVTControlCharacters } from "node:util";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { renderSuggestion } from "../task-suggestion.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { preview: click } = createRequire(import.meta.url)("../preview-click.cjs");
@@ -34,23 +35,21 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
   const { theme } = await native("modes/interactive/theme/theme.js");
   const session = SessionManager.create(cwd, join(temp, "sessions"));
   let extension: any;
-  let widget: any;
-  let placement: string | undefined;
+  let status: string | undefined;
   const draft = "Keep my draft";
   const notices: string[] = [];
   const ctx: any = {
     cwd, hasUI: true, mode: "tui", isIdle: () => false, sessionManager: session,
-    ui: { theme, setStatus() {},
-      setWidget: (_key: string, factory: any, options: any) => {
-        widget = factory?.({}, theme); placement = options?.placement;
-      },
+    ui: { theme,
+      setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
+      setWidget() { throw new Error("suggestions must use the pin footer, not a separate widget"); },
       notify: (value: string) => notices.push(value), addAutocompleteProvider() {},
       getEditorText: () => draft, setEditorText() { throw new Error("must preserve draft"); } },
   };
   const event = async (name: string) => {
     for (const handler of extension.handlers.get(name) ?? []) await handler({}, ctx);
   };
-  const links = () => [...widget.render(60)[0].matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m: any) => m[1]);
+  const links = () => [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m: any) => m[1]);
   const list = () => JSON.parse(cli("list", "--json"));
   try {
     const loaded = await loadExtensions([join(root, "index.ts")], cwd);
@@ -63,27 +62,37 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
       "suggest", { text: `${text}\n\nPreserve details`, tag: "pinote" }, undefined, undefined, ctx);
     const get = () => extension.tools.get("pinote_get_current").definition.execute("get", {}, undefined, undefined, ctx);
     await propose();
-    assert.equal(placement, "belowEditor");
+    const proposedStatus = status;
+    await event("before_agent_start");
+    await event("agent_end");
+    assert.equal(status, proposedStatus, "agent activity must retain the suggestion in the pin footer");
     assert.equal(list().length, 0, "proposing must not create a task");
-    assert.match(stripVTControlCharacters(widget.render(60)[0]), /^\[pinote\] .*✓  ✕$/u);
-    for (const width of [0, 1, 3, 4, 5, 12, 40, 72]) {
-      const line = widget.render(width)[0];
+    assert.match(stripVTControlCharacters(status!), /^📌 Suggested: ✓ Add  ✕ Dismiss · \[pinote\] Add 日本語/u);
+    assert.ok(visibleWidth(status!) <= 60, "uses the configured footer title budget");
+    for (const width of [0, 1, 3, 4, 5, 12, 18, 20, 30, 40, 72]) {
+      const line = renderSuggestion({ text: "Add 日本語 suggested-task confirmation bar", tag: "pinote" }, width, theme, {});
+      const plain = stripVTControlCharacters(line);
       assert.ok(visibleWidth(line) <= width, `fits ${width} columns`);
-      if (width >= 4) assert.match(stripVTControlCharacters(line), /✓  ✕$/u);
+      if (plain.includes("✓")) assert.match(plain, /Suggested:.*✓.*✕/u);
+      if (width >= 30) assert.match(plain, /✓ Add.*✕ Dismiss/u);
     }
+    const longTag = renderSuggestion({ text: "Meaningful title", tag: "x".repeat(64) }, 60, theme, {});
+    assert.match(stripVTControlCharacters(longTag), / · Meaningful title$/u);
+    assert.doesNotMatch(stripVTControlCharacters(longTag), /xxx/u);
     const [yes, no] = links();
     await propose("Do not replace an existing proposal");
     assert.deepEqual(links(), [yes, no]);
     await assert.rejects(click(yes.replace(/\/[0-9a-f]{32}\//, `/${"0".repeat(32)}/`)));
     await event("session_tree");
-    assert.equal(widget, undefined);
+    assert.equal(status, undefined);
     await assert.rejects(click(yes));
     await propose();
     const [accept, dismiss] = links();
     await click(accept);
     await assert.rejects(click(accept), "repeated yes cannot duplicate notes");
     await assert.rejects(click(dismiss), "cross from accepted suggestion is stale");
-    assert.equal(widget, undefined);
+    assert.match(stripVTControlCharacters(status!), /^📌 \[pinote\] Add 日本語/u);
+    assert.doesNotMatch(stripVTControlCharacters(status!), /✓|✕/u);
     assert.equal(list().length, 1);
     const chosen = (await get()).details;
     assert.equal(chosen.state, "in_progress");
@@ -96,12 +105,12 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
     await propose("Decline this one");
     const rejected = links();
     await click(rejected[1]);
-    assert.equal(widget, undefined);
+    assert.equal(status, undefined);
     await assert.rejects(click(rejected[0]));
     assert.equal(list().length, 1, "dismissal must not write a note");
     assert.equal((await get()).details, null);
     assert.match((await propose()).details.status, /dismissed/);
-    assert.equal(widget, undefined, "do not nag after cross");
+    assert.equal(status, undefined, "do not nag after cross");
     await event("session_start");
     await propose("Keyboard fallback");
     await extension.commands.get("pi-note-yes").handler("", ctx);
@@ -125,13 +134,13 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     await accepting;
     process.env.PATH = fastPath;
     await assert.rejects(click(chatLinks[0]), "a start failure cannot leave consent reusable");
-    assert.equal(widget, undefined);
+    assert.equal(status, undefined);
     assert.equal(list().length, 3, "chat acceptance plus repeated clicks creates only one note");
     assert.equal((await get()).details, null);
     await propose("Shutdown invalidates consent");
     const finalLinks = links();
     await event("session_shutdown");
-    assert.equal(widget, undefined);
+    assert.equal(status, undefined);
     await assert.rejects(click(finalLinks[0]));
     assert.equal(list().length, 3);
     assert.equal(draft, "Keep my draft");
