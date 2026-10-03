@@ -55,6 +55,7 @@ class Note:
     reminder_due_at: str | None = None  # Delivered reminder's due time, derived from history.
     archived_at: str | None = None  # Completion/deletion time, independent of later tag edits.
     agent_notes: dict[str, str] = field(default_factory=dict)
+    agent_event_id: int = 0
 
     @property
     def markdown(self) -> str:
@@ -604,10 +605,15 @@ class Store:
                 WHERE action IN ('schedule', 'remind', 'done', 'rm')
                 GROUP BY note_id
             )
-            SELECT notes.*,
+            , latest_agent_event AS (
+                SELECT note_id, MAX(id) AS agent_event_id FROM events
+                WHERE action = 'agent' GROUP BY note_id
+            )
+            SELECT notes.*, COALESCE(agent_events.agent_event_id, 0) AS agent_event_id,
                 CASE WHEN events.action = 'remind'
                     THEN events.previous_remind_at END AS reminder_due_at
             FROM notes
+            LEFT JOIN latest_agent_event AS agent_events ON agent_events.note_id = notes.id
             LEFT JOIN latest_reminder_event ON latest_reminder_event.note_id = notes.id
             LEFT JOIN events ON events.id = latest_reminder_event.event_id
         """
@@ -616,7 +622,12 @@ class Store:
         return [note_from_row(row) for row in self.connection.execute(query + " ORDER BY notes.id")]
 
     def get(self, note_id: int) -> Note:
-        row = self.connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        row = self.connection.execute(
+            "SELECT notes.*, COALESCE((SELECT MAX(id) FROM events "
+            "WHERE note_id = notes.id AND action = 'agent'), 0) AS agent_event_id "
+            "FROM notes WHERE id = ?",
+            (note_id,),
+        ).fetchone()
         if row is None:
             raise NoteError(f"No note with ID {note_id}.")
         return note_from_row(row)

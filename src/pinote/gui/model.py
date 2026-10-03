@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from pinote.paths import Paths, display_lock
@@ -15,6 +15,7 @@ from pinote.store import Note, NoteError, Store
 class TransitionResult:
     notes: list[Note]
     changed: bool
+    completed_ids: set[int] = field(default_factory=set)
 
 
 class ReminderModel:
@@ -27,6 +28,17 @@ class ReminderModel:
                 with display_lock(self.paths, blocking=False):
                     store.activate_due()
             return store.notes()
+
+    def completed_ids(self, note_ids: set[int]) -> set[int]:
+        if not note_ids:
+            return set()
+        with Store(self.paths.database, timeout=0.1) as store:
+            placeholders = ",".join("?" for _ in note_ids)
+            rows = store.connection.execute(
+                f"SELECT id FROM notes WHERE state = 'done' AND id IN ({placeholders})",
+                tuple(note_ids),
+            )
+            return {row[0] for row in rows}
 
     def reminders(self) -> list[Note]:
         with Store(self.paths.database, timeout=0.1) as store:

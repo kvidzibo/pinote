@@ -101,8 +101,8 @@ completion. No cross-machine sync is provided.
   is **not encrypted**, and desktop notifications may remain in Dunst history.
 - Markdown exports are **not backups**: they omit IDs, tags, schedules, agent fields,
   project selections, and history.
-  Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`, and
-  `gui-filter.json`.
+  Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
+  `gui-filter.json`, and `gui-agent-read.json`.
   [Backup and upgrade details](docs/usage.md#data-privacy-and-backup).
 - Back up before upgrading; update both CLI and GUI installations together.
   Older versions cannot read schema 6. [Upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
