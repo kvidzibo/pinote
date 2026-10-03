@@ -17,6 +17,7 @@ const offerGuidance = {
   never: "Do not offer to create a pinote task. Create one only when the user explicitly requests it.",
 };
 const consentGuidance = "On no, continue without a note. On yes, call pinote_add with select true so it becomes this session's active task. Never add or select without a yes. If a task is already selected, do not replace it unless the user asks to switch.";
+const titleGuidance = "Start task text with a short, action-oriented summary (aim for at most 60 characters). Put context, URLs, commands, and acceptance criteria after a blank line. Never put implementation details in the title.";
 const tagGuidance = "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. Tags are set when creating tasks with pinote_add; agent tools cannot retag existing tasks. Do not use pinote_update_current for tags or task text.";
 type Task = {
   id: number;
@@ -71,7 +72,7 @@ function creationGuidance(): { guidelines: string[]; error?: string } {
     policy = "never";
     error = cause instanceof Error ? cause.message : String(cause);
   }
-  return { guidelines: [`${offerGuidance[policy]} ${consentGuidance}`, tagGuidance], error };
+  return { guidelines: [`${offerGuidance[policy]} ${consentGuidance}`, titleGuidance, tagGuidance], error };
 }
 
 function handoffPrompt(): string {
@@ -516,9 +517,9 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_add",
     label: "Pinote add",
     promptGuidelines: createGuidance,
-    description: "Create an active pinote task. Optional tag is registered if new. Set select true only after the user agrees to make it this session's active task; that starts it and remembers it for this session only. Omitting select leaves the current selection unchanged. Does not refresh the desktop notification or bind the project directory.",
+    description: "Create an active pinote task. Start text with a short task title; put details after a blank line. Optional tag is registered if new. Set select true only after the user agrees to make it this session's active task; that starts it and remembers it for this session only. Omitting select leaves the current selection unchanged. Does not refresh the desktop notification or bind the project directory.",
     parameters: Type.Object({
-      text: Type.String({ minLength: 1 }),
+      text: Type.String({ minLength: 1, description: "Short action-oriented title (aim for at most 60 characters), then optional blank line and details." }),
       tag: Type.Optional(Type.String({ minLength: 1 })),
       select: Type.Optional(Type.Boolean()),
     }),

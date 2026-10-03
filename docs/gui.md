@@ -95,8 +95,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Failed saves keep your input. Successful saves clear only the submitted draft;
   edits made while saving stay in the field. In the fully open view, the list scrolls
   to the newly saved task once it loads. List-refresh errors do not undo a saved task.
-- Shows each matching active note's **first line**, with literal text and wrapping for
-  long first lines. Multiline notes and tasks with agent fields have an **eye/preview
+- Shows each matching active note's **first line** as a single-line, literal title;
+  long titles end with an ellipsis. Multiline notes, truncated titles, and tasks
+  with agent fields have an **eye/preview
   button** on the right. A **blue eye with a dot** means an unread agent-field update;
   its tooltip says **Unread agent update — click to view.** Opening that preview
   scrolls to **Agent** and marks the displayed update as viewed. Updates arriving
@@ -277,7 +278,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
 The window requests floating/keep-above behavior at **x=25**, with its bottom edge
 **25 px above the monitor's usable bottom edge**. It keeps the original monitor
 choice: the monitor containing (or nearest to) desktop point `(25, 1300)`, independent
-of keyboard focus. Wrapped first lines, multiline input, and error notices grow
+of keyboard focus. Additional rows, multiline input, and error notices grow
 upward; the list scrolls earlier if needed to keep the input and controls on-screen. Manual moves establish
 a new bottom anchor for that instance and survive remapping/reactivation. Reopening
 after closing restores the default placement. The window manager has the final say
@@ -298,7 +299,7 @@ The limit must be a positive integer. Both sections share this visible-row budge
 with at least one row per nonempty section. While ordinary tasks remain, in-progress
 rows use up to half the budget and half the available list height; the ordinary
 section gets the remaining row budget. With only in-progress tasks, their section
-can use the whole budget. Wrapped lines and available screen space also constrain
+can use the whole budget. Available screen space also constrains
 height; all matching tasks remain accessible through each section's scrollbar.
 An empty view stays compact. `markdown_preview` must be a boolean; set it to `false`
 to disable formatting without changing or converting any notes.
