@@ -2497,7 +2497,11 @@ def test_multiline_entry_and_read_only_preview(gtk):
     wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
     preview = window.preview
     assert preview.body.get_text() == text
-    assert preview.body.get_selectable() and not preview.body.get_use_markup()
+    assert preview.body.get_selectable() and preview.body.get_use_markup()
+    assert preview.body.get_label().startswith(
+        '<span size="x-large" weight="bold">&lt;b&gt;Literal title&lt;/b&gt; 🐦</span>'
+    )
+    assert row.body.get_text() == title
     adjustment = preview.scroll.get_vadjustment()
     wait_until(gtk.glib, lambda: adjustment.get_upper() > adjustment.get_page_size())
     assert preview.scroll.get_allocated_height() == 300
@@ -2584,7 +2588,7 @@ def test_markdown_preview_copy_poll_links_and_opt_out(gtk, monkeypatch, markdown
     config.parent.mkdir(parents=True)
     config.write_text(f"[gui]\nmarkdown_preview = {str(markdown).lower()}\n")
     source = (
-        "# Markdown 🐦\n\n**Bold _italic_** and `code <&>`\n\n"
+        "Markdown 🐦\n\n**Bold _italic_** and `code <&>`\n\n"
         "- One\n- Two\n\n[Web](https://example.org/?a=1&b=2)\n"
         "<b>Literal HTML</b>\n\n```\n<&>\n```\n\n" + "Extra line\n" * 24 + "End"
     )

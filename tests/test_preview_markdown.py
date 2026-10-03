@@ -1,6 +1,21 @@
 from pinote.gui import preview_markdown
 
 
+def test_multiline_task_title_is_preview_heading_only(monkeypatch):
+    source = "Literal <b>& 🐦</b>\n\nDetails"
+    assert preview_markdown.render_markdown(source, title=True) == (
+        '<span size="x-large" weight="bold">Literal &lt;b&gt;&amp; 🐦&lt;/b&gt;</span>\n\nDetails'
+    )
+    assert preview_markdown.render_markdown(source) is None
+    assert preview_markdown.render_markdown("Single line", title=True) is None
+    for explicit in ("## Heading\nDetails", "Heading\n=======\nDetails", "```\ncode\n```"):
+        assert preview_markdown.render_markdown(explicit, title=True) == (
+            preview_markdown.render_markdown(explicit)
+        )
+    monkeypatch.setattr(preview_markdown, "MarkdownIt", None)
+    assert preview_markdown.render_markdown(source, title=True) is None
+
+
 def test_basic_markdown_is_safe_markup_with_optional_plain_text_fallback(monkeypatch):
     source = (
         "# Heading & 🐦\n\n"

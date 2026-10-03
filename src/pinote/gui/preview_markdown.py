@@ -100,16 +100,27 @@ def _blocks(nodes: list[SyntaxTreeNode]) -> list[_Block]:
     return result
 
 
-def render_markdown(text: str) -> str | None:
+def render_markdown(text: str, *, title: bool = False) -> str | None:
     """Return escaped, allowlisted GTK markup, or None for the literal preview.
 
-    Source line maps keep blank lines and ordinary multiline notes intact. The
+    Source line maps keep blank lines and ordinary multiline notes intact. With
+    title=True, an ordinary multiline task starts with a display-only H1. The
     parser is confined here so removing the optional extra needs no data migration.
     """
     if MarkdownIt is None:
         return None
     parser = MarkdownIt("commonmark", {"html": False})
-    blocks = _blocks(SyntaxTreeNode(parser.parse(text)).children)
+    tokens = parser.parse(text)
+    if (
+        title
+        and "\n" in text
+        and tokens
+        and tokens[0].type == "paragraph_open"
+        and tokens[0].map[0] == 0
+    ):
+        # Promote ordinary task titles without rewriting explicit Markdown blocks.
+        tokens = parser.parse("# " + text)
+    blocks = _blocks(SyntaxTreeNode(tokens).children)
     result = []
     previous_end = None
     for block in blocks:
