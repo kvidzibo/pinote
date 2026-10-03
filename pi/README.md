@@ -83,13 +83,19 @@ The agent can still read the task separately with `pinote_get_current`.
 Previewing requires Pi to be idle with no other Pinote operation open.
 
 On Linux, the eye is a clickable OSC 8 link to a private per-session Unix socket.
-Kitty needs this entry added to `~/.config/kitty/open-actions.conf`, preserving
-existing actions and replacing the helper path with your installed package path:
+The package ships [a Kitty configuration example](kitty/open-actions.conf).
+Append its block to `~/.config/kitty/open-actions.conf`, preserving existing
+actions. Replace `/absolute/path/to/pi-note` with the installed package directory
+containing `preview-click.cjs`; for this checkout, that directory is `pi/`.
+Keep `${URL}` literal: Kitty substitutes the clicked eye's link.
 
 ```conf
 protocol pi-note-preview
-action launch --type=background node /home/me/AI/pinote/pi/preview-click.cjs ${URL}
+action launch --type=background node /absolute/path/to/pi-note/preview-click.cjs ${URL}
 ```
+
+Do not replace or symlink your entire Kitty configuration to the example: it
+contains only Pinote's handler. Package installation does not edit Kitty files.
 
 Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the eye; in
 fullscreen mode, use **Ctrl+Shift+click** so Kitty handles the link instead of

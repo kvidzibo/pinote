@@ -14,7 +14,7 @@
   "homepage": "https://github.com/kvidzibo/pinote/tree/main/pi#readme",
   "bugs": { "url": "https://github.com/kvidzibo/pinote/issues" },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
-  "files": ["index.ts", "pr-watch.ts", "footer-links.ts", "footer-config.ts", "footer-settings.ts", "task-picker.ts", "setup.ts", "preview-bridge.ts", "preview-click.cjs", "icons", "README.md", "LICENSE"],
+  "files": ["index.ts", "pr-watch.ts", "footer-links.ts", "footer-config.ts", "footer-settings.ts", "task-picker.ts", "setup.ts", "preview-bridge.ts", "preview-click.cjs", "icons", "kitty", "README.md", "LICENSE"],
   "pi": { "extensions": ["./index.ts"] },
   "scripts": {
     "check": "tsc --noEmit",
