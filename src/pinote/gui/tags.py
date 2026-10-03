@@ -226,6 +226,8 @@ class TagsWindow(Gtk.ApplicationWindow):
                     self._render(result)
             else:
                 old, new = change
+                if old is None:
+                    new = result  # Creation may reuse an existing tag's casing.
                 self.owner._tags_changed(old, new)
                 if not self.closed:
                     self.error_text.hide()

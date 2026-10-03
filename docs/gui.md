@@ -133,8 +133,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Failed saves keep the editor's input; a task changed elsewhere cannot be overwritten
   by a stale editor. Unsaved edits are not cached like the new-task draft.
 - **Right-click note text → Tag →** choose a tag, **New tag…**, or **Untagged** to
-  clear it. Each task has at most one tag. Names are case-sensitive, trimmed, Unicode
-  normalized, and limited to 64 characters on one line. Tags in use on active,
+  clear it. Each task has at most one tag. New names matching a saved tag ignoring
+  case reuse its spelling: entering **pi** when **Pi** exists saves **Pi**. Names are
+  trimmed, Unicode normalized, and limited to 64 characters on one line. Tags in use on active,
   scheduled, or archived tasks are available for reuse. Tags remain saved even when unused.
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;

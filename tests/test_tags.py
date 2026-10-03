@@ -8,7 +8,7 @@ from test_progress import LEGACY_SCHEMA
 
 from pinote.gui.model import ReminderModel
 from pinote.paths import Paths, display_lock
-from pinote.store import NoteError, Store
+from pinote.store import NoteError, Store, validate_tag
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -182,6 +182,38 @@ def test_persistent_registry_upgrade_and_management_preserve_tasks_and_history(t
             assert event["remind_at"] == original.remind_at == event["previous_remind_at"]
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.parametrize(
+    ("saved", "entered"), [("Pi", "pi"), ("Straße", "STRASSE"), ("Café", "CAFE\u0301")]
+)
+def test_tag_creation_and_assignment_reuse_saved_casing(tmp_path, saved, entered):
+    path = tmp_path / "notes.db"
+    with Store(path) as store:
+        assert store.create_tag(saved) == saved
+        assert store.create_tag(f"  {entered}  ") == saved
+        first = store.add("First", tag=entered)
+        selected = store.add_note("Selected", tag=entered, cwd=tmp_path)
+        untagged = store.add_note("Untagged")
+        assert store.set_tag(untagged.id, entered, expected_updated_at=untagged.updated_at)
+        current = store.get(untagged.id)
+        history = [dict(event) for event in store.history()]
+        assert not store.set_tag(current.id, entered, expected_updated_at=current.updated_at)
+        assert store.get(current.id) == current
+        assert [dict(event) for event in store.history()] == history
+        assert store.get(first).tag == selected.tag == current.tag == saved
+        assert store.tags() == [saved]
+        assert all(event["tag"] == saved for event in history if event["tag"] is not None)
+        store.create_tag("Other")
+        with pytest.raises(NoteError, match="already exists"):
+            store.rename_tag("Other", entered)
+        # Explicit renaming still allows changing a tag's own casing.
+        assert store.rename_tag(saved, entered)
+        renamed = validate_tag(entered)
+        assert store.get(first).tag == renamed
+    with Store(path) as store:
+        assert store.create_tag(saved) == renamed
+        assert store.tags() == sorted(["Other", renamed], key=lambda x: (x.casefold(), x))
 
 
 def test_cli_history_shows_saved_text_and_tag_changes(cli):

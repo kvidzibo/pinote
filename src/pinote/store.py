@@ -307,8 +307,8 @@ class Store:
         text = validate_text(text)
         tag = validate_tag(tag)
         with self.connection:
-            if tag is not None:
-                self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
+            self.connection.execute("BEGIN IMMEDIATE")
+            tag = self._register_tag(tag)
             return self._insert(text, "active", "add", timestamp(), tag)
 
     def add_note(self, text: str, *, tag: str | None = None, cwd: Path | None = None) -> Note:
@@ -319,8 +319,7 @@ class Store:
             raise NoteError("--cwd must be an absolute project directory.")
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
-            if tag is not None:
-                self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
+            tag = self._register_tag(tag)
             note_id = self._insert(text, "active", "add", timestamp(), tag)
             if cwd is not None:
                 self._change_state(note_id, "start", "active", "in_progress")
@@ -335,13 +334,31 @@ class Store:
         rows = self.connection.execute("SELECT name FROM tags")
         return sorted((r[0] for r in rows), key=lambda x: (x.casefold(), x))
 
+    def _matching_tag(self, tag: str) -> str | None:
+        tags = self.tags()
+        if tag in tags:
+            return tag  # Preserve exact references if legacy case variants coexist.
+        return next((name for name in tags if name.casefold() == tag.casefold()), None)
+
+    def _register_tag(self, tag: str | None) -> str | None:
+        """Reuse saved spelling inside the caller's immediate write transaction."""
+        if tag is None:
+            return None
+        existing = self._matching_tag(tag)
+        if existing is not None:
+            return existing
+        self.connection.execute("INSERT INTO tags(name) VALUES (?)", (tag,))
+        return tag
+
     def create_tag(self, name: str) -> str:
         tag = validate_tag(name)
         if tag is None:
             raise NoteError("Tag name cannot be empty.")
         with self.connection:
-            self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
-        return tag
+            self.connection.execute("BEGIN IMMEDIATE")
+            saved = self._register_tag(tag)
+        assert saved is not None
+        return saved
 
     def rename_tag(self, old: str, new: str) -> bool:
         old_tag, new_tag = validate_tag(old), validate_tag(new)
@@ -355,7 +372,9 @@ class Store:
                 raise NoteError("This tag no longer exists. Reopen Tags and try again.")
             if old_tag == new_tag:
                 return False
-            if self.connection.execute("SELECT 1 FROM tags WHERE name=?", (new_tag,)).fetchone():
+            if any(
+                name != old_tag and name.casefold() == new_tag.casefold() for name in self.tags()
+            ):
                 raise NoteError("A tag with that name already exists. Choose another name.")
             self.connection.execute("INSERT INTO tags(name) VALUES (?)", (new_tag,))
             self._retag_all(old_tag, new_tag)
@@ -424,7 +443,7 @@ class Store:
             new_text = value if action == "edit" else row["text"]
             new_tag = value if action == "tag" else row["tag"]
             if action == "tag" and new_tag is not None:
-                self.connection.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (new_tag,))
+                new_tag = self._register_tag(new_tag)
             if new_text == row["text"] and new_tag == row["tag"]:
                 return False
             when = timestamp()
