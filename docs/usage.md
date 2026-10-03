@@ -97,6 +97,8 @@ note agent tag 2 --expected-updated-at 'REVISION' --clear
 `add` creates an active task and registers a new tag. `--cwd` also starts and
 selects it for that project. `tag` requires the current revision and only changes
 active or in-progress tasks; `--clear` removes the tag. `tags` lists saved names.
+Adding or assigning a tag reuses a case-insensitive match's saved spelling:
+`--tag pi` saves `Pi` if that tag already exists.
 These commands do not refresh Dunst.
 
 Update merges arbitrary label/Markdown-string pairs; it never overwrites task

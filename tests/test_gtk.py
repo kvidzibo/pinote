@@ -345,12 +345,13 @@ def test_minimise_cycle_and_context_state_icons(gtk):
 def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     with Store(gtk.paths.database) as store:
         store.add("Existing", tag="Work <🐦>")
+        store.create_tag("Personal")
     window = gtk.open()
     click_button(gtk, window, window.tag_button)
     wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
     from pinote.gui.app import Gtk
 
-    item = window.composer_tag_menu.get_children()[1]
+    item = window.composer_tag_menu.get_children()[2]
     assert item.get_accessible().get_name() == "Work <🐦>"
     assert not isinstance(item, Gtk.CheckMenuItem)
     icon, _size = item.get_child().image.get_gicon()
@@ -406,7 +407,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     editor.entry.emit("activate")
     wait_until(gtk.glib, lambda: not editor.saving)
     assert editor.error_text.get_visible() and window.creation_tag == "Work <🐦>"
-    editor.entry.set_text("  Personal  ")
+    editor.entry.set_text("  personal  ")
     editor.entry.emit("activate")
     wait_until(gtk.glib, lambda: window.editor is None)
     assert window.creation_tag == "Personal" and window.tag_filter is None
@@ -456,6 +457,12 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
     wait_until(gtk.glib, lambda: not manager.pending and "Work" in manager.rows)
     assert manager.get_modal() and manager.get_role() == "pinote-tags"
     assert manager.rows["Work"].get_child().image.get_visible()
+    manager.entry.set_text("work")
+    click_button(gtk, manager, manager.save_button)
+    wait_until(gtk.glib, lambda: not manager.pending and not manager.saving)
+    assert manager.tags == window.tags == ["Work"]
+    with Store(gtk.paths.database) as store:
+        assert store.tags() == ["Work"]
     manager.entry.set_text("Unused")
     click_button(gtk, manager, manager.save_button)
     wait_until(gtk.glib, lambda: not manager.pending and "Unused" in manager.rows)
