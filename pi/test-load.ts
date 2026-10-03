@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -136,7 +136,38 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       "resume", {}, undefined, undefined, ctx)).content[0].text);
     assert.equal(resumed.text, "Resume the task");
     assert.deepEqual(resumed.agent_notes, { PR: pr, Next: "Review" });
-    choice = "Done";
+    // Exercise configuration through the real loader/CLI, including edits without reload.
+    const config = join(temp, "pi", "pi-note.json");
+    mkdirSync(dirname(config), { recursive: true });
+    for (const action of ["Continue", "Switch task"]) {
+      choice = action;
+      const customPrompt = `Read the current Pinote task.\nExplain ${action} 日本語; wait for approval.`;
+      writeFileSync(config, JSON.stringify({ handoffPrompt: customPrompt }));
+      draft = "Keep this draft";
+      await extension.commands.get("pi-note").handler("", ctx);
+      assert.equal(draft, `Keep this draft\n\n${customPrompt}`);
+    }
+    choice = "Continue";
+    writeFileSync(config, "{}");
+    draft = "";
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.equal(draft, prompt, "a missing key keeps the default");
+    const beforeInvalid = JSON.parse(cli("agent", "get", "1"));
+    const selectionsBeforeInvalid = entries.filter((entry) => entry.customType === "pinote-selection").length;
+    const configNotices = notices.length;
+    choice = "Switch task";
+    for (const invalid of ["{", "null", "[]", "false", ...[null, 1, false, "", " \n\t", "bad\u001bprompt"].map(
+      (handoffPrompt) => JSON.stringify({ handoffPrompt }))]) {
+      writeFileSync(config, invalid);
+      draft = "Unchanged draft";
+      await extension.commands.get("pi-note").handler("", ctx);
+      assert.equal(draft, "Unchanged draft");
+      assert.match(notices.at(-1)!, /pi-note\.json/);
+      assert.deepEqual(JSON.parse(cli("agent", "get", "1")), beforeInvalid);
+      assert.equal(entries.filter((entry) => entry.customType === "pinote-selection").length, selectionsBeforeInvalid);
+    }
+    assert.equal(notices.length - configNotices, 10, "every invalid configuration reports an error");
+    choice = "Done"; // Invalid prompt configuration must not prevent completion.
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null);

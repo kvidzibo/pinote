@@ -1,6 +1,7 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { createPRWatcher } from "./pr-watch.ts";
@@ -33,6 +34,26 @@ const text = (value: unknown): value is string =>
 const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/gu, "�");
 const firstLine = (task: Summary) => clean(task.text.split("\n", 1)[0]).replace(/\s+/gu, " ").trim();
 const title = (task: Summary) => truncateToWidth(`#${task.id} ${firstLine(task)}`, 60);
+
+const defaultHandoffPrompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
+function handoffPrompt(): string {
+  const path = join(getAgentDir(), "pi-note.json");
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return defaultHandoffPrompt;
+    throw new Error(`Cannot read ${path}. Check the pi-note configuration.`);
+  }
+  let config: unknown;
+  try { config = JSON.parse(raw); } catch { throw new Error(`Invalid JSON in ${path}.`); }
+  if (!record(config)) throw new Error(`Expected a JSON object in ${path}.`);
+  if (!("handoffPrompt" in config)) return defaultHandoffPrompt;
+  if (!text(config.handoffPrompt) || !config.handoffPrompt.trim()) {
+    throw new Error(`handoffPrompt in ${path} must be a nonblank string without control characters (except tabs/newlines).`);
+  }
+  return config.handoffPrompt;
+}
 
 function parse(raw: string): unknown {
   try { return JSON.parse(raw); } catch { throw new Error(compatible); }
@@ -333,6 +354,7 @@ export default function (pi: ExtensionAPI) {
           if (currentSession()) ctx.ui.notify(`Pinote #${current.id} completed.`, "info");
           return;
         }
+        const handoff = handoffPrompt();
         let id: number;
         if (action === "Continue" && current) {
           id = current.id;
@@ -349,7 +371,6 @@ export default function (pi: ExtensionAPI) {
         const chosen = await startTask(id, canAct);
         if (!chosen || !canAct()) return;
         const draft = ctx.ui.getEditorText();
-        const handoff = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
         ctx.ui.setEditorText(draft ? `${draft}\n\n${handoff}` : handoff);
         ctx.ui.notify(`Pinote #${chosen.id} is in progress. Task added to input.`, "info");
       } catch (error) {
