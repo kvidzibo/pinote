@@ -4,15 +4,15 @@ const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const urlPattern = /^pi-note-preview:\/\/([1-9][0-9]*)-([0-9a-f]{8})\/([0-9a-f]{32})\/([1-9][0-9]*)\/([0-9a-f]{32})$/;
+const urlPattern = /^pi-note-preview:\/\/([1-9][0-9]*)-([0-9a-f]{8})\/([0-9a-f]{32})\/([1-9][0-9]*)\/([0-9a-f]{32})(?:\/(yes|no))?$/;
 
 function parse(value) {
-  if (typeof value !== 'string' || value.length > 160) throw new Error('Preview unavailable');
+  if (typeof value !== 'string' || value.length > 180) throw new Error('Preview or suggestion unavailable');
   const m = urlPattern.exec(value);
-  if (!m || m[0] !== value) throw new Error('Preview unavailable');
+  if (!m || m[0] !== value || (m[6] && m[4] !== '1')) throw new Error('Preview or suggestion unavailable');
   const pid = Number(m[1]), id = Number(m[4]);
-  if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(id) || pid <= 0 || id <= 0) throw new Error('Preview unavailable');
-  return { pid, tag: m[2], capability: m[3], id, nonce: m[5] };
+  if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(id) || pid <= 0 || id <= 0) throw new Error('Preview or suggestion unavailable');
+  return { pid, tag: m[2], capability: m[3], id, nonce: m[5], choice: m[6] };
 }
 function socketPathFor(value) {
   const p = parse(value);
@@ -30,17 +30,19 @@ function verify(file) {
 function preview(value) {
   let p, file;
   try { p = parse(value); file = socketPathFor(value); verify(file); }
-  catch { return Promise.reject(new Error('Preview unavailable')); }
+  catch { return Promise.reject(new Error('Preview or suggestion unavailable')); }
   return new Promise((resolve, reject) => {
     const client = net.createConnection(file);
     let response = Buffer.alloc(0), done = false;
+    const message = p.choice ? `${p.choice} ${p.capability} ${p.id} ${p.nonce}\n` : `preview ${p.capability} ${p.id} ${p.nonce}\n`;
+    const errorMessage = 'Preview or suggestion unavailable';
     const finish = (err, result) => {
       if (done) return;
       done = true; clearTimeout(timer); client.destroy();
-      err ? reject(new Error('Preview unavailable')) : resolve(result);
+      err ? reject(new Error(errorMessage)) : resolve(result);
     };
-    const timer = setTimeout(() => finish(new Error()), 6000);
-    client.on('connect', () => client.write(`preview ${p.capability} ${p.id} ${p.nonce}\n`));
+    const timer = setTimeout(() => finish(new Error()), p.choice ? 35000 : 6000);
+    client.on('connect', () => client.write(message));
     client.on('data', chunk => {
       response = Buffer.concat([response, chunk]);
       if (response.length > 64) return finish(new Error());
@@ -57,7 +59,7 @@ if (require.main === module) {
     process.exitCode = 2;
   } else {
     preview(process.argv[2]).catch(() => {
-      console.error('Pinote preview unavailable; select a task and wait until Pi is idle.');
+      console.error('Pinote preview or suggestion unavailable; select a task and wait until Pi is idle.');
       process.exitCode = 1;
     });
   }
