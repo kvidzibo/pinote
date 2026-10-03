@@ -380,7 +380,8 @@ export default function (pi: ExtensionAPI) {
               footer: { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) },
               handoffPrompt: "handoffPrompt" in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt,
             };
-            const edited = await ctx.ui.custom<PinoteSettings | "tasks" | undefined>((tui, theme, kb, done) =>
+            let expectedRaw = document.raw;
+            const edited = await ctx.ui.custom<"tasks" | undefined>((tui, theme, kb, done) =>
               new FooterSettings(config, Object.keys(current?.agent_notes ?? {}).filter((name) => name !== "Bar"),
                 theme, (data, action) => kb.matches(data, action as Keybinding), done, () => tui.requestRender(),
                 () => new Editor(tui, {
@@ -388,12 +389,16 @@ export default function (pi: ExtensionAPI) {
                   selectList: { selectedPrefix: (line) => theme.fg("accent", line), selectedText: (line) => theme.fg("accent", line),
                     description: (line) => theme.fg("muted", line), scrollInfo: (line) => theme.fg("dim", line),
                     noMatch: (line) => theme.fg("warning", line) },
-                })));
+                }), (updated) => {
+                  if (!canAct()) throw new Error("This session changed. Reopen settings before editing.");
+                  const saved = saveFooterConfig(updated.footer, expectedRaw, updated.handoffPrompt);
+                  expectedRaw = saved.raw;
+                  footerConfig = saved.config;
+                  void refresh(ctx);
+                }));
             if (!canAct() || edited === undefined) return;
-            if (edited === "tasks") { settings = false; continue; }
-            footerConfig = saveFooterConfig(edited.footer, document.raw, edited.handoffPrompt);
-            ctx.ui.notify("Global Pinote settings saved.", "info");
-            return;
+            settings = false;
+            continue;
           }
           const action = current
             ? await ctx.ui.custom<string | undefined>((tui, theme, kb, done) =>

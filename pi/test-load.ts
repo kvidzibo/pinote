@@ -54,8 +54,13 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
           picker.handleInput("\r"); picker.handleInput("\x03");
           picker.handleInput("\x1b[200~Read the selected task.\nExplain Settings 日本語; wait.\x1b[201~");
           picker.handleInput("\r");
-          while (!picker.render(100).some((line: string) => line === "> Save settings")) picker.handleInput("\x1b[B");
-          picker.handleInput("\r"); return;
+          assert.equal(JSON.parse(readFileSync(join(temp, "pi", "pi-note.json"), "utf8")).handoffPrompt,
+            "Read the selected task.\nExplain Settings 日本語; wait.", "prompt autosaves before leaving settings");
+          for (let i = 0; i < 3; i++) picker.handleInput("\x1b[A");
+          picker.handleInput("\r"); picker.handleInput("\x0b"); picker.handleInput("42"); picker.handleInput("\r");
+          assert.equal(JSON.parse(readFileSync(join(temp, "pi", "pi-note.json"), "utf8")).footer.titleWidth, 42,
+            "consecutive autosaves use the revision just written");
+          picker.handleInput("\x1b"); return;
         }
         if (picker.render(100).join("\n").includes("Continue")) {
           const index = ["Continue", "Done", "Switch task", "Settings"].indexOf(choice === "pick" ? "Continue" : choice);
@@ -200,7 +205,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(draft, "Preserve existing input");
     assert.deepEqual(JSON.parse(cli("agent", "get", "1")), beforeSettings);
-    assert.match(notices.at(-1)!, /Global Pinote settings saved/);
+    assert.equal(JSON.parse(readFileSync(config, "utf8")).footer.titleWidth, 42);
     const savedPrompt = "Read the selected task.\nExplain Settings 日本語; wait.";
     assert.equal(JSON.parse(readFileSync(config, "utf8")).handoffPrompt, savedPrompt);
     choice = "Continue";
