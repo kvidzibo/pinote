@@ -68,9 +68,9 @@ task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows `👁 📌 [tag] Task title` without replacing other footers.
-The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the eye, pin and tag). Overflow ends with `...`.
-The glyphs are bundled in `icons/eye.txt` and `icons/note.txt`; they use terminal fonts, not a Nerd Font or icon theme.
+The normal Pi status area shows `📌 [tag] Task title` without replacing other footers.
+The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the pin and tag). Overflow ends with `...`.
+The pin glyph is bundled in `icons/note.txt`; it uses terminal fonts, not a Nerd Font or icon theme.
 
 ### Display-only preview
 
@@ -82,12 +82,13 @@ modify the note, editor draft or task selection, and never starts a model call.
 The agent can still read the task separately with `pinote_get_current`.
 Previewing requires Pi to be idle with no other Pinote operation open.
 
-On Linux, the eye is a clickable OSC 8 link to a private per-session Unix socket.
+On Linux, the task text (pin, tag and title) is a clickable OSC 8 link to a
+private per-session Unix socket. Overflow at the configured title width stays linked.
 The package ships [a Kitty configuration example](kitty/open-actions.conf).
 Append its block to `~/.config/kitty/open-actions.conf`, preserving existing
 actions. Replace `/absolute/path/to/pi-note` with the installed package directory
 containing `preview-click.cjs`; for this checkout, that directory is `pi/`.
-Keep `${URL}` literal: Kitty substitutes the clicked eye's link.
+Keep `${URL}` literal: Kitty substitutes the clicked task's link.
 
 ```conf
 protocol pi-note-preview
@@ -97,12 +98,12 @@ action launch --type=background node /absolute/path/to/pi-note/preview-click.cjs
 Do not replace or symlink your entire Kitty configuration to the example: it
 contains only Pinote's handler. Package installation does not edit Kitty files.
 
-Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the eye; in
+Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the task text; in
 fullscreen mode, use **Ctrl+Shift+click** so Kitty handles the link instead of
 Pi's system URL opener. The helper sends only an authenticated selection
 identifier, never note content or a model prompt. Stale links after task switching, tree navigation, reload or session exit
 are rejected. Other terminals can use `/pi-note-preview`; if the socket cannot
-start, the eye is omitted and that command remains available.
+start, the task remains visible without a link and that command remains available.
 
 Each Pi session remembers its own task, including several sessions in one folder.
 Resume restores that session's task; a new session starts unselected and does not import
@@ -170,6 +171,10 @@ user-level configuration only; project-local files are not read.
   populating relevant values with `pinote_update_current`. Empty/missing values
   stay hidden; this tool does not edit configuration.
 - `pinote_tags`: list saved tag names.
+- `pinote_propose`: show a nonmodal suggested-task bar below the input without
+  creating a note. Optional `tag`; full text is retained, but the bar shows only
+  its title. Requires a TUI with no selected task. The agent continues your work
+  while the suggestion awaits your choice.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
   remembers it for this session only; use that only after the user agrees.
 
@@ -177,10 +182,24 @@ Version 0.7.0 replaces `pinote_get`/`pinote_update` with these current-task tool
 and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
 or retag existing tasks; use `/pi-note` to select an existing task.
 
-When allowed by `taskOfferPolicy`, the agent proposes one note as `[tag] text`
-and asks before creating it. No continues without a note. Yes calls
-`pinote_add` with `select: true`. An existing selection is not replaced unless the
-user asks to switch. Reuse a saved tag name when it fits.
+When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
+asking in chat. A bar below the input shows `[tag] Task title  ✓  ✕`:
+
+- **✓** creates the note, starts it, and selects it for this session.
+- **✕** hides the suggestion without creating a note; further offers are suppressed
+  until a new session or reload.
+
+Neither action submits input or starts an agent turn; editor drafts stay unchanged.
+The icons reuse the [Kitty preview handler](#display-only-preview), with no additional
+configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. Keyboard alternatives are
+`/pi-note-yes` and `/pi-note-no`, including when clickable links are unavailable.
+An existing suggestion is retained rather than replaced. Selection, tree navigation,
+reload and shutdown invalidate its links; repeated acceptance cannot duplicate a note.
+A busy Pinote operation blocks acceptance; retry after it finishes. On an error, check
+`/pi-note` before retrying, because a write may already have committed.
+Noninteractive agents still ask in chat before using `pinote_add` with `select: true`.
+An existing selection is not replaced unless the user asks to switch. Reuse a saved
+tag name when it fits.
 Task text starts with a short, action-oriented title (aim for at most 60 characters).
 Put context, URLs, commands, and acceptance criteria after a blank line; the title
 should not contain implementation details. This is agent guidance, not a storage limit.
@@ -233,7 +252,7 @@ Add `footer` to `~/.pi/agent/pi-note.json` (or `pi-note.json` under
 }
 ```
 
-Widths are terminal columns, including the eye, pin, tags or field labels, and must be
+Widths are terminal columns, including the pin, tags or field labels, and must be
 integers from 3 to 1000. Defaults: `titleWidth: 60`, `fieldWidth: 60`,
 `maxFields: 4` (allowed 0–64). Each field can override `fieldWidth` with `width`.
 `fields` selects task field names in order, regardless of a task's `Bar`.
@@ -285,8 +304,9 @@ By default, at most four extra fields are shown, each truncated to 60 columns.
 Overflow ends with `...`, including cuts between Markdown/link segments. Removing
 a listed field hides it even if configuration or `Bar` still names it. Terminal
 OSC 8 support is required for clicking links. Pi joins footer statuses on one
-line and truncates the combined line with `...` when the terminal is narrow;
-this extension does not replace other footers. Other fields, such as `Jira` and
+line and truncates the combined line with `...` when the terminal is narrow.
+Pi's final ellipsis is plain text; click the remaining task text to preview it.
+This extension does not replace other footers. Other fields, such as `Jira` and
 `CWD` in the example, stay off the footer unless selected.
 
 ### PR merge watcher

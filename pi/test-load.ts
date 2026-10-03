@@ -90,7 +90,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   try {
     cli("add", "Resume the task", "--no-notify");
     extension = await load();
-    assert.deepEqual([...extension.commands.keys()].sort(), ["pi-note", "pi-note-preview", "pi-note-setup", "pi-note-upgrade"]);
+    assert.deepEqual([...extension.commands.keys()].sort(), ["pi-note", "pi-note-no", "pi-note-preview", "pi-note-setup", "pi-note-upgrade", "pi-note-yes"]);
     await extension.commands.get("pi-note-setup").handler("", ctx);
     assert.match(notices.at(-1)!, /is ready/);
     await event(extension, "session_start");
@@ -98,10 +98,10 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       [...extension.commands.keys()].map((name: string) => ({ name })), cwd);
     const suggestions = await autocompleteWrappers.at(-1)!(base).getSuggestions(["/pi-note"], 0, 8,
       { signal: new AbortController().signal });
-    assert.deepEqual(suggestions.items.map((item: any) => item.value), ["pi-note", "pi-note-preview"]);
+    assert.deepEqual(suggestions.items.map((item: any) => item.value), ["pi-note", "pi-note-preview", "pi-note-yes", "pi-note-no"]);
     assert.ok(!notices.some((message) => message.includes("Run /pi-note-upgrade")));
     assert.deepEqual([...extension.tools.keys()].sort(), [
-      "pinote_add", "pinote_fields", "pinote_get_current", "pinote_tags", "pinote_update_current",
+      "pinote_add", "pinote_fields", "pinote_get_current", "pinote_propose", "pinote_tags", "pinote_update_current",
     ]);
     const get = extension.tools.get("pinote_get_current").definition;
     const update = extension.tools.get("pinote_update_current").definition;
@@ -130,7 +130,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(draft, "Existing draft");
     rmSync(config, { recursive: true });
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "👁 📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
     const prompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
     assert.equal(draft, `Existing draft\n\n${prompt}`);
@@ -163,7 +163,11 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     extension = await load(); // Reload rereads footer config without changing task data.
     draft = "";
     await event(extension, "session_start");
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "👁 📌 [Untagged] Resum...");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume ...");
+    const linkedTitle = /^\x1b\]8;;[^\x07]+\x07([^\x07]*)\x1b\]8;;\x07$/u.exec(statuses.at(-1)!);
+    assert.ok(linkedTitle, "the task link encloses the entire truncated status");
+    assert.equal(stripVTControlCharacters(linkedTitle[1]), "📌 [Untagged] Resume ...",
+      "overflow remains inside the task link, allowing truncation's ANSI style resets");
     assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "#42 · Next: R...");
     const configuredFields = (await extension.tools.get("pinote_fields").definition.execute(
       "fields", {}, undefined, undefined, ctx)).details;
@@ -182,7 +186,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     writeFileSync(config, '{"footer":{"titleWidth":false}}');
     extension = await load();
     await event(extension, "session_start");
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "👁 📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume the task");
     assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "PR #42");
     assert.match(notices.at(-1)!, /using default Pinote footer settings/);
     // Exercise configuration through the real loader/CLI, including edits without reload.
@@ -282,7 +286,7 @@ test("personal task-offer policies reach the native prompt without disabling exp
       extension = result.extensions[0];
       const definitions: any[] = [...extension.tools.values()].map((tool: any) => tool.definition);
       assert.deepEqual(definitions.map((tool) => tool.name).sort(), [
-        "pinote_add", "pinote_fields", "pinote_get_current", "pinote_tags", "pinote_update_current",
+        "pinote_add", "pinote_fields", "pinote_get_current", "pinote_propose", "pinote_tags", "pinote_update_current",
       ]);
       const add = extension.tools.get("pinote_add").definition;
       assert.deepEqual(add.promptGuidelines, extension.tools.get("pinote_get_current").definition.promptGuidelines);
@@ -290,13 +294,13 @@ test("personal task-offer policies reach the native prompt without disabling exp
         selectedTools: definitions.map((tool) => tool.name),
         toolGuidelines: Object.fromEntries(definitions.map((tool) => [tool.name, tool.promptGuidelines ?? []])),
       });
-      assert.match(prompt, /Never add or select without a yes/);
+      assert.match(prompt, /Never add or select without consent/);
       assert.match(prompt, /existing.*selection|task is already selected/);
       if (scenario.policy === "never") {
         assert.match(prompt, /Do not offer to create a pinote task/);
         assert.doesNotMatch(prompt, /propose one note/);
       } else {
-        assert.match(prompt, /propose one note as `\[tag\] text`/);
+        assert.match(prompt, /use pinote_propose.*bottom bar instead of asking in chat/);
         if (scenario.policy === "github-remote") {
           assert.match(prompt, /first verify with Git.*URL host is github\.com \(HTTPS or SSH\)/);
           assert.match(prompt, /Local paths, other hosts, and GitHub-looking URL paths do not qualify/);

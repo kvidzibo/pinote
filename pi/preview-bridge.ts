@@ -16,8 +16,11 @@ export function createPreviewBridge() {
   let taskId: number | null = null;
   let callback: ((signal: AbortSignal) => Promise<boolean>) | undefined;
   let nonce: string | undefined;
+  let suggestionCallback: ((choice: "yes" | "no") => Promise<boolean>) | undefined;
+  let suggestionNonce: string | undefined;
   const clients = new Set<Socket>();
   const invalidate = () => { taskId = null; callback = undefined; nonce = undefined; };
+  const invalidateSuggestion = () => { suggestionCallback = undefined; suggestionNonce = undefined; };
   const cleanup = async () => {
     ready = false;
     for (const client of clients) client.destroy();
@@ -62,14 +65,32 @@ export function createPreviewBridge() {
             if (!data.includes(10)) return;
             dispatched = true;
             const input = data.toString("utf8");
-            const match = /^preview ([0-9a-f]{32}) ([1-9][0-9]*) ([0-9a-f]{32})\n$/u.exec(input);
-            const id = match ? Number(match[2]) : NaN;
-            if (!match || match[0] !== input || match[1] !== capability || !Number.isSafeInteger(id) ||
-                id !== taskId || match[3] !== nonce || !callback) { client.end("rejected\n"); return; }
-            const invoke = callback;
-            Promise.resolve().then(() => !closed && !request.signal.aborted && taskId === id && nonce === match[3] ? invoke(request.signal) : false)
-              .then((accepted) => { if (!client.destroyed) client.end(accepted === true ? "accepted\n" : "rejected\n"); },
-                () => { if (!client.destroyed) client.end("rejected\n"); });
+            const previewMatch = /^preview ([0-9a-f]{32}) ([1-9][0-9]*) ([0-9a-f]{32})\n$/u.exec(input);
+            const suggestionMatch = /^(yes|no) ([0-9a-f]{32}) 1 ([0-9a-f]{32})\n$/u.exec(input);
+            const id = previewMatch ? Number(previewMatch[2]) : NaN;
+            if (previewMatch && previewMatch[0] === input && previewMatch[1] === capability && Number.isSafeInteger(id) &&
+                id === taskId && previewMatch[3] === nonce && callback) {
+              const invoke = callback;
+              const requestNonce = nonce;
+              Promise.resolve().then(() => !closed && !request.signal.aborted && taskId === id && nonce === requestNonce && callback === invoke
+                ? invoke(request.signal) : false)
+                .then((accepted) => { if (!client.destroyed) client.end(accepted === true ? "accepted\n" : "rejected\n"); },
+                  () => { if (!client.destroyed) client.end("rejected\n"); });
+              return;
+            }
+            if (suggestionMatch && suggestionMatch[0] === input && suggestionMatch[2] === capability && suggestionMatch[3] === suggestionNonce && suggestionCallback) {
+              client.setTimeout(65000);
+              const invoke = suggestionCallback;
+              const requestNonce = suggestionNonce;
+              const choice = suggestionMatch[1] as "yes" | "no";
+              // Add/start/select and refresh can run eleven 5s CLI calls; accepted mutations drain on disconnect.
+              Promise.resolve().then(() => !closed && suggestionNonce === requestNonce && suggestionCallback === invoke
+                ? invoke(choice) : false)
+                .then((accepted) => { if (!client.destroyed) client.end(accepted === true ? "accepted\n" : "rejected\n"); },
+                  () => { if (!client.destroyed) client.end("rejected\n"); });
+              return;
+            }
+            client.end("rejected\n");
           });
         });
         server = instance;
@@ -102,9 +123,20 @@ export function createPreviewBridge() {
       if (!ready || closed || !socketPath || taskId === null || !nonce) return;
       return `pi-note-preview://${basename(socketPath, ".sock")}/${capability}/${taskId}/${nonce}`;
     },
+    setSuggestion(suggestion: (choice: "yes" | "no") => Promise<boolean>): void {
+      if (closed) return;
+      suggestionCallback = suggestion;
+      suggestionNonce = randomBytes(16).toString("hex");
+    },
+    clearSuggestion(): void { invalidateSuggestion(); },
+    suggestionUrl(choice: "yes" | "no"): string | undefined {
+      if ((choice !== "yes" && choice !== "no") || !ready || closed || !socketPath || !suggestionNonce || !suggestionCallback) return;
+      return `pi-note-preview://${basename(socketPath, ".sock")}/${capability}/1/${suggestionNonce}/${choice}`;
+    },
     async stop(): Promise<void> {
       closed = true;
       invalidate();
+      invalidateSuggestion();
       if (!stopping) stopping = (async () => { await starting?.catch(() => {}); await cleanup(); })();
       return stopping;
     },
