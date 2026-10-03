@@ -886,15 +886,22 @@ class ReminderWindow(Gtk.ApplicationWindow):
     def _filter_menu_choices(self, menu) -> None:
         menu.set_reserve_toggle_size(True)
         for value, label in self._tag_choices(None, filtering=True):
-            selected = (
-                self.tag_filter is None
-                if value is None
-                else self.tag_filter is not None and value in self.tag_filter
-            )
+            selected = self.tag_filter is None or value in self.tag_filter
             item = tag_menu_item(label, selected=selected, checkable=True)
             item.filter_tag = value
             item.filter_handler = item.connect(
                 "activate", lambda _item, value=value: self._toggle_filter(value)
+            )
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        for icon, label, selected in (
+            ("edit-select-all-symbolic", "Select all tags", None),
+            ("window-close-symbolic", "Clear selection", frozenset()),
+        ):
+            item = icon_menu_item(icon, label)
+            item.connect(
+                "activate",
+                lambda _item, selected=selected: self._set_filter(selected, close_menu=False),
             )
             menu.append(item)
 
@@ -912,11 +919,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if menu is None:
                 continue
             for item in menu.get_children():
-                selected = (
-                    self.tag_filter is None
-                    if item.filter_tag is None
-                    else self.tag_filter is not None and item.filter_tag in self.tag_filter
-                )
+                if not isinstance(item, Gtk.CheckMenuItem):
+                    continue
+                selected = self.tag_filter is None or item.filter_tag in self.tag_filter
                 # set_active emits activate; syncing checks must not toggle the filter.
                 item.handler_block(item.filter_handler)
                 try:
@@ -953,8 +958,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if selected:
             tags.add(selected)
         choices = [("" if filtering else None, f"Untagged ({counts[None]})")]
-        if filtering:
-            choices.append((None, f"All ({len(self.notes_snapshot)})"))
         choices.extend(
             (tag, f"{tag} ({counts[tag]})")
             for tag in sorted(tags, key=lambda tag: (tag.casefold(), tag))
@@ -1047,13 +1050,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self._filter_menu_choices(menu)
         menu.show_all()
 
-    def _toggle_filter(self, tag: str | None) -> None:
-        if tag is None:
-            selected = None
-        elif self.tag_filter is None:
-            selected = frozenset({tag})
+    def _toggle_filter(self, tag: str) -> None:
+        if self.tag_filter is None:
+            selected = frozenset(value for value, _label in self._tag_choices(None, filtering=True))
         else:
-            selected = self.tag_filter ^ {tag}
+            selected = self.tag_filter
+        selected = selected ^ {tag}
         self._set_filter(selected, close_menu=False)
 
     def _set_filter(self, tags: frozenset[str] | None, *, close_menu: bool = True) -> None:

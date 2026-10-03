@@ -159,9 +159,10 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
   and matching active-task count. Click it to toggle one or more tags, including **Untagged**;
   tasks matching **any** selected tag appear in both sections. Click a checked tag to remove it;
-  with no tags checked, no tasks match. **All** clears the selection and shows every active task;
-  choosing a tag from **All** starts a new selection.
-  **Bottom menu → Filter by tag →** offers the same checkboxes.
+  with no tags checked, no tasks match. The **Select all tags** button (stacked checkboxes)
+  checks every tag, including **Untagged**, and shows every active task. Unchecking a tag
+  then excludes just that tag. The **Clear selection** button (×) unchecks all tags.
+  **Bottom menu → Filter by tag →** offers the same checkboxes and buttons.
   This is separate from the tag icon on the left, which assigns tags to new tasks.
   The filter is saved in `gui-filter.json` beside the database and restored on restart.
   **Untagged** is the first-launch default; older single-tag filters are also restored.
@@ -171,7 +172,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
   its funnel button (**Show all tasks**) clears the filter without changing the draft or new-task tag.
   With no active tasks at all, the empty state invites you to add one instead.
   Filtering only hides rows; it never changes tasks or the tag selected for new tasks. A newly added or
-  retagged task may be hidden by the current filter; choose **All** to see every task.
+  retagged task may be hidden by the current filter; use **Select all tags** to see every task.
   The new-task draft is kept when switching filters.
   Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain
   their tags, so they may be hidden by the checklist's current filter.
