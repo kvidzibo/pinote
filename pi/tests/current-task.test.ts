@@ -79,3 +79,60 @@ test("current-task operations reject navigation during reads, write probes and p
   navigateDuringWrite = undefined;
   await events.get("session_shutdown")({}, ctx);
 });
+
+test("completion survives housekeeping reads of its committed write but rejects branch navigation", async (t) => {
+  const savedPollSeconds = process.env.PINOTE_PR_POLL_SECONDS;
+  process.env.PINOTE_PR_POLL_SECONDS = "0";
+  t.after(() => {
+    if (savedPollSeconds === undefined) delete process.env.PINOTE_PR_POLL_SECONDS;
+    else process.env.PINOTE_PR_POLL_SECONDS = savedPollSeconds;
+  });
+  const item = { id: 1, text: "Task", state: "in_progress", tag: null, updated_at: "r1", agent_notes: {}, markdown: "Task" };
+  const entries: any[] = [];
+  const events = new Map<string, any>();
+  const commands = new Map<string, any>();
+  const notices: string[] = [];
+  let navigate = false;
+  let replacements = 0;
+  let reloads = 0;
+  const ctx: any = {
+    cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
+    sessionManager: { getBranch: () => entries },
+    ui: { setStatus() {}, addAutocompleteProvider() {}, setEditorText() {},
+      notify: (message: string) => notices.push(message), theme: { fg: (_color: string, value: string) => value } },
+    newSession: async (options: any) => {
+      replacements++;
+      await events.get("session_shutdown")({}, ctx);
+      await options.withSession({ ui: ctx.ui, reload: async () => { reloads++; } });
+      return { cancelled: false };
+    },
+  };
+  const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
+  pinote({
+    registerEntryRenderer() {}, registerTool() {},
+    registerCommand: (name: string, definition: any) => commands.set(name, definition),
+    on: (name: string, handler: any) => events.set(name, handler),
+    appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
+    exec: async (_command: string, args: string[]) => {
+      if (args[0] === "--version") return { code: 0, stdout: "pinote 0.4.0", stderr: "", killed: false };
+      if (args[1] === "done") {
+        item.state = "done";
+        // Polling can observe the commit before the mutation's subprocess returns.
+        await events.get(navigate ? "session_tree" : "before_agent_start")({}, ctx);
+      }
+      return success(item);
+    },
+  } as any);
+  t.after(() => events.get("session_shutdown")({}, ctx));
+  for (navigate of [false, true]) {
+    item.state = "in_progress";
+    entries.push({ type: "custom", customType: "pinote-selection", data: { id: 1 } });
+    await events.get("session_start")({}, ctx);
+    await commands.get("pi-note-done").handler("", ctx);
+    assert.equal(item.state, "done");
+    assert.equal(replacements, 1, navigate ? "genuine navigation prevents session replacement" : "housekeeping cannot suppress session replacement");
+    assert.equal(reloads, 1);
+    assert.equal(entries.at(-1).data.id, null);
+    if (navigate) assert.match(notices.at(-1)!, /completion may have committed/);
+  }
+});

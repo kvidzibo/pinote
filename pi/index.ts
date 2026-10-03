@@ -232,7 +232,9 @@ export default function (pi: ExtensionAPI) {
     const current = task(await run(["agent", "get", String(id)], signal, canUse));
     if (!canUse() || selectedId !== id) return null;
     if (!current || current.id !== id || !["active", "in_progress"].includes(current.state)) {
-      if (canUse() && selectedId === id) remember(null);
+      // A read may see a mutation's commit before its subprocess returns. Let the
+      // admitted operation own selection changes until it releases its lock.
+      if (canUse() && selectedId === id && !pending) remember(null);
       return null;
     }
     return current;
@@ -349,54 +351,54 @@ export default function (pi: ExtensionAPI) {
     });
   };
   const completeSelected = async (args: string, ctx: ExtensionCommandContext, expected?: Task) => {
-      const token = args.trim();
-      if (token && (completionDispatch?.token !== token || token !== `${runtimeToken}:${epoch}:${branchEpoch}:${selectedId}`)) {
-        completionDispatch?.finish(false);
-        return;
+    const token = args.trim();
+    if (token && (completionDispatch?.token !== token || token !== `${runtimeToken}:${epoch}:${branchEpoch}:${selectedId}`)) {
+      completionDispatch?.finish(false);
+      return;
+    }
+    if (!ctx.hasUI || ctx.mode !== "tui" || pending || !ctx.isIdle()) {
+      completionDispatch?.finish(false);
+      if (ctx.hasUI) ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
+      return;
+    }
+    const operation = Symbol();
+    pending = operation;
+    completionDispatch?.finish(true);
+    const generation = epoch;
+    const branch = branchEpoch;
+    const id = selectedId;
+    const canAct = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
+    try {
+      const current = await currentTask(undefined, canAct);
+      if (!canAct()) return;
+      if (!current) { ctx.ui.notify("Select a task with /pi-note first.", "warning"); return; }
+      if (expected && (current.id !== expected.id || current.updated_at !== expected.updated_at)) {
+        throw new Error("Task changed elsewhere. Reopen /pi-note before completing it.");
       }
-      if (!ctx.hasUI || ctx.mode !== "tui" || pending || !ctx.isIdle()) {
-        completionDispatch?.finish(false);
-        if (ctx.hasUI) ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
-        return;
+      refreshSerial++;
+      const completed = requiredTask(await run([
+        "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
+      ], undefined, canAct), current.id);
+      if (completed.state !== "done") throw new Error(compatible);
+      if (!canAct()) throw new Error("The session or selection changed; completion may have committed. Read the task before retrying.");
+      remember(null, branch);
+      // Refresh first, but do not replace a session that changed while reading.
+      await refresh(ctx);
+      if (!alive || generation !== epoch || branch !== branchEpoch || selectedId !== null || !ctx.isIdle()) {
+        throw new Error("Task completed, but the session changed. Start a new session manually.");
       }
-      const operation = Symbol();
-      pending = operation;
-      completionDispatch?.finish(true);
-      const generation = epoch;
-      const branch = branchEpoch;
-      const id = selectedId;
-      const canAct = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
-      try {
-        const current = await currentTask(undefined, canAct);
-        if (!canAct()) return;
-        if (!current) { ctx.ui.notify("Select a task with /pi-note first.", "warning"); return; }
-        if (expected && (current.id !== expected.id || current.updated_at !== expected.updated_at)) {
-          throw new Error("Task changed elsewhere. Reopen /pi-note before completing it.");
-        }
-        refreshSerial++;
-        const completed = requiredTask(await run([
-          "agent", "done", String(current.id), "--expected-updated-at", current.updated_at,
-        ], undefined, canAct), current.id);
-        if (completed.state !== "done") throw new Error(compatible);
-        if (!canAct()) throw new Error("The session or selection changed; completion may have committed. Read the task before retrying.");
-        remember(null, branch);
-        // Refresh first, but do not replace a session that changed while reading.
-        await refresh(ctx);
-        if (!alive || generation !== epoch || branch !== branchEpoch || selectedId !== null || !ctx.isIdle()) {
-          throw new Error("Task completed, but the session changed. Start a new session manually.");
-        }
-        // Session replacement invalidates ctx; reload only through the fresh command context.
-        const result = await ctx.newSession({ withSession: async (fresh) => {
-          fresh.ui.setEditorText("");
-          await fresh.reload();
-        } });
-        if (result.cancelled) ctx.ui.notify("Task completed; new session was cancelled.", "warning");
-      } catch (error) {
-        if (alive && generation === epoch) ctx.ui.notify(`Pinote: ${clean(String(error))}`, "error");
-      } finally {
-        if (pending === operation) pending = undefined;
-        if (alive && generation === epoch) await refresh(ctx);
-      }
+      // Session replacement invalidates ctx; reload only through the fresh command context.
+      const result = await ctx.newSession({ withSession: async (fresh) => {
+        fresh.ui.setEditorText("");
+        await fresh.reload();
+      } });
+      if (result.cancelled) ctx.ui.notify("Task completed; new session was cancelled.", "warning");
+    } catch (error) {
+      if (alive && generation === epoch) ctx.ui.notify(`Pinote: ${clean(String(error))}`, "error");
+    } finally {
+      if (pending === operation) pending = undefined;
+      if (alive && generation === epoch) await refresh(ctx);
+    }
   };
   pi.registerCommand("pi-note-done", {
     description: "Complete the selected task, start a new session, and reload Pi",
