@@ -7,7 +7,7 @@ The extension and Python app share a repository but install separately.
 
 ## Install
 
-Requires Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
+Requires Pi 0.99.1+, Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
 From this checkout, install the extension with `pi install ./pi`, then run
 `/reload` in interactive Pi. Use `/pi-note-setup` if the CLI is missing, or the
 suggested `/pi-note-upgrade` if it is older than the bundled CLI. The planned npm package name is
@@ -68,9 +68,41 @@ task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows `📌 [tag] Task title` without replacing other footers.
-The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the pin and tag). Overflow ends with `...`.
-The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
+The normal Pi status area shows `👁 📌 [tag] Task title` without replacing other footers.
+The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the eye, pin and tag). Overflow ends with `...`.
+The glyphs are bundled in `icons/eye.txt` and `icons/note.txt`; they use terminal fonts, not a Nerd Font or icon theme.
+
+### Display-only preview
+
+Run `/pi-note-preview` to print the selected task's full Markdown text and saved
+agent fields in the transcript. The preview is labeled **display only · not sent
+to model**: it is a local custom session entry, excluded from subsequent model
+requests, compaction and branch summaries. It survives session resume but does not
+modify the note, editor draft or task selection, and never starts a model call.
+The agent can still read the task separately with `pinote_get_current`.
+Previewing requires Pi to be idle with no other Pinote operation open.
+
+On Linux, the eye is a clickable OSC 8 link to a private per-session Unix socket.
+The package ships [a Kitty configuration example](kitty/open-actions.conf).
+Append its block to `~/.config/kitty/open-actions.conf`, preserving existing
+actions. Replace `/absolute/path/to/pi-note` with the installed package directory
+containing `preview-click.cjs`; for this checkout, that directory is `pi/`.
+Keep `${URL}` literal: Kitty substitutes the clicked eye's link.
+
+```conf
+protocol pi-note-preview
+action launch --type=background node /absolute/path/to/pi-note/preview-click.cjs ${URL}
+```
+
+Do not replace or symlink your entire Kitty configuration to the example: it
+contains only Pinote's handler. Package installation does not edit Kitty files.
+
+Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the eye; in
+fullscreen mode, use **Ctrl+Shift+click** so Kitty handles the link instead of
+Pi's system URL opener. The helper sends only an authenticated selection
+identifier, never note content or a model prompt. Stale links after task switching, tree navigation, reload or session exit
+are rejected. Other terminals can use `/pi-note-preview`; if the socket cannot
+start, the eye is omitted and that command remains available.
 
 Each Pi session remembers its own task, including several sessions in one folder.
 Resume restores that session's task; a new session starts unselected and does not import
@@ -198,7 +230,7 @@ Add `footer` to `~/.pi/agent/pi-note.json` (or `pi-note.json` under
 }
 ```
 
-Widths are terminal columns, including icons/tags or field labels, and must be
+Widths are terminal columns, including the eye, pin, tags or field labels, and must be
 integers from 3 to 1000. Defaults: `titleWidth: 60`, `fieldWidth: 60`,
 `maxFields: 4` (allowed 0–64). Each field can override `fieldWidth` with `width`.
 `fields` selects task field names in order, regardless of a task's `Bar`.
