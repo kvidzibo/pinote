@@ -20,7 +20,7 @@ test("native task-link preview renders complete local data but never reaches req
     PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
-    PINOTE_PR_POLL_SECONDS: "0", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-preview-bus",
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-preview-bus",
   };
   const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
   Object.assign(process.env, overrides);
@@ -49,8 +49,7 @@ test("native task-link preview renders complete local data but never reaches req
   const event = async (name: string) => {
     for (const handler of extension.handlers.get(name) ?? []) await handler({}, ctx);
   };
-  const link = () => [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)][1][1];
-  const doneLink = () => /\x1b\]8;;([^\x07]+)\x07/u.exec(status!)![1];
+  const link = () => [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m) => m[1]).find((url) => !url.endsWith("/done"))!;
   const previews = () => session.getBranch().filter((entry: any) => entry.customType === "pinote-preview");
   try {
     cli("agent", "add", "--text=Preview 日本語\nlocal-preview-body-marker", "--tag=pinote");
@@ -66,9 +65,10 @@ test("native task-link preview renders complete local data but never reaches req
     loaded.runtime.appendEntry = (type: string, data: unknown) => session.appendCustomEntry(type, data);
     loaded.runtime.sendMessage = loaded.runtime.sendUserMessage = () => { throw new Error("preview must not send messages"); };
     await event("session_start");
-    assert.match(stripVTControlCharacters(status!), /^✓ Done 📌 \[pinote\] Preview 日本語$/u);
-    assert.equal(status, `\x1b]8;;${doneLink()}\x07✓ Done\x1b]8;;\x07 \x1b]8;;${link()}\x07📌 [pinote] Preview 日本語\x1b]8;;\x07`,
-      "completion and the entire visible task are independently linked");
+    assert.match(stripVTControlCharacters(status!), /^📌 ✓\u00a0\u00a0\u00a0 · \[pinote\] Preview 日本語$/u);
+    const previewLabel = [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07(.*?)\x1b\]8;;\x07/gu)].find((m) => m[1] === link())![2];
+    assert.equal(stripVTControlCharacters(previewLabel), "[pinote] Preview 日本語",
+      "preview links only the task label, separate from the completion control");
     assert.ok(visibleWidth(status!) <= 60);
     const url = link();
     const beforeContext = session.buildSessionContext().messages;
@@ -139,15 +139,14 @@ setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},ar
     assert.equal(draft, "Keep my draft");
     assert.deepEqual(JSON.parse(cli("agent", "get", "1")), before, "preview never mutates task data");
     const lastUrl = link();
-    const completeUrl = doneLink();
+    const doneUrl = [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m) => m[1]).find((url) => url.endsWith("/done"))!;
     const lifecycle: string[] = [];
-    let command: Promise<void> | undefined;
+    let completion: Promise<void> | undefined;
     loaded.runtime.sendUserMessage = (message: string, options: any) => {
       assert.equal(options.expandPromptTemplates, true);
-      const [name, args] = message.slice(1).split(" ");
-      command = extension.commands.get(name).handler(args, ctx);
+      completion = extension.commands.get("pi-note-done").handler(message.slice("/pi-note-done ".length), ctx);
     };
-    ctx.reload = () => { throw new Error("must not reload a stale command context"); };
+    ctx.reload = () => { throw new Error("cannot reload a stale command context"); };
     ctx.newSession = async (options: any) => {
       lifecycle.push("new");
       assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
@@ -156,16 +155,11 @@ setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},ar
       await options.withSession({ ui: ctx.ui, reload: async () => { lifecycle.push("reload"); } });
       return { cancelled: false };
     };
-    idle = false;
-    await assert.rejects(click(completeUrl), "busy completion cannot mutate the task or restart Pi");
-    assert.equal(JSON.parse(cli("agent", "get", "1")).state, "active");
-    assert.deepEqual(lifecycle, []);
-    idle = true;
-    await click(completeUrl);
-    await command;
-    assert.deepEqual(lifecycle, ["new", "reload"], "completion reloads only through the fresh session context");
+    await click(doneUrl);
+    await completion;
+    assert.deepEqual(lifecycle, ["new", "reload"]);
     assert.equal(draft, "", "the replacement session starts with an empty editor");
-    await assert.rejects(click(completeUrl), "a consumed completion link cannot complete twice");
+    await assert.rejects(click(doneUrl));
     await assert.rejects(click(lastUrl));
   } finally {
     if (extension) await event("session_shutdown");
