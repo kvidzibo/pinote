@@ -59,7 +59,7 @@ if (require.main === module) {
     process.exitCode = 2;
   } else {
     preview(process.argv[2]).catch(() => {
-      console.error('Pinote preview or suggestion unavailable; select a task and wait until Pi is idle.');
+      console.error('Pinote action unavailable; select a task and retry after any Pinote operation finishes. Done also requires Pi to be idle.');
       process.exitCode = 1;
     });
   }

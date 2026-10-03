@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -107,19 +107,52 @@ test("native task-link preview renders complete local data but never reaches req
     assert.equal(reopened.getBranch().filter((entry: any) => entry.customType === "pinote-preview").length, 1);
     assert.doesNotMatch(JSON.stringify(reopened.buildSessionContext().messages), /local-preview-/);
     idle = false;
-    await assert.rejects(click(url));
-    assert.equal(previews().length, 1);
+    const busyDir = join(temp, "busy-cli");
+    const reading = join(busyDir, "reading");
+    const release = join(busyDir, "release");
+    mkdirSync(busyDir);
+    writeFileSync(join(busyDir, "note"), `#!${process.execPath}\nconst fs=require('node:fs'),{execFile}=require('node:child_process');
+const argv=process.argv.slice(2);
+const run=()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},argv,{encoding:'utf8'},(err,out,stderr)=>{
+  process.stdout.write(out);process.stderr.write(stderr);process.exitCode=err?1:0;
+});
+if(argv[0]==='agent'&&argv[1]==='get'&&!fs.existsSync(${JSON.stringify(reading)})){
+  fs.writeFileSync(${JSON.stringify(reading)},'');
+  const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(timer);run();}},10);
+}else run();\n`, { mode: 0o755 });
+    const normalPath = process.env.PATH;
+    process.env.PATH = `${busyDir}:${normalPath}`;
+    const busyClick = click(url);
+    try {
+      for (let i = 0; i < 100 && !existsSync(reading); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.ok(existsSync(reading), "preview is reading while the agent is active");
+      await assert.rejects(click(url), "overlapping clicks stay serialized");
+      const added = await extension.tools.get("pinote_add").definition.execute("concurrent-add",
+        { text: "Agent task created during preview" }, undefined, undefined, ctx);
+      assert.equal(added.details.id, 2, "preview reads do not lock out agent writes");
+      writeFileSync(release, "");
+      await busyClick;
+    } finally {
+      writeFileSync(release, "");
+      await busyClick.catch(() => {});
+      process.env.PATH = normalPath;
+    }
+    assert.equal(previews().length, 2, "task-link preview works while the agent is active");
+    assert.equal(draft, "Keep my draft");
+    assert.doesNotMatch(JSON.stringify(session.buildSessionContext().messages), /local-preview-/);
+    const busyResume = SessionManager.open(session.getSessionFile());
+    assert.equal(busyResume.getBranch().filter((entry: any) => entry.customType === "pinote-preview").length, 2);
     idle = true;
     const brokenConfig = join(overrides.PI_CODING_AGENT_DIR, "pi-note.json");
     mkdirSync(overrides.PI_CODING_AGENT_DIR, { recursive: true });
     writeFileSync(brokenConfig, '{"handoffPrompt":""}');
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(previews().length, 2, "Settings preview works even with invalid preferences");
+    assert.equal(previews().length, 3, "Settings preview works even with invalid preferences");
     rmSync(brokenConfig);
     await event("session_tree");
     await assert.rejects(click(url), "a stale branch link must not preview a new branch");
     await click(link());
-    assert.equal(previews().length, 3);
+    assert.equal(previews().length, 4);
     await assert.rejects(click(link().replace(/\/[0-9a-f]{32}\//, `/${"0".repeat(32)}/`)));
     assert.throws(() => socketPathFor(`${link()}\n`));
     // Reproduce a 1s version probe + 4.5s successful task read, exceeding the socket's 5s deadline.
