@@ -255,7 +255,7 @@ export default function (pi: ExtensionAPI) {
         previewBridge?.setTask(previewId, (signal) => alive && generation === epoch && previewBranch === branchEpoch &&
           selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false));
         const url = previewBridge?.url();
-        // Truncate before linking so the full visible task, including overflow, is clickable.
+        // Truncate before linking so the task label, including configured overflow, is clickable.
         const label = current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, footerConfig.titleWidth, "...") : undefined;
         ctx.ui.setStatus("pinote", label && url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label);
         watcher.update(ctx, current);

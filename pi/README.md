@@ -82,8 +82,8 @@ modify the note, editor draft or task selection, and never starts a model call.
 The agent can still read the task separately with `pinote_get_current`.
 Previewing requires Pi to be idle with no other Pinote operation open.
 
-On Linux, the entire displayed task (pin, tag and title, including `...` on overflow)
-is a clickable OSC 8 link to a private per-session Unix socket.
+On Linux, the task text (pin, tag and title) is a clickable OSC 8 link to a
+private per-session Unix socket. Overflow at the configured title width stays linked.
 The package ships [a Kitty configuration example](kitty/open-actions.conf).
 Append its block to `~/.config/kitty/open-actions.conf`, preserving existing
 actions. Replace `/absolute/path/to/pi-note` with the installed package directory
@@ -286,8 +286,9 @@ By default, at most four extra fields are shown, each truncated to 60 columns.
 Overflow ends with `...`, including cuts between Markdown/link segments. Removing
 a listed field hides it even if configuration or `Bar` still names it. Terminal
 OSC 8 support is required for clicking links. Pi joins footer statuses on one
-line and truncates the combined line with `...` when the terminal is narrow;
-this extension does not replace other footers. Other fields, such as `Jira` and
+line and truncates the combined line with `...` when the terminal is narrow.
+Pi's final ellipsis is plain text; click the remaining task text to preview it.
+This extension does not replace other footers. Other fields, such as `Jira` and
 `CWD` in the example, stay off the footer unless selected.
 
 ### PR merge watcher
