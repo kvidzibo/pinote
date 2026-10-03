@@ -65,7 +65,7 @@ test("native task-link preview renders complete local data but never reaches req
     loaded.runtime.appendEntry = (type: string, data: unknown) => session.appendCustomEntry(type, data);
     loaded.runtime.sendMessage = loaded.runtime.sendUserMessage = () => { throw new Error("preview must not send messages"); };
     await event("session_start");
-    assert.match(stripVTControlCharacters(status!), /^📌 ✓\u00a0\u00a0\u00a0 · \[pinote\] Preview 日本語$/u);
+    assert.match(stripVTControlCharacters(status!), /^📌 ✓ · \[pinote\] Preview 日本語$/u);
     const previewLabel = [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07(.*?)\x1b\]8;;\x07/gu)].find((m) => m[1] === link())![2];
     assert.equal(stripVTControlCharacters(previewLabel), "[pinote] Preview 日本語",
       "preview links only the task label, separate from the completion control");

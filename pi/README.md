@@ -68,7 +68,7 @@ task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows selected-task controls and title without replacing other footers. The footer omits the task ID and state and shows only the first line, bounded by `footer.titleWidth` (default 60 terminal columns including the pin, controls, tag and title). Overflow ends with `...`. The title remains clickable for preview; task controls are separate. At very small widths controls are hidden (pin only). The pin and controls are bundled in `icons/note.txt`, `icons/check.txt`, `icons/cross.txt`, and `icons/add.txt`; they use terminal fonts, not a Nerd Font or icon theme.
+The normal Pi status area shows selected-task controls and title without replacing other footers. The footer omits the task ID and state and shows only the first line, bounded by `footer.titleWidth` (default 60 terminal columns including the pin, controls, tag and title). Overflow ends with `...`. The title remains clickable for preview; task controls are separate. At very small widths controls are hidden (pin only). The pin and controls are bundled in `icons/note.txt`, `icons/check.txt`, `icons/cross.txt`, and `icons/add.txt`; they use terminal fonts, not a Nerd Font or icon theme. Icons are bold; their apparent weight depends on the terminal font, and emoji may look unchanged.
 
 ### Display-only preview
 
@@ -185,7 +185,7 @@ asking in chat. The pin footer shows a pending suggestion, distinct from a selec
 
 ```text
 📌 ✕  + · [tag] Task title...
-📌 ✓    · [tag] Task title...
+📌 ✓ · [tag] Task title...
 ```
 
 ![Suggested task controls](../docs/images/pi-task-suggestion.png)
@@ -195,7 +195,7 @@ asking in chat. The pin footer shows a pending suggestion, distinct from a selec
 - Accent **+** creates, starts, and selects the suggested task.
 - Green **✓** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and `/pi-note-done` do the same.
 
-Done occupies the former ✕ position, not the + position, so clicking Add twice cannot accidentally complete the new task. The former + cell stays blank. The selected task's title is a separate preview link.
+Done occupies the former ✕ position, not the + position, so clicking Add twice cannot accidentally complete the new task. The selected row removes the former + cell's padding. The selected task's title is a separate preview link.
 
 The configured `footer.titleWidth` bounds the entire row (default 60 columns). Controls stay first; the tag is dropped before truncating the first-line title with `...`. Tiny widths hide controls (pin only). Pi can still clip the combined status row on narrow terminals.
 

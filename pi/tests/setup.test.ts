@@ -118,7 +118,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
     },
   } as any);
   const commandCtx: any = { ...ctx, mode: "tui", hasUI: true, isIdle: () => true,
-    sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, setStatus() {}, addAutocompleteProvider() {} } };
+    sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, theme: { bold: (value: string) => value }, setStatus() {}, addAutocompleteProvider() {} } };
   await events.get("session_start")({}, commandCtx);
   const setup = commands.get("pi-note-upgrade").handler("", commandCtx);
   await installing;
@@ -180,7 +180,7 @@ test("tree navigation during setup restores the active branch", async () => {
     ui: {
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       notify() {}, addAutocompleteProvider() {}, confirm: async () => true,
-      theme: { fg: (_color: string, value: string) => value },
+      theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
     },
   };
   await events.get("session_start")({}, ctx);

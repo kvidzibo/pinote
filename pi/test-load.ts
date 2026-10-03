@@ -39,7 +39,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       return { cancelled: false };
     },
     ui: {
-      theme: { fg: (_color: string, value: string) => value },
+      theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
       setStatus: (key: string, value?: string) => {
         (key === "pinote" ? statuses : prStatuses).push(value);
       },
@@ -133,7 +133,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(draft, "Existing draft");
     rmSync(config, { recursive: true });
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✓\u00a0\u00a0\u00a0 · [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✓ · [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
     const prompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
     assert.equal(draft, `Existing draft\n\n${prompt}`);
@@ -161,12 +161,12 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "added tasks must not bind the folder");
     await event(extension, "session_shutdown");
     writeFileSync(config, JSON.stringify({ handoffPrompt: prompt, footer: {
-      titleWidth: 24, fieldWidth: 10, fields: [{ name: "PR", label: "", format: "#<number>" }, "Next"],
+      titleWidth: 21, fieldWidth: 10, fields: [{ name: "PR", label: "", format: "#<number>" }, "Next"],
     } }));
     extension = await load(); // Reload rereads footer config without changing task data.
     draft = "";
     await event(extension, "session_start");
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✓\u00a0\u00a0\u00a0 · Resume the ...");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✓ · Resume the ...");
     const linkedTitle = [...statuses.at(-1)!.matchAll(/\x1b\]8;;([^\x07]+)\x07(.*?)\x1b\]8;;\x07/gu)].at(-1);
     assert.ok(linkedTitle, "the task link encloses the truncated label separately from Done");
     assert.equal(stripVTControlCharacters(linkedTitle[2]), "Resume the ...",
@@ -189,7 +189,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     writeFileSync(config, '{"footer":{"titleWidth":false}}');
     extension = await load();
     await event(extension, "session_start");
-    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✓\u00a0\u00a0\u00a0 · [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✓ · [Untagged] Resume the task");
     assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "PR #42");
     assert.match(notices.at(-1)!, /using default Pinote footer settings/);
     // Exercise configuration through the real loader/CLI, including edits without reload.

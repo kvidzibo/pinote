@@ -45,7 +45,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
       return { cancelled: false };
     },
     ui: {
-      theme: { fg: (_color: string, value: string) => value },
+      theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       notify: (value: string) => { notices.push(value); },
       addAutocompleteProvider: (wrapper: any) => autocompleteWrappers.push(wrapper),
@@ -328,7 +328,7 @@ test("add and tag listing require pinote 0.4.0 and select only when asked", asyn
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
     sessionManager: { getBranch: () => [] },
     ui: {
-      theme: { fg: (_color: string, value: string) => value },
+      theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       addAutocompleteProvider() {},
       notify() {},
