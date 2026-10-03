@@ -324,6 +324,8 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_start", async (_event, ctx) => {
     setupAbort?.abort();
+    // Retire old polling before bridge teardown/startup yields to its scheduled callbacks.
+    watcher.stop();
     alive = false;
     epoch++;
     branchEpoch++;
