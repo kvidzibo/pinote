@@ -128,10 +128,14 @@ Edits and tag changes retain the task ID and record old/new values in history;
   (archive box), plus editing, scheduling, and tags. Hover for labels; only tag
   choices show text. Remove archives immediately; recover the task from Archive.
 - **Right-click note text → Edit…** opens a full multiline editor. Click **Save**
-  or press **Ctrl+Enter** to save; **Enter** inserts a newline. **Cancel** or **Esc**
-  discards unsaved edits. Editing keeps the task's ID, tag, and progress state.
-  Failed saves keep the editor's input; a task changed elsewhere cannot be overwritten
-  by a stale editor. Unsaved edits are not cached like the new-task draft.
+  or press **Ctrl+Enter** to save; **Enter** inserts a newline. Closing the editor,
+  pressing **Esc**, or closing the checklist keeps a private draft, restored when you
+  next edit that task—even after restarting. The **Discard draft** icon abandons the
+  draft and closes the editor; **Save** commits it and clears the cache. Drafts do not
+  change tasks or history. Editing keeps the task's ID, tag, and progress state.
+  Failed saves keep the draft. If the task changed elsewhere, the recovered draft
+  cannot overwrite it: copy the draft, discard it, then reopen the latest task to
+  reconcile your changes. Tag-name and reminder dialogs do not cache unfinished input.
 - **Right-click note text → Tag →** choose a tag, **New tag…**, or **Untagged** to
   clear it. Each task has at most one tag. New names matching a saved tag ignoring
   case reuse its spelling: entering **pi** when **Pi** exists saves **Pi**. Names are
@@ -179,13 +183,17 @@ Edits and tag changes retain the task ID and record old/new values in history;
   retagged task may be hidden by the current filter; use **Select all tags** to see every task.
   The new-task draft is kept when switching filters.
   Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain
-  their tags, so they may be hidden by the checklist's current filter.
+  their tags. A saved or restored task hidden by the filter or collapsed view shows
+  a brief explanation with **Show task** and dismissal icons. Showing it explicitly
+  opens the full list, selects all tags, and scrolls to the task; saving/restoring
+  alone never changes the filter, view, input draft, or new-task tag.
 - Left-click note text or empty space in the checklist to focus **Add a task…**.
   Drag to select text: releasing the mouse copies the selection to the clipboard,
   then focuses the input. A plain click leaves the clipboard unchanged. Buttons,
   scrollbars, and editing/selecting text inside the input keep their normal behavior.
 - The checkbox has three states: **Empty**, **In progress** (amber dash), and
-  **Marked for deletion** (red dash):
+  **Marked for deletion** (trash icon with a red row). Hover for the current actions;
+  the distinct deletion icon does not rely on colour alone:
 
   | State | Left-click | Right-click |
   | --- | --- | --- |

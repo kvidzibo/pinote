@@ -21,6 +21,7 @@ node_modules/
 /backups/
 display.lock
 gui-draft.txt
+gui-edit-drafts/
 gui-filter.json
 .gui-draft-*
 *.sqlite

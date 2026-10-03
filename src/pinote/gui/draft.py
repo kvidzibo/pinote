@@ -25,6 +25,11 @@ class DraftCache:
         self._current = self._saved = (0, text)
         return text
 
+    def snapshot(self) -> str:
+        """Reuse the latest draft when an editor reopens before disk I/O finishes."""
+        with self._lock:
+            return self._current[1]
+
     def update(self, text: str) -> int:
         with self._lock:
             revision = self._current[0] + 1
