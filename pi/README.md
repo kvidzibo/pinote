@@ -81,20 +81,34 @@ worktrees and pull requests. Task status refreshes at session start, before/afte
 agent activity, and after commands/tools. The CLI's per-directory `agent selected`
 command is not this session memory.
 
-### Handoff prompt configuration
+### Personal configuration
 
-Set `handoffPrompt` in `~/.pi/agent/pi-note.json` (or in the agent directory set
-by `PI_CODING_AGENT_DIR`):
+Configure `~/.pi/agent/pi-note.json` (or the agent directory set by
+`PI_CODING_AGENT_DIR`):
 
 ```json
 {
-  "handoffPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet."
+  "handoffPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet.",
+  "taskOfferPolicy": "github-remote"
 }
 ```
 
-Both task selection and **Continue** read this file each time; no `/reload` is
-needed after edits. The value is literal text, not a prompt template; use `\n`
-in JSON strings for multiple lines. It must be a nonblank string without control
+`taskOfferPolicy` controls the agent's task-offer guidance:
+
+- `always` (default): offer a task when given work with no task selected.
+- `github-remote`: first verify with Git that the repository has an HTTPS or SSH
+  remote hosted on `github.com`; otherwise do not offer. Local paths and other
+  hosts do not qualify. This is agent guidance, not a network or PR-access check.
+- `never`: do not offer tasks; explicit requests to create one remain allowed.
+
+All policies preserve the existing creation tools, user-consent requirement,
+and selected tasks. Run `/reload` after changing this setting. Invalid policy
+values or unreadable/malformed configuration suppress offers; interactive startup
+warns until you fix the file and reload. No project-local configuration is read.
+
+Task selection and **Continue** reread `handoffPrompt` each time; changing that
+field needs no `/reload`. Its value is literal text, not a prompt template; use
+`\n` in JSON strings for multiple lines. It must be a nonblank string without control
 characters other than tabs and newlines. A missing file or key uses the default.
 Invalid/unreadable configuration reports an error without starting/switching a
 task or changing the editor. **Done** and agent tools are unaffected. This is
@@ -117,8 +131,8 @@ Version 0.7.0 replaces `pinote_get`/`pinote_update` with these current-task tool
 and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
 or retag existing tasks; use `/pi-note` to select an existing task.
 
-When the user gives work and no task is selected, the agent proposes one note as
-`[tag] text` and asks before creating it. No continues without a note. Yes calls
+When allowed by `taskOfferPolicy`, the agent proposes one note as `[tag] text`
+and asks before creating it. No continues without a note. Yes calls
 `pinote_add` with `select: true`. An existing selection is not replaced unless the
 user asks to switch. Reuse a saved tag name when it fits.
 
