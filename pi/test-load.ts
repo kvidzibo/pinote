@@ -292,13 +292,18 @@ test("personal task-offer policies reach the native prompt without disabling exp
       assert.match(prompt, /existing.*selection|task is already selected/);
       if (scenario.policy === "never") {
         assert.match(prompt, /Do not offer to create a pinote task/);
-        assert.doesNotMatch(prompt, /propose one note/);
+        assert.doesNotMatch(prompt, /implementation is expected to span multiple turns/);
       } else {
+        assert.match(prompt, /suggest one only when implementation is expected to span multiple turns/);
+        assert.match(prompt, /Skip suggestions for questions, investigation, recon, and small edits such as changing a few configuration lines/);
+        assert.match(prompt, /If investigation develops into substantial implementation, suggest then/);
+        assert.match(prompt, /No plan is required; use a short title describing the work/);
+        assert.match(prompt, /Explicit user requests to create one remain allowed/);
+        assert.doesNotMatch(prompt, /When the user gives work and no pinote task is selected/);
         assert.match(prompt, /use pinote_propose.*bottom bar instead of asking in chat/);
         if (scenario.policy === "github-remote") {
           assert.match(prompt, /first verify with Git.*URL host is github\.com \(HTTPS or SSH\)/);
           assert.match(prompt, /Local paths, other hosts, and GitHub-looking URL paths do not qualify/);
-          assert.match(prompt, /explicit user requests to create one remain allowed/);
         } else assert.doesNotMatch(prompt, /first verify with Git/);
       }
       const before = notices.length;

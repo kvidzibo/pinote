@@ -132,9 +132,16 @@ Configure `~/.pi/agent/pi-note.json` (or the agent directory set by
 
 `taskOfferPolicy` controls the agent's task-offer guidance:
 
-- `always` (default): offer a task when given work with no task selected.
-- `github-remote`: first verify with Git that the repository has an HTTPS or SSH
-  remote hosted on `github.com`; otherwise do not offer. Local paths and other
+With no selected task, suggest a note only when implementation is expected to
+span multiple turns. Skip questions, investigation, recon, and small edits (such
+as changing a few configuration lines). If investigation develops into substantial
+implementation, suggest then. No plan is required: a short title identifies the
+work. Explicit user requests to create a task remain allowed under every policy.
+
+- `always` (default): offer for qualifying implementation in any repository.
+- `github-remote`: for qualifying implementation, first verify with Git that the
+  repository has an HTTPS or SSH remote hosted on `github.com`; otherwise do not
+  offer. Local paths and other
   hosts do not qualify. This is agent guidance, not a network or PR-access check.
 - `never`: do not offer tasks; explicit requests to create one remain allowed.
 

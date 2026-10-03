@@ -132,8 +132,10 @@ See the [extension setup guide](pi/README.md#cli-setup-and-upgrades) for trouble
 
 #### Tasks and handoff details
 
-By default, with no selected task, the agent proposes one note and tag and asks
-before creating and selecting it. [Personal configuration](pi/README.md#personal-configuration)
+By default, with no selected task, the agent suggests a short note for
+implementation expected to span multiple turns—not questions, investigation,
+recon, or small edits. No plan is required. Creating and selecting it still needs
+your confirmation. [Personal configuration](pi/README.md#personal-configuration)
 can restrict offers to GitHub-backed repositories or disable them.
 
 Each Pi session remembers its own task, even in the same folder. Arbitrary
