@@ -128,7 +128,7 @@ test("native suggestion and completion controls require consent and reject stale
     assert.equal(stripVTControlCharacters(status!), stripVTControlCharacters(proposedStatus!), "reload restores the pending suggestion and its controls");
     assert.equal(list().length, 0, "restoring a suggestion never creates a task");
     assert.deepEqual(session.getBranch().filter((entry: any) => entry.customType === "pinote-suggestion").at(-1).data,
-      { suggestion: { text: "Add 日本語 suggested-task confirmation bar\n\nPreserve details", tag: "pinote" }, declined: false });
+      { suggestion: { text: "Add 日本語 suggested-task confirmation bar\n\nPreserve details", tag: "pinote" } });
     await assert.rejects(click(staleSuggestion[1]), "reload invalidates the old capability, not the proposal");
     const [no, yes] = links();
     await propose("Do not replace an existing proposal");
@@ -167,13 +167,24 @@ test("native suggestion and completion controls require consent and reject stale
     await assert.rejects(click(rejected[1]));
     assert.equal(list().length, 1, "dismissal must not write a note");
     assert.equal((await get()).details, null);
-    assert.match((await propose()).details.status, /dismissed/);
-    assert.equal(status, undefined, "do not nag after cross");
+    assert.match((await propose("A later task")).details.status, /pending; user can click \+/);
+    const later = links();
+    assert.match(stripVTControlCharacters(status!), /A later task/u);
+    await assert.rejects(click(rejected[0]), "old dismissal cannot clear a later proposal");
+    await assert.rejects(click(rejected[1]), "old acceptance cannot create the dismissed task");
+    assert.deepEqual(links(), later);
+    await click(later[0]);
+    assert.equal(status, undefined);
+    assert.equal(list().length, 1, "later proposals still need consent");
+    // A saved dismissal from the old version must not keep this session blocked.
+    session.appendCustomEntry("pinote-suggestion", { suggestion: null, declined: true });
     await event("session_shutdown");
     await load();
     await event("session_start");
     assert.equal(status, undefined, "reload never resurrects a dismissed proposal");
-    assert.match((await propose()).details.status, /dismissed/);
+    assert.match((await propose("A task after reload")).details.status, /pending/);
+    await click(links()[0]);
+    assert.equal(status, undefined);
     session = SessionManager.create(cwd, join(temp, "sessions"));
     ctx.sessionManager = session;
     // Forking an ancestor proposal must not restore consent consumed in the parent.

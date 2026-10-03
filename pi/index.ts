@@ -20,7 +20,7 @@ const offerGuidance = {
   "github-remote": `${implementationOfferGuidance} For eligible work, first verify with Git that the current repository has a remote whose URL host is github.com (HTTPS or SSH). Only then use pinote_propose to show one suggested \`[tag] task\` in the bottom bar instead of asking in chat. In noninteractive modes, ask before creating it. Local paths, other hosts, and GitHub-looking URL paths do not qualify. If no GitHub remote is verified, do not offer a task.`,
   never: "Do not offer to create a pinote task. Create one only when the user explicitly requests it.",
 };
-const consentGuidance = "The suggestion bar's plus creates, starts and selects the note; its cross dismisses it. Continue the requested work while the suggestion is pending; do not ask again in chat or create a note yourself. On a chat no, continue without a note; on a chat yes, call pinote_add with select true. Never add or select without consent. If a task is already selected, do not replace it unless the user asks to switch.";
+const consentGuidance = "The suggestion bar's plus creates, starts and selects the note; its cross dismisses only that suggestion, not future suggestions. Continue the requested work while the suggestion is pending; do not ask again in chat or create a note yourself. On a chat no, continue without a note; on a chat yes, call pinote_add with select true. Never add or select without consent. If a task is already selected, do not replace it unless the user asks to switch.";
 const titleGuidance = "Start task text with a short, action-oriented summary (aim for at most 60 characters). Put context, URLs, commands, and acceptance criteria after a blank line. Never put implementation details in the title.";
 const tagGuidance = "Reuse a pinote_tags name when it fits. One tag; case-sensitive, trimmed, at most 64 characters. Tags are set when creating tasks with pinote_add; agent tools cannot retag existing tasks. Do not use pinote_update_current for tags or task text.";
 type Task = {
@@ -136,8 +136,7 @@ export default function (pi: ExtensionAPI) {
   let previewBridge: ReturnType<typeof createPreviewBridge> | undefined;
   const suggestionType = "pinote-suggestion";
   let suggestion: { text: string; tag?: string } | undefined;
-  let offerDeclined = false;
-  const saveSuggestion = () => pi.appendEntry(suggestionType, { suggestion: suggestion ?? null, declined: offerDeclined });
+  const saveSuggestion = () => pi.appendEntry(suggestionType, { suggestion: suggestion ?? null });
   const clearSuggestion = (ctx: ExtensionContext, persist = true) => {
     const hadSuggestion = suggestion !== undefined;
     previewBridge?.clearSuggestion();
@@ -147,18 +146,17 @@ export default function (pi: ExtensionAPI) {
   };
   const restoreSuggestion = (ctx: ExtensionContext) => {
     suggestion = undefined;
-    offerDeclined = false;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom" || entry.customType !== suggestionType) continue;
       const data = entry.data;
-      if (!record(data) || typeof data.declined !== "boolean") continue;
+      if (!record(data)) continue;
       const value = data.suggestion;
-      suggestion = record(value) && text(value.text) && value.text.trim() &&
+      // Legacy dismissal entries clear their proposal, but never block a new one.
+      suggestion = data.declined !== true && record(value) && text(value.text) && value.text.trim() &&
         (value.tag === undefined || (text(value.tag) && value.tag.trim() && value.tag.length <= 64))
         ? { text: value.text, ...(value.tag === undefined ? {} : { tag: value.tag as string }) } : undefined;
-      offerDeclined = data.declined;
     }
-    if (selectedId !== null || offerDeclined) suggestion = undefined;
+    if (selectedId !== null) suggestion = undefined;
   };
   let alive = true;
   let epoch = 0;
@@ -426,7 +424,6 @@ export default function (pi: ExtensionAPI) {
     if (_event.reason === "new" || _event.reason === "fork") {
       // A fork may include an ancestor proposal whose consent was consumed elsewhere.
       clearSuggestion(ctx, false);
-      offerDeclined = false;
       if (ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === suggestionType)) saveSuggestion();
     }
     footerConfig = loadFooterConfig((message) => {
@@ -720,7 +717,6 @@ export default function (pi: ExtensionAPI) {
     const proposed = suggestion;
     if (!alive || !proposed || selectedId !== null) return false;
     if (choice === "no") {
-      offerDeclined = true;
       clearSuggestion(ctx);
       return true;
     }
@@ -759,7 +755,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_propose",
     label: "Pinote suggest task",
     promptGuidelines: createGuidance,
-    description: "Show a suggested task beside the pin icon in the footer, without creating it or asking in chat. + creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. An existing suggestion is retained; a dismissed offer is not repeated. In noninteractive modes ask in chat, then use pinote_add only after consent.",
+    description: "Show a suggested task beside the pin icon in the footer, without creating it or asking in chat. + creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. An existing suggestion is retained; dismissal clears only that suggestion and allows later proposals. In noninteractive modes ask in chat, then use pinote_add only after consent.",
     parameters: Type.Object({
       text: Type.String({ minLength: 1, description: "Short action-oriented title, then optional details after a blank line." }),
       tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
@@ -775,13 +771,12 @@ export default function (pi: ExtensionAPI) {
       if (current || selectedId !== null) throw new Error("A task is already selected; keep it unless the user asks to switch.");
       if (pending || setupAbort) throw new Error("A pinote operation is already open. Retry after it finishes.");
       const result = (status: string) => ({ content: [{ type: "text" as const, text: JSON.stringify({ status }) }], details: { status } });
-      if (offerDeclined) return result("dismissed; continue without a note and do not offer again");
       if (suggestion) return result("pending; existing suggestion retained, continue work without asking again");
       suggestion = { text: params.text, ...(params.tag === undefined ? {} : { tag: params.tag.trim() }) };
       saveSuggestion();
       previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
       ctx.ui.setStatus("pinote", suggestionStatus(ctx));
-      return result("pending; user can click ✓ to add and select or ✕ to dismiss, continue work without asking again");
+      return result("pending; user can click + to add and select or ✕ to dismiss, continue work without asking again");
     },
   });
   pi.registerTool({
