@@ -221,15 +221,14 @@ class NotePreview(Gtk.Window):
         if self.source_text == source:
             return  # Compare source, not rendered text, to preserve selection on polls.
         self.source_text = source
-        title = "\n" in note.text
-        markup = render_markdown(source, title=title) if self.markdown else None
+        markup = render_markdown(source, title=True) if self.markdown else None
         if markup is None:
             self.body.set_text(source)
         else:
             self.body.set_markup(markup)
         # The appended Agent heading follows the rendered task, not its source
         # character count (Markdown syntax and Unicode change those offsets).
-        prefix_markup = render_markdown(note.text, title=title) if self.markdown else None
+        prefix_markup = render_markdown(note.text, title=True) if self.markdown else None
         if prefix_markup:
             # GtkLabel supports link tags; Pango.parse_markup does not.
             prefix_label = Gtk.Label()

@@ -1,13 +1,15 @@
 from pinote.gui import preview_markdown
 
 
-def test_multiline_task_title_is_preview_heading_only(monkeypatch):
+def test_task_title_is_preview_heading_only(monkeypatch):
     source = "Literal <b>& 🐦</b>\n\nDetails"
     assert preview_markdown.render_markdown(source, title=True) == (
         '<span size="x-large" weight="bold">Literal &lt;b&gt;&amp; 🐦&lt;/b&gt;</span>\n\nDetails'
     )
     assert preview_markdown.render_markdown(source) is None
-    assert preview_markdown.render_markdown("Single line", title=True) is None
+    assert preview_markdown.render_markdown("Single line", title=True) == (
+        '<span size="x-large" weight="bold">Single line</span>'
+    )
     assert preview_markdown.render_markdown("Title\n[ref]: https://example.org", title=True) == (
         '<span size="x-large" weight="bold">Title</span>\n[ref]: https://example.org'
     )

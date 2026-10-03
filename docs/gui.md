@@ -110,11 +110,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
   field keeps the eye available until viewed, with a short removal explanation.
   Preview opens a scrollable, read-only popup with the
   full text with basic Markdown: headings, bold/italic, lists, quotes, inline/fenced
-  code, and web/email links. An ordinary multiline task's first line becomes a
-  heading in the preview only; no `#` is added to list rows or saved text. Explicit
-  Markdown headings and other block types keep their formatting. Single-line
-  tasks stay unchanged. Line breaks and blank lines are retained. Select text
-  and press **Ctrl+C** to copy the displayed text. Editing and list rows stay literal.
+  code, and web/email links. Every ordinary task's first line becomes a heading
+  in the preview, including single-line tasks with Agent fields or truncated titles;
+  no `#` is added to list rows or saved text. Explicit Markdown headings and other
+  block types keep their formatting. Line breaks and blank lines are retained.
+  Select text and press **Ctrl+C** to copy the displayed text. Editing and list rows stay literal.
   HTML stays literal, images show alt text without loading, and only explicit
   HTTP/HTTPS/mailto links can open external applications. There is no syntax highlighting.
   **Esc** or clicking outside dismisses the preview without closing the checklist.

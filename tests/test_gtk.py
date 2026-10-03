@@ -2880,6 +2880,10 @@ def test_agent_fields_enable_single_line_preview_and_refresh_links(gtk, monkeypa
     assert preview.body.get_text() == (
         "Task with a handoff\n\nAgent\nLiteral &copy;: Kept\n\nNext: Review\n\nPR: Fix #42"
     )
+    assert preview.body.get_label().startswith(
+        '<span size="x-large" weight="bold">Task with a handoff</span>'
+    )
+    assert preview.agent_offset == preview.body.get_text().index("Agent")
     assert '<a href="https://example.org/pull/42">' in preview.body.get_label()
     opened = []
     monkeypatch.setattr(Gtk, "show_uri_on_window", lambda _owner, uri, _time: opened.append(uri))

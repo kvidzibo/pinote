@@ -117,7 +117,7 @@ def render_markdown(text: str, *, title: bool = False) -> str | None:
     """Return escaped, allowlisted GTK markup, or None for the literal preview.
 
     Source line maps keep blank lines and ordinary multiline notes intact. With
-    title=True, an ordinary multiline task starts with a display-only H1. The
+    title=True, an ordinary task starts with a display-only H1. The
     parser is confined here so removing the optional extra needs no data migration.
     """
     if MarkdownIt is None:
@@ -125,7 +125,7 @@ def render_markdown(text: str, *, title: bool = False) -> str | None:
     parser = MarkdownIt("commonmark", {"html": False})
     # Style the existing inline tree, rather than reparsing a generated heading:
     # reparsing can turn visible body lines into invisible reference definitions.
-    blocks = _blocks(SyntaxTreeNode(parser.parse(text)).children, title=title and "\n" in text)
+    blocks = _blocks(SyntaxTreeNode(parser.parse(text)).children, title=title)
     result = []
     previous_end = None
     for block in blocks:
