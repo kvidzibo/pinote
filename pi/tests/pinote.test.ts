@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import pinote from "../index.ts";
-import { CombinedAutocompleteProvider, visibleWidth } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,8 +49,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
       setEditorText: (value: string) => { draft = value; },
       custom: async (factory: any) => new Promise((resolve) => {
         const picker = factory({ requestRender() {} }, ctx.ui.theme, {
-          matches: (data: string, action: string) => (data === "\r" && action === "tui.select.confirm") ||
-            (data === "\x1b" && action === "tui.select.cancel"),
+          matches: (data: string, action: string) => getKeybindings().matches(data, action as any),
         }, resolve);
         beforeChoice?.();
         const choice = choices.shift();
@@ -58,9 +57,15 @@ test("task selection, handoff, guarded Done and tools stay session-local without
           resolve(choice === "pick" ? "Continue" : choice); return;
         }
         if (choice === "save-fields") {
-          resolve({ footer: { titleWidth: 60, fieldWidth: 30, maxFields: 4,
-            fields: [{ name: "Next", label: "", link: false, format: "<value>" }] },
-            handoffPrompt: "Read the current Pinote task. Summarize your understanding, but don’t start work yet." }); return;
+          const down = (n: number) => { for (let i = 0; i < n; i++) picker.handleInput("\x1b[B"); };
+          const enter = () => picker.handleInput("\r");
+          down(4); enter(); down(4); enter(); // remove PR
+          down(4); enter(); picker.handleInput("Next"); enter(); // add
+          enter(); // link off
+          down(1); enter(); picker.handleInput("\x0b"); enter(); // blank label
+          picker.handleInput("\x1b");
+          down(1); enter(); picker.handleInput("\x0b"); picker.handleInput("30"); enter();
+          picker.handleInput("\x1b"); return;
         }
         if (choice === "older") { resolve(1); return; }
         picker.handleInput(choice === "pick" ? "\r" : "\x1b");

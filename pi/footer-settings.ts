@@ -44,7 +44,8 @@ export class FooterSettings {
   private knownFields: string[];
   private theme: Theme;
   private matches: Matches;
-  private done: (result: PinoteSettings | "tasks" | undefined) => void;
+  private done: (result: "tasks" | undefined) => void;
+  private save: (settings: PinoteSettings) => void;
   private requestRender: () => void;
   private index = 0;
   private field?: FooterField;
@@ -53,10 +54,12 @@ export class FooterSettings {
   private hasFocus = false;
 
   constructor(config: PinoteSettings, knownFields: string[], theme: Theme, matches: Matches,
-    done: (result: PinoteSettings | "tasks" | undefined) => void, requestRender: () => void, createEditor: () => Editor) {
+    done: (result: "tasks" | undefined) => void, requestRender: () => void, createEditor: () => Editor,
+    save: (settings: PinoteSettings) => void) {
     this.draft = structuredClone(config.footer);
     this.prompt = config.handoffPrompt;
     this.createEditor = createEditor;
+    this.save = save;
     this.draft.fields ??= [];
     this.knownFields = [...new Set(knownFields)].filter((name) => name !== "Bar");
     this.theme = theme; this.matches = matches; this.done = done; this.requestRender = requestRender;
@@ -76,6 +79,20 @@ export class FooterSettings {
   private validate(field: FooterField): FooterField {
     return parseFooterConfig({ footer: { fields: [field] } }).fields![0];
   }
+  private persist(footer = this.draft, handoffPrompt = this.prompt) {
+    const settings = { footer: parseFooterConfig({ footer }), handoffPrompt: parseHandoffPrompt(handoffPrompt) };
+    this.save(structuredClone(settings));
+    this.draft = settings.footer;
+    this.prompt = settings.handoffPrompt;
+  }
+  private persistField(field: FooterField) {
+    const candidate = this.validate(field);
+    const fields = this.draft.fields!.filter((entry) => entry.name !== candidate.name);
+    const index = this.draft.fields!.findIndex((entry) => entry.name === candidate.name);
+    fields.splice(index < 0 ? fields.length : index, 0, candidate);
+    this.persist({ ...this.draft, fields });
+    this.field = candidate;
+  }
   private edit(name: string) {
     this.field = structuredClone(this.draft.fields!.find((field) => field.name === name) ?? defaultFooterField(name));
     this.index = 0; this.error = "";
@@ -86,7 +103,7 @@ export class FooterSettings {
       action: () => this.ask(key, String(this.draft[key]), (value) => {
         const candidate = { ...this.draft, [key]: Number(value) };
         if (!value.trim()) throw new Error("Enter a number.");
-        this.draft = parseFooterConfig({ footer: candidate });
+        this.persist(candidate);
       }),
     }));
     rows.push({ label: `Task prompt: ${display(this.prompt)}`, action: () => {
@@ -101,40 +118,33 @@ export class FooterSettings {
     }
     rows.push({ label: "+ Add field", action: () => this.ask("Field name", "", (value) => {
       const field = this.validate(defaultFooterField(value));
-      this.edit(field.name);
-    }) }, { label: "Save settings", action: () => this.done({ footer: parseFooterConfig({ footer: this.draft }), handoffPrompt: parseHandoffPrompt(this.prompt) }) },
+      this.persistField(field);
+      this.index = 0;
+    }) },
     { label: "Return to tasks", action: () => this.done("tasks") });
     return rows;
   }
   private fieldRows(): Row[] {
     const field = this.field!;
     const rows: Row[] = [
-      { label: `Link: ${field.link ? "on" : "off (plain text)"}`, action: () => { field.link = !field.link; } },
+      { label: `Link: ${field.link ? "on" : "off (plain text)"}`, action: () => this.persistField({ ...field, link: !field.link }) },
       { label: `Label: ${display(field.label) || "(none)"}`, action: () => this.ask("Label (empty = no prefix)", field.label, (value) => {
-        this.field = this.validate({ ...field, label: value });
+        this.persistField({ ...field, label: value });
       }) },
       { label: `Format: ${display(field.format) || "(empty)"}`, action: () => this.ask("Format: <value>, <url>, <number>", field.format, (value) => {
-        this.field = this.validate({ ...field, format: value });
+        this.persistField({ ...field, format: value });
       }) },
       { label: `Width: ${field.width ?? `default (${this.draft.fieldWidth})`}`, action: () => this.ask("Width (empty = default)", field.width === undefined ? "" : String(field.width), (value) => {
         const candidate = { ...field };
         if (value.trim()) candidate.width = Number(value); else delete candidate.width;
-        this.field = this.validate(candidate);
+        this.persistField(candidate);
       }) },
-      { label: "Save field", action: () => {
-        const candidate = this.validate(field);
-        const fields = this.draft.fields!.filter((entry) => entry.name !== candidate.name);
-        const index = this.draft.fields!.findIndex((entry) => entry.name === candidate.name);
-        fields.splice(index < 0 ? fields.length : index, 0, candidate);
-        this.draft = parseFooterConfig({ footer: { ...this.draft, fields } });
-        this.field = undefined; this.index = 0;
-      } },
     ];
     if (this.draft.fields!.some((entry) => entry.name === field.name)) rows.push({ label: "Remove field", action: () => {
-      this.draft.fields = this.draft.fields!.filter((entry) => entry.name !== field.name);
+      this.persist({ ...this.draft, fields: this.draft.fields!.filter((entry) => entry.name !== field.name) });
       this.field = undefined; this.index = 0;
     } });
-    rows.push({ label: "Cancel field", action: () => { this.field = undefined; this.index = 0; } });
+    rows.push({ label: "Back to settings", action: () => { this.field = undefined; this.index = 0; } });
     return rows;
   }
   handleInput(data: string) {
@@ -146,7 +156,7 @@ export class FooterSettings {
         else if (this.matches(data, "tui.select.cancel")) this.editor = undefined;
         else if (this.matches(data, "tui.input.newLine")) this.editor.handleInput(data);
         else if (this.matches(data, "tui.select.confirm")) {
-          this.prompt = parseHandoffPrompt(this.editor.getExpandedText());
+          this.persist(this.draft, this.editor.getExpandedText());
           this.editor = undefined;
         } else this.editor.handleInput(data);
       } else if (this.input) {
@@ -172,10 +182,10 @@ export class FooterSettings {
     const lines = [this.theme.fg("accent", "Pinote — Global Settings"), this.theme.fg("dim", "Tasks (Tab) · Settings · Fields")];
     if (this.editor) {
       lines.push(this.theme.fg("accent", "Task prompt"), ...this.editor.render(width),
-        this.theme.fg("dim", "Enter apply · Shift+Enter/Ctrl+J newline · Ctrl+C clear · Esc cancel"));
+        this.theme.fg("dim", "Enter save · Shift+Enter/Ctrl+J newline · Ctrl+C clear · Esc cancel edit"));
     } else if (this.input) {
       lines.push(this.theme.fg("accent", this.input.heading), ...this.input.widget.render(width),
-        this.theme.fg("dim", "Enter apply to draft · Esc cancel"));
+        this.theme.fg("dim", "Enter save · Esc cancel edit"));
     } else {
       if (this.field) lines.push(this.theme.fg("accent", `Field: ${display(this.field.name)}`));
       const rows = this.field ? this.fieldRows() : this.rootRows();
@@ -184,10 +194,10 @@ export class FooterSettings {
       lines.push(...rows.slice(start, start + 8).map((row, offset) => offset + start === this.index
         ? this.theme.fg("accent", `> ${row.label}`) : `  ${row.label}`));
       if (rows.length > 8) lines.push(this.theme.fg("dim", `${this.index + 1}/${rows.length}`));
-      lines.push(this.theme.fg("dim", "↑↓ navigate · Enter edit · Esc cancel"));
+      lines.push(this.theme.fg("dim", "↑↓ navigate · Enter edit · Esc back"));
     }
     if (this.error) lines.push(this.theme.fg("error", this.error));
-    lines.push(this.theme.fg("dim", "Tab: tasks, discard draft · Save settings: persist globally"));
+    lines.push(this.theme.fg("dim", "Changes save automatically · Tab: tasks"));
     return lines.map((line) => truncateToWidth(line, width));
   }
   invalidate() { this.input?.widget.invalidate(); this.editor?.invalidate(); }

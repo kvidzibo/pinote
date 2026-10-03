@@ -90,7 +90,7 @@ export function loadFooterConfig(warn: (message: string) => void): FooterConfig 
 
 // Synchronous compare-and-replace: reject edits made while the settings dialog was open,
 // preserve unrelated keys, and never leave partial JSON behind.
-export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string): FooterConfig {
+export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string) {
   const checked = parseFooterConfig({ footer: config });
   const prompt = handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) };
   const directory = getAgentDir();
@@ -101,15 +101,17 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
   try { descriptor = openSync(lock, "wx", 0o600); }
   catch { throw new Error("Pinote settings are locked. Retry after another save finishes; remove a stale pi-note.json.lock only when no save is running."); }
   const temp = join(directory, `.pi-note-${randomUUID()}.tmp`);
+  let raw: string;
   try {
     if (readRaw() !== expectedRaw) throw new Error("Pi-note configuration changed while settings were open. Reopen settings before saving.");
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("pi-note.json is a symlink. Edit its target manually rather than replacing the link.");
     const root = expectedRaw === null ? {} : JSON.parse(expectedRaw);
     if (!object(root)) throw new Error("Invalid pi-note configuration; expected an object.");
-    writeFileSync(temp, `${JSON.stringify({ ...root, ...prompt, footer: checked }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    raw = `${JSON.stringify({ ...root, ...prompt, footer: checked }, null, 2)}\n`;
+    writeFileSync(temp, raw, { flag: "wx", mode: 0o600 });
     renameSync(temp, path);
   } finally { rmSync(temp, { force: true }); closeSync(descriptor); rmSync(lock, { force: true }); }
-  return checked;
+  return { config: checked, raw };
 }
 
 export function effectiveFooterFields(config: FooterConfig, notes: Record<string, string> = {}): FooterField[] {

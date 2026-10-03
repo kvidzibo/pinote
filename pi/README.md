@@ -63,7 +63,7 @@ they are not copied into the draft. The default prompt asks for a summary, not i
 Existing drafts are preserved; nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, **Switch task**, and **Settings**.
 Press **Tab** from the task menu or picker to open global settings; Tab
-returns to tasks without saving. Settings also lists fields found on the current
+returns to tasks, keeping saved changes. Settings also lists fields found on the current
 task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
@@ -110,10 +110,11 @@ values or unreadable/malformed configuration suppress offers; interactive startu
 warns until you fix the file and reload. No project-local configuration is read.
 
 In `/pi-note → Settings`, select **Task prompt** to edit the text inserted after
-selection or **Continue**. **Shift+Enter** or **Ctrl+J** adds a newline; **Enter** applies it to
-the settings draft, **Ctrl+C** clears it, and **Esc** cancels that edit. Select **Save settings** to
-persist it globally; leaving Settings with **Esc** or **Tab** discards the draft.
-Saving never changes existing editor input or submits anything.
+selection or **Continue**. **Shift+Enter** or **Ctrl+J** adds a newline; **Enter** saves it
+globally, **Ctrl+C** clears the edit, and **Esc** cancels that unfinished edit.
+Settings and fields save automatically after each confirmed change; no separate
+Save action is needed. Leaving Settings with **Esc** or **Tab** keeps saved changes
+and discards only unfinished input. Saving never changes existing editor input or submits anything.
 
 Task selection and **Continue** reread `handoffPrompt` each time; changing that
 field needs no `/reload`. Its value is literal text, not a prompt template; use
@@ -209,9 +210,12 @@ accepted. Missing/blank values do not display and do not consume the field limit
 In `/pi-note → Settings`, **Add field** adds a global display definition, not a
 task value. Select any field to edit **Link**, **Label**, **Format**, and **Width**.
 Label starts as the field name; clear it for no prefix. Link off displays plain
-text without a clickable link. **Save** persists the draft; cancellation leaves
-configuration untouched. Saves include the task prompt and preserve unrelated
-settings (such as `taskOfferPolicy`) and reject configuration changes made while the dialog was open.
+text without a clickable link. Toggles, field additions/removals, and edits confirmed
+with **Enter** save immediately. **Esc** returns from a field to settings without
+undoing saved changes. Invalid edits and failed saves stay open with an error;
+failed saves leave saved values unchanged and can be retried. Saves include the task
+prompt, preserve unrelated settings (such as `taskOfferPolicy`), and reject external
+configuration changes made since opening settings or the last successful save.
 Concurrent saves use `pi-note.json.lock`; remove stale locks only when no save is
 running. Symlinked configuration must be edited manually; saves never replace the link.
 
