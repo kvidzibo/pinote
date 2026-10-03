@@ -96,6 +96,22 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     await assert.rejects(update.execute("unselected", { expected_updated_at: "unused", set: { Next: "No task" } },
       undefined, undefined, ctx), /No selected pinote task/);
     assert.deepEqual(JSON.parse(cli("agent", "get", "1")).agent_notes, {});
+    const config = join(temp, "pi", "pi-note.json");
+    mkdirSync(dirname(config), { recursive: true });
+    writeFileSync(config, '{"handoffPrompt":false}');
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.match(notices.at(-1)!, /handoffPrompt/);
+    assert.equal(JSON.parse(cli("agent", "get", "1")).state, "active");
+    assert.equal(entries.length, 0, "invalid configuration cannot select an initial task");
+    assert.equal(draft, "Existing draft");
+    rmSync(config);
+    mkdirSync(config); // A directory is an unreadable configuration file, even when running as root.
+    await extension.commands.get("pi-note").handler("", ctx);
+    assert.match(notices.at(-1)!, /Cannot read .*pi-note\.json/);
+    assert.equal(JSON.parse(cli("agent", "get", "1")).state, "active");
+    assert.equal(entries.length, 0);
+    assert.equal(draft, "Existing draft");
+    rmSync(config, { recursive: true });
     await extension.commands.get("pi-note").handler("", ctx);
     assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
@@ -137,8 +153,6 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(resumed.text, "Resume the task");
     assert.deepEqual(resumed.agent_notes, { PR: pr, Next: "Review" });
     // Exercise configuration through the real loader/CLI, including edits without reload.
-    const config = join(temp, "pi", "pi-note.json");
-    mkdirSync(dirname(config), { recursive: true });
     for (const action of ["Continue", "Switch task"]) {
       choice = action;
       const customPrompt = `Read the current Pinote task.\nExplain ${action} 日本語; wait for approval.`;
