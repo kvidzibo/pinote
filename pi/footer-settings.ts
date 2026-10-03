@@ -118,8 +118,11 @@ export class FooterSettings {
     }
     rows.push({ label: "+ Add field", action: () => this.ask("Field name", "", (value) => {
       const field = this.validate(defaultFooterField(value));
-      this.persistField(field);
-      this.index = 0;
+      if (this.draft.fields!.some((entry) => entry.name === field.name)) this.edit(field.name);
+      else {
+        this.persistField(field);
+        this.index = 0;
+      }
     }) },
     { label: "Return to tasks", action: () => this.done("tasks") });
     return rows;

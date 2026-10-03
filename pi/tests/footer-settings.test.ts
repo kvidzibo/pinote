@@ -41,6 +41,12 @@ test("global field settings autosave blank labels, PR formatting, links, add, re
   ui.handleInput("\x1b");
   for (const width of [16, 40, 100]) assert.ok(ui.render(width).every((line) => visibleWidth(line) <= width));
   assert.doesNotMatch(ui.render(100).join("\n"), /Save field|Save settings/);
+  const beforeDuplicate = saved;
+  down(7); enter(); ui.handleInput(" PR "); enter(); // normalized duplicate reopens the saved definition
+  assert.match(ui.render(100).join("\n"), /Label: \(none\)/);
+  assert.match(ui.render(100).join("\n"), /Link: off/);
+  assert.equal(saved, beforeDuplicate, "duplicate additions do not overwrite saved customization");
+  ui.handleInput("\x1b");
   ui.handleInput("\t"); assert.equal(result, "tasks");
   assert.deepEqual(saved!.footer.fields, [{ name: "PR", label: "", link: false, format: "#<number>" }, defaultFooterField("Dashboard")]);
   assert.deepEqual(config, original, "the supplied configuration is not mutated");
