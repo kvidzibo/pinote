@@ -1,11 +1,10 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
+import { defaultFooterConfig, type FooterConfig, type FooterField } from "./footer-config.ts";
 
 export const footerStatusKey = "pinote-links";
 export const legacyFooterStatusKey = "pinote-pr";
-const maxCustomChips = 4;
 const maxLabelWidth = 24;
-const maxChipWidth = 60;
 const maxUrlLength = 2048;
 const blockedProtocols = new Set(["javascript:", "data:", "vbscript:"]);
 const control = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -167,32 +166,38 @@ export function renderMarkdown(value: string | undefined): FooterSegment[] {
 }
 
 function truncateSegments(segments: readonly FooterSegment[], width: number): FooterSegment[] {
+  if (segments.reduce((sum, segment) => sum + visibleWidth(segment.text), 0) <= width) return [...segments];
   const kept: FooterSegment[] = [];
-  let used = 0;
+  let room = width - 3;
   for (const segment of segments) {
-    if (used >= width) break;
-    const room = width - used;
-    const text = visibleWidth(segment.text) <= room ? segment.text : clip(segment.text, room);
-    if (!text) break;
-    kept.push(segment.url ? { text, url: segment.url } : { text });
-    used += visibleWidth(text);
+    if (room <= 0) break;
+    const text = stripVTControlCharacters(truncateToWidth(segment.text, room, ""));
+    if (text) kept.push(segment.url ? { text, url: segment.url } : { text });
+    room -= visibleWidth(text);
+    if (text !== segment.text) break;
   }
+  // Keep the ellipsis outside hyperlinks, including cuts at segment boundaries.
+  kept.push({ text: "..." });
   return kept;
 }
 
-export function customFooterChips(notes: Record<string, string> | undefined): FooterChip[] {
+export function customFooterChips(
+  notes: Record<string, string> | undefined, config: FooterConfig = defaultFooterConfig,
+): FooterChip[] {
   if (!notes) return [];
   const chips: FooterChip[] = [];
   const seen = new Set(["PR", "Bar"]);
-  for (const raw of (notes.Bar ?? "").split("\n")) {
-    if (chips.length >= maxCustomChips) break;
-    const name = raw.normalize("NFC").trim();
+  const fields: FooterField[] = config.fields ?? (notes.Bar ?? "").split("\n").map((label) => ({ label }));
+  for (const field of fields) {
+    if (chips.length >= config.maxFields) break;
+    const name = field.label.normalize("NFC").trim();
     if (!name || seen.has(name)) continue;
     seen.add(name);
     const label = clip(name, maxLabelWidth);
     const body = renderMarkdown(ownText(notes, name));
     if (!label || !body.length) continue;
-    chips.push({ segments: truncateSegments([{ text: `${label}: ` }, ...body], maxChipWidth) });
+    const fieldWidth = field.width ?? config.fieldWidth;
+    chips.push({ segments: truncateSegments([{ text: `${label}: ` }, ...body], fieldWidth) });
   }
   return chips;
 }
@@ -200,11 +205,12 @@ export function customFooterChips(notes: Record<string, string> | undefined): Fo
 export function footerChips(
   task: { state: string; agent_notes: Record<string, string> } | null,
   pr: { url: string; number: string } | undefined,
+  config: FooterConfig = defaultFooterConfig,
 ): FooterChip[] {
   if (!task || !["active", "in_progress"].includes(task.state)) return [];
   return [
     ...(pr ? [{ segments: [{ text: `PR #${pr.number}`, url: pr.url }] }] : []),
-    ...customFooterChips(task.agent_notes),
+    ...customFooterChips(task.agent_notes, config),
   ];
 }
 

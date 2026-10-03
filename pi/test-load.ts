@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -140,10 +141,14 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       "adding without select must preserve the current task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "added tasks must not bind the folder");
     await event(extension, "session_shutdown");
-    extension = await load(); // New process-like extension state, same durable database.
+    writeFileSync(config, JSON.stringify({ handoffPrompt: prompt, footer: {
+      titleWidth: 24, fieldWidth: 10, fields: ["Next"],
+    } }));
+    extension = await load(); // Reload rereads footer config without changing task data.
     draft = "";
     await event(extension, "session_start");
-    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume ...");
+    assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "PR #42 · Next: R...");
     assert.equal(draft, "", "startup never overwrites/submits the editor");
     choice = "Continue";
     await extension.commands.get("pi-note").handler("", ctx);
@@ -152,6 +157,13 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       "resume", {}, undefined, undefined, ctx)).content[0].text);
     assert.equal(resumed.text, "Resume the task");
     assert.deepEqual(resumed.agent_notes, { PR: pr, Next: "Review" });
+    await event(extension, "session_shutdown");
+    writeFileSync(config, '{"footer":{"titleWidth":false}}');
+    extension = await load();
+    await event(extension, "session_start");
+    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "PR #42");
+    assert.match(notices.at(-1)!, /using default Pinote footer settings/);
     // Exercise configuration through the real loader/CLI, including edits without reload.
     for (const action of ["Continue", "Switch task"]) {
       choice = action;

@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { footerChips, footerStatusKey, legacyFooterStatusKey, renderFooterLinks, type FooterChip } from "./footer-links.ts";
+import type { FooterConfig } from "./footer-config.ts";
 
 export type WatchedTask = {
   id: number;
@@ -14,6 +15,7 @@ type Dependencies = {
   done: (task: WatchedTask, canAct: () => boolean) => Promise<void>;
   claim: () => (() => void) | undefined;
   refresh: (ctx: ExtensionContext) => Promise<void>;
+  footerConfig?: () => FooterConfig;
 };
 const entryType = "pinote-pr-acknowledged";
 const watchEntryType = "pinote-pr-watched";
@@ -99,7 +101,7 @@ export function createPRWatcher(pi: ExtensionAPI, deps: Dependencies) {
     revision++;
     // Display only the active selection, independently of the retained merge watch.
     visiblePR = current && ["active", "in_progress"].includes(current.state) ? taskPR(current) : undefined;
-    visibleLinks = footerChips(current, visiblePR);
+    visibleLinks = footerChips(current, visiblePR, deps.footerConfig?.());
     // Completion clears selection. Keep the last task until poll verifies its state.
     const changed = current ? remember(taskPR(current) ? current : null) : false;
     paint();

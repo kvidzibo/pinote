@@ -66,7 +66,7 @@ Type in the task picker to filter by text, ID, tag, or state (all words must mat
 Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
 **○** for active, followed by the tag (`[Untagged]` when absent).
 The normal Pi status area shows `📌 [tag] Task title` without replacing other footers.
-The footer omits the task ID and state and shows only the first line, truncated to 60 terminal columns including the pin and tag.
+The footer omits the task ID and state and shows only the first line, truncated to the configured width (default 60 terminal columns including the pin and tag). Overflow ends with `...`.
 The pin glyph is bundled in `icons/note.txt`; it uses the terminal's emoji font, not a Nerd Font or icon theme.
 
 Each Pi session remembers its own task, including several sessions in one folder.
@@ -138,13 +138,14 @@ user asks to switch. Reuse a saved tag name when it fits.
 
 Agents are guided to keep notes to three short bullets total: relevant outcome,
 blocker, and next action. Replace stale notes; omit narration, repeated task text,
-and routine test logs. Keep a GitHub pull request in `PR`. To show another footer
-field, set its Markdown value and append its label to `Bar`, one label per line.
-Do not list `PR` in `Bar`. Remove the field and its `Bar` line to drop it. This is
-guidance, not truncation or a storage limit.
+and routine test logs. Keep a GitHub pull request in `PR`. Set configured footer
+fields with Markdown values; remove a field to hide it. Without a configured field
+list, append its label to `Bar`, one label per line. Do not list `PR` in `Bar`.
+Agents use `pinote_update_current`; there is no separate `add_to_bottom_bar` tool.
+This is guidance, not truncation or a storage limit.
 
 Values are Markdown strings; no fields are required. `PR` enables the watcher below.
-`Bar` chooses extra footer fields:
+`Bar` chooses extra footer fields unless configuration overrides it:
 
 ```markdown
 # Agent
@@ -163,20 +164,53 @@ sessions. Labels are case-sensitive (trimmed, Unicode-normalized), at most 64
 characters; values are at most 4096 characters. Maximum 64 fields / 32 KiB JSON
 per task. Use removal rather than empty values.
 
+### Footer configuration
+
+Add `footer` to `~/.pi/agent/pi-note.json` (or `pi-note.json` under
+`PI_CODING_AGENT_DIR`), preserving any existing `handoffPrompt`:
+
+```json
+{
+  "footer": {
+    "titleWidth": 40,
+    "fieldWidth": 30,
+    "maxFields": 4,
+    "fields": ["Dashboard", { "label": "Next", "width": 24 }]
+  }
+}
+```
+
+Widths are terminal columns, including icons/tags or field labels, and must be
+integers from 3 to 1000. Defaults: `titleWidth: 60`, `fieldWidth: 60`,
+`maxFields: 4` (allowed 0–64). Each field can override `fieldWidth` with `width`.
+`fields` selects labels in order, regardless of a task's `Bar`; absent/`null`
+uses `Bar` for compatibility. `[]` or `maxFields: 0` hides all extra fields, not
+`PR`. Missing/reserved (`PR`, `Bar`) and duplicate labels are skipped. Up to 64
+labels are accepted, using the task's case-sensitive, trimmed NFC labels.
+
+Run `/reload` after editing footer settings; they are also reread on session start.
+Invalid footer configuration warns and uses footer defaults; missing files silently
+use defaults. This does not validate or change `handoffPrompt`, which is read
+separately on selection/Continue as described above.
+This is user-level configuration, not task data; agents should not change it
+without approval. Task values still come from `pinote_update_current`.
+
 ### Footer links
 
 The selected active or in-progress task can show fields after its title.
 `PR` is always shown when it matches the watcher format below, as **PR #123**.
-`Bar` is a newline-separated list of other field labels. Each listed value is
+Configured `fields`, or otherwise `Bar`, selects other field labels. Each listed value is
 Markdown: the footer shows its text, and links in it are clickable for any scheme
 except `javascript:`, `data:`, and `vbscript:`. Credentials, control characters,
 and targets over 2048 characters after serialization are shown as text but not
 linked. Missing labels and the `PR` and `Bar` labels themselves are skipped.
-At most four extra fields are shown, each truncated to 60 columns. Removing a listed
-field hides it even if `Bar` still names it. Terminal OSC 8 support is required
-for clicking links. Pi joins footer statuses on one line, so a narrow terminal can
-ellipsize later fields. Other fields, such as `Jira` and `CWD` in the example, stay
-off the footer unless named in `Bar`.
+By default, at most four extra fields are shown, each truncated to 60 columns.
+Overflow ends with `...`, including cuts between Markdown/link segments. Removing
+a listed field hides it even if configuration or `Bar` still names it. Terminal
+OSC 8 support is required for clicking links. Pi joins footer statuses on one
+line and truncates the combined line with `...` when the terminal is narrow;
+this extension does not replace other footers. Other fields, such as `Jira` and
+`CWD` in the example, stay off the footer unless selected.
 
 ### PR merge watcher
 
