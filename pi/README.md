@@ -171,8 +171,8 @@ user-level configuration only; project-local files are not read.
   populating relevant values with `pinote_update_current`. Empty/missing values
   stay hidden; this tool does not edit configuration.
 - `pinote_tags`: list saved tag names.
-- `pinote_propose`: show a nonmodal suggested-task bar below the input without
-  creating a note. Optional `tag`; full text is retained, but the bar shows only
+- `pinote_propose`: show a suggested task beside the pin icon in the footer without
+  creating a note. Optional `tag`; full text is retained, but the footer shows only
   its title. Requires a TUI with no selected task. The agent continues your work
   while the suggestion awaits your choice.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
@@ -183,11 +183,24 @@ and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
 or retag existing tasks; use `/pi-note` to select an existing task.
 
 When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
-asking in chat. A bar below the input shows `[tag] Task title  ✓  ✕`:
+asking in chat. The pin footer shows a pending suggestion, distinct from a selected task:
 
-- **✓** creates the note, starts it, and selects it for this session.
-- **✕** hides the suggestion without creating a note; further offers are suppressed
+```text
+📌 Suggested: ✓ Add  ✕ Dismiss · [tag] Task title...
+```
+
+![Suggested task beside the footer pin](../docs/images/pi-task-suggestion.png)
+
+- **✓ Add** creates the note, starts it, and selects it for this session.
+- **✕ Dismiss** hides the suggestion without creating a note; further offers are suppressed
   until a new session or reload.
+
+The configured `footer.titleWidth` bounds the whole suggestion (default 60 columns).
+Controls precede the variable text so long titles cannot push them off the right edge.
+The tag is omitted when space is tight; the first-line title truncates with `...`.
+Smaller budgets shorten controls to ✓ and ✕; tiny budgets show only the suggestion cue.
+Pi can still clip the combined status row on narrow terminals; use the commands below
+if the controls are not visible. Accepting replaces the suggestion with the selected task.
 
 Neither action submits input or starts an agent turn; editor drafts stay unchanged.
 The icons reuse the [Kitty preview handler](#display-only-preview), with no additional

@@ -131,7 +131,7 @@ export default function (pi: ExtensionAPI) {
   let offerDeclined = false;
   const clearSuggestion = (ctx: ExtensionContext) => {
     previewBridge?.clearSuggestion();
-    if (suggestion && ctx.hasUI && ctx.mode === "tui") ctx.ui.setWidget("pinote-suggestion", undefined);
+    if (suggestion && ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
     suggestion = undefined;
   };
   let alive = true;
@@ -142,6 +142,11 @@ export default function (pi: ExtensionAPI) {
   let activeContext: ExtensionContext | undefined;
   let cliState: CLIAction | undefined;
   let footerConfig = { ...defaultFooterConfig };
+  const suggestionStatus = (ctx: ExtensionContext) => suggestion ? renderSuggestion(
+    suggestion, footerConfig.titleWidth, ctx.ui.theme, {
+      yes: previewBridge?.suggestionUrl("yes"), no: previewBridge?.suggestionUrl("no"),
+    },
+  ) : undefined;
   const checkCLI = async (ctx: ExtensionContext, suggest = false) => {
     if (!ctx.hasUI || ctx.mode !== "tui" || setupAbort) return;
     const generation = epoch;
@@ -266,13 +271,13 @@ export default function (pi: ExtensionAPI) {
         const url = previewBridge?.url();
         // Truncate before linking so the task label, including configured overflow, is clickable.
         const label = current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, footerConfig.titleWidth, "...") : undefined;
-        ctx.ui.setStatus("pinote", label && url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label);
+        ctx.ui.setStatus("pinote", current ? (label && url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label) : suggestionStatus(ctx));
         watcher.update(ctx, current);
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
         previewBridge?.invalidate();
-        ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
+        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${noteIcon} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
       }
     }
   };
@@ -661,7 +666,7 @@ export default function (pi: ExtensionAPI) {
     name: "pinote_propose",
     label: "Pinote suggest task",
     promptGuidelines: createGuidance,
-    description: "Show a suggested task in a nonmodal bar below the input, without creating it or asking in chat. ✓ creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. An existing suggestion is retained; a dismissed offer is not repeated. In noninteractive modes ask in chat, then use pinote_add only after consent.",
+    description: "Show a suggested task beside the pin icon in the footer, without creating it or asking in chat. ✓ creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. An existing suggestion is retained; a dismissed offer is not repeated. In noninteractive modes ask in chat, then use pinote_add only after consent.",
     parameters: Type.Object({
       text: Type.String({ minLength: 1, description: "Short action-oriented title, then optional details after a blank line." }),
       tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
@@ -681,13 +686,7 @@ export default function (pi: ExtensionAPI) {
       if (suggestion) return result("pending; existing suggestion retained, continue work without asking again");
       suggestion = { text: params.text, ...(params.tag === undefined ? {} : { tag: params.tag.trim() }) };
       previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
-      const proposed = suggestion;
-      ctx.ui.setWidget("pinote-suggestion", (_tui, theme) => ({
-        render: (width) => [renderSuggestion(proposed, width, theme, {
-          yes: previewBridge?.suggestionUrl("yes"), no: previewBridge?.suggestionUrl("no"),
-        })],
-        invalidate() {},
-      }), { placement: "belowEditor" });
+      ctx.ui.setStatus("pinote", suggestionStatus(ctx));
       return result("pending; user can click ✓ to add and select or ✕ to dismiss, continue work without asking again");
     },
   });

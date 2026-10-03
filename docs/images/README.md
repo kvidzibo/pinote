@@ -10,6 +10,8 @@ and no prompt was submitted to a provider.
   outside the captured UI. The checklist and editor are cropped separately.
 - `workflow-still.png`: static alternative showing the edited, in-progress task.
 - `pi-integration.png`: selected-task menu/footer and the same task's Agent preview.
+- `pi-task-suggestion.png`: pi-note 0.13.2 pending suggestion in the pin footer,
+  cropped from an isolated Xterm capture with synthetic data and no model request.
 
 When refreshing these assets, use the [GUI development environment](../development.md)
 and an isolated Xvfb display, private D-Bus and private i3 socket. Use temporary
