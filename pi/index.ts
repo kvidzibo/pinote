@@ -163,6 +163,7 @@ export default function (pi: ExtensionAPI) {
   let epoch = 0;
   let refreshSerial = 0;
   let pending: symbol | undefined;
+  let previewPending = false;
   let setupAbort: AbortController | undefined;
   let activeContext: ExtensionContext | undefined;
   let cliState: CLIAction | undefined;
@@ -311,18 +312,18 @@ export default function (pi: ExtensionAPI) {
     }
   };
   const preview = async (ctx: ExtensionContext, requestSignal?: AbortSignal): Promise<boolean> => {
-    if (!ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || !validId(selectedId)) return false;
+    if (!ctx.hasUI || ctx.mode !== "tui" || pending || previewPending || !validId(selectedId)) return false;
     const generation = epoch;
     const branch = branchEpoch;
     const id = selectedId;
-    const operation = Symbol();
-    pending = operation;
+    // Serialize clicks without blocking the agent's task updates.
+    previewPending = true;
     // Complete before the bridge's 5s and helper's 6s deadlines; disconnection cancels reads too.
     const controller = new AbortController();
     const deadline = Date.now() + 4000;
     const timer = setTimeout(() => controller.abort(), 4000);
     const signal = requestSignal ? AbortSignal.any([requestSignal, controller.signal]) : controller.signal;
-    const canUse = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle() &&
+    const canUse = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && !pending &&
       !signal.aborted && Date.now() < deadline;
     try {
       const current = await currentTask(signal, canUse);
@@ -335,7 +336,7 @@ export default function (pi: ExtensionAPI) {
       return false;
     } finally {
       clearTimeout(timer);
-      if (pending === operation) pending = undefined;
+      previewPending = false;
     }
   };
   const dispatchCompletion = (ctx: ExtensionContext, displayed: Task, selection: string): Promise<boolean> => {

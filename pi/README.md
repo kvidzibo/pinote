@@ -81,7 +81,12 @@ to model**: it is a local custom session entry, excluded from subsequent model
 requests, compaction and branch summaries. It survives session resume but does not
 modify the note, editor draft or task selection, and never starts a model call.
 The agent can still read the task separately with `pinote_get_current`.
-Previewing requires Pi to be idle with no other Pinote operation open.
+Click previews work while the agent is running, provided no other Pinote operation
+is open. Each click saves a fresh snapshot in the transcript, above any currently
+streaming response. Later output scrolls it upward; it does not expire. Preview
+reads never lock out the agent's task updates. Settings still requires Pi to be idle.
+
+![Preview above a running response](../docs/images/pi-note-active-preview.png)
 
 On Linux, the task text (pin, tag and title) is a clickable OSC 8 link to a
 private per-session Unix socket. Overflow at the configured title width stays linked.
