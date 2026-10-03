@@ -330,6 +330,7 @@ test("add and tag listing require pinote 0.4.0 and select only when asked", asyn
     cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
     sessionManager: { getBranch: () => [] },
     ui: {
+      theme: { fg: (_color: string, value: string) => value },
       setStatus: (key: string, value?: string) => { if (key === "pinote") status = value; },
       addAutocompleteProvider() {},
       notify() {},

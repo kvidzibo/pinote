@@ -49,7 +49,7 @@ test("native task-link preview renders complete local data but never reaches req
   const event = async (name: string) => {
     for (const handler of extension.handlers.get(name) ?? []) await handler({}, ctx);
   };
-  const link = () => /\x1b\]8;;([^\x07]+)\x07/u.exec(status!)![1];
+  const link = () => [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07/gu)].map((m) => m[1]).find((url) => !url.endsWith("/done"))!;
   const previews = () => session.getBranch().filter((entry: any) => entry.customType === "pinote-preview");
   try {
     cli("agent", "add", "--text=Preview 日本語\nlocal-preview-body-marker", "--tag=pinote");
@@ -65,9 +65,10 @@ test("native task-link preview renders complete local data but never reaches req
     loaded.runtime.appendEntry = (type: string, data: unknown) => session.appendCustomEntry(type, data);
     loaded.runtime.sendMessage = loaded.runtime.sendUserMessage = () => { throw new Error("preview must not send messages"); };
     await event("session_start");
-    assert.match(stripVTControlCharacters(status!), /^📌 \[pinote\] Preview 日本語$/u);
-    assert.equal(status, `\x1b]8;;${link()}\x07📌 [pinote] Preview 日本語\x1b]8;;\x07`,
-      "the entire visible task is linked, without an eye icon or trailing linked whitespace");
+    assert.match(stripVTControlCharacters(status!), /^📌 ✓\u00a0\u00a0\u00a0 · \[pinote\] Preview 日本語$/u);
+    const previewLabel = [...status!.matchAll(/\x1b\]8;;([^\x07]+)\x07(.*?)\x1b\]8;;\x07/gu)].find((m) => m[1] === link())![2];
+    assert.equal(stripVTControlCharacters(previewLabel), "[pinote] Preview 日本語",
+      "preview links only the task label, separate from the completion control");
     assert.ok(visibleWidth(status!) <= 60);
     const url = link();
     const beforeContext = session.buildSessionContext().messages;
