@@ -54,6 +54,13 @@ test("task selection, handoff, guarded Done and tools stay session-local without
         }, resolve);
         beforeChoice?.();
         const choice = choices.shift();
+        if (picker.render(100).join("\n").includes("Continue")) {
+          resolve(choice === "pick" ? "Continue" : choice); return;
+        }
+        if (choice === "save-fields") {
+          resolve({ titleWidth: 60, fieldWidth: 30, maxFields: 4,
+            fields: [{ name: "Next", label: "", link: false, format: "<value>" }] }); return;
+        }
         if (choice === "older") { resolve(1); return; }
         picker.handleInput(choice === "pick" ? "\r" : "\x1b");
       }),
@@ -166,6 +173,14 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.ok(!status!.includes("Hidden details"), "footer shows only the first line");
   assert.ok(!status!.includes("In progress"), "footer omits state text");
   assert.ok(!/[●○]/u.test(status!), "footer omits state indicators");
+  const beforeSettings = JSON.stringify(tasks);
+  const draftBeforeSettings = draft;
+  choices.push("Settings", "save-fields");
+  await extension.command();
+  assert.equal(JSON.stringify(tasks), beforeSettings, "global settings do not write task values");
+  assert.equal(draft, draftBeforeSettings);
+  const configuredFields = (await extension.tool("pinote_fields", {})).details.fields;
+  assert.deepEqual(configuredFields, [{ name: "Next", label: "", link: false, format: "<value>" }]);
   const originalText = tasks[1].text;
   tasks[1].text = "日本語 ".repeat(40) + "\nHidden details";
   await extension.event("agent_end");

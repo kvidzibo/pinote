@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -46,9 +47,13 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       confirm: async () => { throw new Error("compatible setup must not ask for confirmation"); },
       custom: async (factory: any) => new Promise((resolve) => {
         const picker = factory({ requestRender() {} }, ctx.ui.theme, {
-          matches: (data: string, action: string) => data === "\r" && action === "tui.select.confirm",
+          matches: (data: string, action: string) => (data === "\r" && action === "tui.select.confirm") ||
+            (data === "\x1b[B" && action === "tui.select.down"),
         }, resolve);
-        picker.handleInput("Resume");
+        if (picker.render(100).join("\n").includes("Continue")) {
+          const index = ["Continue", "Done", "Switch task", "Settings"].indexOf(choice === "pick" ? "Continue" : choice);
+          for (let i = 0; i < index; i++) picker.handleInput("\x1b[B");
+        } else picker.handleInput("Resume");
         picker.handleInput("\r");
       }),
       select: async (_title: string, options: string[]) =>
@@ -84,7 +89,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.deepEqual(suggestions.items.map((item: any) => item.value), ["pi-note"]);
     assert.ok(!notices.some((message) => message.includes("Run /pi-note-upgrade")));
     assert.deepEqual([...extension.tools.keys()].sort(), [
-      "pinote_add", "pinote_get_current", "pinote_tags", "pinote_update_current",
+      "pinote_add", "pinote_fields", "pinote_get_current", "pinote_tags", "pinote_update_current",
     ]);
     const get = extension.tools.get("pinote_get_current").definition;
     const update = extension.tools.get("pinote_update_current").definition;
@@ -140,10 +145,19 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       "adding without select must preserve the current task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "added tasks must not bind the folder");
     await event(extension, "session_shutdown");
-    extension = await load(); // New process-like extension state, same durable database.
+    writeFileSync(config, JSON.stringify({ handoffPrompt: prompt, footer: {
+      titleWidth: 24, fieldWidth: 10, fields: [{ name: "PR", label: "", format: "#<number>" }, "Next"],
+    } }));
+    extension = await load(); // Reload rereads footer config without changing task data.
     draft = "";
     await event(extension, "session_start");
-    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 [Untagged] Resume ...");
+    assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "#42 · Next: R...");
+    const configuredFields = (await extension.tools.get("pinote_fields").definition.execute(
+      "fields", {}, undefined, undefined, ctx)).details;
+    assert.equal(configuredFields.fields[0].name, "PR");
+    assert.equal(configuredFields.fields[0].label, "");
+    assert.equal(configuredFields.fields[0].format, "#<number>");
     assert.equal(draft, "", "startup never overwrites/submits the editor");
     choice = "Continue";
     await extension.commands.get("pi-note").handler("", ctx);
@@ -152,6 +166,13 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       "resume", {}, undefined, undefined, ctx)).content[0].text);
     assert.equal(resumed.text, "Resume the task");
     assert.deepEqual(resumed.agent_notes, { PR: pr, Next: "Review" });
+    await event(extension, "session_shutdown");
+    writeFileSync(config, '{"footer":{"titleWidth":false}}');
+    extension = await load();
+    await event(extension, "session_start");
+    assert.equal(statuses.at(-1), "📌 [Untagged] Resume the task");
+    assert.equal(stripVTControlCharacters(prStatuses.at(-1)!), "PR #42");
+    assert.match(notices.at(-1)!, /using default Pinote footer settings/);
     // Exercise configuration through the real loader/CLI, including edits without reload.
     for (const action of ["Continue", "Switch task"]) {
       choice = action;
@@ -237,7 +258,7 @@ test("personal task-offer policies reach the native prompt without disabling exp
       extension = result.extensions[0];
       const definitions: any[] = [...extension.tools.values()].map((tool: any) => tool.definition);
       assert.deepEqual(definitions.map((tool) => tool.name).sort(), [
-        "pinote_add", "pinote_get_current", "pinote_tags", "pinote_update_current",
+        "pinote_add", "pinote_fields", "pinote_get_current", "pinote_tags", "pinote_update_current",
       ]);
       const add = extension.tools.get("pinote_add").definition;
       assert.deepEqual(add.promptGuidelines, extension.tools.get("pinote_get_current").definition.promptGuidelines);
