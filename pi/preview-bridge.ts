@@ -79,11 +79,11 @@ export function createPreviewBridge() {
               return;
             }
             if (suggestionMatch && suggestionMatch[0] === input && suggestionMatch[2] === capability && suggestionMatch[3] === suggestionNonce && suggestionCallback) {
-              client.setTimeout(35000);
+              client.setTimeout(65000);
               const invoke = suggestionCallback;
               const requestNonce = suggestionNonce;
               const choice = suggestionMatch[1] as "yes" | "no";
-              // A click may take 30s; do not abort an accepted parent mutation on disconnect.
+              // Add/start/select and refresh can run eleven 5s CLI calls; accepted mutations drain on disconnect.
               Promise.resolve().then(() => !closed && suggestionNonce === requestNonce && suggestionCallback === invoke
                 ? invoke(choice) : false)
                 .then((accepted) => { if (!client.destroyed) client.end(accepted === true ? "accepted\n" : "rejected\n"); },

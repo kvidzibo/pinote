@@ -713,17 +713,22 @@ export default function (pi: ExtensionAPI) {
       if (params.tag !== undefined) argv.push(`--tag=${params.tag}`);
       const generation = epoch;
       const branch = branchEpoch;
-      const created = await writeTask(ctx, signal, argv, undefined, "0.4.0");
-      if (params.select !== true) return toolResult(created);
-      if (!alive || generation !== epoch || branch !== branchEpoch) throw new Error("Pinote operation cancelled: the session changed.");
+      if (params.select !== true) return toolResult(await writeTask(ctx, signal, argv, undefined, "0.4.0"));
       if (pending) throw new Error("A pinote operation is already open. Retry after it finishes.");
       const operation = Symbol();
+      const previousSelection = selectedId;
       pending = operation;
+      refreshSerial++;
+      const canAct = () => alive && generation === epoch && branch === branchEpoch && pending === operation && selectedId === previousSelection;
+      // Chat consent consumes the same suggestion as clicking ✓, even if start fails.
+      clearSuggestion(ctx);
       try {
-        const chosen = await startTask(
-          created.id, () => alive && generation === epoch && branch === branchEpoch && pending === operation, signal,
-        );
-        if (!chosen) throw new Error("Pinote operation cancelled: the session changed.");
+        const created = requiredTask(await run(argv, signal, canAct, "0.4.0"));
+        if (!canAct()) throw new Error("Pinote operation cancelled: the session changed. The note was created; check /pi-note before retrying.");
+        const chosen = await startTask(created.id, canAct, signal);
+        if (!chosen || !alive || generation !== epoch || branch !== branchEpoch || selectedId !== chosen.id) {
+          throw new Error("Pinote operation cancelled: the session changed. The note may have started; check /pi-note before retrying.");
+        }
         return toolResult(chosen);
       } finally {
         if (pending === operation) pending = undefined;

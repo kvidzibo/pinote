@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -109,12 +109,31 @@ test("native suggestion bar requires consent, selects once, and rejects stale cl
     assert.equal((await get()).details.state, "in_progress");
     session.appendCustomEntry("pinote-selection", { id: null });
     await event("session_tree");
+    await propose("Chat acceptance consumes the same consent");
+    const chatLinks = links();
+    const shimDir = join(temp, "failing-start-cli");
+    mkdirSync(shimDir);
+    writeFileSync(join(shimDir, "note"), `#!${process.execPath}\nconst {execFileSync}=require("node:child_process");
+const args=process.argv.slice(2);
+if(args[0]==="--no-notify"&&args[1]==="start"){process.stderr.write("forced start failure");process.exit(1);}
+process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/note"))},args));\n`, { mode: 0o755 });
+    const fastPath = process.env.PATH;
+    process.env.PATH = `${shimDir}:${fastPath}`;
+    const accepting = assert.rejects(extension.tools.get("pinote_add").definition.execute(
+      "chat-yes", { text: "Chat acceptance consumes the same consent", tag: "pinote", select: true }, undefined, undefined, ctx), /forced start failure/);
+    await assert.rejects(click(chatLinks[0]), "chat consent invalidates ✓ before yielding");
+    await accepting;
+    process.env.PATH = fastPath;
+    await assert.rejects(click(chatLinks[0]), "a start failure cannot leave consent reusable");
+    assert.equal(widget, undefined);
+    assert.equal(list().length, 3, "chat acceptance plus repeated clicks creates only one note");
+    assert.equal((await get()).details, null);
     await propose("Shutdown invalidates consent");
     const finalLinks = links();
     await event("session_shutdown");
     assert.equal(widget, undefined);
     await assert.rejects(click(finalLinks[0]));
-    assert.equal(list().length, 2);
+    assert.equal(list().length, 3);
     assert.equal(draft, "Keep my draft");
     assert.deepEqual(session.buildSessionContext().messages, [], "no model-context message or prompt is added");
   } finally {

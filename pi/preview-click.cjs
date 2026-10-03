@@ -41,7 +41,7 @@ function preview(value) {
       done = true; clearTimeout(timer); client.destroy();
       err ? reject(new Error(errorMessage)) : resolve(result);
     };
-    const timer = setTimeout(() => finish(new Error()), p.choice ? 35000 : 6000);
+    const timer = setTimeout(() => finish(new Error()), p.choice ? 70000 : 6000);
     client.on('connect', () => client.write(message));
     client.on('data', chunk => {
       response = Buffer.concat([response, chunk]);
