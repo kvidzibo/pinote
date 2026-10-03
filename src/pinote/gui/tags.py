@@ -31,6 +31,7 @@ class TagsWindow(Gtk.ApplicationWindow):
         self.pending = False
         self.saving = False
         self.selected: str | None = None
+        self.requested_tag: str | None = None
         self.tags: list[str] = []
         self.rows: dict[str, Gtk.ListBoxRow] = {}
         self.set_role("pinote-tags")
@@ -237,6 +238,14 @@ class TagsWindow(Gtk.ApplicationWindow):
             self._controls()
         return GLib.SOURCE_REMOVE
 
+    def select_tag(self, tag: str) -> None:
+        if tag in self.rows:
+            self.list_box.select_row(self.rows[tag])
+            self.entry.grab_focus()
+            self.requested_tag = None
+        else:
+            self.requested_tag = tag
+
     def _render(self, tags: list[str]) -> None:
         if tags == self.tags:
             return
@@ -257,6 +266,10 @@ class TagsWindow(Gtk.ApplicationWindow):
                 self.rows[tag] = row
                 self.list_box.insert(row, index)
                 row.show_all()
+        if self.requested_tag is not None:
+            tag, self.requested_tag = self.requested_tag, None
+            if tag in self.rows:
+                self.select_tag(tag)
 
     @staticmethod
     def _sort_rows(left, right) -> int:

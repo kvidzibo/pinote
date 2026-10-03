@@ -631,6 +631,80 @@ def test_tag_filter_persists_across_restarts_and_tracks_registry_changes(gtk):
     assert window.tag_filter is None  # Missing-tag fallback itself is persisted.
 
 
+def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Untagged task")
+        store.add("Work task", tag="Work")
+        store.add("Personal task", tag="Personal")
+        store.transition(3, "start")
+        store.add("Completed work", tag="Work")
+        store.transition(4, "start")
+        store.transition(4, "done")
+    window = gtk.open()
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
+    menu = window.visible_filter_menu
+    tags = {
+        item.filter_tag: item for item in menu.get_children() if isinstance(item, Gtk.CheckMenuItem)
+    }
+    select_all, clear = menu.get_children()[-2:]
+    wait_until(gtk.glib, lambda: clear.get_allocated_width() > 1)
+    assert select_all.get_allocation().y == clear.get_allocation().y
+    assert select_all.get_allocation().x < clear.get_allocation().x
+    assert {tag: item.progress_count.get_text() for tag, item in tags.items()} == {
+        "": "0",
+        "Personal": "1",
+        "Work": "0",
+    }
+
+    def click(item):
+        pointer_at(gtk, item.get_toplevel(), item, 8, 8)
+        ready = time.monotonic() + 0.6
+        wait_until(gtk.glib, lambda: time.monotonic() >= ready)
+        click_button(gtk, item.get_toplevel(), item)
+
+    click(tags["Work"])
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Work"}))
+    assert menu.get_mapped()
+    click(tags[""])
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"Work"}))
+    assert menu.get_mapped()
+    click(select_all)
+    wait_until(gtk.glib, lambda: window.tag_filter is None)
+    assert menu.get_mapped()
+    click(clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
+    assert menu.get_mapped()
+    subprocess.run(["xdotool", "key", "Home", "Return"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({""}))
+    assert menu.get_mapped()
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "start")
+    window._poll()
+    wait_until(gtk.glib, lambda: tags["Work"].progress_count.get_text() == "1")
+    assert "1 in-progress tasks" in tags["Work"].get_accessible().get_description()
+    assert menu.get_mapped()
+    subprocess.run(
+        ["xdotool", "mousemove", "10", "10", "click", "1"], env=gtk.env, check=True, timeout=5
+    )
+    wait_until(gtk.glib, lambda: not menu.get_mapped())
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: menu.get_mapped())
+    work = next(item for item in menu.get_children() if getattr(item, "filter_tag", None) == "Work")
+    selected = window.tag_filter
+    pointer_at(gtk, work.get_toplevel(), work, 12, 12, "click", "3")
+    wait_until(
+        gtk.glib, lambda: window.tags_window is not None and window.tags_window.selected == "Work"
+    )
+    assert window.tags_window.entry.get_text() == "Work"
+    assert window.tag_filter == selected
+    assert not menu.get_mapped()
+    with Store(gtk.paths.database) as store:
+        assert len(store.history()) == 8  # Filtering and opening Tags write no task history.
+
+
 def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
     from pinote.gui.app import Gtk
 
@@ -668,8 +742,8 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
             active = selected is None or child.filter_tag in selected
             assert child.get_active() == active
             assert child.get_style_context().has_class("selected-tag") == active
-        if menu.get_mapped():
-            menu.popdown()
+        assert menu.get_mapped()
+        menu.deactivate()
         wait_until(gtk.glib, lambda: not window.geometry_source)
 
     toggle("Work", frozenset({"", "Work"}), {1, 2})
@@ -708,8 +782,8 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
                 assert child.get_active() == active
                 assert child.get_style_context().has_class("selected-tag") == active
         assert window.creation_tag == "Other" and window.entry.get_text() == "Keep this draft"
-        if menu.get_mapped():
-            menu.popdown()
+        assert menu.get_mapped()
+        menu.deactivate()
         wait_until(gtk.glib, lambda: not window.geometry_source)
 
     action("Select all tags", None, {1, 2, 3, 4})
@@ -811,8 +885,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         previous = window.tag_filter
         select(window.filter_menu, label)
         wait_until(gtk.glib, lambda: window.tag_filter != previous)
-        if window.menu.get_mapped():
-            window.menu.popdown()
+        assert window.filter_menu.get_mapped()
+        window.filter_menu.deactivate()
+        window.menu.deactivate()
         wait_until(gtk.glib, lambda: not window.menu.get_mapped())
 
     for save in (False, True):

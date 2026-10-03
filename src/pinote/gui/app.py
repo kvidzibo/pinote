@@ -18,6 +18,7 @@ from pinote.gui.archive import ArchiveWindow  # noqa: E402
 from pinote.gui.config import GuiConfig  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.editor import NoteEditor  # noqa: E402
+from pinote.gui.filter_menu import FilterMenu  # noqa: E402
 from pinote.gui.icons import (  # noqa: E402
     TagLabel,
     icon_button,
@@ -464,7 +465,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         ):
             self.menu.append(item)
             item.show()
-        self.visible_filter_menu = Gtk.Menu()
+        self.visible_filter_menu = FilterMenu(self._edit_filter_tag)
         self.visible_filter_menu.get_style_context().add_class("pinote-window")
         self.visible_filter_menu.get_style_context().add_class("reminder-menu")
         self.visible_filter_menu.connect("show", self._prepare_visible_filters)
@@ -885,25 +886,65 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _filter_menu_choices(self, menu) -> None:
         menu.set_reserve_toggle_size(True)
-        for value, label in self._tag_choices(None, filtering=True):
+        choices = self._tag_choices(None, filtering=True)
+        for index, (value, label) in enumerate(choices):
             selected = self.tag_filter is None or value in self.tag_filter
             item = tag_menu_item(label, selected=selected, checkable=True)
             item.filter_tag = value
             item.filter_handler = item.connect(
                 "activate", lambda _item, value=value: self._toggle_filter(value)
             )
-            menu.append(item)
-        menu.append(Gtk.SeparatorMenuItem())
-        for icon, label, selected in (
-            ("edit-select-all-symbolic", "Select all tags", None),
-            ("window-close-symbolic", "Clear selection", frozenset()),
+            item.progress_count = Gtk.Label()
+            badge = Gtk.Box(spacing=3)
+            badge.pack_start(icon_image("media-playback-start-symbolic"), False, False, 0)
+            badge.pack_start(item.progress_count, False, False, 0)
+            item.get_child().pack_end(badge, False, False, 8)
+            menu.attach(item, 0, 2, index, index + 1)
+        menu.attach(Gtk.SeparatorMenuItem(), 0, 2, len(choices), len(choices) + 1)
+        for column, (icon, label, selected) in enumerate(
+            (
+                ("edit-select-all-symbolic", "Select all tags", None),
+                ("view-filter-clear-symbolic", "Clear selection", frozenset()),
+            )
         ):
             item = icon_menu_item(icon, label)
             item.connect(
                 "activate",
                 lambda _item, selected=selected: self._set_filter(selected, close_menu=False),
             )
-            menu.append(item)
+            menu.attach(item, column, column + 1, len(choices) + 1, len(choices) + 2)
+        self._sync_filter_menu(menu)
+
+    def _sync_filter_menu(self, menu) -> None:
+        progress = Counter(
+            note.tag or "" for note in self.notes_snapshot if note.state == "in_progress"
+        )
+        counts = dict(self._tag_choices(None, filtering=True))
+        for item in menu.get_children():
+            if not isinstance(item, Gtk.CheckMenuItem):
+                continue
+            selected = self.tag_filter is None or item.filter_tag in self.tag_filter
+            # set_active emits activate; syncing checks must not toggle the filter.
+            item.handler_block(item.filter_handler)
+            try:
+                item.set_active(selected)
+            finally:
+                item.handler_unblock(item.filter_handler)
+            count = progress[item.filter_tag]
+            item.progress_count.set_text(str(count))
+            label = counts.get(item.filter_tag, item.filter_tag or "Untagged")
+            item.get_child().label.set_text(label)
+            item.get_accessible().set_name(label)
+            description = f"{count} in-progress tasks. Right-click to edit tags."
+            item.set_tooltip_text(description)
+            item.get_accessible().set_description(
+                f"{'Selected. ' if selected else ''}{description}"
+            )
+            context = item.get_style_context()
+            if selected:
+                context.add_class("selected-tag")
+            else:
+                context.remove_class("selected-tag")
 
     def _update_filter_label(self) -> None:
         if self.tag_filter is None:
@@ -918,22 +959,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         for menu in (self.visible_filter_menu, getattr(self, "filter_menu", None)):
             if menu is None:
                 continue
-            for item in menu.get_children():
-                if not isinstance(item, Gtk.CheckMenuItem):
-                    continue
-                selected = self.tag_filter is None or item.filter_tag in self.tag_filter
-                # set_active emits activate; syncing checks must not toggle the filter.
-                item.handler_block(item.filter_handler)
-                try:
-                    item.set_active(selected)
-                finally:
-                    item.handler_unblock(item.filter_handler)
-                item.get_accessible().set_description("Selected" if selected else "")
-                context = item.get_style_context()
-                if selected:
-                    context.add_class("selected-tag")
-                else:
-                    context.remove_class("selected-tag")
+            self._sync_filter_menu(menu)
         self._update_creation_tag_label()
         self.filter_item.set_tooltip_text(f"Filter by tag: {label}")
         self.filter_item.get_accessible().set_name(f"Filter by tag: {label}")
@@ -1007,13 +1033,22 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self._watch_child_focus(self.editor)
         self._present_child(self.editor)
 
-    def _open_tags(self) -> None:
+    def _edit_filter_tag(self, tag: str | None) -> None:
+        self.visible_filter_menu.deactivate()
+        if getattr(self, "filter_menu", None) is not None:
+            self.filter_menu.deactivate()
+        self.menu.deactivate()
+        GLib.idle_add(self._open_tags, tag)
+
+    def _open_tags(self, tag: str | None = None) -> None:
         if self.closed or self.action_pending:
             return
         self.menu.popdown()
         if self.tags_window is None:
             self.tags_window = TagsWindow(self)
             self._watch_child_focus(self.tags_window)
+        if tag is not None:
+            self.tags_window.select_tag(tag)
         self._present_child(self.tags_window)
 
     def _tags_changed(self, old: str | None, new: str | None) -> None:
@@ -1038,7 +1073,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         previous = self.filter_item.get_submenu()
         if previous is not None:
             previous.destroy()
-        self.filter_menu = Gtk.Menu()
+        self.filter_menu = FilterMenu(self._edit_filter_tag)
         self.filter_menu.get_style_context().add_class("pinote-window")
         self.filter_menu.get_style_context().add_class("reminder-menu")
         self._filter_menu_choices(self.filter_menu)
@@ -1063,8 +1098,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             return
         self.tag_filter = tags
         if close_menu:
-            self.visible_filter_menu.popdown()
-            self.menu.popdown()
+            self.visible_filter_menu.deactivate()
+            self.menu.deactivate()
         self._remember_filter()
         self.composer_tag_menu.popdown()
         # Do not carry a departing row's animation into a different view.
