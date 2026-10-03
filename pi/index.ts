@@ -1,5 +1,5 @@
-import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Editor, truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
+import { getAgentDir, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Editor, Markdown, Text, truncateToWidth, visibleWidth, type Keybinding } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -9,6 +9,7 @@ import { defaultFooterConfig, defaultHandoffPrompt, effectiveFooterFields, loadF
 import { FooterSettings, TaskMenu, withSettingsTab } from "./footer-settings.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, cliMenu, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
+import { createPreviewBridge } from "./preview-bridge.ts";
 
 const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. Read pinote_fields to learn the user's globally configured footer field names and presentation. Populate those fields with meaningful task values when relevant using pinote_update_current; fields without values stay hidden. Footer fields and widths are chosen by the user's pi-note.json config. Set configured fields with Markdown values; links are clickable. When footer.fields is unset, Bar selects labels, one per line. Do not list PR in Bar. Remove a field to hide it. Do not modify config without user approval.";
 const offerGuidance = {
@@ -30,6 +31,8 @@ type Task = {
 type Summary = Pick<Task, "id" | "text" | "state" | "tag">;
 // The standard Pi footer accepts text, so ship a portable terminal glyph, not a theme icon.
 const noteIcon = readFileSync(new URL("./icons/note.txt", import.meta.url), "utf8").trim();
+const eyeIcon = readFileSync(new URL("./icons/eye.txt", import.meta.url), "utf8").trim();
+const previewType = "pinote-preview";
 const compatible = "Incompatible note CLI response. Install pinote 0.3.0+ and check note on PATH.";
 const validId = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -115,6 +118,14 @@ function toolResult(value: Task | null) {
 
 export default function (pi: ExtensionAPI) {
   const { guidelines: createGuidance, error: offerConfigError } = creationGuidance();
+  pi.registerEntryRenderer<{ id: number; markdown: string }>(previewType, (entry, _options, theme) => {
+    if (!record(entry.data) || !validId(entry.data.id) || typeof entry.data.markdown !== "string") return;
+    const view = new Container();
+    view.addChild(new Text(theme.fg("muted", `Pinote #${entry.data.id} · display only · not sent to model`), 0, 0));
+    view.addChild(new Markdown(clean(entry.data.markdown), 0, 0, getMarkdownTheme()));
+    return view;
+  });
+  let previewBridge: ReturnType<typeof createPreviewBridge> | undefined;
   let alive = true;
   let epoch = 0;
   let refreshSerial = 0;
@@ -184,6 +195,7 @@ export default function (pi: ExtensionAPI) {
   let branchEpoch = 0;
   const remember = (id: number | null, branch = branchEpoch) => {
     if (!alive || branch !== branchEpoch || selectedId === id) return;
+    previewBridge?.invalidate();
     selectedId = id;
     pi.appendEntry(selectionType, { id });
   };
@@ -238,11 +250,20 @@ export default function (pi: ExtensionAPI) {
     try {
       const current = await selected(ctx);
       if (alive && generation === epoch && serial === refreshSerial) {
-        ctx.ui.setStatus("pinote", current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, footerConfig.titleWidth, "...") : undefined);
+        const previewId = current?.id ?? null;
+        const previewBranch = branchEpoch;
+        previewBridge?.setTask(previewId, () => alive && generation === epoch && previewBranch === branchEpoch &&
+          selectedId === previewId ? preview(ctx) : Promise.resolve(false));
+        const url = previewBridge?.url();
+        // Keep the eye outside title truncation, including the minimum title width.
+        const eye = url ? `\x1b]8;;${url}\x07${eyeIcon}\x1b]8;;\x07 ` : "";
+        const width = Math.max(0, footerConfig.titleWidth - (eye ? visibleWidth(eyeIcon) + 1 : 0));
+        ctx.ui.setStatus("pinote", current ? eye + truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, width, "...") : undefined);
         watcher.update(ctx, current);
       }
     } catch {
       if (alive && generation === epoch && serial === refreshSerial) {
+        previewBridge?.invalidate();
         ctx.ui.setStatus("pinote", `${noteIcon} Pinote unavailable · ${cliState === "upgrade" ? "/pi-note-upgrade" : cliState === "setup" ? "/pi-note-setup" : "/pi-note"}`);
       }
     }
@@ -265,14 +286,48 @@ export default function (pi: ExtensionAPI) {
     },
     refresh,
   });
+  const preview = async (ctx: ExtensionContext): Promise<boolean> => {
+    if (!ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || !validId(selectedId)) return false;
+    const generation = epoch;
+    const branch = branchEpoch;
+    const id = selectedId;
+    const operation = Symbol();
+    pending = operation;
+    const canUse = () => alive && generation === epoch && branch === branchEpoch && selectedId === id && ctx.isIdle();
+    try {
+      const current = await currentTask(undefined, canUse);
+      if (!current || !canUse()) return false;
+      // Custom entries are rendered locally, never conversation messages or compaction input.
+      pi.appendEntry(previewType, { id: current.id, markdown: current.markdown });
+      return true;
+    } catch (error) {
+      if (canUse()) ctx.ui.notify(`Pinote preview: ${clean(String(error))}`, "error");
+      return false;
+    } finally {
+      if (pending === operation) pending = undefined;
+    }
+  };
+  pi.registerCommand("pi-note-preview", {
+    description: "Display the selected task locally without sending it to the model",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI || ctx.mode !== "tui") return;
+      if (args.trim()) { ctx.ui.notify("Usage: /pi-note-preview", "warning"); return; }
+      if (!await preview(ctx)) ctx.ui.notify("Select a task with /pi-note and wait until Pi is idle before previewing.", "warning");
+    },
+  });
   pi.on("session_start", async (_event, ctx) => {
     setupAbort?.abort();
-    alive = true;
-    activeContext = ctx;
+    alive = false;
     epoch++;
     branchEpoch++;
-    selectedId = readSelection(ctx);
     const generation = epoch;
+    const previousBridge = previewBridge;
+    previewBridge = undefined;
+    if (previousBridge) await previousBridge.stop();
+    if (generation !== epoch) return;
+    alive = true;
+    activeContext = ctx;
+    selectedId = readSelection(ctx);
     footerConfig = loadFooterConfig((message) => {
       if (ctx.hasUI) ctx.ui.notify(message, "warning");
     });
@@ -281,6 +336,18 @@ export default function (pi: ExtensionAPI) {
       if (offerConfigError) ctx.ui.notify(`Pinote task offers disabled: ${clean(offerConfigError)} Fix the configuration and /reload.`, "warning");
       ctx.ui.addAutocompleteProvider((current) => cliMenu(current, () => setupAbort ? undefined : cliState));
     }
+    if (ctx.hasUI && ctx.mode === "tui") {
+      const bridge = createPreviewBridge();
+      previewBridge = bridge;
+      try {
+        await bridge.start();
+      } catch {
+        await bridge.stop();
+        if (previewBridge === bridge) previewBridge = undefined;
+        ctx.ui.notify("Pinote eye link unavailable; use /pi-note-preview.", "warning");
+      }
+    }
+    if (!alive || generation !== epoch) return;
     // Keep the setup lock until its aborted subprocess has actually settled.
     if (!setupAbort) pending = undefined;
     await checkCLI(ctx, true);
@@ -291,6 +358,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_tree", async (_event, ctx) => {
     if (!alive) return;
     branchEpoch++;
+    previewBridge?.invalidate();
     const generation = branchEpoch;
     const id = readSelection(ctx);
     if (!alive || generation !== branchEpoch) return;
@@ -300,7 +368,7 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("before_agent_start", async (_event, ctx) => { await refresh(ctx); });
   pi.on("agent_end", async (_event, ctx) => { await refresh(ctx); });
-  pi.on("session_shutdown", (_event, ctx) => {
+  pi.on("session_shutdown", async (_event, ctx) => {
     setupAbort?.abort();
     alive = false;
     activeContext = undefined;
@@ -310,6 +378,9 @@ export default function (pi: ExtensionAPI) {
     refreshSerial++;
     watcher.stop();
     if (ctx.hasUI && ctx.mode === "tui") ctx.ui.setStatus("pinote", undefined);
+    const bridge = previewBridge;
+    previewBridge = undefined;
+    if (bridge) await bridge.stop();
   });
 
   const registerInstallCommand = (name: "pi-note-setup" | "pi-note-upgrade") => pi.registerCommand(name, {

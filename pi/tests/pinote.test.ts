@@ -84,6 +84,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
     const tools = new Map<string, any>();
     const events = new Map<string, any>();
     pinote({
+      registerEntryRenderer() {},
       registerCommand: (name: string, definition: any) => commands.set(name, definition),
       registerTool: (definition: any) => tools.set(definition.name, definition),
       on: (name: string, callback: any) => events.set(name, callback),
@@ -331,7 +332,7 @@ test("add and tag listing require pinote 0.4.0 and select only when asked", asyn
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   pinote({
     appendEntry() {},
-    registerCommand() {},
+    registerEntryRenderer() {}, registerCommand() {},
     registerTool: (definition: any) => tools.set(definition.name, definition),
     on(name: string, handler: unknown) { handlers.set(name, handler); },
     async exec(command: string, args: string[]) {

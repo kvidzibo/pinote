@@ -104,6 +104,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
     else process.env.PINOTE_PR_POLL_SECONDS = savedPoll;
   });
   pinote({
+    registerEntryRenderer() {},
     registerCommand: (name: string, command: any) => commands.set(name, command),
     registerTool: (tool: any) => tools.set(tool.name, tool),
     on: (name: string, handler: any) => events.set(name, handler),
@@ -161,6 +162,7 @@ test("tree navigation during setup restores the active branch", async () => {
   const events = new Map<string, any>();
   const tools = new Map<string, any>();
   pinote({
+    registerEntryRenderer() {},
     registerCommand: (name: string, command: any) => commands.set(name, command),
     registerTool: (tool: any) => tools.set(tool.name, tool),
     on: (name: string, handler: any) => events.set(name, handler),
