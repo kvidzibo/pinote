@@ -62,7 +62,7 @@ The agent fetches current task text and saved handoff fields when you submit;
 they are not copied into the draft. The default prompt asks for a summary, not implementation.
 Existing drafts are preserved; nothing is submitted automatically.
 With a selected task it offers **Continue**, **Done**, **Switch task**, and **Settings**.
-Press **Tab** from the task menu or picker to open global footer settings; Tab
+Press **Tab** from the task menu or picker to open global settings; Tab
 returns to tasks without saving. Settings also lists fields found on the current
 task, so existing values can be configured without creating another task.
 Type in the task picker to filter by text, ID, tag, or state (all words must match).
@@ -108,6 +108,12 @@ All policies preserve the existing creation tools, user-consent requirement,
 and selected tasks. Run `/reload` after changing this setting. Invalid policy
 values or unreadable/malformed configuration suppress offers; interactive startup
 warns until you fix the file and reload. No project-local configuration is read.
+
+In `/pi-note → Settings`, select **Task prompt** to edit the text inserted after
+selection or **Continue**. **Shift+Enter** adds a newline; **Enter** applies it to
+the settings draft, **Ctrl+C** clears it, and **Esc** cancels that edit. Select **Save settings** to
+persist it globally; leaving Settings with **Esc** or **Tab** discards the draft.
+Saving never changes existing editor input or submits anything.
 
 Task selection and **Continue** reread `handoffPrompt` each time; changing that
 field needs no `/reload`. Its value is literal text, not a prompt template; use
@@ -204,8 +210,8 @@ In `/pi-note → Settings`, **Add field** adds a global display definition, not 
 task value. Select any field to edit **Link**, **Label**, **Format**, and **Width**.
 Label starts as the field name; clear it for no prefix. Link off displays plain
 text without a clickable link. **Save** persists the draft; cancellation leaves
-configuration untouched. Saves preserve unrelated settings (`handoffPrompt`,
-`taskOfferPolicy`) and reject configuration changes made while the dialog was open.
+configuration untouched. Saves include the task prompt and preserve unrelated
+settings (such as `taskOfferPolicy`) and reject configuration changes made while the dialog was open.
 Concurrent saves use `pi-note.json.lock`; remove stale locks only when no save is
 running. Symlinked configuration must be edited manually; saves never replace the link.
 
@@ -221,8 +227,8 @@ the first Settings save turns this legacy list into explicit global definitions.
 Settings saves apply immediately in this Pi session. Run `/reload` after manual
 footer edits or in other running sessions; settings are also reread on session start.
 Invalid footer configuration warns and uses footer defaults; missing files silently
-use defaults. This does not validate or change `handoffPrompt`, which is read
-separately on selection/Continue as described above.
+use defaults. The task prompt is also read separately on selection/Continue as
+described above; prompt changes need no reload in any running session.
 This is user-level configuration, not task data; agents should not change it
 without approval. Task values still come from `pinote_update_current`.
 
