@@ -5,6 +5,24 @@ Linux/i3 first: use a persistent Dunst notification or the optional GTK checklis
 for editing, tags, progress, scheduled reminders, and archived tasks. The CLI has
 no Python runtime dependencies; the GUI is a separate process, not a service.
 
+## See it in action
+
+![Pinote GTK checklist on Linux/i3: tagged tasks, an amber in-progress task, and the task input and filter controls.](docs/images/linux-checklist.png)
+
+*The optional GTK checklist on Linux/i3, using sample tasks.*
+
+**Desktop workflow:** capture → start → edit → complete. Completed tasks remain
+recoverable from Archive.
+
+<details>
+<summary>Watch the desktop workflow (9-second demo)</summary>
+
+![A task is typed and added with Enter, started with its checkbox, edited with extra details, saved, and completed.](docs/images/workflow.gif)
+
+[View a still image instead](docs/images/workflow-still.png).
+
+</details>
+
 ## Install
 
 Requires **Python 3.11+**. From a checkout:
@@ -63,6 +81,11 @@ Full commands,
 Markdown import/export, and scheduling rules: [CLI and data guide](docs/usage.md).
 
 ### Pi integration
+
+![Pi's task menu and selected-task footer with a PR link, above the same task's GTK preview with saved Agent fields.](docs/images/pi-integration.png)
+
+*Real Pi and GTK captures with sample data and a fictitious PR; no model request
+was sent. Capture a task → select it in Pi → retain handoff details → complete it.*
 
 The optional [pi-note extension](pi/README.md) adds selected-task status,
 `/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent current-task
