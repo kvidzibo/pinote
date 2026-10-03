@@ -113,12 +113,15 @@ def _blocks(nodes: list[SyntaxTreeNode], *, title: bool = False) -> list[_Block]
     return result
 
 
-def render_markdown(text: str, *, title: bool = False) -> str | None:
+def render_markdown(
+    text: str, *, title: bool = False, compact_from: int | None = None
+) -> str | None:
     """Return escaped, allowlisted GTK markup, or None for the literal preview.
 
     Source line maps keep blank lines and ordinary multiline notes intact. With
     title=True, an ordinary task starts with a display-only H1. The
-    parser is confined here so removing the optional extra needs no data migration.
+    compact_from removes inter-block blank gaps starting at that source line.
+    The parser is confined here so removing the optional extra needs no data migration.
     """
     if MarkdownIt is None:
         return None
@@ -130,7 +133,10 @@ def render_markdown(text: str, *, title: bool = False) -> str | None:
     previous_end = None
     for block in blocks:
         if previous_end is not None:
-            result.append("\n" * max(1, block.start - previous_end + 1))
+            gap = max(1, block.start - previous_end + 1)
+            if compact_from is not None and block.start >= compact_from:
+                gap = 1
+            result.append("\n" * gap)
         result.append(block.markup)
         previous_end = block.end
     markup = "".join(result)

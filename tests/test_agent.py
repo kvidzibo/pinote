@@ -50,11 +50,11 @@ def test_agent_handoff_upgrade_restart_and_revision_safe_updates(cli, tmp_path):
         "update", "7", "--expected-updated-at", task["updated_at"], "--set-json", json.dumps(patch)
     )
     assert saved["text"] == "Original task" and saved["agent_notes"] == patch
-    assert "# Agent\n" in saved["markdown"] and f"PR: {link}" in saved["markdown"]
+    assert "\n\n## Agent\n" in saved["markdown"] and f"PR: {link}" in saved["markdown"]
     assert agent("get", "7") == saved
     # Every CLI call is a new process; selection and fields survive restart.
     assert agent("selected", "--cwd", cwd) == saved
-    assert "# Agent" in cli().stdout and "Original task" in cli().stdout
+    assert "## Agent" in cli().stdout and "Original task" in cli().stdout
     assert "agent" in cli("history", "7").stdout
     stale = agent("done", "7", "--expected-updated-at", task["updated_at"], check=False)
     assert stale.returncode == 1 and "changed elsewhere" in stale.stdout

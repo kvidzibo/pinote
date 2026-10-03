@@ -217,11 +217,17 @@ class NotePreview(Gtk.Window):
             and self.removal_event == note.agent_event_id
             and self.removal_event
         ):
-            source += "\n\n# Agent\nAgent fields were removed."
+            source += "\n\n## Agent\nAgent fields were removed."
         if self.source_text == source:
             return  # Compare source, not rendered text, to preserve selection on polls.
         self.source_text = source
-        markup = render_markdown(source, title=True) if self.markdown else None
+        # Keep task spacing; compact only the generated Agent section.
+        compact_from = note.text.count("\n") + 2
+        markup = (
+            render_markdown(source, title=True, compact_from=compact_from)
+            if self.markdown
+            else None
+        )
         if markup is None:
             self.body.set_text(source)
         else:
@@ -238,6 +244,6 @@ class NotePreview(Gtk.Window):
         else:
             prefix = note.text
         text = self.body.get_text()
-        heading = "\n\nAgent\n" if markup else "\n\n# Agent\n"
+        heading = "\nAgent\n" if markup else "\n\n## Agent\n"
         offset = text.find(heading, max(0, len(prefix) - 2))
-        self.agent_offset = offset + 2 if offset >= 0 else len(prefix)
+        self.agent_offset = offset + (1 if markup else 2) if offset >= 0 else len(prefix)

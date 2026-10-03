@@ -2878,11 +2878,12 @@ def test_agent_fields_enable_single_line_preview_and_refresh_links(gtk, monkeypa
     wait_until(gtk.glib, lambda: window.preview is not None and window.preview.get_mapped())
     preview = window.preview
     assert preview.body.get_text() == (
-        "Task with a handoff\n\nAgent\nLiteral &copy;: Kept\n\nNext: Review\n\nPR: Fix #42"
+        "Task with a handoff\nAgent\nLiteral &copy;: Kept\nNext: Review\nPR: Fix #42"
     )
     assert preview.body.get_label().startswith(
         '<span size="x-large" weight="bold">Task with a handoff</span>'
     )
+    assert '<span size="large" weight="bold">Agent</span>' in preview.body.get_label()
     assert preview.agent_offset == preview.body.get_text().index("Agent")
     assert '<a href="https://example.org/pull/42">' in preview.body.get_label()
     opened = []

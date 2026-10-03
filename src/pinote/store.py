@@ -67,7 +67,7 @@ class Note:
             # Labels are literal; only values are Markdown.
             label = "".join("\\" + char if char in string.punctuation else char for char in label)
             fields.append(f"{label}: {value}")
-        return self.text + "\n\n# Agent\n" + "\n\n".join(fields)
+        return self.text + "\n\n## Agent\n" + "\n\n".join(fields)
 
 
 def note_from_row(row: sqlite3.Row) -> Note:

@@ -24,6 +24,27 @@ def test_task_title_is_preview_heading_only(monkeypatch):
     assert preview_markdown.render_markdown(source, title=True) is None
 
 
+def test_agent_subheading_is_compact_without_reinterpreting_fields():
+    from pinote.store import Note
+
+    task = "Title\n\nBody"
+    note = Note(
+        1,
+        task,
+        "active",
+        "created",
+        "updated",
+        agent_notes={"First": "- One\n- Two", "Next": "Review"},
+    )
+    assert "\n\n## Agent\n" in note.markdown
+    assert preview_markdown.render_markdown(
+        note.markdown, title=True, compact_from=task.count("\n") + 2
+    ) == (
+        '<span size="x-large" weight="bold">Title</span>\n\nBody\n'
+        '<span size="large" weight="bold">Agent</span>\nFirst: - One\n• Two\nNext: Review'
+    )
+
+
 def test_basic_markdown_is_safe_markup_with_optional_plain_text_fallback(monkeypatch):
     source = (
         "# Heading & 🐦\n\n"
