@@ -1,5 +1,5 @@
 import { getAgentDir, getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Editor, Markdown, Text, truncateToWidth, visibleWidth, type Keybinding } from "@earendil-works/pi-tui";
+import { Container, Editor, Markdown, Text, truncateToWidth, type Keybinding } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -32,7 +32,6 @@ type Task = {
 type Summary = Pick<Task, "id" | "text" | "state" | "tag">;
 // The standard Pi footer accepts text, so ship a portable terminal glyph, not a theme icon.
 const noteIcon = readFileSync(new URL("./icons/note.txt", import.meta.url), "utf8").trim();
-const eyeIcon = readFileSync(new URL("./icons/eye.txt", import.meta.url), "utf8").trim();
 const previewType = "pinote-preview";
 const compatible = "Incompatible note CLI response. Install pinote 0.3.0+ and check note on PATH.";
 const validId = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
@@ -256,10 +255,9 @@ export default function (pi: ExtensionAPI) {
         previewBridge?.setTask(previewId, (signal) => alive && generation === epoch && previewBranch === branchEpoch &&
           selectedId === previewId ? preview(ctx, signal) : Promise.resolve(false));
         const url = previewBridge?.url();
-        // Keep the eye outside title truncation, including the minimum title width.
-        const eye = url ? `\x1b]8;;${url}\x07${eyeIcon}\x1b]8;;\x07 ` : "";
-        const width = Math.max(0, footerConfig.titleWidth - (eye ? visibleWidth(eyeIcon) + 1 : 0));
-        ctx.ui.setStatus("pinote", current ? eye + truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, width, "...") : undefined);
+        // Truncate before linking so the full visible task, including overflow, is clickable.
+        const label = current ? truncateToWidth(`${noteIcon} ${taskTag(current)} ${firstLine(current)}`, footerConfig.titleWidth, "...") : undefined;
+        ctx.ui.setStatus("pinote", label && url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label);
         watcher.update(ctx, current);
       }
     } catch {
@@ -354,7 +352,7 @@ export default function (pi: ExtensionAPI) {
       } catch {
         await bridge.stop();
         if (previewBridge === bridge) previewBridge = undefined;
-        ctx.ui.notify("Pinote eye link unavailable; use /pi-note-preview.", "warning");
+        ctx.ui.notify("Pinote task link unavailable; use /pi-note-preview.", "warning");
       }
     }
     if (!alive || generation !== epoch) return;
