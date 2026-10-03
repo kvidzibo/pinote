@@ -23,7 +23,7 @@ test("current-task operations reject navigation during reads, write probes and p
   };
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   pinote({
-    registerCommand() {}, appendEntry() {},
+    registerEntryRenderer() {}, registerCommand() {}, appendEntry() {},
     registerTool: (tool: any) => tools.set(tool.name, tool),
     on: (name: string, handler: any) => events.set(name, handler),
     async exec(_command: string, args: string[]) {
