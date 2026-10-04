@@ -143,7 +143,7 @@ Markdown handoff fields appear under **Agent** in the GTK preview without changi
 the task text.
 
 A GitHub `PR` field adds a clickable footer link; Pinote does not poll GitHub or
-prompt on PR merges. Pending suggestions survive `/reload`. The footer **✓**
+prompt on PR merges. Pending suggestions survive `/reload`. The footer **✔**
 completes the task, starts a clean session, and reloads Pi. No cross-machine sync
 is provided.
 

@@ -34,7 +34,7 @@ export function renderSuggestion(task: Task, width: number, theme: Colors, urls:
 }
 
 export function renderSelectedTask(task: Task, width: number, theme: Colors, urls: { preview?: string; done?: string }): string {
-  // Done stays in the former '✕' cell, never the Add cell.
+  // Done stays in the former '✖' cell, never the Add cell.
   return renderTask(task, width, theme,
     `${theme.bold(pin)} ${theme.fg("success", link(theme.bold(check), urls.done))}`,
     urls.preview);
