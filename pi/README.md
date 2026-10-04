@@ -203,18 +203,18 @@ When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
 asking in chat. The pin footer shows a pending suggestion, distinct from a selected task:
 
 ```text
-📌 ✕  + · [tag] Task title...
-📌 ✓ · [tag] Task title...
+📌 ✖  ✚ · [tag] Task title...
+📌 ✔ · [tag] Task title...
 ```
 
 ![Suggested task controls](../docs/images/pi-task-suggestion.png)
 ![Selected task with Done control](../docs/images/pi-task-selected.png)
 
-- Muted **✕** dismisses only the current suggestion without creating a note; the agent can suggest another task while none is selected.
-- Accent **+** creates, starts, and selects the suggested task.
-- Green **✓** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and **Complete task** in Settings do the same.
+- Muted **✖** dismisses only the current suggestion without creating a note; the agent can suggest another task while none is selected.
+- Accent **✚** creates, starts, and selects the suggested task.
+- Green **✔** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and **Complete task** in Settings do the same.
 
-Done occupies the former ✕ position, not the + position, so clicking Add twice cannot accidentally complete the new task. The selected row removes the former + cell's padding. The selected task's title is a separate preview link.
+Done occupies the former ✖ position, not the ✚ position, so clicking Add twice cannot accidentally complete the new task. The selected row removes the former ✚ cell's padding. The selected task's title is a separate preview link.
 
 The configured `footer.titleWidth` bounds the entire row (default 60 columns). Controls stay first; the tag is dropped before truncating the first-line title with `...`. Tiny widths hide controls (pin only). Pi can still clip the combined status row on narrow terminals.
 
@@ -222,7 +222,7 @@ Controls use the [Kitty preview handler](#display-only-preview), with no additio
 
 Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed. Failed or stale writes never restart Pi. If another extension cancels the new session, the task remains completed and Pi reports the cancellation. The reload runs through the new session's fresh context; retired contexts are not reused.
 
-If another task fits better, the agent can replace an unaccepted suggestion by calling `pinote_propose` again, without waiting for dismissal. Replacement invalidates the old +/✕ links; only the latest suggestion can be accepted or dismissed. Pending suggestions survive `/reload` and session resume, including their full text and tag; new links replace stale capabilities. Accepted or dismissed suggestions never reappear on reload, but dismissal does not block new proposals—even in sessions saved by older versions. New sessions and forks start without a suggestion; selecting a task or navigating the tree clears it. Suggestion state is local, display-only session metadata, not model context. Pi saves the session after the first submitted message; quitting before that can still lose unsaved session state. Repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
+If another task fits better, the agent can replace an unaccepted suggestion by calling `pinote_propose` again, without waiting for dismissal. Replacement invalidates the old ✚/✖ links; only the latest suggestion can be accepted or dismissed. Pending suggestions survive `/reload` and session resume, including their full text and tag; new links replace stale capabilities. Accepted or dismissed suggestions never reappear on reload, but dismissal does not block new proposals—even in sessions saved by older versions. New sessions and forks start without a suggestion; selecting a task or navigating the tree clears it. Suggestion state is local, display-only session metadata, not model context. Pi saves the session after the first submitted message; quitting before that can still lose unsaved session state. Repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
 tag name when it fits.
 
 ![Pending suggestion replaced without creating a task](../docs/images/pi-task-replacement.png)

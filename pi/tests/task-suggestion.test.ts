@@ -97,21 +97,21 @@ test("native suggestion and completion controls require consent and reject stale
     await event("agent_end");
     assert.equal(status, proposedStatus, "agent activity must retain the suggestion in the pin footer");
     assert.equal(list().length, 0, "proposing must not create a task");
-    assert.match(stripVTControlCharacters(status!), /^📌 ✕\u00a0\u00a0\+ · \[pinote\] Add 日本語/u);
-    for (const icon of ["📌", "✕", "+"]) assert.ok(status!.includes(theme.bold(icon)), `${icon} is bold`);
+    assert.match(stripVTControlCharacters(status!), /^📌 ✖\u00a0\u00a0✚ · \[pinote\] Add 日本語/u);
+    for (const icon of ["📌", "✖", "✚"]) assert.ok(status!.includes(theme.bold(icon)), `${icon} is bold`);
     assert.ok(visibleWidth(status!) <= 60, "uses the configured footer title budget");
     for (const width of [0, 1, 3, 4, 5, 12, 18, 20, 30, 40, 72]) {
       const line = renderSuggestion({ text: "Add 日本語 suggested-task confirmation bar", tag: "pinote" }, width, theme, {});
       const plain = stripVTControlCharacters(line);
       assert.ok(visibleWidth(line) <= width, `fits ${width} columns`);
-      if (plain.includes("+")) assert.match(plain, /✕.*\+/u);
-      if (width >= 30) assert.match(plain, /✕\u00a0\u00a0\+/u);
+      if (plain.includes("✚")) assert.match(plain, /✖.*✚/u);
+      if (width >= 30) assert.match(plain, /✖\u00a0\u00a0✚/u);
       const selectedLine = renderSelectedTask({ text: "Add 日本語 suggested-task confirmation bar", tag: "pinote" }, width, theme, {});
       assert.ok(visibleWidth(selectedLine) <= width);
       if (width >= 30) {
         const selectedPlain = stripVTControlCharacters(selectedLine);
-        assert.equal(visibleWidth(plain.split("✕")[0]), visibleWidth(selectedPlain.split("✓")[0]));
-        assert.match(selectedPlain, /^📌 ✓ · /u);
+        assert.equal(visibleWidth(plain.split("✖")[0]), visibleWidth(selectedPlain.split("✔")[0]));
+        assert.match(selectedPlain, /^📌 ✔ · /u);
         // Match Pi's default-footer ASCII-space sanitization, not just raw status text.
         const sanitized = line.replace(/ +/gu, " ").trim();
         const selectedSanitized = selectedLine.replace(/ +/gu, " ").trim();
@@ -162,9 +162,9 @@ test("native suggestion and completion controls require consent and reject stale
     await click(accept);
     await assert.rejects(click(accept), "repeated yes cannot duplicate notes");
     await assert.rejects(click(dismiss), "cross from accepted suggestion is stale");
-    assert.match(stripVTControlCharacters(status!), /^📌 ✓ · \[pinote\] Add 日本語/u);
-    for (const icon of ["📌", "✓"]) assert.ok(status!.includes(theme.bold(icon)), `${icon} is bold`);
-    assert.doesNotMatch(stripVTControlCharacters(status!), /\+|✕/u);
+    assert.match(stripVTControlCharacters(status!), /^📌 ✔ · \[pinote\] Add 日本語/u);
+    for (const icon of ["📌", "✔"]) assert.ok(status!.includes(theme.bold(icon)), `${icon} is bold`);
+    assert.doesNotMatch(stripVTControlCharacters(status!), /✚|✖/u);
     assert.equal(list().length, 1);
     const chosen = (await get()).details;
     assert.equal(chosen.state, "in_progress");
@@ -175,7 +175,7 @@ test("native suggestion and completion controls require consent and reject stale
     await event("session_shutdown");
     await load();
     await event("session_start");
-    assert.doesNotMatch(stripVTControlCharacters(status!), /\+/u, "reload never resurrects accepted consent");
+    assert.doesNotMatch(stripVTControlCharacters(status!), /✚/u, "reload never resurrects accepted consent");
     assert.equal(list().length, 1);
     await assert.rejects(propose(), /already selected/);
     session.appendCustomEntry("pinote-selection", { id: null });
@@ -233,7 +233,7 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     process.env.PATH = `${shimDir}:${fastPath}`;
     const accepting = assert.rejects(extension.tools.get("pinote_add").definition.execute(
       "chat-yes", { text: "Chat acceptance consumes the same consent", tag: "pinote", select: true }, undefined, undefined, ctx), /forced start failure/);
-    await assert.rejects(click(chatLinks[0]), "chat consent invalidates ✓ before yielding");
+    await assert.rejects(click(chatLinks[0]), "chat consent invalidates ✔ before yielding");
     await accepting;
     process.env.PATH = fastPath;
     await assert.rejects(click(chatLinks[0]), "a start failure cannot leave consent reusable");
