@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Editor, Input, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { defaultFooterField, parseFooterConfig, parseHandoffPrompt, type PinoteSettings, type FooterConfig, type FooterField } from "./footer-config.ts";
+import { defaultFooterField, defaultNewSessionPrompt, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, type PinoteSettings, type FooterConfig, type FooterField } from "./footer-config.ts";
 
 type Matches = (data: string, action: string) => boolean;
 type Row = { label: string; action: () => void };
@@ -42,7 +42,9 @@ export class TaskMenu {
 export class FooterSettings {
   private draft: FooterConfig;
   private prompt: string;
+  private newSessionPrompt: string;
   private editor?: Editor;
+  private editorMode?: "handoff" | "newSession";
   private createEditor: () => Editor;
   private knownFields: string[];
   private theme: Theme;
@@ -65,6 +67,7 @@ export class FooterSettings {
     this.configurationError = configurationError;
     this.draft = structuredClone(config.footer);
     this.prompt = config.handoffPrompt;
+    this.newSessionPrompt = config.newSessionPrompt === undefined ? defaultNewSessionPrompt : parseNewSessionPrompt(config.newSessionPrompt);
     this.createEditor = createEditor;
     this.save = save;
     this.draft.fields ??= [];
@@ -86,11 +89,13 @@ export class FooterSettings {
   private validate(field: FooterField): FooterField {
     return parseFooterConfig({ footer: { fields: [field] } }).fields![0];
   }
-  private persist(footer = this.draft, handoffPrompt = this.prompt) {
-    const settings = { footer: parseFooterConfig({ footer }), handoffPrompt: parseHandoffPrompt(handoffPrompt) };
+  private persist(footer = this.draft, handoffPrompt = this.prompt, newSessionPrompt = this.newSessionPrompt) {
+    const settings = { footer: parseFooterConfig({ footer }), handoffPrompt: parseHandoffPrompt(handoffPrompt),
+      newSessionPrompt: parseNewSessionPrompt(newSessionPrompt) };
     this.save(structuredClone(settings));
     this.draft = settings.footer;
     this.prompt = settings.handoffPrompt;
+    this.newSessionPrompt = settings.newSessionPrompt;
   }
   private persistField(field: FooterField) {
     const candidate = this.validate(field);
@@ -119,9 +124,17 @@ export class FooterSettings {
       }),
     }));
     rows.push({ label: `Task prompt: ${display(this.prompt)}`, action: () => {
+      this.editorMode = "handoff";
       this.editor = this.createEditor();
       this.editor.disableSubmit = true;
       this.editor.setText(this.prompt);
+      this.editor.focused = this.hasFocus;
+    } });
+    rows.push({ label: `New session prompt: ${display(this.newSessionPrompt).trim() || "(disabled)"}`, action: () => {
+      this.editorMode = "newSession";
+      this.editor = this.createEditor();
+      this.editor.disableSubmit = true;
+      this.editor.setText(this.newSessionPrompt);
       this.editor.focused = this.hasFocus;
     } });
     const configured = this.draft.fields!.map((field) => field.name);
@@ -168,11 +181,13 @@ export class FooterSettings {
       if (isTab(data)) this.done("tasks");
       else if (this.editor) {
         if (matchesKey(data, "ctrl+c")) this.editor.setText("");
-        else if (this.matches(data, "tui.select.cancel")) this.editor = undefined;
+        else if (this.matches(data, "tui.select.cancel")) { this.editor = undefined; this.editorMode = undefined; }
         else if (this.matches(data, "tui.input.newLine")) this.editor.handleInput(data);
         else if (this.matches(data, "tui.select.confirm")) {
-          this.persist(this.draft, this.editor.getExpandedText());
+          if (this.editorMode === "newSession") this.persist(this.draft, this.prompt, this.editor.getExpandedText());
+          else this.persist(this.draft, this.editor.getExpandedText(), this.newSessionPrompt);
           this.editor = undefined;
+          this.editorMode = undefined;
         } else this.editor.handleInput(data);
       } else if (this.input) {
         if (this.matches(data, "tui.select.cancel")) this.input = undefined;
@@ -197,7 +212,7 @@ export class FooterSettings {
     const lines = [this.theme.fg("accent", "Pinote — Global Settings"), this.theme.fg("dim", "Tasks (Tab) · Settings · Fields")];
     if (this.configurationError) lines.push(this.theme.fg("warning", this.configurationError));
     if (this.editor) {
-      lines.push(this.theme.fg("accent", "Task prompt"), ...this.editor.render(width),
+      lines.push(this.theme.fg("accent", this.editorMode === "newSession" ? "New session prompt" : "Task prompt"), ...this.editor.render(width),
         this.theme.fg("dim", "Enter save · Shift+Enter/Ctrl+J newline · Ctrl+C clear · Esc cancel edit"));
     } else if (this.input) {
       lines.push(this.theme.fg("accent", this.input.heading), ...this.input.widget.render(width),

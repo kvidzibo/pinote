@@ -112,8 +112,11 @@ are rejected. The **Preview task** Settings action is also available when the
 socket cannot start; the task remains visible without a link.
 
 Each Pi session remembers its own task, including several sessions in one folder.
-Resume restores that session's task; a new session starts unselected and does not import
-an older per-folder selection. Pi saves the session after the first submitted message;
+Resume restores that session's task. `/new` keeps the current task selected and
+prepopulates the editor with `newSessionPrompt`; nothing is submitted automatically.
+A fresh Pi launch starts unselected and does not import an older per-folder selection.
+Completion still starts a clean, unselected session. Retention requires normal
+file-backed Pi sessions; `--no-session` does not retain the selection across `/new`. Pi saves the session after the first submitted message;
 quitting before that leaves the next launch unselected, while the task stays in progress.
 Use **Continue**
 to insert the same configured prompt. Completing, removing, or scheduling a task clears it
@@ -131,6 +134,7 @@ Configure `~/.pi/agent/pi-note.json` (or the agent directory set by
 ```json
 {
   "handoffPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet.",
+  "newSessionPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet.",
   "taskOfferPolicy": "github-remote"
 }
 ```
@@ -158,6 +162,13 @@ warns until you fix the file and reload. No project-local configuration is read.
 In `/pi-note → Settings`, select **Task prompt** to edit the text inserted after
 selection or **Continue**. **Shift+Enter** or **Ctrl+J** adds a newline; **Enter** saves it
 globally, **Ctrl+C** clears the edit, and **Esc** cancels that unfinished edit.
+
+**New session prompt** edits the separate draft inserted by `/new` when a task is
+retained. Its default matches the built-in task prompt; an empty/whitespace-only
+value disables insertion without clearing the task. `/new` rereads it each time,
+so changes need no `/reload`. Invalid configuration warns and leaves the retained
+task selected without inserting a prompt. Both prompts are literal text, not templates.
+
 Settings and fields save automatically after each confirmed change; no separate
 Save action is needed. Leaving Settings with **Esc** or **Tab** keeps saved changes
 and discards only unfinished input. Saving never changes existing editor input or submits anything.
@@ -309,7 +320,7 @@ String definitions and the older `{ "label": "Next", "width": 24 }` form still
 work. Absent/`null` fields retain the legacy automatic PR link plus `Bar` fields;
 the first Settings save turns this legacy list into explicit global definitions.
 
-Settings saves apply immediately in this Pi session. Run `/reload` after manual
+Settings saves include both prompts and apply immediately in this Pi session. Run `/reload` after manual
 footer edits or in other running sessions; settings are also reread on session start.
 Invalid footer configuration warns and uses footer defaults; missing files silently
 use defaults. The task prompt is also read separately on selection/Continue as

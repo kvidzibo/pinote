@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { defaultFooterConfig, parseFooterConfig, readFooterDocument, saveFooterConfig } from "../footer-config.ts";
+import { defaultFooterConfig, defaultNewSessionPrompt, parseNewSessionPrompt, parseFooterConfig, readFooterDocument, saveFooterConfig } from "../footer-config.ts";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,6 +10,9 @@ import { customFooterChips, renderFooterLinks } from "../footer-links.ts";
 
 test("footer config selects fields and clips linked Unicode across segment boundaries", (t) => {
   assert.deepEqual(parseFooterConfig({}), defaultFooterConfig);
+  assert.equal(defaultNewSessionPrompt, "Read the current Pinote task. Summarize your understanding, but don’t start work yet.");
+  assert.equal(parseNewSessionPrompt(""), "");
+  assert.throws(() => parseNewSessionPrompt("bad\x1bvalue"), /control characters/);
   const config = parseFooterConfig({ footer: {
     titleWidth: 24, fieldWidth: 16, maxFields: 2,
     fields: ["Missing", { label: "Next", width: 12 }, "Link", "Hidden", "PR"],
@@ -51,9 +54,10 @@ test("footer config selects fields and clips linked Unicode across segment bound
   const path = join(directory, "pi-note.json");
   writeFileSync(path, JSON.stringify({ handoffPrompt: "Keep this prompt", taskOfferPolicy: "never", other: 9 }));
   const document = readFooterDocument();
-  saveFooterConfig(linkedConfig, document.raw);
+  saveFooterConfig(linkedConfig, document.raw, undefined, "");
   const root = JSON.parse(readFileSync(path, "utf8"));
   assert.equal(root.handoffPrompt, "Keep this prompt");
+  assert.equal(root.newSessionPrompt, "");
   assert.equal(root.other, 9);
   assert.equal(root.taskOfferPolicy, "never");
   assert.deepEqual(readFooterDocument().config, linkedConfig);

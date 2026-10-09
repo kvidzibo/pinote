@@ -4,13 +4,20 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export const defaultHandoffPrompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
+export const defaultNewSessionPrompt = defaultHandoffPrompt;
+export function parseNewSessionPrompt(value: unknown): string {
+  if (typeof value !== "string" || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value)) {
+    throw new Error("newSessionPrompt in pi-note.json must be a string without control characters (except tabs/newlines).");
+  }
+  return value;
+}
 export function parseHandoffPrompt(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value)) {
     throw new Error("handoffPrompt in pi-note.json must be a nonblank string without control characters (except tabs/newlines).");
   }
   return value;
 }
-export type PinoteSettings = { footer: FooterConfig; handoffPrompt: string };
+export type PinoteSettings = { footer: FooterConfig; handoffPrompt: string; newSessionPrompt?: string };
 
 export type FooterField = { name: string; label: string; link: boolean; format: string; width?: number };
 export type FooterConfig = { titleWidth: number; fieldWidth: number; maxFields: number; fields: FooterField[] | null };
@@ -90,9 +97,12 @@ export function loadFooterConfig(warn: (message: string) => void): FooterConfig 
 
 // Synchronous compare-and-replace: reject edits made while the settings dialog was open,
 // preserve unrelated keys, and never leave partial JSON behind.
-export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string) {
+export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string) {
   const checked = parseFooterConfig({ footer: config });
-  const prompt = handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) };
+  const prompts = {
+    ...(handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) }),
+    ...(newSessionPrompt === undefined ? {} : { newSessionPrompt: parseNewSessionPrompt(newSessionPrompt) }),
+  };
   const directory = getAgentDir();
   mkdirSync(directory, { recursive: true });
   const path = join(directory, "pi-note.json");
@@ -107,7 +117,7 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("pi-note.json is a symlink. Edit its target manually rather than replacing the link.");
     const root = expectedRaw === null ? {} : JSON.parse(expectedRaw);
     if (!object(root)) throw new Error("Invalid pi-note configuration; expected an object.");
-    raw = `${JSON.stringify({ ...root, ...prompt, footer: checked }, null, 2)}\n`;
+    raw = `${JSON.stringify({ ...root, ...prompts, footer: checked }, null, 2)}\n`;
     writeFileSync(temp, raw, { flag: "wx", mode: 0o600 });
     renameSync(temp, path);
   } finally { rmSync(temp, { force: true }); closeSync(descriptor); rmSync(lock, { force: true }); }
