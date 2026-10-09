@@ -3141,6 +3141,57 @@ def test_archive_time_filters_expire_on_unchanged_poll(gtk, monkeypatch):
         assert len(store.archived_notes()) == 3
 
 
+def test_archive_entries_collapse_expand_and_preserve_full_text(gtk):
+    from pinote.gui.app import Pango
+
+    text = "<b>Long archived title</b> " + "wide title " * 30 + "\n\n" + "Details 🐦\n" * 20
+    with Store(gtk.paths.database) as store:
+        note = store.get(store.add(text, tag="Work"))
+        note = store.update_agent(
+            note.id, {"Outcome": "Full handoff details"}, [], expected_updated_at=note.updated_at
+        )
+        store.transition(note.id, "done")
+        single = store.get(store.add("Single line " * 50))
+        store.transition(single.id, "rm")
+    window = gtk.open()
+    window._open_archive()
+    archive = window.archive_window
+    wait_until(gtk.glib, lambda: not archive.pending and len(archive.rows) == 2)
+    archive.resize(420, 440)
+    row = archive.rows[note.id]
+    wait_until(gtk.glib, lambda: row.get_allocated_width() <= 420)
+    for entry in archive.rows.values():
+        assert entry.title.get_visible() and not entry.body.get_visible()
+        assert entry.title.get_text() == entry.note.text.splitlines()[0]
+        assert entry.title.get_ellipsize() == Pango.EllipsizeMode.END
+        assert entry.get_allocated_height() < 100
+        assert entry.expand.get_accessible().get_name() == f"Expand note {entry.note.id}"
+    assert row.tag_badge.get_visible() and row.restore.get_visible()
+    assert not row.title.get_use_markup() and not row.body.get_use_markup()
+    click_button(gtk, archive, row.expand)
+    wait_until(gtk.glib, lambda: row.get_allocated_height() > 100)
+    assert row.body.get_visible() and not row.title.get_visible()
+    assert row.body.get_text() == note.markdown
+    assert row.expand.get_accessible().get_name() == f"Collapse note {note.id}"
+    row.body.select_region(0, 10)
+    archive._poll()
+    wait_until(gtk.glib, lambda: not archive.pending)
+    assert archive.rows[note.id] is row and row.expand.get_active()
+    assert row.body.get_selection_bounds()[0]
+    row.expand.clicked()
+    wait_until(gtk.glib, lambda: row.get_allocated_height() < 100)
+    assert row.title.get_visible() and not row.body.get_visible()
+    archive.rows[single.id].expand.clicked()
+    assert archive.rows[single.id].body.get_visible()
+    assert archive.rows[single.id].body.get_text() == single.text
+    row.restore.clicked()
+    wait_until(gtk.glib, lambda: not archive.pending and note.id not in archive.rows)
+    with Store(gtk.paths.database) as store:
+        restored = store.get(note.id)
+        assert restored.text == note.text and restored.agent_notes == note.agent_notes
+        assert restored.state == "active"
+
+
 def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, monkeypatch):
     from datetime import datetime
 
@@ -3187,6 +3238,7 @@ def test_menu_archive_lists_dates_restores_and_closes_independently(gtk, cli, mo
         assert row.date.get_text() == f"{status} · {date:%Y-%m-%d %H:%M:%S %Z}"
         assert row.restore.get_accessible().get_name() == f"Restore note {note_id}"
     retained = archive.rows[1]
+    click_button(gtk, archive, retained.expand)
     retained.body.select_region(0, 10)
     archive._poll()
     wait_until(gtk.glib, lambda: not archive.pending)

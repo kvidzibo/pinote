@@ -246,8 +246,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
   **All** (default), **1d**, and **7d** filter by completion/deletion time over all
   history, the past 24 hours, or the past seven days. Filtering never deletes tasks.
   It lists currently completed/deleted tasks, newest first, including previous
-  sessions and CLI changes. Each row shows its full text, **Completed** or **Deleted**,
-  the recorded date/time in your local timezone, and a **Restore** arrow icon.
+  sessions and CLI changes. Each row starts with a single-line title, shortened
+  with an ellipsis if needed. Its expand/collapse icon shows or hides the full task
+  text and agent fields; expansion stays open across refreshes while the row remains
+  in the list. **Completed** or **Deleted**, the recorded date/time in your local
+  timezone, tags, and the **Restore** arrow stay visible when collapsed.
   Imported completed tasks use their import date because the original completion
   date is unknown. Opening Archive again presents the same archive window.
   Its in-window **Close** button and **Esc** still close it.
