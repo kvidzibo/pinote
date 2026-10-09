@@ -12,7 +12,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
-from pinote.gui.icons import TagLabel, icon_button  # noqa: E402
+from pinote.gui.icons import TagLabel, icon_button, icon_image  # noqa: E402
 from pinote.gui.placement import place_child  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
@@ -26,8 +26,18 @@ class ArchiveRow(Gtk.ListBoxRow):
         content = Gtk.Box(spacing=12)
         content.get_style_context().add_class("archive-content")
         self.add(content)
+        self.expand = Gtk.ToggleButton(valign=Gtk.Align.START)
+        self.expand.set_relief(Gtk.ReliefStyle.NONE)
+        self.expand.connect("toggled", self._toggle_details)
+        content.pack_start(self.expand, False, False, 0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3, hexpand=True)
+        self.title = Gtk.Label(xalign=0, selectable=True, ellipsize=Pango.EllipsizeMode.END)
+        self.title.set_max_width_chars(58)
+        self.title.set_single_line_mode(True)
+        self.title.set_no_show_all(True)
+        text.pack_start(self.title, False, False, 0)
         self.body = Gtk.Label(xalign=0, selectable=True)
+        self.body.set_no_show_all(True)
         self.body.set_line_wrap(True)
         self.body.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.body.set_max_width_chars(58)
@@ -50,12 +60,28 @@ class ArchiveRow(Gtk.ListBoxRow):
         self.restore.connect("clicked", lambda _button: on_restore(note.id))
         content.pack_start(self.restore, False, False, 0)
         self.update(note, sensitive=True)
+        self._toggle_details(self.expand)
+
+    def _toggle_details(self, button: Gtk.ToggleButton) -> None:
+        expanded = button.get_active()
+        self.title.set_visible(not expanded)
+        self.body.set_visible(expanded)
+        button.set_image(
+            icon_image("view-collapse-symbolic" if expanded else "view-expand-symbolic")
+        )
+        description = f"{'Collapse' if expanded else 'Expand'} note {self.note.id}"
+        button.set_tooltip_text(description)
+        button.get_accessible().set_name(description)
+        button.get_accessible().set_description("Show or hide the full task text and agent fields.")
 
     def update(self, note: Note, *, sensitive: bool) -> None:
         self.note = note
         self.tag_badge.label.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)
         self.tag_badge.set_visible(note.tag is not None)
+        title = note.text.splitlines()[0]
+        if self.title.get_text() != title:
+            self.title.set_text(title)
         if self.body.get_text() != note.markdown:
             self.body.set_text(note.markdown)  # Literal text, never Pango markup.
         status = "Completed" if note.state == "done" else "Deleted"
