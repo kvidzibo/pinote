@@ -169,9 +169,6 @@ value disables insertion without clearing the task. `/new` rereads it each time,
 so changes need no `/reload`. Invalid configuration warns and leaves the retained
 task selected without inserting a prompt. Both prompts are literal text, not templates.
 
-![Clean session with the retained note and configurable draft](../docs/images/pi-note-new-session.png)
-![Editing the separate new-session prompt in Settings](../docs/images/pi-note-new-session-settings.png)
-
 Settings and fields save automatically after each confirmed change; no separate
 Save action is needed. Leaving Settings with **Esc** or **Tab** keeps saved changes
 and discards only unfinished input. Saving never changes existing editor input or submits anything.
