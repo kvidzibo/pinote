@@ -62,9 +62,9 @@ test("native suggestion and completion controls require consent and reject stale
         if (!stripVTControlCharacters(component.render(100).join("\n")).includes("Global Settings")) {
           component.handleInput("\t"); return;
         }
-        const row = component.render(100).findIndex((line: string) => line.includes(settingsChoice)) - 2;
-        assert.ok(row >= 0, `settings offers ${settingsChoice}`);
-        for (let i = 0; i < row; i++) component.handleInput("\x1b[B");
+        const selected = () => stripVTControlCharacters(component.render(100).join("\n")).includes(`> ${settingsChoice}`);
+        for (let i = 0; i < 80 && !selected(); i++) component.handleInput("\x1b[B");
+        assert.ok(selected(), `settings offers ${settingsChoice}`);
         component.handleInput("\r");
       }) },
   };

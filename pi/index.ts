@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { Type } from "typebox";
 import { updateTaskFooter, clearTaskFooter } from "./footer-status.ts";
-import { defaultFooterConfig, defaultHandoffPrompt, effectiveFooterFields, loadFooterConfig, parseHandoffPrompt, readFooterDocument, saveFooterConfig, type FooterConfig, type PinoteSettings } from "./footer-config.ts";
+import { defaultFooterConfig, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, loadFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readFooterDocument, saveFooterConfig, type FooterConfig, type PinoteSettings } from "./footer-config.ts";
 import { FooterSettings, TaskMenu, withSettingsTab, type SettingsOption, type SettingsResult } from "./footer-settings.ts";
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
@@ -36,6 +36,13 @@ type Summary = Pick<Task, "id" | "text" | "state" | "tag">;
 // The standard Pi footer accepts text, so ship a portable terminal glyph, not a theme icon.
 const noteIcon = readFileSync(new URL("./icons/note.txt", import.meta.url), "utf8").trim();
 const previewType = "pinote-preview";
+// /new replaces the extension runtime, even before the outgoing session is saved.
+// Transfer only the ID, keyed by the exact destination session file, within this process.
+const continuationKey = Symbol.for("pi-note.new-session-selections");
+const processState = globalThis as typeof globalThis & {
+  [continuationKey]?: Map<string, number>;
+};
+const continuations = processState[continuationKey] ??= new Map<string, number>();
 const compatible = "Incompatible note CLI response. Install pinote 0.3.0+ and check note on PATH.";
 const validId = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -420,6 +427,11 @@ export default function (pi: ExtensionAPI) {
     alive = true;
     activeContext = ctx;
     selectedId = readSelection(ctx);
+    const sessionFile = ctx.sessionManager.getSessionFile?.();
+    const continuation = sessionFile ? continuations.get(sessionFile) : undefined;
+    if (sessionFile) continuations.delete(sessionFile);
+    const carrying = _event.reason === "new" && validId(continuation);
+    if (carrying) remember(continuation);
     restoreSuggestion(ctx);
     if (_event.reason === "new" || _event.reason === "fork") {
       // A fork may include an ancestor proposal whose consent was consumed elsewhere.
@@ -451,6 +463,22 @@ export default function (pi: ExtensionAPI) {
     if (!alive || generation !== epoch) return;
     if (suggestion) previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
     await refresh(ctx);
+    if (carrying && alive && generation === epoch) {
+      try {
+        const branch = branchEpoch;
+        const current = await selected(ctx);
+        if (!current || !alive || generation !== epoch || branch !== branchEpoch || selectedId !== current.id ||
+            !ctx.hasUI || ctx.mode !== "tui") return;
+        const config = readConfig();
+        const prompt = "newSessionPrompt" in config ? parseNewSessionPrompt(config.newSessionPrompt) : defaultNewSessionPrompt;
+        if (prompt.trim()) {
+          const draft = ctx.ui.getEditorText();
+          ctx.ui.setEditorText(draft ? `${draft}\n\n${prompt}` : prompt);
+        }
+      } catch (error) {
+        if (alive && generation === epoch && ctx.hasUI) ctx.ui.notify(`Pinote new session: ${clean(String(error))}`, "warning");
+      }
+    }
   });
   pi.on("session_tree", async (_event, ctx) => {
     if (!alive) return;
@@ -470,6 +498,12 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (_event, ctx) => { await refresh(ctx); });
   pi.on("agent_end", async (_event, ctx) => { await refresh(ctx); });
   pi.on("session_shutdown", async (_event, ctx) => {
+    // Shutdown means replacement was accepted; cancelled /new never leaves a transfer.
+    if (_event.reason === "new" && _event.targetSessionFile && validId(selectedId)) {
+      // Bound orphaned transfers if creating the replacement runtime fails.
+      if (continuations.size >= 32) continuations.delete(continuations.keys().next().value!);
+      continuations.set(_event.targetSessionFile, selectedId);
+    }
     setupAbort?.abort();
     cancelCompletionDispatch();
     clearSuggestion(ctx, false);
@@ -551,7 +585,7 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           if (settings) {
-            let config: PinoteSettings = { footer: { ...defaultFooterConfig, fields: [] }, handoffPrompt: defaultHandoffPrompt };
+            let config: PinoteSettings = { footer: { ...defaultFooterConfig, fields: [] }, handoffPrompt: defaultHandoffPrompt, newSessionPrompt: defaultNewSessionPrompt };
             let expectedRaw: string | null = null;
             let configurationError: string | undefined;
             try {
@@ -560,6 +594,7 @@ export default function (pi: ExtensionAPI) {
               config = {
                 footer: { ...document.config, fields: effectiveFooterFields(document.config, current?.agent_notes) },
                 handoffPrompt: "handoffPrompt" in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt,
+                newSessionPrompt: "newSessionPrompt" in root ? parseNewSessionPrompt(root.newSessionPrompt) : defaultNewSessionPrompt,
               };
               expectedRaw = document.raw;
             } catch (error) {
@@ -590,7 +625,7 @@ export default function (pi: ExtensionAPI) {
                 }), (updated) => {
                   if (!canAct()) throw new Error("This session changed. Reopen settings before editing.");
                   if (configurationError) throw new Error(configurationError);
-                  const saved = saveFooterConfig(updated.footer, expectedRaw, updated.handoffPrompt);
+                  const saved = saveFooterConfig(updated.footer, expectedRaw, updated.handoffPrompt, updated.newSessionPrompt);
                   expectedRaw = saved.raw;
                   footerConfig = saved.config;
                   void refresh(ctx);

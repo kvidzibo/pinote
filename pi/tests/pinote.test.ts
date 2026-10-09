@@ -62,8 +62,8 @@ test("task selection, handoff, guarded Done and tools stay session-local without
         if (choice === "save-fields") {
           const down = (n: number) => { for (let i = 0; i < n; i++) picker.handleInput("\x1b[B"); };
           const enter = () => picker.handleInput("\r");
-          down(4); enter(); down(4); enter(); // remove PR
-          down(4); enter(); picker.handleInput("Next"); enter(); // add
+          down(5); enter(); down(4); enter(); // remove PR
+          down(5); enter(); picker.handleInput("Next"); enter(); // add
           enter(); // link off
           down(1); enter(); picker.handleInput("\x0b"); enter(); // blank label
           picker.handleInput("\x1b");

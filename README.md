@@ -138,8 +138,10 @@ recon, or small edits. No plan is required. Creating and selecting it still need
 your confirmation. [Personal configuration](pi/README.md#personal-configuration)
 can restrict offers to GitHub-backed repositories or disable them.
 
-Each Pi session remembers its own task, even in the same folder. Arbitrary
-Markdown handoff fields appear under **Agent** in the GTK preview without changing
+Each Pi session remembers its own task, even in the same folder. `/new` keeps the
+current task selected and inserts a configurable draft without submitting it;
+completion starts unselected. A fresh Pi launch still starts unselected.
+Arbitrary Markdown handoff fields appear under **Agent** in the GTK preview without changing
 the task text.
 
 A GitHub `PR` field adds a clickable footer link; Pinote does not poll GitHub or
