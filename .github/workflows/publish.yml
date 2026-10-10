@@ -58,5 +58,7 @@ jobs:
           if [ "$PUBLISHED" = true ]; then
             echo "Skip: $NAME@$VERSION already on npm"
           else
+            npm ci --ignore-scripts
+            npm run build:mcp
             npm publish --ignore-scripts --access public --provenance
           fi

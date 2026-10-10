@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 dist/
+/pi/dist-mcp/
 *.egg-info/
 *.db
 *.db-*

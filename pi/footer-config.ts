@@ -1,4 +1,4 @@
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./config-path.ts";
 import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -97,7 +97,8 @@ export function loadFooterConfig(warn: (message: string) => void): FooterConfig 
 
 // Synchronous compare-and-replace: reject edits made while the settings dialog was open,
 // preserve unrelated keys, and never leave partial JSON behind.
-export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string) {
+export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string) {
+  if (taskOfferPolicy !== undefined && !["always", "github-remote", "never"].includes(taskOfferPolicy)) throw new Error("Invalid taskOfferPolicy");
   const checked = parseFooterConfig({ footer: config });
   const prompts = {
     ...(handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) }),
@@ -117,7 +118,7 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("pi-note.json is a symlink. Edit its target manually rather than replacing the link.");
     const root = expectedRaw === null ? {} : JSON.parse(expectedRaw);
     if (!object(root)) throw new Error("Invalid pi-note configuration; expected an object.");
-    raw = `${JSON.stringify({ ...root, ...prompts, footer: checked }, null, 2)}\n`;
+    raw = `${JSON.stringify({ ...root, ...prompts, ...(taskOfferPolicy === undefined ? {} : { taskOfferPolicy }), footer: checked }, null, 2)}\n`;
     writeFileSync(temp, raw, { flag: "wx", mode: 0o600 });
     renameSync(temp, path);
   } finally { rmSync(temp, { force: true }); closeSync(descriptor); rmSync(lock, { force: true }); }
