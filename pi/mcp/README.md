@@ -48,7 +48,8 @@ normal personal data. No desktop notifications are sent.
 - **Tasks:** filter, select/start, create/select, clear selection, complete, preview,
   and request insertion of the task prompt. Selecting a task asks for confirmation.
 - **Settings:** edit prompts, task-offer policy, footer limits, and field definitions
-  (label, link, format, width). Saves are confirmed, validated, and atomic; concurrent
+  (label, link, format, width). Enter text as JSON strings (`\n` for line breaks)
+  so whitespace round-trips exactly. Saves are confirmed, validated, and atomic; concurrent
   edits are rejected and unrelated settings are preserved. Invalid configuration
   fails closed; repair it manually rather than replacing it with defaults.
 - **Footer:** selected task plus configured fields; safe HTTP(S) links are clickable.

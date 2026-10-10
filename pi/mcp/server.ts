@@ -6,7 +6,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseHandoffPrompt, parseNewSessionPrompt, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
+import { defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 
 const URI = 'pinote://ui';
 const MIME = 'application/vnd.mcp-native-ui+json';
@@ -48,6 +48,13 @@ async function selected(state: State, signal: AbortSignal): Promise<Task | null>
   const task: Task | null = JSON.parse(await note(['agent', 'get', String(state.selectedId)], signal));
   return task && ['active', 'in_progress'].includes(task.state) ? task : null;
 }
+function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?: Record<string, string>) {
+  // Legacy Bar values are arbitrary task text, not validated field definitions.
+  return effectiveFooterFields(config, notes).flatMap((field) => {
+    try { return parseFooterConfig({ footer: { fields: [field] } }).fields!; }
+    catch { return []; }
+  }).slice(0, 64);
+}
 function settings() {
   const document = readFooterDocument();
   const root = document.raw === null ? {} : JSON.parse(document.raw);
@@ -62,14 +69,14 @@ async function snapshot(state: State, signal: AbortSignal) {
   const task = await selected(state, signal);
   const config = settings();
   state = { ...state, selectedId: task?.id ?? null };
-  if (state.screen === 'field' && !effectiveFooterFields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
+  if (state.screen === 'field' && !fields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
   const revision = createHash('sha256').update(JSON.stringify({ state, tasks, task, raw: config.raw })).digest('hex');
   return { state, tasks, task, config, revision };
 }
 type Snapshot = Awaited<ReturnType<typeof snapshot>>;
 function view(data: Snapshot) {
   const { tasks, task, config, revision } = data;
-  const state: State = { ...data.state, selectedId: task?.id ?? null };
+  const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
   const action = (id: string, label: string, extra: Partial<Control> = {}) => controls.push({ id, label: label.slice(0, 2000), kind: 'action', ...extra });
   let title = 'Pinote · Tasks';
@@ -84,9 +91,9 @@ function view(data: Snapshot) {
     controls.push({ id: 'taskOfferPolicy', label: 'Task offers', kind: 'select', value: config.policy, options: ['always', 'github-remote', 'never'].map((value) => ({ label: value, value })), confirm: 'Save this global task-offer policy?' });
     for (const key of ['titleWidth', 'fieldWidth', 'maxFields'] as const) controls.push({ id: key, label: key, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
     controls.push({ id: 'add-field', label: 'Add field', icon: icons.add, kind: 'text', value: '', confirm: 'Add this global footer field?' });
-    effectiveFooterFields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.label || '(no label)'} · ${field.format}` }));
+    fields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.label || '(no label)'} · ${field.format}` }));
   } else if (state.screen === 'field') {
-    const field = effectiveFooterFields(config.config, task?.agent_notes).find((f) => f.name === state.field);
+    const field = fields(config.config, task?.agent_notes).find((f) => f.name === state.field);
     if (!field) throw new Error('Field no longer exists; open Settings again');
     title = `Pinote · ${field.name}`; body = 'Global footer display definition; task values are unchanged.';
     controls.push({ id: 'label', label: 'Label', kind: 'text', value: field.label, confirm: 'Save this global field label?' });
@@ -109,7 +116,7 @@ function view(data: Snapshot) {
   }
   const footer: { text: string; url?: string; width?: number }[] = [{ text: `${icons.note} ${task ? task.text.split('\n')[0].slice(0, 2000) : 'Pinote · no task'}`, width: config.config.titleWidth }];
   if (task) {
-    for (const field of effectiveFooterFields(config.config, task.agent_notes)) {
+    for (const field of fields(config.config, task.agent_notes)) {
       if (footer.length - 1 >= config.config.maxFields) break;
       const raw = task.agent_notes[field.name];
       if (!raw) continue;
@@ -179,7 +186,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     else if (action === 'taskOfferPolicy') policy = z.enum(['always', 'github-remote', 'never']).parse(value);
     else if (['titleWidth', 'fieldWidth', 'maxFields'].includes(action)) cfg[action as 'titleWidth'] = z.number().int().parse(value);
     else {
-      cfg.fields = effectiveFooterFields(cfg, before.task?.agent_notes);
+      cfg.fields = fields(cfg, before.task?.agent_notes);
       if (action === 'add-field') cfg.fields.push(defaultFooterField(z.string().parse(value)));
       else if (action === 'remove-field') { cfg.fields = cfg.fields.filter((f) => f.name !== state.field); next.screen = 'settings'; }
       else {
