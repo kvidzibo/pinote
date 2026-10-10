@@ -169,6 +169,7 @@ export default function (pi: ExtensionAPI) {
   let epoch = 0;
   let refreshSerial = 0;
   let pending: symbol | undefined;
+  let menuPending: symbol | undefined;
   let previewPending = false;
   let setupAbort: AbortController | undefined;
   let activeContext: ExtensionContext | undefined;
@@ -318,7 +319,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
   const preview = async (ctx: ExtensionContext, requestSignal?: AbortSignal): Promise<boolean> => {
-    if (!ctx.hasUI || ctx.mode !== "tui" || pending || previewPending || !validId(selectedId)) return false;
+    if (!ctx.hasUI || ctx.mode !== "tui" || pending || menuPending || previewPending || !validId(selectedId)) return false;
     const generation = epoch;
     const branch = branchEpoch;
     const id = selectedId;
@@ -346,7 +347,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
   const dispatchCompletion = (ctx: ExtensionContext, displayed: Task, selection: string): Promise<boolean> => {
-    if (!ctx.isIdle() || pending || completionDispatch) return Promise.resolve(false);
+    if (!ctx.isIdle() || pending || menuPending || completionDispatch) return Promise.resolve(false);
     const token = `${selection}:${randomBytes(8).toString("hex")}`;
     return new Promise((resolve) => {
       const finish = (accepted: boolean) => {
@@ -367,7 +368,7 @@ export default function (pi: ExtensionAPI) {
     const token = args.trim();
     const request = token ? completionDispatch : undefined;
     if (token && (request?.token !== token || request.selection !== `${runtimeToken}:${epoch}:${branchEpoch}:${selectedId}`)) return;
-    if (!alive || !ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || setupAbort || !validId(selectedId)) {
+    if (!alive || !ctx.hasUI || ctx.mode !== "tui" || !ctx.isIdle() || pending || menuPending || setupAbort || !validId(selectedId)) {
       request?.finish(false);
       if (ctx.hasUI) ctx.ui.notify("Select a task and wait until Pi is idle and the Pinote operation has finished.", "warning");
       return;
@@ -459,6 +460,7 @@ export default function (pi: ExtensionAPI) {
     if (!alive || generation !== epoch) return;
     // Keep the setup lock until its aborted subprocess has actually settled.
     if (!setupAbort) pending = undefined;
+    menuPending = undefined;
     await checkCLI(ctx, true);
     if (!alive || generation !== epoch) return;
     if (suggestion) previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
@@ -522,7 +524,7 @@ export default function (pi: ExtensionAPI) {
 
   const installCLI = async (upgrade: boolean, ctx: ExtensionCommandContext) => {
     if (!ctx.hasUI || ctx.mode !== "tui") return;
-    if (pending || !ctx.isIdle()) {
+    if (pending || menuPending || !ctx.isIdle()) {
       ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
       return;
     }
@@ -563,18 +565,18 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (token) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
-      if (pending) {
+      if (pending || menuPending) {
         ctx.ui.notify("Wait until the pinote operation has finished.", "warning");
         return;
       }
       const operation = Symbol();
-      pending = operation;
+      menuPending = operation;
       const generation = epoch;
       const branch = branchEpoch;
       const currentSession = () => alive && generation === epoch;
       // Menus, task selection and preference edits do not interrupt the agent.
       // Completion and CLI setup retain their own idle-only guards.
-      const canAct = () => currentSession() && branch === branchEpoch;
+      const canAct = () => currentSession() && branch === branchEpoch && menuPending === operation;
       try {
         await checkCLI(ctx);
         if (!canAct()) return;
@@ -635,7 +637,7 @@ export default function (pi: ExtensionAPI) {
             if (!canAct() || edited === undefined) return;
             if (edited === "tasks") { settings = false; continue; }
             if (!options.some((option) => option.result === edited)) return;
-            if (pending === operation) pending = undefined;
+            if (menuPending === operation) menuPending = undefined;
             if (edited === "preview") {
               if (!await preview(ctx)) ctx.ui.notify("The task is no longer available for preview.", "warning");
             } else if (edited === "done") await completeSelected("", ctx, current ?? undefined);
@@ -651,7 +653,7 @@ export default function (pi: ExtensionAPI) {
           if (!action || !canAct()) return;
           if (action === "Settings") { settings = true; continue; }
           if (action === "Done" && current) {
-            if (pending === operation) pending = undefined;
+            if (menuPending === operation) menuPending = undefined;
             await completeSelected("", ctx, current);
             return;
           }
@@ -669,6 +671,11 @@ export default function (pi: ExtensionAPI) {
             id = choice;
           } else return;
           const handoff = handoffPrompt();
+          if (pending) {
+            ctx.ui.notify("Wait until the pinote operation has finished.", "warning");
+            return;
+          }
+          pending = operation;
           refreshSerial++;
           const chosen = await startTask(id, canAct);
           if (!chosen || !canAct()) return;
@@ -681,6 +688,7 @@ export default function (pi: ExtensionAPI) {
         if (currentSession()) ctx.ui.notify(`Pinote: ${clean(error instanceof Error ? error.message : String(error))}`, "error");
       } finally {
         if (pending === operation) pending = undefined;
+        if (menuPending === operation) menuPending = undefined;
         if (currentSession()) await refresh(ctx);
       }
     },
@@ -757,7 +765,7 @@ export default function (pi: ExtensionAPI) {
       clearSuggestion(ctx);
       return true;
     }
-    if (pending || setupAbort) return false;
+    if (pending || menuPending || setupAbort) return false;
     const generation = epoch;
     const branch = branchEpoch;
     const operation = Symbol();
@@ -806,7 +814,7 @@ export default function (pi: ExtensionAPI) {
       const current = await selected(ctx, signal);
       if (!alive || generation !== epoch || branch !== branchEpoch) throw new Error("Pinote operation cancelled: the session changed.");
       if (current || selectedId !== null) throw new Error("A task is already selected; keep it unless the user asks to switch.");
-      if (pending || setupAbort) throw new Error("A pinote operation is already open. Retry after it finishes.");
+      if (pending || menuPending || setupAbort) throw new Error("A pinote operation is already open. Retry after it finishes.");
       const result = (status: string) => ({ content: [{ type: "text" as const, text: JSON.stringify({ status }) }], details: { status } });
       suggestion = { text: params.text, ...(params.tag === undefined ? {} : { tag: params.tag.trim() }) };
       saveSuggestion();
@@ -836,7 +844,7 @@ export default function (pi: ExtensionAPI) {
       const generation = epoch;
       const branch = branchEpoch;
       if (params.select !== true) return toolResult(await writeTask(ctx, signal, argv, undefined, "0.4.0"));
-      if (pending) throw new Error("A pinote operation is already open. Retry after it finishes.");
+      if (pending || menuPending) throw new Error("A pinote operation is already open. Retry after it finishes.");
       const operation = Symbol();
       const previousSelection = selectedId;
       pending = operation;

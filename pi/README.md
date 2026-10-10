@@ -362,7 +362,7 @@ Tools work without a TUI. `/pi-note` works in a TUI while the agent is running:
 you can select/switch tasks, use Continue, preview tasks, respond to suggestions,
 and edit settings without interrupting the turn or submitting input. Completion
 and CLI installation/upgrades still require an idle session. Another pending
-Pinote operation blocks the menu.
+Pinote operation blocks the menu. Open menus do not block agent handoff updates.
 This package does not synchronize databases or paths between machines. Note text
 and fields loaded into Pi are sent to the configured model when used as context;
 avoid secrets. Agent commands do not send desktop notifications.
