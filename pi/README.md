@@ -84,7 +84,7 @@ The agent can still read the task separately with `pinote_get_current`.
 Click previews work while the agent is running, provided no other Pinote operation
 is open. Each click saves a fresh snapshot in the transcript, above any currently
 streaming response. Later output scrolls it upward; it does not expire. Preview
-reads never lock out the agent's task updates. Settings still requires Pi to be idle.
+reads never lock out the agent's task updates. Settings also works during a running turn.
 
 ![Preview above a running response](../docs/images/pi-note-active-preview.png)
 
