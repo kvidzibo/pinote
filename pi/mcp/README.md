@@ -6,7 +6,7 @@ the generic [gateway UI host](https://github.com/kvidzibo/mcp-session-gateway)
 only renders and routes them. No model turn is needed for UI actions.
 
 This uses the gateway's **private native UI v1 protocol**, not browser MCP Apps or
-the built-in Pi MCP resource renderer. Use gateway 0.6.0+ with its Pi adapter.
+the built-in Pi MCP resource renderer. Use gateway 0.7.0+ with its Pi adapter.
 
 ## Setup
 
