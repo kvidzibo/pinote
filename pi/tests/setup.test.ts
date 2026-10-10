@@ -158,7 +158,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   assert.ok(!notices.some(({ message }) => message.includes("PR check failed")));
   await commands.get("pi-note").handler("", commandCtx);
   assert.equal(installs, 1);
-  assert.match(notices.at(-1)!.message, /Wait until Pi is idle/);
+  assert.match(notices.at(-1)!.message, /Wait until the pinote operation has finished/);
   await assert.rejects(tools.get("pinote_get_current").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
   cliVersion = "pinote 0.4.0";
   finishInstall();

@@ -563,8 +563,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (token) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
-      if (pending || !ctx.isIdle()) {
-        ctx.ui.notify("Wait until Pi is idle and the pinote operation has finished.", "warning");
+      if (pending) {
+        ctx.ui.notify("Wait until the pinote operation has finished.", "warning");
         return;
       }
       const operation = Symbol();
@@ -572,7 +572,9 @@ export default function (pi: ExtensionAPI) {
       const generation = epoch;
       const branch = branchEpoch;
       const currentSession = () => alive && generation === epoch;
-      const canAct = () => currentSession() && ctx.isIdle() && branch === branchEpoch;
+      // Menus, task selection and preference edits do not interrupt the agent.
+      // Completion and CLI setup retain their own idle-only guards.
+      const canAct = () => currentSession() && branch === branchEpoch;
       try {
         await checkCLI(ctx);
         if (!canAct()) return;

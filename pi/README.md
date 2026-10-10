@@ -358,7 +358,11 @@ Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on
 PR merges. No GitHub authentication is required. `PINOTE_PR_POLL_SECONDS` is no
 longer used. Other separately installed Pi PR/Git extensions are unaffected.
 
-Tools work without a TUI, but `/pi-note` needs an idle TUI.
+Tools work without a TUI. `/pi-note` works in a TUI while the agent is running:
+you can select/switch tasks, use Continue, preview tasks, respond to suggestions,
+and edit settings without interrupting the turn or submitting input. Completion
+and CLI installation/upgrades still require an idle session. Another pending
+Pinote operation blocks the menu.
 This package does not synchronize databases or paths between machines. Note text
 and fields loaded into Pi are sent to the configured model when used as context;
 avoid secrets. Agent commands do not send desktop notifications.

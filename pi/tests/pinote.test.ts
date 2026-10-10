@@ -30,6 +30,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   let failSelection = false;
   let beforeChoice: (() => void) | undefined;
   let delaySelected: (() => Promise<void>) | undefined;
+  let idle = true;
   let draft = "Existing draft";
   let status: string | undefined;
   const calls: string[][] = [];
@@ -37,7 +38,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   const choices: Array<string | undefined> = [];
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   const ctx: any = {
-    cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
+    cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => idle,
     sessionManager: { getBranch: () => entries },
     newSession: async (options: any) => {
       await options.withSession({ ui: ctx.ui, reload: async () => {} });
@@ -164,6 +165,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.equal(draft, "Existing draft");
   assert.equal(sessionTask(), null);
   failSelection = false;
+  idle = false;
   choices.push("pick");
   await extension.command();
   assert.equal(sessionTask(), 2, "newest task is first");
@@ -182,6 +184,15 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.equal(draft, draftBeforeSettings);
   const configuredFields = (await extension.tool("pinote_fields", {})).details.fields;
   assert.deepEqual(configuredFields, [{ name: "Next", label: "", link: false, format: "<value>" }]);
+  choices.push("Continue");
+  await extension.command();
+  assert.ok(draft.startsWith(`${draftBeforeSettings}\n\n`), "Continue appends to the draft while the agent runs");
+  draft = draftBeforeSettings;
+  choices.push("Done");
+  await extension.command();
+  assert.equal(tasks[1].state, "in_progress", "busy menus must not allow completion or session replacement");
+  assert.match(notices.at(-1)!, /wait until Pi is idle/);
+  idle = true;
   const originalText = tasks[1].text;
   tasks[1].text = "日本語 ".repeat(40) + "\nHidden details";
   await extension.event("agent_end");

@@ -213,11 +213,7 @@ test("native suggestion and completion controls require consent and reject stale
     assert.equal(status, undefined);
     await propose("Keyboard fallback");
     await extension.commands.get("pi-note").handler("", ctx);
-    assert.equal(list().length, 1, "Settings waits for the agent to be idle");
-    idle = true;
-    await extension.commands.get("pi-note").handler("", ctx);
-    idle = false;
-    assert.equal(list().length, 2);
+    assert.equal(list().length, 2, "Settings can accept a suggestion while the agent is running");
     assert.equal((await get()).details.state, "in_progress");
     session.appendCustomEntry("pinote-selection", { id: null });
     await event("session_tree");
