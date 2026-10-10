@@ -6,7 +6,7 @@ the generic [gateway UI host](https://github.com/kvidzibo/mcp-session-gateway)
 only renders and routes them. No model turn is needed for UI actions.
 
 This uses the gateway's **private native UI v1 protocol**, not browser MCP Apps or
-the built-in Pi MCP resource renderer. Use gateway 0.4.0+ with its Pi adapter.
+the built-in Pi MCP resource renderer. Use gateway 0.5.0+ with its Pi adapter.
 
 ## Setup
 
@@ -74,7 +74,7 @@ be edited for compatibility with the existing extension, but this host does not
 yet implement their automation. Continue requests a separately confirmed draft;
 it never overwrites existing editor text or submits a prompt. Previews are plain
 text/Markdown source, limited to 20,000 characters; the task list shows at most 200
-filtered matches. Use the CLI for full text and unsupported task operations.
+filtered matches (fewer if the serialized display budget is reached). Use the CLI for full text and unsupported task operations.
 
 Changes through this service notify the host. External CLI/GTK/config changes need
 Ctrl+R or reopening the app. Failed actions are never retried automatically: a

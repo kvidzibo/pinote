@@ -16,7 +16,7 @@ const noteCommand = process.env.PINOTE_NOTE_COMMAND || 'note';
 const icons = Object.fromEntries(['add', 'check', 'note'].map((name) => [name, readFileSync(new URL(`../icons/${name}.txt`, import.meta.url), 'utf8').trim()]));
 const Context = z.object({ conversationId: z.string().min(1).max(256), state: z.object({
   selectedId: z.number().int().positive().safe().nullable().optional(), screen: z.enum(['tasks', 'settings', 'field']).optional(),
-  field: z.string().max(64).optional(), search: z.string().max(256).optional(),
+  field: z.string().refine((value) => [...value].length <= 64, 'Field name exceeds 64 code points').optional(), search: z.string().max(256).optional(),
 }).default({}) });
 type State = z.infer<typeof Context>['state'];
 type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, string> };
@@ -53,7 +53,7 @@ function settings() {
   const root = document.raw === null ? {} : JSON.parse(document.raw);
   const handoffPrompt = 'handoffPrompt' in root ? parseHandoffPrompt(root.handoffPrompt) : defaultHandoffPrompt;
   const newSessionPrompt = 'newSessionPrompt' in root ? parseNewSessionPrompt(root.newSessionPrompt) : defaultNewSessionPrompt;
-  const policy = root.taskOfferPolicy ?? 'always';
+  const policy = Object.hasOwn(root, 'taskOfferPolicy') ? root.taskOfferPolicy : 'always';
   if (!['always', 'github-remote', 'never'].includes(policy)) throw new Error('Invalid taskOfferPolicy in pi-note.json');
   return { ...document, handoffPrompt, newSessionPrompt, policy };
 }
@@ -96,7 +96,7 @@ function view(data: Snapshot) {
     action('remove-field', 'Remove field', { confirm: 'Remove this global display definition? Task values are retained.' });
   } else {
     if (task) {
-      action('continue', 'Continue', { description: 'Request insertion of the task prompt; never submit it' });
+      if (config.handoffPrompt.length <= 20_000) action('continue', 'Continue', { description: 'Request insertion of the task prompt; never submit it' });
       action('preview', 'Preview full task', { description: 'Read-only local preview; never sent to the model' });
       action('done', 'Complete task', { icon: icons.check, confirm: 'Complete this task? This does not start a new conversation.' });
       action('clear', 'Clear selection', { description: 'Keep the task and its progress unchanged' });
@@ -118,10 +118,28 @@ function view(data: Snapshot) {
       const value = link?.[1] ?? raw;
       const number = url?.match(/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)\/?$/)?.[1] ?? (/^\d+$/.test(value) ? value : undefined);
       if (field.format.includes('<url>') && !url || field.format.includes('<number>') && !number) continue;
-      footer.push({ text: ` · ${field.label ? `${field.label}: ` : ''}${field.format.replaceAll('<value>', value).replaceAll('<url>', url ?? '').replaceAll('<number>', number ?? '')}`, ...(field.link && url ? { url } : {}), width: field.width ?? config.config.fieldWidth });
+      const substitutions: Record<string, string> = { value, url: url ?? '', number: number ?? '' };
+      const rendered = ` · ${field.label ? `${field.label}: ` : ''}${field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key])}`;
+      footer.push({ text: rendered.slice(0, 20_000), ...(field.link && url && url.length <= 2048 ? { url } : {}), width: field.width ?? config.config.fieldWidth });
     }
   }
-  return { version: 1, title, body: body.slice(0, 20_000), revision, state, controls, footer };
+  const editable = controls.filter((control) => {
+    if (typeof control.value !== 'string' || control.value.length <= 20_000) return true;
+    body = `${control.label} exceeds the editor limit; edit it outside this UI.\n${body}`;
+    return false;
+  });
+  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state, controls: editable, footer };
+  // JSON escaping and expanded footer formats can exceed the host budget even
+  // with bounded row counts. Preserve navigation/filter controls ahead of rows.
+  let shortened = false;
+  while (JSON.stringify(result).length > 240_000) {
+    const row = result.controls.map((control) => control.id.startsWith('select:')).lastIndexOf(true);
+    if (row >= 0) { result.controls.splice(row, 1); shortened = true; }
+    else if (result.footer.length > 1) result.footer.pop();
+    else throw new Error('UI exceeds its display budget; shorten configuration values');
+  }
+  if (shortened) result.body = `More matches omitted to fit the display budget; narrow Filter tasks.\n${result.body}`.slice(0, 20_000);
+  return result;
 }
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [{ uri: URI, name: 'Pinote', mimeType: MIME }] }));
 server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(async () => {
@@ -148,7 +166,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     if (!before.tasks.some((t) => t.id === id)) throw new Error('Task no longer selectable');
     await note(['start', String(id)], extra.signal); next.selectedId = id;
   } else if (action === 'add') {
-    const task: Task = JSON.parse(await note(['agent', 'add', '--text', z.string().min(1).parse(value)], extra.signal));
+    const task: Task = JSON.parse(await note(['agent', 'add', `--text=${z.string().min(1).parse(value)}`], extra.signal));
     await note(['start', String(task.id)], extra.signal); next.selectedId = task.id;
   } else if (action === 'done') {
     await note(['agent', 'done', String(before.task!.id), '--expected-updated-at', before.task!.updated_at], extra.signal);
@@ -197,7 +215,7 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
       const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
       const task = await selected(state, extra.signal);
       if (!task) throw new Error('No task is selected');
-      result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.flatMap((key) => ['--remove', key])], extra.signal));
+      result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal));
       await server.notification({ method: 'notifications/native-ui/changed', params: { uri: URI } });
     } else throw new Error('Unknown tool');
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
