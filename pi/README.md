@@ -84,7 +84,7 @@ The agent can still read the task separately with `pinote_get_current`.
 Click previews work while the agent is running, provided no other Pinote operation
 is open. Each click saves a fresh snapshot in the transcript, above any currently
 streaming response. Later output scrolls it upward; it does not expire. Preview
-reads never lock out the agent's task updates. Settings still requires Pi to be idle.
+reads never lock out the agent's task updates. Settings also works during a running turn.
 
 ![Preview above a running response](../docs/images/pi-note-active-preview.png)
 
@@ -358,7 +358,11 @@ Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on
 PR merges. No GitHub authentication is required. `PINOTE_PR_POLL_SECONDS` is no
 longer used. Other separately installed Pi PR/Git extensions are unaffected.
 
-Tools work without a TUI, but `/pi-note` needs an idle TUI.
+Tools work without a TUI. `/pi-note` works in a TUI while the agent is running:
+you can select/switch tasks, use Continue, preview tasks, respond to suggestions,
+and edit settings without interrupting the turn or submitting input. Completion
+and CLI installation/upgrades still require an idle session. Another pending
+Pinote operation blocks the menu. Open menus do not block agent handoff updates.
 This package does not synchronize databases or paths between machines. Note text
 and fields loaded into Pi are sent to the configured model when used as context;
 avoid secrets. Agent commands do not send desktop notifications.

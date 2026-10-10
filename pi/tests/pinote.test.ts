@@ -30,6 +30,9 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   let failSelection = false;
   let beforeChoice: (() => void) | undefined;
   let delaySelected: (() => Promise<void>) | undefined;
+  let enteredMenu: (() => void) | undefined;
+  let finishMenu: (() => void) | undefined;
+  let idle = true;
   let draft = "Existing draft";
   let status: string | undefined;
   const calls: string[][] = [];
@@ -37,7 +40,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   const choices: Array<string | undefined> = [];
   const success = (value: unknown) => ({ code: 0, stdout: JSON.stringify(value), stderr: "", killed: false });
   const ctx: any = {
-    cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => true,
+    cwd: "/tmp/project", hasUI: true, mode: "tui", isIdle: () => idle,
     sessionManager: { getBranch: () => entries },
     newSession: async (options: any) => {
       await options.withSession({ ui: ctx.ui, reload: async () => {} });
@@ -56,6 +59,11 @@ test("task selection, handoff, guarded Done and tools stay session-local without
         }, resolve);
         beforeChoice?.();
         const choice = choices.shift();
+        if (choice === "hold") {
+          finishMenu = () => picker.handleInput("\x1b");
+          enteredMenu?.();
+          return;
+        }
         if (picker.render(100).join("\n").includes("Continue")) {
           resolve(choice === "pick" ? "Continue" : choice); return;
         }
@@ -164,6 +172,7 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.equal(draft, "Existing draft");
   assert.equal(sessionTask(), null);
   failSelection = false;
+  idle = false;
   choices.push("pick");
   await extension.command();
   assert.equal(sessionTask(), 2, "newest task is first");
@@ -182,6 +191,28 @@ test("task selection, handoff, guarded Done and tools stay session-local without
   assert.equal(draft, draftBeforeSettings);
   const configuredFields = (await extension.tool("pinote_fields", {})).details.fields;
   assert.deepEqual(configuredFields, [{ name: "Next", label: "", link: false, format: "<value>" }]);
+  choices.push("Continue");
+  await extension.command();
+  assert.ok(draft.startsWith(`${draftBeforeSettings}\n\n`), "Continue appends to the draft while the agent runs");
+  draft = draftBeforeSettings;
+  choices.push("Done");
+  await extension.command();
+  assert.equal(tasks[1].state, "in_progress", "busy menus must not allow completion or session replacement");
+  assert.match(notices.at(-1)!, /wait until Pi is idle/);
+  const menuOpened = new Promise<void>((resolve) => { enteredMenu = resolve; });
+  choices.push("Settings", "hold");
+  const openMenu = extension.command();
+  await menuOpened;
+  await extension.command();
+  assert.match(notices.at(-1)!, /Wait until the pinote operation has finished/, "duplicate menus remain blocked");
+  const whileOpen = (await extension.tool("pinote_get_current", {})).details;
+  const handoffUpdate = await extension.tool("pinote_update_current", {
+    expected_updated_at: whileOpen.updated_at, set: { Next: "Updated while Settings is open" },
+  });
+  assert.equal(handoffUpdate.details.agent_notes.Next, "Updated while Settings is open");
+  finishMenu!();
+  await openMenu;
+  idle = true;
   const originalText = tasks[1].text;
   tasks[1].text = "日本語 ".repeat(40) + "\nHidden details";
   await extension.event("agent_end");
