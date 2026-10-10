@@ -851,6 +851,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self.visible_filter_menu.popdown()
             elif self.menu.get_visible():
                 self.menu.popdown()
+            elif self.creation_tag is not None:
+                self._select_creation_tag(None)
             else:
                 self.close()
             return True
@@ -955,7 +957,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
             menu.append(item)
 
     def _filter_matches(self, note: Note) -> bool:
-        return self.tag_filter is None or (note.tag or "") in self.tag_filter
+        return (
+            note.state == "in_progress"
+            or self.tag_filter is None
+            or (note.tag or "") in self.tag_filter
+        )
 
     def _filter_menu_choices(self, menu) -> None:
         menu.set_reserve_toggle_size(True)
@@ -1049,7 +1055,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.filter_count.set_text(f"({count})" if self.loaded_notes else "(…)")
         description = (
             f"Filter by tag: {label}. {count} of {len(self.notes_snapshot)} active tasks match. "
-            "Select multiple tags to show tasks matching any of them."
+            "Select multiple tags to show tasks matching any of them. "
+            "In-progress tasks always bypass tag filtering."
             if self.loaded_notes
             else f"Filter by tag: {label}. Loading tasks."
         )
@@ -1432,7 +1439,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 return
             tag = note.tag
             self.saved_feedback = (note_id, verb, tag)
-        filtered = self.tag_filter is not None and (tag or "") not in self.tag_filter
+        filtered = (
+            not self._filter_matches(note)
+            if note is not None
+            else self.tag_filter is not None and (tag or "") not in self.tag_filter
+        )
         collapsed = self.view_mode == 2 or (
             self.view_mode == 1 and (note is None or note.state != "in_progress")
         )

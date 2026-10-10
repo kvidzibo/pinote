@@ -407,6 +407,43 @@ def test_minimise_cycle_and_context_state_icons(gtk):
     cycle(1, False, False)
 
 
+def test_escape_dismisses_menus_then_clears_creation_tag_then_closes(gtk):
+    with Store(gtk.paths.database) as store:
+        store.add("Existing", tag="Work")
+    window = gtk.open()
+    window.entry.set_text("Keep this draft")
+    window._select_creation_tag("Work")
+
+    def escape():
+        subprocess.run(["xdotool", "key", "Escape"], env=gtk.env, check=True, timeout=5)
+
+    for button, menu in (
+        (window.tag_button, window.composer_tag_menu),
+        (window.filter_button, window.visible_filter_menu),
+        (window.menu_button, window.menu),
+    ):
+        click_button(gtk, window, button)
+        wait_until(gtk.glib, lambda menu=menu: menu.get_mapped())
+        escape()
+        wait_until(gtk.glib, lambda menu=menu: not menu.get_mapped())
+        assert window.creation_tag == "Work" and not window.closed
+    subprocess.run(
+        ["xdotool", "windowfocus", "--sync", str(window.get_window().get_xid())],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    escape()
+    wait_until(gtk.glib, lambda: window.creation_tag is None)
+    assert not window.closed and window.tag_label.get_text() == "Untagged"
+    assert window.entry.get_text() == "Keep this draft"
+    assert window.tag_filter == frozenset({""}) and not window.rows
+    with Store(gtk.paths.database) as store:
+        assert store.get(1).tag == "Work" and len(store.history()) == 1
+    escape()
+    wait_until(gtk.glib, lambda: window.closed)
+
+
 def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     with Store(gtk.paths.database) as store:
         store.add("Existing", tag="Work <🐦>")
@@ -590,6 +627,46 @@ def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
     window.worker.shutdown(wait=True)
     with Store(gtk.paths.database) as store:
         assert "Saved while closing" in store.tags()
+
+
+@pytest.mark.parametrize("selected", [frozenset({"Work"}), frozenset()])
+def test_in_progress_bypasses_tag_filter_until_reset(gtk, selected):
+    with Store(gtk.paths.database) as store:
+        store.add("Work task", tag="Work")
+        store.add("Personal task", tag="Personal")
+        store.add("Untagged task")
+        store.transition(2, "start")
+        store.transition(3, "start")
+    window = gtk.open()
+    window.entry.set_text("Keep this draft")
+    window._select_creation_tag("Personal")
+    window._set_filter(selected)
+    ordinary = {1} if selected else set()
+    assert set(window.rows) == ordinary | {2, 3}
+    assert window.filter_count.get_text() == f"({len(ordinary) + 2})"
+    assert not window.show_all_button.get_visible()
+    assert window.progress_scroll.get_visible()
+    window._task_saved(2, "Saved", "Personal")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert not window.feedback.get_visible()
+    window._act(2, "reset")
+    wait_until(gtk.glib, lambda: not window.pending and 2 not in window.rows)
+    assert set(window.rows) == ordinary | {3}
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "start")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and 2 in window.rows)
+    assert set(window.rows) == ordinary | {2, 3}
+    with Store(gtk.paths.database) as store:
+        store.transition(2, "reset")
+        store.transition(3, "reset")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == ordinary)
+    assert window.filter_count.get_text() == f"({len(ordinary)})"
+    assert window.show_all_button.get_visible() == (not selected)
+    assert window.entry.get_text() == "Keep this draft" and window.creation_tag == "Personal"
+    assert window.tag_filter == selected
 
 
 def test_visible_filter_count_and_empty_state_recovery(gtk):
@@ -865,8 +942,8 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
         menu.deactivate()
         wait_until(gtk.glib, lambda: not window.geometry_source)
 
-    toggle("Work", frozenset({"", "Work"}), {1, 2})
-    toggle("", frozenset({"Work"}), {2})
+    toggle("Work", frozenset({"", "Work"}), {1, 2, 3})
+    toggle("", frozenset({"Work"}), {2, 3})
     toggle("Personal", frozenset({"Work", "Personal"}), {2, 3})
     assert window.rows[3].get_parent() is window.progress_list
     assert "Personal, Work" in window.filter_button.get_tooltip_text()
@@ -876,9 +953,9 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
     assert not window.scroll.get_visible() and not window.progress_scroll.get_visible()
     window._cycle_view(window.minimise_button)
     toggle("Work", frozenset({"Personal"}), {3})
-    toggle("Personal", frozenset(), set())
+    toggle("Personal", frozenset(), {3})
     assert window.filter_label.get_text() == "No tags"
-    assert window.show_all_button.get_visible()
+    assert not window.show_all_button.get_visible()
 
     def action(label, selected, visible):
         click_button(gtk, window, window.filter_button)
@@ -909,9 +986,9 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
     action("Select all tags", None, {1, 2, 3, 4})
     assert window.filter_label.get_text() == "All"
     toggle("Work", frozenset({"", "Other", "Personal"}), {1, 3, 4})
-    action("Clear selection", frozenset(), set())
-    action("Clear selection", frozenset(), set())
-    toggle("Work", frozenset({"Work"}), {2})
+    action("Clear selection", frozenset(), {3})
+    action("Clear selection", frozenset(), {3})
+    toggle("Work", frozenset({"Work"}), {2, 3})
     with Store(gtk.paths.database) as store:
         assert len(store.history()) == 5  # Filtering never mutates tasks.
 
@@ -926,7 +1003,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         store.transition(2, "start")
         store.transition(3, "done")
     window = gtk.open()
-    assert window.tag_filter == frozenset({""}) and set(window.rows) == {1}
+    assert window.tag_filter == frozenset({""}) and set(window.rows) == {1, 2}
     window._prepare_filters()
     assert [
         item.get_accessible().get_name()
@@ -1034,10 +1111,12 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     editor = window.editor
     editor.entry.set_text("Personal 🐦")
     click_button(gtk, editor, editor.save_button)
-    wait_until(gtk.glib, lambda: window.editor is None and not window.pending and not window.rows)
-    assert window.empty.get_text() == "No tasks match this filter."
+    wait_until(
+        gtk.glib, lambda: window.editor is None and not window.pending and set(window.rows) == {2}
+    )
+    assert not window.show_all_button.get_visible()
     filter_by("Personal 🐦 (1)")
-    assert set(window.rows) == {1}
+    assert set(window.rows) == {1, 2}
     assert [
         item.get_accessible().get_name()
         for item in window.filter_menu.get_children()
@@ -1052,7 +1131,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     ]
     window._select_creation_tag("Personal 🐦")
     window.entry.emit("activate")
-    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {1, 4})
+    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {1, 2, 4})
     assert window.rows[4].note.tag == "Personal 🐦"
     tags = tag_menu(1)
     assert [item.get_accessible().get_name() for item in tags.get_children()][:4] == [
@@ -1062,14 +1141,14 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         "Work (1)",
     ]
     select(tags, "Work (1)")
-    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {4})
+    wait_until(gtk.glib, lambda: not window.pending and set(window.rows) == {2, 4})
     filter_by("Select all tags")
     assert set(window.rows) == {1, 2, 4}
     select(tag_menu(1), "Untagged (0)")
     wait_until(gtk.glib, lambda: not window.pending and window.rows[1].note.tag is None)
     filter_by("Clear selection")
     filter_by("Untagged (1)")
-    assert set(window.rows) == {1}
+    assert set(window.rows) == {1, 2}
     filter_by("Select all tags")
     context(2)
     target = window.rows[2]
@@ -1668,7 +1747,8 @@ def test_only_action_controls_have_tooltips_on_ordinary_notes(gtk):
         elif widget is window.filter_button:
             assert widget.get_tooltip_text() == (
                 "Filter by tag: Untagged. 1 of 1 active tasks match. "
-                "Select multiple tags to show tasks matching any of them."
+                "Select multiple tags to show tasks matching any of them. "
+                "In-progress tasks always bypass tag filtering."
             )
         else:
             assert not widget.get_has_tooltip()
@@ -3895,7 +3975,8 @@ def test_in_progress_pins_on_focus_loss_above_input_and_below_new_tasks(gtk, mon
         assert pinned.get_upper() > pinned.get_page_size()
         assert window.get_position()[1] >= 25
         window._set_filter(frozenset({"Hidden"}))
-        assert not window.rows and not window.progress_scroll.get_visible()
+        assert sections() == ([], list(range(1, 18)))
+        assert window.progress_scroll.get_visible()
         window._set_filter(frozenset({""}))
         settled()
         assert sections() == ([], list(range(1, 18)))
