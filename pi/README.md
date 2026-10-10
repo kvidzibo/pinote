@@ -5,6 +5,10 @@ in Pi: selected-task footer status, `/pi-note`, and agent current-task read/upda
 add, and tag-listing tools.
 The extension and Python app share a repository but install separately.
 
+For server-provided UI instead of this Pinote-specific extension, see the opt-in
+[native MCP UI alternative](mcp/README.md). It uses a generic gateway host and has
+explicit initial-version limits; it is not activated by installing this extension.
+
 ## Install
 
 Requires Pi 0.99.1+, Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.

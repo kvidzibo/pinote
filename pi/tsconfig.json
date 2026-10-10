@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["index.ts", "tests/**/*.ts", "test-load.ts"]
+  "include": ["index.ts", "mcp/**/*.ts", "tests/**/*.ts", "test-load.ts"]
 }
