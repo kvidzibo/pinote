@@ -162,8 +162,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   List-filter menus also show checkboxes for their independently selected tags.
 - **Tag dropdown below the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
-  Right-click the tag below the input to reset it to **Untagged**, keeping the draft,
-  existing tasks, and list filter unchanged.
+  Right-click the tag below the input, or press **Esc** with no menu or preview open,
+  to reset it to **Untagged**, keeping the draft, existing tasks, and list filter unchanged.
+  Once the tag is **Untagged**, **Esc** closes the checklist.
   **+** saves a new tag in the database immediately and selects it, even without a task.
   Saved tags survive reopening; the new-task tag selection resets to **Untagged**.
 - **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
@@ -173,8 +174,10 @@ Edits and tag changes retain the task ID and record old/new values in history;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
 - The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
   and matching active-task count. Click it to toggle one or more tags, including **Untagged**;
-  tasks matching **any** selected tag appear in both sections. Click a checked tag to remove it;
-  with no tags checked, no tasks match. The **Select all tags** button (stacked checkboxes)
+  tasks matching **any** selected tag appear. **In-progress tasks always bypass tag filtering**,
+  including when no tags are checked; resetting their progress makes the filter apply again.
+  Click a checked tag to remove it; with no tags checked, only in-progress tasks appear.
+  The **Select all tags** button (stacked checkboxes)
   checks every tag, including **Untagged**, and shows every active task. Unchecking a tag
   then excludes just that tag. The **Clear selection** button (funnel with ×) unchecks all tags.
   Both buttons sit side by side below the tags. Selecting tags or either button keeps the
@@ -234,7 +237,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   of the desktop icon theme. Tag choices keep their text labels.
 - The **minimise button** next to the drag handle cycles with each click:
   **all notes → in-progress notes and bottom bar → bottom bar only → all notes**.
-  Tag filters still apply. The in-progress view includes newly started tasks immediately.
+  Tag filters apply only to tasks not in progress. The in-progress view includes
+  newly started tasks immediately.
   Hidden tasks are unchanged; the input draft is preserved. The chosen view stays in
   effect during updates: added tasks, reset tasks, and due reminders are ordinary
   tasks, so switch to all notes to see them. Reopening starts fully open.
@@ -268,7 +272,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
 - Close with **menu → Close**, **Esc**, or the window manager. This only closes
   the window; it does not mark notes done. Unsubmitted input returns on reopening
   without becoming a task.
-  With the menu or a preview open, **Esc** dismisses it instead of closing the checklist.
+  With the menu or a preview open, **Esc** dismisses it first. Otherwise, a selected
+  new-task tag is cleared before a subsequent **Esc** closes the checklist.
 - Notices CLI changes about once per second. Unchanged rows are retained so
   polling does not reset text selection or scrolling. Background additions do not
   scroll the list; only a successful add from the GUI does.
