@@ -14,9 +14,9 @@ import { z } from 'zod';
 const text = z.string().max(20_000);
 const scalar = z.union([text, z.number(), z.boolean(), z.null()]);
 const View = z.object({
-  version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(),
+  version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
-  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
+  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict();
 
 // One end-to-end case exercises the UI contract against the real CLI and database.
@@ -115,6 +115,41 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.ok(view.controls.filter((c) => c.id.startsWith('select:')).length < 200);
     view = (await act(view, 'search', 'Task 199')).view;
     assert.equal(view.controls.filter((c) => c.id.startsWith('select:')).length, 1);
+    view = (await act(view, 'search', '')).view;
+    const proposal = await client.callTool({ name: 'propose', arguments: { text: 'Suggested task\n\nDetails', tag: 'MCP' }, _meta: meta() });
+    assert.equal(proposal.isError, undefined);
+    state = proposal._meta!['native-ui/state'] as Record<string, unknown>;
+    const first = await read();
+    assert.ok(first.footer?.some((item) => item.action === 'proposal:accept'));
+    const replaced = await client.callTool({ name: 'propose', arguments: { text: 'Replacement task', tag: 'MCP' }, _meta: meta() });
+    const oldState = state;
+    state = replaced._meta!['native-ui/state'] as Record<string, unknown>;
+    view = await read();
+    assert.notEqual(first.revision, view.revision);
+    await assert.rejects(act(first, 'proposal:accept'), /changed/);
+    view = (await act(view, 'proposal:accept')).view;
+    assert.equal(view.retainOnNew, true);
+    const acceptedId = view.state.selectedId;
+    assert.equal(typeof acceptedId, 'number');
+    const accepted = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
+    assert.equal(accepted.tag, 'MCP');
+    assert.equal(accepted.text, 'Replacement task');
+    assert.ok(view.footer?.some((item) => item.action === 'preview'));
+    assert.ok(view.footer?.some((item) => item.action === 'done'));
+    assert.equal((await client.callTool({ name: 'propose', arguments: { text: 'Forbidden' }, _meta: meta() })).isError, true);
+    view = (await act(view, 'done')).view;
+    const emptyState = state;
+    state = oldState;
+    await client.close(); client = await connect();
+    assert.equal((await read()).state.proposal, null, 'Replaced proposal cannot be resurrected by branch restore/reconnect');
+    state = replaced._meta!['native-ui/state'] as Record<string, unknown>;
+    assert.equal((await read()).state.proposal, null, 'Accepted consent cannot be replayed');
+    state = emptyState;
+    const dismissible = await client.callTool({ name: 'propose', arguments: { text: 'Dismiss me' }, _meta: meta() });
+    state = dismissible._meta!['native-ui/state'] as Record<string, unknown>;
+    view = (await act(await read(), 'proposal:dismiss')).view;
+    assert.equal(view.state.proposal, null);
+    assert.equal(view.state.selectedId, null);
     const saved = await readFile(config, 'utf8');
     await writeFile(config, JSON.stringify({ ...JSON.parse(saved), taskOfferPolicy: null }));
     await assert.rejects(read(), /taskOfferPolicy/);
