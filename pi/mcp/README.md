@@ -77,13 +77,25 @@ have saved the session for resume persistence. Existing extension selections are
 not imported. Changing the gateway config path or service name starts a separate
 selection namespace.
 
+## Task-offer guidance
+
+Before multi-step implementation or configuration migrations, agents should call
+`get_current`. If it returns null, use `tags` and `propose` to suggest a short task
+with a saved tag, then continue without waiting. Skip informational questions and
+trivial edits. Never replace an existing selection or create/select without consent.
+
+The tool descriptions reinforce this workflow after discovery. For proactive
+discovery, include the same guidance in the client's always-loaded agent rules;
+tool descriptions alone cannot make an agent discover the service.
+
 ## Initial-version limits
 
 This is a working alternative, **not full parity with the old extension**. It does
 not retag/edit existing tasks or install/upgrade the CLI. Completion intentionally
-does not reset conversations. Task-offer policy and new-session prompt can
-be edited for compatibility with the existing extension, but this host does not
-yet implement their automation. Continue requests a separately confirmed draft;
+does not reset conversations. The legacy `taskOfferPolicy` and new-session prompt
+remain editable for native-extension compatibility; the MCP host does not apply
+them automatically. Agent-side task offers follow the client rules and tool
+descriptions above. Continue requests a separately confirmed draft;
 it never overwrites existing editor text or submits a prompt. Previews are display-only transcript entries (never model context), showing plain
 text/Markdown source limited to 20,000 characters; the task list shows at most 200
 filtered matches (fewer if the serialized display budget is reached). Use the CLI for full text and unsupported task operations.
