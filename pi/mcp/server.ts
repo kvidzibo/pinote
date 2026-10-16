@@ -31,7 +31,7 @@ const Action = z.object({ method: z.literal('native-ui/action'), params: z.objec
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.20.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.20.1' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
@@ -256,8 +256,8 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
 }));
 const empty = { type: 'object' as const, properties: {}, additionalProperties: false };
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
-  { name: 'propose', description: 'Suggest a task without creating it. Requires no selected task. Show a short action-oriented title, optional details after a blank line, and reuse a saved tag. The user clicks + to create/start/select or dismiss. Replaces an unaccepted suggestion; continue working without asking again. Never creates a task before a user action.', inputSchema: { type: 'object' as const, properties: { text: { type: 'string', minLength: 1, maxLength: 4000 }, tag: { type: 'string', minLength: 1, maxLength: 64 } }, required: ['text'], additionalProperties: false } },
-  { name: 'get_current', description: 'Read the task selected through the native Pinote UI for this conversation. Returns null if unselected.', inputSchema: empty, annotations: { readOnlyHint: true } },
+  { name: 'propose', description: 'Before multi-step implementation or configuration migrations, suggest a task if get_current returns null; skip informational questions and trivial edits. Show a short action-oriented title, optional details after a blank line, and reuse a saved tag from tags. The user clicks + to create/start/select or dismiss. Replaces an unaccepted suggestion; continue working without waiting or asking again. Never creates a task before a user action.', inputSchema: { type: 'object' as const, properties: { text: { type: 'string', minLength: 1, maxLength: 4000 }, tag: { type: 'string', minLength: 1, maxLength: 64 } }, required: ['text'], additionalProperties: false } },
+  { name: 'get_current', description: 'Read the task selected through the native Pinote UI for this conversation before multi-step implementation or configuration migrations. Returns null if unselected; then use tags and propose to suggest a task without creating one. Skip informational questions and trivial edits; never replace an existing selection.', inputSchema: empty, annotations: { readOnlyHint: true } },
   { name: 'fields', description: 'Read global footer field definitions before setting task handoff values. Does not edit settings.', inputSchema: empty, annotations: { readOnlyHint: true } },
   { name: 'tags', description: 'List saved Pinote tags.', inputSchema: empty, annotations: { readOnlyHint: true } },
   { name: 'update_current', description: 'Merge Markdown handoff fields on the selected task. Read get_current first. Keep handoff notes concise; PR is one GitHub PR URL.', inputSchema: { type: 'object' as const, properties: { expected_updated_at: { type: 'string' }, set: { type: 'object', additionalProperties: { type: 'string' } }, remove: { type: 'array', items: { type: 'string' } } }, required: ['expected_updated_at'], additionalProperties: false } },
