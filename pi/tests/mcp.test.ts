@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -9,13 +9,14 @@ import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { z } from 'zod';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 // Assert the wire limits independently of the service implementation.
 const text = z.string().max(20_000);
 const scalar = z.union([text, z.number(), z.boolean(), z.null()]);
 const View = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
-  controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
+  controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, revision: z.string().min(1).max(256).optional(), kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
   footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict();
 
@@ -35,7 +36,8 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   };
   let client = await connect();
   let state: Record<string, unknown> = {};
-  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state } });
+  let scoped = false;
+  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...(scoped ? { 'native-ui/features': { actionRevisions: true } } : {}) });
   const read = async () => {
     const result = await client.readResource({ uri: 'pinote://ui', _meta: meta() });
     assert.ok('text' in result.contents[0]);
@@ -43,7 +45,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     return View.parse(JSON.parse(result.contents[0].text));
   };
   const act = async (view: any, action: string, value?: unknown) => {
-    const result = await client.request({ method: 'native-ui/action', params: { uri: 'pinote://ui', revision: view.revision, action, value, _meta: meta() } }, z.object({ view: View, draft: text.optional(), preview: text.optional() }));
+    const result = await client.request({ method: 'native-ui/action', params: { uri: 'pinote://ui', revision: view.controls.find((control: any) => control.id === action)?.revision ?? view.revision, action, value, _meta: meta() } }, z.object({ view: View, draft: text.optional(), preview: text.optional() }));
     state = result.view.state;
     return result;
   };
@@ -150,6 +152,72 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     view = (await act(await read(), 'proposal:dismiss')).view;
     assert.equal(view.state.proposal, null);
     assert.equal(view.state.selectedId, null);
+    // Negotiated controls only invalidate dependencies of the requested action.
+    scoped = true;
+    view = await read(); state = view.state;
+    assert.ok(view.controls.every((control) => control.revision));
+    view = (await act(view, 'search', 'External')).view;
+    view = (await act(view, 'add', 'Scoped task')).view;
+    const displayed = view;
+    const external = async (...args: string[]) => (await promisify(execFile)(join(root, '../.venv/bin/note'), ['--no-notify', ...args], {
+      env: { ...process.env, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir },
+    })).stdout;
+    const observer = await connect();
+    const observedChange = async (write: () => Promise<unknown>, matches: (next: any) => boolean, observerState: Record<string, unknown> = {}) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const changed = new Promise<void>((resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('External write did not notify the other MCP process')), 8000);
+        observer.setNotificationHandler(z.object({ method: z.literal('notifications/native-ui/changed'), params: z.object({ uri: z.literal('pinote://ui') }) }), async () => {
+          try {
+            const result = await observer.readResource({ uri: 'pinote://ui', _meta: { 'native-ui/context': { conversationId: 'observer', state: observerState } } });
+            if ('text' in result.contents[0] && matches(JSON.parse(result.contents[0].text))) resolve();
+          } catch (error) { reject(error); }
+        });
+      });
+      try { await write(); await changed; } finally { clearTimeout(timeout!); }
+    };
+    try {
+      let other: any;
+      await observedChange(async () => { other = JSON.parse(await external('agent', 'add', '--text', 'External task')); },
+        (next) => next.controls.some((control: any) => control.id === `select:${other?.id}`), { search: 'External' });
+      assert.notEqual((await read()).revision, displayed.revision);
+      assert.match((await act(displayed, 'preview')).preview!, /Scoped task/);
+      view = (await act(displayed, 'done')).view;
+      const selectable = view;
+      await external('agent', 'add', '--text', 'Another unrelated task');
+      view = (await act(selectable, `select:${other.id}`)).view;
+      const selectedView = view;
+      let current = JSON.parse(await external('agent', 'get', String(other.id)));
+      await external('agent', 'update', String(other.id), '--expected-updated-at', current.updated_at, '--set-json', JSON.stringify({ Bar: 'Before' }));
+      const rejected = (error: unknown) => error instanceof McpError && error.code === -33003 &&
+        (error.data as any)?.['native-ui/action']?.status === 'not-applied';
+      await assert.rejects(act(selectedView, 'done'), rejected);
+      assert.match((await act(selectedView, 'preview')).preview!, /Before/);
+      view = (await act(await read(), 'screen:settings')).view;
+      await external('agent', 'add', '--text', 'Settings must survive this unrelated task');
+      view = (await act(view, 'titleWidth', 82)).view;
+      const document = JSON.parse(await readFile(config, 'utf8'));
+      document.footer.fields = null;
+      await observedChange(async () => {
+        await writeFile(`${config}.tmp`, JSON.stringify(document)); await rename(`${config}.tmp`, config);
+      }, (next) => next.controls.some((control: any) => control.id === 'titleWidth' && control.value === 82), { screen: 'settings' });
+      view = await read(); state = view.state;
+      view = (await act(view, 'field:Before')).view;
+      current = JSON.parse(await external('agent', 'get', String(other.id)));
+      await external('agent', 'update', String(other.id), '--expected-updated-at', current.updated_at, '--set-json', JSON.stringify({ Bar: 'Before\nAfter' }));
+      await assert.rejects(act(view, 'width', 90), rejected, 'Derived field definitions are part of settings consent');
+      assert.equal(JSON.parse(await readFile(config, 'utf8')).footer.fields, null);
+      const legacy = await observer.readResource({ uri: 'pinote://ui', _meta: { 'native-ui/context': { conversationId: 'legacy', state: {} } } });
+      assert.ok('text' in legacy.contents[0]);
+      assert.ok(JSON.parse(legacy.contents[0].text).controls.every((control: any) => control.revision === undefined));
+      view = await read(); state = view.state;
+      view = (await act(view, 'done')).view;
+      const receipt = await client.callTool({ name: 'propose', arguments: { text: 'Cross-process receipt' }, _meta: meta() });
+      state = receipt._meta!['native-ui/state'] as Record<string, unknown>;
+      view = await read(); state = view.state;
+      const pendingState = { ...state };
+      await observedChange(() => act(view, 'proposal:dismiss'), (next) => next.state.proposal === null, pendingState);
+    } finally { await observer.close(); }
     const saved = await readFile(config, 'utf8');
     await writeFile(config, JSON.stringify({ ...JSON.parse(saved), taskOfferPolicy: null }));
     await assert.rejects(read(), /taskOfferPolicy/);

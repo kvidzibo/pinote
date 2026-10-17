@@ -83,6 +83,7 @@ row; each session remembers its own task. Fields belong to the task, not a sessi
 note agent select 2 --cwd "$PWD"    # start and select atomically
 note agent selected --cwd "$PWD"    # task or null
 note agent get 2                    # task, Markdown, fields, updated_at revision
+note agent start 2 --expected-updated-at 'REVISION_FROM_GET' # no project selection
 note agent update 2 --expected-updated-at 'REVISION_FROM_GET' \
   --set-json '{"PR":"[Fix #42](https://github.com/org/repo/pull/42)","Next":"Review"}'
 note agent update 2 --expected-updated-at 'LATEST_REVISION' --remove Next
@@ -107,7 +108,11 @@ maximum). Values use the same 4096-character/control-character rules as task
 text. Up to 64 fields / 32 KiB JSON can be saved per task. Empty values are
 rejected; use `--remove` instead. Conflicting set/remove labels are rejected.
 
-Use the returned `updated_at` for updates, tagging, and completion; a stale revision fails
+`agent start` starts an active task without storing a project selection. It also
+accepts an unchanged in-progress task without adding history. Its revision check
+and transition are atomic; use it for a task selected by another UI.
+
+Use the returned `updated_at` for guarded starts, updates, tagging, and completion; a stale revision fails
 without changing anything. Fields are retained as history snapshots and displayed
 under `## Agent` in terminal listings and the GTK Markdown preview. The task editor
 edits only task text, leaving agent fields intact. Fields also remain visible as
