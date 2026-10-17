@@ -55,8 +55,13 @@ normal personal data. No desktop notifications are sent.
   edits are rejected and unrelated settings are preserved. Invalid configuration
   fails closed; repair it manually rather than replacing it with defaults.
 - **Footer:** selected task plus configured fields; safe HTTP(S) links are clickable.
-  The title previews the task; **✔** completes it and clears the selection without
-  resetting the conversation or editor. Suggestions show only **✚**: left-click to
+  Single-click the active title to preview; double-click it to complete. **✔** also
+  completes and clears the selection without resetting the conversation or editor.
+  Suggested titles use italic accent text; double-click to accept/start, then the
+  title returns to normal text. Acceptance cannot reuse the same click capability
+  to complete. Styling/double-click require gateway 0.28.0+ and double-click needs
+  its updated Kitty mouse mapping (Ctrl+Shift+double-click in fullscreen).
+  Older hosts retain plain titles and icon actions. Suggestions show **✚**: left-click to
   create/start/select, right-click to dismiss. Right-click requires gateway 0.22.0+
   and its Kitty mouse mapping; **Dismiss suggestion** in the app menu remains the
   keyboard/older-host fallback. These use the gateway's generic footer actions, not a Pinote

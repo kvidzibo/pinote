@@ -32,7 +32,7 @@ const Action = z.object({ method: z.literal('native-ui/action'), params: z.objec
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.22.1' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.23.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
@@ -118,7 +118,13 @@ function staleAction(): never {
 function secondaryActions(meta: Record<string, unknown> | undefined): boolean {
   return z.object({ footerSecondaryActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success;
 }
-function view(data: Snapshot, scoped = false, secondary = false) {
+function footerFeatures(meta: Record<string, unknown> | undefined) {
+  return {
+    footerStyles: z.object({ footerStyles: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
+    footerDoubleActions: z.object({ footerDoubleActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
+  };
+}
+function view(data: Snapshot, scoped = false, secondary = false, features: { footerStyles?: boolean; footerDoubleActions?: boolean } = {}) {
   const { tasks, task, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -164,13 +170,13 @@ function view(data: Snapshot, scoped = false, secondary = false) {
     for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state}`, confirm: 'Select and start this task for this conversation?' });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
-  const footer: { text: string; url?: string; action?: string; secondaryAction?: string; width?: number }[] = [{ text: `${icons.note} `, width: 3 }];
+  const footer: { text: string; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic: boolean; color: 'accent' }; width?: number }[] = [{ text: `${icons.note} `, width: 3 }];
   if (task) {
     footer.push({ text: `${icons.check} `, action: 'done', width: 3 });
-    footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', width: config.config.titleWidth });
+    footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(features.footerDoubleActions ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
   } else if (state.proposal) {
     footer.push({ text: `${icons.add} `, action: 'proposal:accept', ...(secondary ? { secondaryAction: 'proposal:dismiss' } : {}), width: 3 });
-    footer.push({ text: `${state.proposal.tag ? `[${state.proposal.tag}] ` : ''}${state.proposal.text.split('\n')[0].slice(0, 2000)}`, width: config.config.titleWidth });
+    footer.push({ text: `${state.proposal.tag ? `[${state.proposal.tag}] ` : ''}${state.proposal.text.split('\n')[0].slice(0, 2000)}`, ...(features.footerDoubleActions ? { doubleAction: 'proposal:accept' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
   const titleParts = footer.length;
   if (task) {
@@ -211,7 +217,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [
 server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(async () => {
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const data = await snapshot(context(request.params._meta).state, extra.signal);
-  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta))) }] };
+  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta), footerFeatures(request.params._meta))) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const state = context(request.params._meta).state;
@@ -275,7 +281,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     extra.signal.throwIfAborted();
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy);
   }
-  const result = { view: view(await snapshot(next, extra.signal), scoped, secondaryActions(request.params._meta)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, extra.signal), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await server.notification({ method: 'notifications/native-ui/changed', params: { uri: URI } });
   return result;
 }));
