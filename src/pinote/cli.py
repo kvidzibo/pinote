@@ -80,13 +80,23 @@ def parser() -> argparse.ArgumentParser:
         )
         if name == "agent":
             actions = sub.add_subparsers(dest="agent_action", required=True)
-            for action in ("get", "selected", "select", "update", "done", "add", "tag", "tags"):
+            for action in (
+                "get",
+                "selected",
+                "select",
+                "start",
+                "update",
+                "done",
+                "add",
+                "tag",
+                "tags",
+            ):
                 operation = actions.add_parser(action)
                 if action not in {"selected", "add", "tags"}:
                     operation.add_argument("id", type=positive_id)
                 if action in {"selected", "select"}:
                     operation.add_argument("--cwd", type=Path, required=True)
-                if action in {"update", "done", "tag"}:
+                if action in {"start", "update", "done", "tag"}:
                     operation.add_argument("--expected-updated-at", required=True)
                 if action == "update":
                     operation.add_argument("--set-json", default="{}", help="label: Markdown pairs")
@@ -178,14 +188,15 @@ def execute_agent(args: argparse.Namespace, store: Store) -> None:
         note = store.update_agent(
             args.id, fields, args.remove, expected_updated_at=args.expected_updated_at
         )
-    elif action == "done":
+    elif action in {"start", "done"}:
         if not store.transition(
             args.id,
-            "done",
+            action,
             expected_states={"active", "in_progress"},
             expected_updated_at=args.expected_updated_at,
+            allow_unchanged=action == "start",
         ):
-            raise NoteError("This task changed elsewhere. Read it again before completing.")
+            raise NoteError("This task changed elsewhere. Read it again before acting.")
         note = store.get(args.id)
     elif action == "add":
         note = store.add_note(
@@ -209,7 +220,8 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
     refresh = args.command in MUTATIONS and not args.no_notify
     scheduled_when = parse_reminder_time(args.when) if args.command == "schedule" else None
     needs_lock = args.command in MUTATIONS | {"show"} or (
-        args.command == "agent" and args.agent_action in {"select", "update", "done", "add", "tag"}
+        args.command == "agent"
+        and args.agent_action in {"select", "start", "update", "done", "add", "tag"}
     )
     lock = display_lock(paths) if needs_lock else nullcontext()
     with lock, Store(paths.database) as store:

@@ -130,6 +130,48 @@ def test_agent_handoff_upgrade_restart_and_revision_safe_updates(cli, tmp_path):
         assert store.selected(Path(cwd)) is None
 
 
+def test_agent_start_guards_displayed_revision_and_allows_unchanged_selection(cli):
+    def agent(*args, check=True):
+        result = cli("agent", *args, check=check)
+        return json.loads(result.stdout) if result.returncode == 0 else result
+
+    task = agent("add", "--text", "Guarded selection")
+    changed = agent(
+        "update",
+        str(task["id"]),
+        "--expected-updated-at",
+        task["updated_at"],
+        "--set-json",
+        '{"Next":"External change"}',
+    )
+    stale = agent(
+        "start",
+        str(task["id"]),
+        "--expected-updated-at",
+        task["updated_at"],
+        check=False,
+    )
+    assert stale.returncode == 1 and "changed elsewhere" in stale.stdout
+    assert agent("get", str(task["id"])) == changed
+    started = agent("start", str(task["id"]), "--expected-updated-at", changed["updated_at"])
+    assert started["state"] == "in_progress"
+    assert (
+        agent("start", str(task["id"]), "--expected-updated-at", started["updated_at"]) == started
+    )
+    assert (
+        agent(
+            "start",
+            str(task["id"]),
+            "--expected-updated-at",
+            changed["updated_at"],
+            check=False,
+        ).returncode
+        == 1
+    )
+    with Store(cli.database) as store:
+        assert sum(event["action"] == "start" for event in store.history(task["id"])) == 1
+
+
 def test_agent_add_and_tag_without_desktop_refresh(cli, tmp_path):
     calls = tmp_path / "dunst-calls"
     fake = Path(cli.env["PATH"].split(os.pathsep)[0]) / "dunstify"

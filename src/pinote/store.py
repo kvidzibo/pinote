@@ -566,6 +566,7 @@ class Store:
         *,
         expected_states: set[str] | None = None,
         expected_updated_at: str | None = None,
+        allow_unchanged: bool = False,
     ) -> bool:
         target = {
             "start": "in_progress",
@@ -590,7 +591,7 @@ class Store:
                 return False  # The archive row was restored/changed since it was drawn.
             previous = row["state"]
             if previous == target:
-                return False
+                return allow_unchanged
             if action in {"start", "reset"} and previous in {"done", "removed", "scheduled"}:
                 raise NoteError(f"Note {note_id} is {previous}; restore it first.")
             if action == "done" and previous in {"removed", "scheduled"}:
