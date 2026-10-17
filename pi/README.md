@@ -1,5 +1,7 @@
 # pi-note
 
+[npm](https://www.npmjs.com/package/pi-note) · [Pi package directory](https://pi.dev/packages/pi-note)
+
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
 in Pi: selected-task footer status, `/pi-note`, and agent current-task read/update,
 add, and tag-listing tools.
@@ -12,10 +14,8 @@ explicit initial-version limits; it is not activated by installing this extensio
 ## Install
 
 Requires Pi 0.99.1+, Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
-From this checkout, install the extension with `pi install ./pi`, then run
-`/reload` in interactive Pi. The planned npm package name is `pi-note`; after its
-first release use `pi install npm:pi-note` instead. It is not published yet. npm
-installation does not run Python installers.
+Install with `pi install npm:pi-note`, or `pi install ./pi` from this checkout,
+then run `/reload` in interactive Pi. npm installation does not run Python installers.
 
 ### CLI setup and upgrades
 
@@ -390,13 +390,13 @@ data. Run visual checks under Xvfb/private D-Bus; never use personal task data.
 OIDC trusted publishing and provenance. Existing versions are skipped; registry
 failures fail the workflow. No npm token is stored in GitHub.
 
-One-time maintainer setup (not performed by installing this package):
+Only a package's first publication needs this manual bootstrap (not part of
+installation). `pi-note` is already published; use automated releases above.
 
 1. From `pi/`, run `npm login`, then `npm publish --ignore-scripts --access public`
    to bootstrap `pi-note` after checking name availability.
 2. In npm's package settings configure the GitHub trusted publisher: owner
    `kvidzibo`, repository `pinote`, workflow `publish.yml`, no environment.
-3. Add verified npm and Pi package-directory links here after publication.
 
 The CLI source pin in `setup.ts` must point to a verified immutable commit with a
 compatible Python package. Update it and the bundled-version setup text together

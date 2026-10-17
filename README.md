@@ -96,29 +96,33 @@ For full commands, Markdown import/export, and scheduling rules, see the
 
 **Pi workflow:** capture a task → select it in Pi → retain handoff details → complete it.
 
-The optional [pi-note extension](pi/README.md) adds selected-task status,
+Choose the [native MCP UI](pi/mcp/README.md) for a generic gateway host, or the
+[pi-note extension](pi/README.md) for extension-specific controls. Load only one.
+The MCP UI keeps completion in the current conversation; the extension starts a
+clean session and reloads Pi.
+
+The optional extension adds selected-task status,
 `/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent current-task
 read/update, add, and tag-listing tools.
 
 #### Install the extension
 
-From this checkout:
-
 ```sh
+pi install npm:pi-note
+# Or from this checkout:
 pi install ./pi
 ```
 
-Then run `/reload` in Pi. After the first npm publication, `pi install npm:pi-note`
-will replace the local extension installation step; npm itself installs no Python code.
+Then run `/reload` in Pi. npm itself installs no Python code.
 
 #### CLI setup and upgrades
 
 At startup Pi compares the installed CLI with the bundled version, without a
 network check:
 
-- **Missing/unrecognized CLI:** shows `/pi-note-setup`.
-- **Older CLI:** suggests `/pi-note-upgrade`.
-- **Current/newer CLI:** hides both commands and leaves the CLI untouched.
+- **Missing/unrecognized CLI:** `/pi-note` opens Settings with **Install CLI**.
+- **Older CLI:** `/pi-note` opens Settings with **Upgrade CLI**.
+- **Current/newer CLI:** hides both actions and leaves the CLI untouched.
 
 Setup/upgrade requires [uv](https://docs.astral.sh/uv/getting-started/installation/)
 and asks before installing a pinned CLI in an isolated environment. It can
