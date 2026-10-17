@@ -18,11 +18,12 @@ npm --prefix pi ci --ignore-scripts
 npm --prefix pi run build:mcp
 ```
 
-Add a service to the gateway config (use absolute paths):
+Merge the service into your gateway's existing `mcpServers` map, preserving other
+services (use absolute paths):
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "pinote": {
       "command": "node",
       "args": ["/absolute/path/to/pinote/pi/dist-mcp/mcp/server.js"],
@@ -59,8 +60,8 @@ normal personal data. No desktop notifications are sent.
   create/start/select, right-click to dismiss. Right-click requires gateway 0.22.0+
   and its Kitty mouse mapping; **Dismiss suggestion** in the app menu remains the
   keyboard/older-host fallback. These use the gateway's generic footer actions, not a Pinote
-  extension or private handler. Install the gateway's Kitty protocol handler as
-  and right-click mouse mapping described in its native UI documentation. Existing
+  extension or private handler. Install the gateway's Kitty protocol handler
+  and right-click mouse mapping as described in its native UI documentation. Existing
   installations need to add the mapping and reload Kitty; package updates do not
   edit terminal configuration. App menus remain the keyboard fallback.
 - **Agent:** `propose`, `get_current`, `update_current`, `fields`, and `tags` are

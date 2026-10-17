@@ -32,7 +32,7 @@ const Action = z.object({ method: z.literal('native-ui/action'), params: z.objec
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.22.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.22.1' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
