@@ -55,7 +55,7 @@ normal personal data. No desktop notifications are sent.
   so whitespace round-trips exactly. Saves are confirmed, validated, and atomic; concurrent
   edits are rejected and unrelated settings are preserved. Invalid configuration
   fails closed; repair it manually rather than replacing it with defaults.
-- **Fullscreen native footer (gateway 0.29.0+):** enabled only when the host
+- **Fullscreen native footer (gateway 0.30.0+):** enabled only when the host
   negotiates `native-ui/features.footerNativeActions=true` (the gateway advertises
   `experimental.native-ui-v1.footerNativeActions=true`). **▤** opens the Pinote app;
   there are no separate complete/accept buttons. Idle status reads “Pinote · No task”.
