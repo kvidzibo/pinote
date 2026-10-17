@@ -17,7 +17,7 @@ const scalar = z.union([text, z.number(), z.boolean(), z.null()]);
 const View = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, revision: z.string().min(1).max(256).optional(), kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
-  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), secondaryAction: z.string().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
+  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), secondaryAction: z.string().optional(), doubleAction: z.string().optional(), style: z.object({ italic: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict();
 
 // One end-to-end case exercises the UI contract against the real CLI and database.
@@ -36,8 +36,8 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   };
   let client = await connect();
   let state: Record<string, unknown> = {};
-  let scoped = false, secondary = false;
-  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...((scoped || secondary) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}) } } : {}) });
+  let scoped = false, secondary = false, styles = false, double = false;
+  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...((scoped || secondary || styles || double) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}), ...(styles ? { footerStyles: true } : {}), ...(double ? { footerDoubleActions: true } : {}) } } : {}) });
   const read = async () => {
     const result = await client.readResource({ uri: 'pinote://ui', _meta: meta() });
     assert.ok('text' in result.contents[0]);
@@ -126,7 +126,16 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.ok(first.footer?.every((item) => item.action !== 'proposal:dismiss' && item.secondaryAction === undefined), 'Legacy hosts use the app menu to dismiss, without a cross');
     const legacyResult = (await act(first, 'screen:settings')).view;
     assert.ok(legacyResult.footer?.every((item) => item.secondaryAction === undefined), 'Legacy action results omit unsupported fields too');
-    secondary = true;
+    assert.ok(legacyResult.footer?.every((item) => item.style === undefined && item.doubleAction === undefined));
+    styles = true;
+    const styled = await read();
+    assert.deepEqual(styled.footer?.find((item) => item.text.includes('Suggested task'))?.style, { italic: true, color: 'accent' });
+    assert.ok(styled.footer?.every((item) => item.doubleAction === undefined), 'Styles negotiate independently');
+    styles = false; double = true;
+    const doubleOnly = await read();
+    assert.equal(doubleOnly.footer?.find((item) => item.text.includes('Suggested task'))?.doubleAction, 'proposal:accept');
+    assert.ok(doubleOnly.footer?.every((item) => item.style === undefined), 'Double actions negotiate independently');
+    secondary = true; styles = true;
     const clickable = (await act(await read(), 'screen:tasks')).view;
     assert.equal(clickable.footer?.find((item) => item.action === 'proposal:accept')?.secondaryAction, 'proposal:dismiss');
     assert.ok(clickable.footer?.every((item) => item.action !== 'proposal:dismiss'));
@@ -145,6 +154,9 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(accepted.text, 'Replacement task');
     assert.ok(view.footer?.some((item) => item.action === 'preview'));
     assert.ok(view.footer?.some((item) => item.action === 'done'));
+    assert.equal(view.footer?.find((item) => item.action === 'preview')?.doubleAction, 'done');
+    assert.ok(view.footer?.every((item) => item.style === undefined), 'Accepted titles return to normal text');
+    await assert.rejects(act(clickable, 'proposal:accept'), /changed/, 'Accepting double-click cannot be reused to complete');
     assert.equal((await client.callTool({ name: 'propose', arguments: { text: 'Forbidden' }, _meta: meta() })).isError, true);
     view = (await act(view, 'done')).view;
     const emptyState = state;
