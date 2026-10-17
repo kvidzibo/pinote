@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync } from 'node:fs';
+import { readFileSync, watchFile, unwatchFile } from 'node:fs';
+import { getAgentDir } from '../config-path.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 
@@ -26,12 +27,12 @@ const Context = z.object({ conversationId: z.string().min(1).max(256), contextId
 type State = z.infer<typeof Context>['state'];
 type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, string> };
 type Scalar = string | number | boolean | null;
-type Control = { id: string; label: string; kind: 'action' | 'text' | 'number' | 'toggle' | 'select'; value?: Scalar; icon?: string; description?: string; multiline?: boolean; confirm?: string; options?: { label: string; value: Scalar }[] };
+type Control = { id: string; label: string; revision?: string; kind: 'action' | 'text' | 'number' | 'toggle' | 'select'; value?: Scalar; icon?: string; description?: string; multiline?: boolean; confirm?: string; options?: { label: string; value: Scalar }[] };
 const Action = z.object({ method: z.literal('native-ui/action'), params: z.object({
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.20.1' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.21.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
@@ -63,7 +64,7 @@ async function note(args: string[], signal: AbortSignal): Promise<string> {
   const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
   const version = (await exec(noteCommand, ['--version'], options)).stdout.trim();
   const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match || Number(match[1]) === 0 && Number(match[2]) < 4) throw new Error('Pinote MCP requires note 0.4.0+');
+  if (!match || Number(match[1]) === 0 && Number(match[2]) < 12) throw new Error('Pinote MCP requires note 0.12.0+');
   return (await exec(noteCommand, ['--no-notify', ...args], options)).stdout;
 }
 async function selected(state: State, signal: AbortSignal): Promise<Task | null> {
@@ -98,7 +99,23 @@ async function snapshot(state: State, signal: AbortSignal) {
   return { state, tasks, task, config, revision };
 }
 type Snapshot = Awaited<ReturnType<typeof snapshot>>;
-function view(data: Snapshot) {
+function scopedActions(meta: Record<string, unknown> | undefined): boolean {
+  return z.object({ actionRevisions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success;
+}
+function actionRevision(data: Snapshot, control: Control): string {
+  const { id, revision: _revision, ...semantics } = control;
+  let dependency: unknown = null;
+  if (id === 'done') dependency = data.task && { id: data.task.id, updated_at: data.task.updated_at };
+  else if (id.startsWith('select:')) dependency = data.tasks.find((task) => task.id === Number(id.slice(7)));
+  else if (!['preview', 'continue', 'clear', 'search', 'add', 'proposal:accept', 'proposal:dismiss'].includes(id) && !id.startsWith('screen:') && !id.startsWith('field:')) {
+    dependency = { raw: data.config.raw, ...(['add-field', 'remove-field', 'label', 'format', 'width', 'link'].includes(id) ? { fields: fields(data.config.config, data.task?.agent_notes) } : {}) };
+  }
+  return createHash('sha256').update(JSON.stringify({ action: id, semantics, state: data.state, dependency })).digest('hex');
+}
+function staleAction(): never {
+  throw new McpError(-33003, 'View changed; refresh before acting', { 'native-ui/action': { status: 'not-applied', reason: 'stale-view' } });
+}
+function view(data: Snapshot, scoped = false) {
   const { tasks, task, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -173,6 +190,7 @@ function view(data: Snapshot) {
     body = `${control.label} exceeds the editor limit; edit it outside this UI.\n${body}`;
     return false;
   });
+  if (scoped) for (const control of editable) control.revision = actionRevision(data, control);
   const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer };
   // JSON escaping and expanded footer formats can exceed the host budget even
   // with bounded row counts. Preserve navigation/filter controls ahead of rows.
@@ -190,14 +208,15 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [
 server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(async () => {
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const data = await snapshot(context(request.params._meta).state, extra.signal);
-  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data)) }] };
+  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta))) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const state = context(request.params._meta).state;
   const before = await snapshot(state, extra.signal);
-  if (before.revision !== request.params.revision) throw new Error('View changed; refresh before acting');
+  const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
-  if (!view(before).controls.some((c) => c.id === action)) throw new Error('Action is not available in this view');
+  const control = view(before, scoped).controls.find((item) => item.id === action);
+  if (!control || (control.revision ?? before.revision) !== request.params.revision) staleAction();
   const next: State = { ...before.state };
   let draft: string | undefined, preview: string | undefined;
   if (action === 'proposal:accept' || action === 'proposal:dismiss') {
@@ -207,7 +226,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     next.proposal = null;
     if (action === 'proposal:accept') {
       const task: Task = JSON.parse(await note(['agent', 'add', `--text=${proposal.text}`, ...(proposal.tag ? [`--tag=${proposal.tag}`] : [])], extra.signal));
-      await note(['start', String(task.id)], extra.signal); next.selectedId = task.id;
+      await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at], extra.signal); next.selectedId = task.id;
     }
   } else if (action.startsWith('screen:')) next.screen = action.slice(7) as State['screen'];
   else if (action.startsWith('field:')) { next.screen = 'field'; next.field = action.slice(6); }
@@ -217,14 +236,17 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   else if (action === 'preview') preview = (before.task!.text + '\n\n' + JSON.stringify(before.task!.agent_notes, null, 2)).slice(0, 20_000);
   else if (action.startsWith('select:')) {
     const id = Number(action.slice(7));
-    if (!before.tasks.some((t) => t.id === id)) throw new Error('Task no longer selectable');
+    const candidate = before.tasks.find((task) => task.id === id);
+    if (!candidate) staleAction();
+    const target: Task = JSON.parse(await note(['agent', 'get', String(id)], extra.signal));
+    if (target.text !== candidate.text || target.state !== candidate.state || target.tag !== candidate.tag) staleAction();
     if (next.proposal) await consume(next.proposal.id);
-    await note(['start', String(id)], extra.signal); next.selectedId = id; next.proposal = null;
+    await note(['agent', 'start', String(id), '--expected-updated-at', target.updated_at], extra.signal); next.selectedId = id; next.proposal = null;
   } else if (action === 'add') {
     if (next.proposal) await consume(next.proposal.id);
     next.proposal = null;
     const task: Task = JSON.parse(await note(['agent', 'add', `--text=${z.string().min(1).parse(value)}`], extra.signal));
-    await note(['start', String(task.id)], extra.signal); next.selectedId = task.id;
+    await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at], extra.signal); next.selectedId = task.id;
   } else if (action === 'done') {
     await note(['agent', 'done', String(before.task!.id), '--expected-updated-at', before.task!.updated_at], extra.signal);
     next.selectedId = null;
@@ -250,7 +272,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     extra.signal.throwIfAborted();
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy);
   }
-  const result = { view: view(await snapshot(next, extra.signal)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, extra.signal), scoped), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await server.notification({ method: 'notifications/native-ui/changed', params: { uri: URI } });
   return result;
 }));
@@ -286,4 +308,36 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
     return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(outgoing ? { _meta: { 'native-ui/state': outgoing } } : {}) };
   } catch (error) { return { isError: true, content: [{ type: 'text', text: String(error) }] }; }
 }));
+// Every MCP process observes shared storage, including writes by CLI/GTK/other
+// sessions. Stat polling survives missing files and atomic config replacement.
+server.oninitialized = () => {
+  server.oninitialized = undefined;
+  const dataHome = process.env.XDG_DATA_HOME;
+  const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
+  const paths = [database, `${database}-wal`, join(getAgentDir(), 'pi-note.json'), receiptDir];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  const changed = () => {
+    if (closed || timer) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void server.notification({ method: 'notifications/native-ui/changed', params: { uri: URI } }).catch((error) => {
+        if (!closed) console.error('Pinote UI update failed:', error);
+      });
+    }, 100);
+    timer.unref();
+  };
+  const listeners = paths.map((path) => {
+    const listener = (current: import('node:fs').Stats, previous: import('node:fs').Stats) => {
+      if (current.mtimeMs !== previous.mtimeMs || current.ctimeMs !== previous.ctimeMs || current.size !== previous.size || current.ino !== previous.ino || current.nlink !== previous.nlink) changed();
+    };
+    watchFile(path, { persistent: false, interval: 1000 }, listener);
+    return listener;
+  });
+  server.onclose = () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    paths.forEach((path, index) => unwatchFile(path, listeners[index]));
+  };
+};
 await server.connect(new StdioServerTransport());

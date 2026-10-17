@@ -10,7 +10,7 @@ the built-in Pi MCP resource renderer. Use gateway 0.12.0+ with its Pi adapter.
 
 ## Setup
 
-Requires Node.js 22.19+, Python 3.11+, and `note` 0.4.0+. From the Pinote checkout:
+Requires Node.js 22.19+, Python 3.11+, and `note` 0.12.0+. From the Pinote checkout:
 
 ```bash
 uv sync --locked
@@ -106,9 +106,21 @@ to reject historical proposals. Do not delete them while old sessions may resume
 They are replay protection, not a second selection database or an authorization
 boundary against local processes.
 
-Changes through this service notify the host. External CLI/GTK/config changes need
-Ctrl+R or reopening the app. Failed actions are never retried automatically: a
-write might have committed before an interruption. Read fresh state before retrying.
+Each MCP process observes the shared database (including its WAL), settings, and
+proposal receipts with coalesced, one-second stat checks. External CLI/GTK/other-session
+changes refresh connected hosts; Ctrl+R or reopening the app remains a fallback.
+Watchers stop on disconnect and never invoke the CLI or change task data.
+
+Gateway 0.16.0+ negotiates per-control revisions: unrelated task-list changes no
+longer invalidate preview/navigation, task creation, settings saves, or completion
+of an unchanged selected task. Completion checks the displayed task revision;
+selection starts its target with an atomic revision check. Settings writes check
+the original file and resolved field definitions, including task-defined `Bar`
+fields. Older hosts retain full-view revision checks without extra control fields.
+
+Known stale-view rejections occur before writes and report **Action not applied**
+on supporting hosts. Failed actions are never retried automatically: other errors
+can follow a committed or partial write. Read fresh state before retrying.
 Trusted services/agents have ordinary OS permissions; UI-only routing is not a
 secrecy or authorization boundary.
 
