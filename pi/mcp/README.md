@@ -6,7 +6,8 @@ the generic [gateway UI host](https://github.com/kvidzibo/mcp-session-gateway)
 only renders and routes them. No model turn is needed for UI actions.
 
 This uses the gateway's **private native UI v1 protocol**, not browser MCP Apps or
-the built-in Pi MCP resource renderer. Use gateway 0.12.0+ with its Pi adapter.
+the built-in Pi MCP resource renderer. Use gateway 0.12.0+ with its Pi adapter;
+see below for features requiring newer gateways.
 
 ## Setup
 
@@ -54,7 +55,22 @@ normal personal data. No desktop notifications are sent.
   so whitespace round-trips exactly. Saves are confirmed, validated, and atomic; concurrent
   edits are rejected and unrelated settings are preserved. Invalid configuration
   fails closed; repair it manually rather than replacing it with defaults.
-- **Footer:** selected task plus configured fields; safe HTTP(S) links are clickable.
+- **Fullscreen native footer (gateway 0.30.0+):** enabled only when the host
+  negotiates `native-ui/features.footerNativeActions=true` (the gateway advertises
+  `experimental.native-ui-v1.footerNativeActions=true`). **▤** opens the Pinote app;
+  there are no separate complete/accept buttons. Idle status reads “Pinote · No task”.
+  Task titles are plain text, not terminal links: single-click previews without changing state;
+  double-click completes an in-progress task immediately, with no extra confirmation.
+  Suggestions have a `? ` prefix and italic/accent styling when supported;
+  single-click is inert, double-click creates/starts/selects. Use the app menu to
+  dismiss a suggestion. Handoff labels are plain text with a separate **↗** link;
+  label and icon share the configured field width and count as one field. Very large
+  footers omit fields beyond the 128-segment protocol limit, keeping label/icon pairs intact.
+  Clicks/double-clicks are handled locally by the fullscreen host. Completion never
+  resets the conversation or editor; app menus remain the accessible keyboard fallback.
+- **Regular/older-host footer:** unchanged when native footer actions are not
+  negotiated (the regular host never sends that feature). Selected task plus
+  configured fields; safe HTTP(S) links are clickable.
   Single-click the active title to preview; double-click it to complete. **✔** also
   completes and clears the selection without resetting the conversation or editor.
   Suggested titles use italic accent text; double-click to accept/start, then the
