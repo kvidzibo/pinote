@@ -19,7 +19,7 @@ npm --prefix pi run build:mcp
 ```
 
 Merge the service into your gateway's existing `mcpServers` map, preserving other
-services (use absolute paths):
+services (use absolute paths). Do not mix `mcpServers` with the legacy `servers` key:
 
 ```json
 {
