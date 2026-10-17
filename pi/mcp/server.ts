@@ -10,6 +10,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { stripVTControlCharacters } from 'node:util';
 import { defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 
 const URI = 'pinote://ui';
@@ -17,7 +19,7 @@ const MIME = 'application/vnd.mcp-native-ui+json';
 const CONTEXT = 'native-ui/context';
 const exec = promisify(execFile);
 const noteCommand = process.env.PINOTE_NOTE_COMMAND || 'note';
-const icons = Object.fromEntries(['add', 'check', 'cross', 'note'].map((name) => [name, readFileSync(new URL(`../icons/${name}.txt`, import.meta.url), 'utf8').trim()]));
+const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', 'external-link'].map((name) => [name, readFileSync(new URL(`../icons/${name}.txt`, import.meta.url), 'utf8').trim()]));
 const Proposal = z.object({ id: z.string().uuid(), text: z.string().min(1).max(4000), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
@@ -32,7 +34,7 @@ const Action = z.object({ method: z.literal('native-ui/action'), params: z.objec
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.23.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.24.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
@@ -120,11 +122,12 @@ function secondaryActions(meta: Record<string, unknown> | undefined): boolean {
 }
 function footerFeatures(meta: Record<string, unknown> | undefined) {
   return {
+    footerNativeActions: z.object({ footerNativeActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     footerStyles: z.object({ footerStyles: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     footerDoubleActions: z.object({ footerDoubleActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
   };
 }
-function view(data: Snapshot, scoped = false, secondary = false, features: { footerStyles?: boolean; footerDoubleActions?: boolean } = {}) {
+function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean } = {}) {
   const { tasks, task, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -134,9 +137,9 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   // Footer actions remain valid on every screen, including Settings.
   if (task) {
     action('preview', 'Preview full task', { description: 'Display only; never sent to the model' });
-    action('done', 'Complete task', { icon: icons.check });
+    action('done', 'Complete task', { icon: icons.check, ...(features.footerNativeActions ? { description: 'Complete task; keep this conversation and draft' } : {}) });
   } else if (state.proposal) {
-    action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: `Left-click to create/start/select; right-click to dismiss.\n${state.proposal.text}` });
+    action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: features.footerNativeActions ? `Create, start, and select this suggestion. Double-click the suggested footer title to accept; use Dismiss suggestion to dismiss.\n${state.proposal.text}` : `Left-click to create/start/select; right-click to dismiss.\n${state.proposal.text}` });
     action('proposal:dismiss', 'Dismiss suggestion', { icon: icons.cross });
   }
   action('screen:tasks', 'Tasks', { icon: icons.note });
@@ -170,18 +173,24 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state}`, confirm: 'Select and start this task for this conversation?' });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
-  const footer: { text: string; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic: boolean; color: 'accent' }; width?: number }[] = [{ text: `${icons.note} `, width: 3 }];
-  if (task) {
+  const footer: { text: string; openApp?: true; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic: boolean; color: 'accent' }; width?: number }[] = features.footerNativeActions
+    ? [{ text: `${icons['open-app']} `, openApp: true, width: 3 }]
+    : [{ text: `${icons.note} `, width: 3 }];
+  if (features.footerNativeActions) {
+    if (task) footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(task.state === 'in_progress' ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
+    else if (state.proposal) footer.push({ text: `? ${state.proposal.tag ? `[${state.proposal.tag}] ` : ''}${state.proposal.text.split('\n')[0].slice(0, 2000)}`, doubleAction: 'proposal:accept', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    else footer.push({ text: 'Pinote · No task', width: config.config.titleWidth });
+  } else if (task) {
     footer.push({ text: `${icons.check} `, action: 'done', width: 3 });
     footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(features.footerDoubleActions ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
   } else if (state.proposal) {
     footer.push({ text: `${icons.add} `, action: 'proposal:accept', ...(secondary ? { secondaryAction: 'proposal:dismiss' } : {}), width: 3 });
     footer.push({ text: `${state.proposal.tag ? `[${state.proposal.tag}] ` : ''}${state.proposal.text.split('\n')[0].slice(0, 2000)}`, ...(features.footerDoubleActions ? { doubleAction: 'proposal:accept' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
-  const titleParts = footer.length;
+  let fieldCount = 0;
   if (task) {
     for (const field of fields(config.config, task.agent_notes)) {
-      if (footer.length - titleParts >= config.config.maxFields) break;
+      if (fieldCount >= config.config.maxFields) break;
       const raw = task.agent_notes[field.name];
       if (!raw) continue;
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
@@ -191,7 +200,17 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       if (field.format.includes('<url>') && !url || field.format.includes('<number>') && !number) continue;
       const substitutions: Record<string, string> = { value, url: url ?? '', number: number ?? '' };
       const rendered = ` · ${field.label ? `${field.label}: ` : ''}${field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key])}`;
-      footer.push({ text: rendered.slice(0, 20_000), ...(field.link && url && url.length <= 2048 ? { url } : {}), width: field.width ?? config.config.fieldWidth });
+      const target = field.link && url && url.length <= 2048 ? url : undefined;
+      const width = field.width ?? config.config.fieldWidth;
+      if (features.footerNativeActions) {
+        // Clip before splitting: each field still consumes one field slot, and
+        // the icon (including its space) shares the field's cell budget.
+        const icon = target ? ` ${icons['external-link']}` : '';
+        const plain = stripVTControlCharacters(rendered).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+        footer.push({ text: truncateToWidth(plain.slice(0, 20_000), Math.max(0, width - visibleWidth(icon)), '') });
+        if (target) footer.push({ text: icon, url: target });
+      } else footer.push({ text: rendered.slice(0, 20_000), ...(target ? { url: target } : {}), width });
+      fieldCount++;
     }
   }
   const editable = controls.filter((control) => {
@@ -224,7 +243,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const before = await snapshot(state, extra.signal);
   const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
-  const control = view(before, scoped).controls.find((item) => item.id === action);
+  const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
   if (!control || (control.revision ?? before.revision) !== request.params.revision) staleAction();
   const next: State = { ...before.state };
   let draft: string | undefined, preview: string | undefined;

@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { z } from 'zod';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
+import { visibleWidth } from '@earendil-works/pi-tui';
 
 // Assert the wire limits independently of the service implementation.
 const text = z.string().max(20_000);
@@ -17,7 +18,7 @@ const scalar = z.union([text, z.number(), z.boolean(), z.null()]);
 const View = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, revision: z.string().min(1).max(256).optional(), kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
-  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), secondaryAction: z.string().optional(), doubleAction: z.string().optional(), style: z.object({ italic: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
+  footer: z.array(z.object({ text, openApp: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().optional(), secondaryAction: z.string().optional(), doubleAction: z.string().optional(), style: z.object({ italic: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict();
 
 // One end-to-end case exercises the UI contract against the real CLI and database.
@@ -36,8 +37,8 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   };
   let client = await connect();
   let state: Record<string, unknown> = {};
-  let scoped = false, secondary = false, styles = false, double = false;
-  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...((scoped || secondary || styles || double) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}), ...(styles ? { footerStyles: true } : {}), ...(double ? { footerDoubleActions: true } : {}) } } : {}) });
+  let scoped = false, secondary = false, styles = false, double = false, native = false;
+  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...((scoped || secondary || styles || double || native) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}), ...(styles ? { footerStyles: true } : {}), ...(double ? { footerDoubleActions: true } : {}), ...(native ? { footerNativeActions: true } : {}) } } : {}) });
   const read = async () => {
     const result = await client.readResource({ uri: 'pinote://ui', _meta: meta() });
     assert.ok('text' in result.contents[0]);
@@ -53,6 +54,11 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal((await client.listResources()).resources[0].mimeType, 'application/vnd.mcp-native-ui+json');
     let view = await read(); state = view.state;
     assert.equal(view.state.selectedId, null);
+    const idleFooter = view.footer;
+    native = true;
+    assert.deepEqual((await read()).footer, [{ text: '▤ ', openApp: true, width: 3 }, { text: 'Pinote · No task', width: 60 }]);
+    native = false;
+    assert.deepEqual((await read()).footer, idleFooter, 'Regular host footer is unchanged');
     view = (await act(view, 'add', 'MCP task\n\nDetails')).view;
     const id = view.state.selectedId;
     assert.equal(typeof id, 'number');
@@ -64,7 +70,32 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     await assert.rejects(act(view, 'done'), /changed/);
     view = await read(); state = view.state;
     assert.ok(view.footer?.some((item) => item.url?.endsWith('/42')));
-    view = (await act(view, 'screen:settings')).view;
+    const savedConfig = await readFile(config, 'utf8');
+    await writeFile(config, JSON.stringify({ unrelated: true, footer: { maxFields: 2, fields: [
+      { name: 'PR', label: 'PR', format: '<number>', link: true, width: 3 },
+      { name: '--Flag', label: '界界', format: '<value>', link: false, width: 8 },
+    ] } }));
+    const regularFields = (await read()).footer;
+    native = true; scoped = true;
+    const compact = await read();
+    assert.deepEqual(compact.footer?.[0], { text: '▤ ', openApp: true, width: 3 });
+    assert.equal(compact.footer?.[1].action, 'preview');
+    assert.equal(compact.footer?.[1].doubleAction, 'done', 'Native double action does not require legacy double-action negotiation');
+    assert.ok(compact.footer?.every((item) => item.action !== 'done' && item.action !== 'proposal:accept'));
+    assert.equal(compact.footer?.length, 5, 'Split links do not consume another field slot');
+    assert.equal(compact.footer?.[3].text, ' ↗');
+    assert.ok(compact.footer?.[3].url?.endsWith('/42'));
+    assert.equal(compact.footer?.[2].url, undefined);
+    assert.ok(visibleWidth(compact.footer![2].text) + visibleWidth(compact.footer![3].text) <= 3);
+    assert.ok(visibleWidth(compact.footer![4].text) <= 8);
+    const previewed = await act(compact, compact.footer![1].action!);
+    assert.match(previewed.preview!, /Details/);
+    assert.deepEqual(previewed.view.state, compact.state, 'Single click only previews');
+    assert.equal(previewed.view.controls.find((control) => control.id === 'done')?.confirm, undefined, 'Double completion has no extra confirmation');
+    native = false; scoped = false;
+    assert.deepEqual((await read()).footer, regularFields);
+    await writeFile(config, savedConfig);
+    view = (await act(await read(), 'screen:settings')).view;
     view = (await act(view, 'handoffPrompt', 'Read current task, then wait.')).view;
     assert.equal(JSON.parse(await readFile(config, 'utf8')).unrelated, true);
     await assert.rejects(act(view, 'maxFields', -1), /maxFields/);
@@ -135,6 +166,14 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     const doubleOnly = await read();
     assert.equal(doubleOnly.footer?.find((item) => item.text.includes('Suggested task'))?.doubleAction, 'proposal:accept');
     assert.ok(doubleOnly.footer?.every((item) => item.style === undefined), 'Double actions negotiate independently');
+    native = true; styles = true;
+    const nativeSuggestion = await read();
+    assert.equal(nativeSuggestion.footer?.length, 2);
+    assert.match(nativeSuggestion.footer![1].text, /^\? /);
+    assert.equal(nativeSuggestion.footer![1].action, undefined, 'Suggestion single click is inert');
+    assert.equal(nativeSuggestion.footer![1].doubleAction, 'proposal:accept');
+    assert.deepEqual(nativeSuggestion.footer![1].style, { italic: true, color: 'accent' });
+    native = false;
     secondary = true; styles = true;
     const clickable = (await act(await read(), 'screen:tasks')).view;
     assert.equal(clickable.footer?.find((item) => item.action === 'proposal:accept')?.secondaryAction, 'proposal:dismiss');
@@ -145,7 +184,11 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     view = await read();
     assert.notEqual(first.revision, view.revision);
     await assert.rejects(act(first, 'proposal:accept'), /changed/);
-    view = (await act(view, 'proposal:accept')).view;
+    native = true; scoped = true;
+    view = await read();
+    view = (await act(view, view.footer![1].doubleAction!)).view;
+    native = false; scoped = false;
+    view = await read();
     assert.equal(view.retainOnNew, true);
     const acceptedId = view.state.selectedId;
     assert.equal(typeof acceptedId, 'number');
@@ -158,7 +201,13 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.ok(view.footer?.every((item) => item.style === undefined), 'Accepted titles return to normal text');
     await assert.rejects(act(clickable, 'proposal:accept'), /changed/, 'Accepting double-click cannot be reused to complete');
     assert.equal((await client.callTool({ name: 'propose', arguments: { text: 'Forbidden' }, _meta: meta() })).isError, true);
-    view = (await act(view, 'done')).view;
+    native = true; scoped = true;
+    view = await read();
+    view = (await act(view, view.footer![1].doubleAction!)).view;
+    assert.equal(view.state.selectedId, null, 'One native double-click completes immediately');
+    assert.equal(view.footer?.[0].openApp, true);
+    assert.equal(view.footer?.[1].text, 'Pinote · No task');
+    native = false; scoped = false;
     const emptyState = state;
     state = oldState;
     await client.close(); client = await connect();
