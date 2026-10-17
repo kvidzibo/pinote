@@ -17,7 +17,7 @@ const scalar = z.union([text, z.number(), z.boolean(), z.null()]);
 const View = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, revision: z.string().min(1).max(256).optional(), kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
-  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
+  footer: z.array(z.object({ text, url: z.string().max(2048).optional(), action: z.string().optional(), secondaryAction: z.string().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict();
 
 // One end-to-end case exercises the UI contract against the real CLI and database.
@@ -36,8 +36,8 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   };
   let client = await connect();
   let state: Record<string, unknown> = {};
-  let scoped = false;
-  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...(scoped ? { 'native-ui/features': { actionRevisions: true } } : {}) });
+  let scoped = false, secondary = false;
+  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...((scoped || secondary) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}) } } : {}) });
   const read = async () => {
     const result = await client.readResource({ uri: 'pinote://ui', _meta: meta() });
     assert.ok('text' in result.contents[0]);
@@ -123,6 +123,13 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     state = proposal._meta!['native-ui/state'] as Record<string, unknown>;
     const first = await read();
     assert.ok(first.footer?.some((item) => item.action === 'proposal:accept'));
+    assert.ok(first.footer?.every((item) => item.action !== 'proposal:dismiss' && item.secondaryAction === undefined), 'Legacy hosts use the app menu to dismiss, without a cross');
+    const legacyResult = (await act(first, 'screen:settings')).view;
+    assert.ok(legacyResult.footer?.every((item) => item.secondaryAction === undefined), 'Legacy action results omit unsupported fields too');
+    secondary = true;
+    const clickable = (await act(await read(), 'screen:tasks')).view;
+    assert.equal(clickable.footer?.find((item) => item.action === 'proposal:accept')?.secondaryAction, 'proposal:dismiss');
+    assert.ok(clickable.footer?.every((item) => item.action !== 'proposal:dismiss'));
     const replaced = await client.callTool({ name: 'propose', arguments: { text: 'Replacement task', tag: 'MCP' }, _meta: meta() });
     const oldState = state;
     state = replaced._meta!['native-ui/state'] as Record<string, unknown>;

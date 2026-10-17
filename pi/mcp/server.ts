@@ -32,7 +32,7 @@ const Action = z.object({ method: z.literal('native-ui/action'), params: z.objec
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.21.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.22.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
@@ -115,7 +115,10 @@ function actionRevision(data: Snapshot, control: Control): string {
 function staleAction(): never {
   throw new McpError(-33003, 'View changed; refresh before acting', { 'native-ui/action': { status: 'not-applied', reason: 'stale-view' } });
 }
-function view(data: Snapshot, scoped = false) {
+function secondaryActions(meta: Record<string, unknown> | undefined): boolean {
+  return z.object({ footerSecondaryActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success;
+}
+function view(data: Snapshot, scoped = false, secondary = false) {
   const { tasks, task, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -127,7 +130,7 @@ function view(data: Snapshot, scoped = false) {
     action('preview', 'Preview full task', { description: 'Display only; never sent to the model' });
     action('done', 'Complete task', { icon: icons.check });
   } else if (state.proposal) {
-    action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: state.proposal.text });
+    action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: `Left-click to create/start/select; right-click to dismiss.\n${state.proposal.text}` });
     action('proposal:dismiss', 'Dismiss suggestion', { icon: icons.cross });
   }
   action('screen:tasks', 'Tasks', { icon: icons.note });
@@ -161,12 +164,12 @@ function view(data: Snapshot, scoped = false) {
     for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state}`, confirm: 'Select and start this task for this conversation?' });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
-  const footer: { text: string; url?: string; action?: string; width?: number }[] = [{ text: `${icons.note} `, width: 3 }];
+  const footer: { text: string; url?: string; action?: string; secondaryAction?: string; width?: number }[] = [{ text: `${icons.note} `, width: 3 }];
   if (task) {
     footer.push({ text: `${icons.check} `, action: 'done', width: 3 });
     footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', width: config.config.titleWidth });
   } else if (state.proposal) {
-    footer.push({ text: `${icons.cross} `, action: 'proposal:dismiss', width: 3 }, { text: `${icons.add} `, action: 'proposal:accept', width: 3 });
+    footer.push({ text: `${icons.add} `, action: 'proposal:accept', ...(secondary ? { secondaryAction: 'proposal:dismiss' } : {}), width: 3 });
     footer.push({ text: `${state.proposal.tag ? `[${state.proposal.tag}] ` : ''}${state.proposal.text.split('\n')[0].slice(0, 2000)}`, width: config.config.titleWidth });
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
   const titleParts = footer.length;
@@ -208,7 +211,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [
 server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(async () => {
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const data = await snapshot(context(request.params._meta).state, extra.signal);
-  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta))) }] };
+  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta))) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const state = context(request.params._meta).state;
@@ -272,13 +275,13 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     extra.signal.throwIfAborted();
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy);
   }
-  const result = { view: view(await snapshot(next, extra.signal), scoped), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, extra.signal), scoped, secondaryActions(request.params._meta)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await server.notification({ method: 'notifications/native-ui/changed', params: { uri: URI } });
   return result;
 }));
 const empty = { type: 'object' as const, properties: {}, additionalProperties: false };
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
-  { name: 'propose', description: 'Before multi-step implementation or configuration migrations, suggest a task if get_current returns null; skip informational questions and trivial edits. Show a short action-oriented title, optional details after a blank line, and reuse a saved tag from tags. The user clicks + to create/start/select or dismiss. Replaces an unaccepted suggestion; continue working without waiting or asking again. Never creates a task before a user action.', inputSchema: { type: 'object' as const, properties: { text: { type: 'string', minLength: 1, maxLength: 4000 }, tag: { type: 'string', minLength: 1, maxLength: 64 } }, required: ['text'], additionalProperties: false } },
+  { name: 'propose', description: 'Before multi-step implementation or configuration migrations, suggest a task if get_current returns null; skip informational questions and trivial edits. Show a short action-oriented title, optional details after a blank line, and reuse a saved tag from tags. The user left-clicks + to create/start/select or right-clicks it to dismiss (also available in the app menu). Replaces an unaccepted suggestion; continue working without waiting or asking again. Never creates a task before a user action.', inputSchema: { type: 'object' as const, properties: { text: { type: 'string', minLength: 1, maxLength: 4000 }, tag: { type: 'string', minLength: 1, maxLength: 64 } }, required: ['text'], additionalProperties: false } },
   { name: 'get_current', description: 'Read the task selected through the native Pinote UI for this conversation before multi-step implementation or configuration migrations. Returns null if unselected; then use tags and propose to suggest a task without creating one. Skip informational questions and trivial edits; never replace an existing selection.', inputSchema: empty, annotations: { readOnlyHint: true } },
   { name: 'fields', description: 'Read global footer field definitions before setting task handoff values. Does not edit settings.', inputSchema: empty, annotations: { readOnlyHint: true } },
   { name: 'tags', description: 'List saved Pinote tags.', inputSchema: empty, annotations: { readOnlyHint: true } },
@@ -294,7 +297,7 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
       if (!args.text.trim()) throw new Error('Task text must not be blank');
       outgoing = boundedState({ ...state, selectedId: null, proposal: { ...args, id: randomUUID() } });
       if (state.proposal && !await consumed(state.proposal.id)) await consume(state.proposal.id);
-      result = { status: 'Suggested; user can accept (+) or dismiss. Continue working without asking again.' };
+      result = { status: 'Suggested; user can left-click + to accept or right-click + to dismiss (or use the app menu). Continue working without asking again.' };
     } else if (request.params.name === 'get_current') result = await selected(state, extra.signal);
     else if (request.params.name === 'fields') result = settings().config;
     else if (request.params.name === 'tags') result = JSON.parse(await note(['agent', 'tags'], extra.signal));

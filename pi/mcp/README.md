@@ -55,10 +55,14 @@ normal personal data. No desktop notifications are sent.
   fails closed; repair it manually rather than replacing it with defaults.
 - **Footer:** selected task plus configured fields; safe HTTP(S) links are clickable.
   The title previews the task; **✔** completes it and clears the selection without
-  resetting the conversation or editor. Suggestions show **✖ / ✚** to dismiss or
-  create/start/select. These use the gateway's generic footer actions, not a Pinote
+  resetting the conversation or editor. Suggestions show only **✚**: left-click to
+  create/start/select, right-click to dismiss. Right-click requires gateway 0.22.0+
+  and its Kitty mouse mapping; **Dismiss suggestion** in the app menu remains the
+  keyboard/older-host fallback. These use the gateway's generic footer actions, not a Pinote
   extension or private handler. Install the gateway's Kitty protocol handler as
-  described in its native UI documentation; app menus remain the keyboard fallback.
+  and right-click mouse mapping described in its native UI documentation. Existing
+  installations need to add the mapping and reload Kitty; package updates do not
+  edit terminal configuration. App menus remain the keyboard fallback.
 - **Agent:** `propose`, `get_current`, `update_current`, `fields`, and `tags` are
   available through gateway tool discovery. `propose` returns opaque UI state;
   it does not create a task. It replaces an unaccepted suggestion only when no task
