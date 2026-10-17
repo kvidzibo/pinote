@@ -94,6 +94,24 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(previewed.view.controls.find((control) => control.id === 'done')?.confirm, undefined, 'Double completion has no extra confirmation');
     native = false; scoped = false;
     assert.deepEqual((await read()).footer, regularFields);
+    const linkedFields = Array.from({ length: 64 }, (_, index) => ({ name: `Link${index}`, label: '', format: 'x'.repeat(110), link: true, width: 100 }));
+    const current = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
+    assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: current.updated_at,
+      remove: Object.keys(current.agent_notes), set: Object.fromEntries(linkedFields.map((field) => [field.name, 'https://example.com/pull/42'])) }, _meta: meta() })).isError, undefined);
+    await writeFile(config, JSON.stringify({ unrelated: true, footer: { maxFields: 64, fields: linkedFields } }));
+    native = true; scoped = true;
+    const capped = await read();
+    assert.equal(capped.footer?.length, 128, 'Maximum linked fields fit the protocol segment limit');
+    for (let index = 2; index < capped.footer!.length; index += 2) {
+      assert.equal(capped.footer![index].width, 100, 'Host must not reapply its 60-cell default');
+      assert.equal(visibleWidth(capped.footer![index].text), 98);
+      assert.equal(capped.footer![index + 1].text, ' ↗', 'Every retained label keeps its link icon');
+      assert.ok(capped.footer![index + 1].url);
+    }
+    const expanded = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
+    assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: expanded.updated_at,
+      remove: linkedFields.map((field) => field.name), set: current.agent_notes }, _meta: meta() })).isError, undefined);
+    native = false; scoped = false;
     await writeFile(config, savedConfig);
     view = (await act(await read(), 'screen:settings')).view;
     view = (await act(view, 'handoffPrompt', 'Read current task, then wait.')).view;

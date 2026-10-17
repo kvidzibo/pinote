@@ -64,7 +64,8 @@ normal personal data. No desktop notifications are sent.
   Suggestions have a `? ` prefix and italic/accent styling when supported;
   single-click is inert, double-click creates/starts/selects. Use the app menu to
   dismiss a suggestion. Handoff labels are plain text with a separate **↗** link;
-  label and icon share the configured field width and count as one field.
+  label and icon share the configured field width and count as one field. Very large
+  footers omit fields beyond the 128-segment protocol limit, keeping label/icon pairs intact.
   Clicks/double-clicks are handled locally by the fullscreen host. Completion never
   resets the conversation or editor; app menus remain the accessible keyboard fallback.
 - **Regular/older-host footer:** unchanged when native footer actions are not

@@ -203,11 +203,12 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       const target = field.link && url && url.length <= 2048 ? url : undefined;
       const width = field.width ?? config.config.fieldWidth;
       if (features.footerNativeActions) {
+        if (footer.length + (target ? 2 : 1) > 128) break;
         // Clip before splitting: each field still consumes one field slot, and
         // the icon (including its space) shares the field's cell budget.
         const icon = target ? ` ${icons['external-link']}` : '';
         const plain = stripVTControlCharacters(rendered).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
-        footer.push({ text: truncateToWidth(plain.slice(0, 20_000), Math.max(0, width - visibleWidth(icon)), '') });
+        footer.push({ text: truncateToWidth(plain.slice(0, 20_000), Math.max(0, width - visibleWidth(icon)), ''), width });
         if (target) footer.push({ text: icon, url: target });
       } else footer.push({ text: rendered.slice(0, 20_000), ...(target ? { url: target } : {}), width });
       fieldCount++;
