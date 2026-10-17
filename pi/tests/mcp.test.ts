@@ -124,8 +124,10 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     const first = await read();
     assert.ok(first.footer?.some((item) => item.action === 'proposal:accept'));
     assert.ok(first.footer?.every((item) => item.action !== 'proposal:dismiss' && item.secondaryAction === undefined), 'Legacy hosts use the app menu to dismiss, without a cross');
+    const legacyResult = (await act(first, 'screen:settings')).view;
+    assert.ok(legacyResult.footer?.every((item) => item.secondaryAction === undefined), 'Legacy action results omit unsupported fields too');
     secondary = true;
-    const clickable = await read();
+    const clickable = (await act(await read(), 'screen:tasks')).view;
     assert.equal(clickable.footer?.find((item) => item.action === 'proposal:accept')?.secondaryAction, 'proposal:dismiss');
     assert.ok(clickable.footer?.every((item) => item.action !== 'proposal:dismiss'));
     const replaced = await client.callTool({ name: 'propose', arguments: { text: 'Replacement task', tag: 'MCP' }, _meta: meta() });
