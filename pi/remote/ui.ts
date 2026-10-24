@@ -1,7 +1,7 @@
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Input, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
-import { clean, editorText, footerText, literal, type NativeControl, type NativeView } from './protocol.ts';
+import { clean, cleanUnbounded, editorText, footerText, literal, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
 import { RemoteSession } from './session.ts';
 import { remoteMenu, type MenuState } from './menu.ts';
@@ -12,6 +12,8 @@ const line = (text: string) => clean(text).replace(/\n/g, ' ');
 /** Inline, review-gated disclosure. Enter is NEVER a default approval. */
 export async function review(ctx: ExtensionContext, title: string, text: string, signal: AbortSignal): Promise<boolean> {
   if (signal.aborted || ctx.mode !== 'tui') return false;
+  // Escaped values can exceed the wire text limit. Every disclosure line must remain reviewable.
+  const disclosure = cleanUnbounded(text);
   const reviewed = await ctx.ui.custom<boolean>((tui, theme, keys, done) => {
     let offset = 0, page = 1, max = 0, geometry = '', usable = false;
     let seen = new Set<number>();
@@ -25,7 +27,7 @@ export async function review(ctx: ExtensionContext, title: string, text: string,
         page = Math.max(1, Math.min(18, tui.terminal.rows - 12));
         usable = width >= 20 && tui.terminal.rows >= 14;
         if (!usable) return [truncateToWidth('Enlarge terminal · Esc cancel', width)];
-        const lines = clean(text).split('\n').flatMap((s) => wrapTextWithAnsi(s, width));
+        const lines = disclosure.split('\n').flatMap((s) => wrapTextWithAnsi(s, width));
         max = Math.max(0, lines.length - page); offset = Math.min(offset, max);
         for (let i = offset; i < Math.min(lines.length, offset + page); i++) seen.add(i);
         const complete = seen.size === lines.length;
@@ -38,7 +40,7 @@ export async function review(ctx: ExtensionContext, title: string, text: string,
         else if (usable && geometry === `${tui.terminal.columns}:${tui.terminal.rows}`) {
           if (keys.matches(data, 'tui.select.confirm') && !signal.aborted) {
             // Every wrapped line must have been visible in this geometry.
-            const lines = clean(text).split('\n').flatMap((s) => wrapTextWithAnsi(s, tui.terminal.columns));
+            const lines = disclosure.split('\n').flatMap((s) => wrapTextWithAnsi(s, tui.terminal.columns));
             if (seen.size === lines.length) done(true);
           } else if (keys.matches(data, 'tui.select.down')) offset = Math.min(max, offset + 1);
           else if (keys.matches(data, 'tui.select.up')) offset = Math.max(0, offset - 1);

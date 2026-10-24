@@ -234,6 +234,31 @@ test('required review has no default approval and non-TUI review cannot authoriz
   assert.equal(await review(ctx, 'Confirm change', 'All change details', controller.signal), false);
   assert.deepEqual(options, ['Cancel', 'Confirm']);
   assert.equal(await review({ mode: 'rpc' } as any, 'Confirm', 'details', controller.signal), false);
+
+  const { literal } = await import('../remote/protocol.ts');
+  const disclosure = literal('界'.repeat(4000) + 'FINAL_DISCLOSURE_SUFFIX');
+  assert.ok(disclosure.length > 20_000);
+  const longCtx = { mode: 'tui', ui: {
+    select: async () => 'Confirm',
+    custom: async (factory: any) => new Promise((resolve) => {
+      let completed = false;
+      const tui = { terminal: { rows: 30, columns: 80 }, requestRender() {} };
+      const theme = { fg: (_color: string, value: string) => value };
+      const keys = { matches: (data: string, action: string) => action === 'tui.select.confirm' && data === '\r' };
+      const component = factory(tui, theme, keys, (value: boolean) => { completed = true; resolve(value); });
+      let rows = component.render(80);
+      const displayed = [...rows];
+      component.handleInput('\r');
+      assert.equal(completed, false, 'Partial disclosure cannot authorize a write');
+      for (let page = 0; page < 100 && !rows.join('\n').includes('Review complete'); page++) {
+        component.handleInput('\x1b[6~'); rows = component.render(80); displayed.push(...rows);
+      }
+      assert.match(rows.join('\n'), /Review complete/);
+      assert.match(displayed.join('\n'), /FINAL_DISCLOSURE_SUFFIX/, 'The saved suffix must be visible before approval');
+      component.handleInput('\r'); component.dispose();
+    }),
+  } } as any;
+  assert.equal(await review(longCtx, 'Save long prompt', disclosure, controller.signal), true);
 });
 
 test('remote menu bounds native layout and preserves search/selection across notification refresh and resize', async () => {
