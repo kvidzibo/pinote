@@ -313,3 +313,76 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.ok(!(await client.listTools()).tools.some((t) => /settings|action/.test(t.name)), 'UI writes are not model tools');
   } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('agent context is complete, read-only, consent-validated and fails closed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-context-'));
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const env = { PINOTE_NOTE_COMMAND: join(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
+  const cli = async (...args: string[]) => JSON.parse((await promisify(execFile)(env.PINOTE_NOTE_COMMAND, ['--no-notify', ...args], { env: { ...process.env, ...env } })).stdout);
+  const client = new Client({ name: 'agent-context-test', version: '1' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'dist-mcp/mcp/server.js')], env, stderr: 'pipe' });
+  transport.stderr?.on('data', () => {});
+  let state: Record<string, unknown> = {};
+  const meta = () => ({ 'native-ui/context': { conversationId: 'context-test', contextId: 'branch-a', state } });
+  const read = async () => {
+    const result = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
+    assert.equal(result.contents[0].mimeType, 'application/vnd.mcp-agent-context+json');
+    assert.ok('text' in result.contents[0]);
+    return z.object({ version: z.literal(1), text: z.string().min(1).max(64_000) }).strict().parse(JSON.parse(result.contents[0].text)).text;
+  };
+  try {
+    await client.connect(transport);
+    const entries = (await client.listResources()).resources.filter((entry) => entry.mimeType === 'application/vnd.mcp-agent-context+json');
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].description, 'Selected task and handoff notes; otherwise selection status and saved tags.');
+    assert.match(await read(), /No task is selected/);
+    const task = await cli('agent', 'add', '--text=Original task\n\nComplete task details', '--tag=Saved');
+    const updated = await cli('agent', 'update', String(task.id), '--expected-updated-at', task.updated_at, '--set-json', JSON.stringify({ Next: 'Full handoff notes' }));
+    state = { selectedId: task.id };
+    const selectedText = await read();
+    const selectedTask = JSON.parse(selectedText.split('Selected task (complete text, revision and handoff notes):\n')[1].split('\n')[0]);
+    assert.deepEqual(selectedTask, { id: task.id, text: task.text, tag: 'Saved', state: task.state, updated_at: updated.updated_at, agent_notes: updated.agent_notes });
+    assert.match(selectedText, /Effective handoff field definitions/);
+    assert.equal(await read(), selectedText);
+    assert.deepEqual(await cli('agent', 'get', String(task.id)), updated, 'Resource reads never mutate the task');
+    state = {};
+    assert.match(await read(), /Saved tags:\n\["Saved"\]/);
+    const suggest = async (args: Record<string, unknown>) => {
+      const result = await client.callTool({ name: 'propose', arguments: args, _meta: meta() });
+      assert.equal(result.isError, undefined);
+      state = result._meta!['native-ui/state'] as Record<string, unknown>;
+    };
+    await suggest({ text: 'Pending new work', tag: 'Saved' });
+    assert.match(await read(), /Pending new work/);
+    const oldState = state;
+    await suggest({ task_id: task.id });
+    assert.match(await read(), /"task_id":/);
+    assert.match(await read(), /Complete task details/);
+    const existingState = state;
+    state = oldState;
+    assert.match(await read(), /Pending suggestion \(not selected\):\nnull/, 'Consumed proposals stay hidden');
+    state = existingState;
+    await cli('agent', 'done', String(task.id), '--expected-updated-at', updated.updated_at);
+    assert.match(await read(), /Pending suggestion \(not selected\):\nnull/, 'Completed suggestions stay hidden');
+    state = { selectedId: task.id };
+    assert.match(await read(), /No task is selected/);
+    state = { selectedId: 999999 };
+    await assert.rejects(read(), /agent get 999999/, 'Missing target CLI errors propagate, as in get_current');
+    state = { selectedId: -1 };
+    await assert.rejects(read());
+    state = {};
+    await assert.rejects(client.readResource({ uri: 'pinote://agent-context' }), /./, 'Missing host context is an error');
+    // Simulate oversized legacy/imported data in the same database (normal writes are bounded).
+    const large = await cli('agent', 'add', '--text=Oversized legacy task');
+    await promisify(execFile)(join(root, '../.venv/bin/python'), ['-c', 'import sqlite3, sys\nwith sqlite3.connect(sys.argv[1]) as db:\n db.execute("UPDATE notes SET text = ? WHERE id = ?", ("x" * 65000, int(sys.argv[2])))', join(dir, 'pinote/notes.db'), String(large.id)]);
+    state = { selectedId: large.id };
+    await assert.rejects(read(), /exceeds 64000/);
+    await rename(join(dir, 'pinote/notes.db'), join(dir, 'pinote/backup.db'));
+    await writeFile(join(dir, 'pinote/notes.db'), 'not a database');
+    state = { selectedId: task.id };
+    await assert.rejects(read(), /./, 'Read failure must not become no selection');
+  } finally {
+    await client.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
