@@ -2,377 +2,120 @@
 
 [npm](https://www.npmjs.com/package/pi-note) · [Pi package directory](https://pi.dev/packages/pi-note)
 
-Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
-in Pi: selected-task footer status, `/pi-note`, and agent current-task read/update,
-add, and tag-listing tools.
-The extension and Python app share a repository but install separately.
+Shared [Pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs in Pi.
+A dedicated extension connects directly to an authenticated **MCP Streamable HTTP**
+service. No MCP gateway, VM-local Python installation, or network-mounted database
+is needed.
 
-For server-provided UI instead of this Pinote-specific extension, see the opt-in
-[native MCP UI alternative](mcp/README.md). It uses a generic gateway host and has
-explicit initial-version limits; it is not activated by installing this extension.
-MCP users can separately enable the [optional Ctrl+D exit companion](mcp/README.md#optional-ctrld-exit-confirmation).
-It ships as `exit-confirm.ts` but is not loaded by default; do not load `index.ts`
-alongside MCP.
+```text
+Host Pi ── Pinote extension ──┐
+                             ├─ HTTPS → Pinote service → notes.db
+VM Pi ──── Pinote extension ──┘
+```
+
+Tasks, tags, progress and handoff fields are shared. Selection and pending
+suggestions belong to each Pi conversation/branch, not the HTTP connection.
+Other tools continue running wherever Pi and their services run.
 
 ## Install
 
-Requires Pi 0.99.1+, Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
-Install with `pi install npm:pi-note`, or `pi install ./pi` from this checkout,
-then run `/reload` in interactive Pi. npm installation does not run Python installers.
+Requires **Pi 1.4.0+** and **Node.js 22.19+**. The service additionally needs
+**Python 3.11+** and **note 0.12.0+**. Install and start the
+[Pinote service](mcp/README.md) first, then on each client:
 
-### CLI setup and upgrades
+```sh
+pi install npm:pi-note
+# Or, from a checkout:
+pi install ./pi
+```
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
-restart Pi with `uv` on PATH. At startup the extension checks `note --version`
-against its bundled CLI version (currently 0.4.0), without network requests:
+Set the endpoint and use the same private bearer token as the service before
+starting Pi. Both read `PINOTE_TOKEN`, or a private owner-only `PINOTE_TOKEN_FILE`
+(default `<Pi agent directory>/pinote-token`):
 
-- Missing/unrecognized CLI: `/pi-note` opens Settings directly, where **Install CLI** is available.
-- Older CLI: `/pi-note` opens Settings directly, where **Upgrade CLI** is available.
-- Equal/newer CLI: neither installation action is shown; no upgrade notification.
+```sh
+export PINOTE_URL=https://notes.example.net/mcp
+# Load PINOTE_TOKEN from your private environment/secret manager; never commit it.
+pi
+```
 
-Install and upgrade recheck the CLI version and ask before installing into uv's
-isolated tool environment. Restart Pi or `/reload` after external CLI changes;
-installation actions never reinstall an equal/newer CLI or intentionally downgrade it.
-Python 3.11+ is required; uv can download a suitable interpreter when missing.
-Installation downloads a pinned GitHub source archive and build dependencies,
-not a similarly named PyPI package. It does not install GTK dependencies, edit
-shell configuration, or change tasks. This checks the Python CLI bundled with
-the installed extension, not the latest npm/GitHub release. Update the extension
-first to receive a newer bundled CLI.
-
-Back up your database before upgrading and update an optional GUI separately.
-For checkout development, use `uv tool install --reinstall .` at the repo root
-instead, so local Python changes are installed.
-
-If setup reports a PATH problem, run `uv tool dir --bin` in your terminal,
-put that directory before older `note` executables on PATH, and restart Pi.
-Check `note --version`, then restart Pi or `/reload`. Network/build failures and
-conflicting executables are reported without forcibly overwriting another
-installer's commands. Fix the reported cause and retry; installs time out after
-three minutes. Installation actions are unavailable while installation runs.
-Setup hints direct users to `/pi-note` → Settings.
-Missing uv is reported with its installation link, not installed
-automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
-and still requires separate system dependencies.
-
-The extension probes `note --version` before task commands: older CLIs interpret
-unknown commands as note text and must be rejected before use. Remove the old
-standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one copy.
+The token must contain at least 32 non-whitespace characters. The default endpoint
+is `http://127.0.0.1:8765/mcp`. Non-loopback HTTP requires the explicit
+`PINOTE_ALLOW_HTTP=1` opt-in and a trusted private VPN; prefer HTTPS. Endpoint URLs
+cannot contain credentials, query strings or fragments. Do not register this
+service again through Pi's built-in MCP client: the extension owns the connection,
+state routing, tools and UI.
 
 ## Use
 
-When the CLI is ready and no task is selected, `/pi-note` opens the task picker.
-It marks the chosen task in progress and adds this default prompt to the editor:
-“Read the current Pinote task. Summarize your understanding, but don’t start work yet.”
-If the CLI is missing or older than the bundled version, `/pi-note` opens Settings
-directly so the relevant CLI installation action remains accessible. **Tab** opens
-Settings from the picker or task view; **Tab** from Settings returns to tasks.
-The agent fetches current task text and saved handoff fields when you submit;
-they are not copied into the draft. The default prompt asks for a summary, not implementation.
-Existing drafts are preserved; nothing is submitted automatically.
-With a selected task, `/pi-note` offers **Continue**, **Done**, **Switch task**, and
-**Settings**. Settings provides **Preview task**, **Complete task (new session)**,
-**Accept suggestion**, and **Dismiss suggestion** when applicable, plus
-**Install CLI** or **Upgrade CLI** only when needed. Settings also lists fields found
-on the current task, so existing values can be configured without creating another task.
-Type in the task picker to filter by text, ID, tag, or state (all words must match).
-Use ↑/↓ and Enter to select, or Esc to cancel. Rows show **●** for in progress or
-**○** for active, followed by the tag (`[Untagged]` when absent).
-The normal Pi status area shows selected-task controls and title without replacing other footers. The footer omits the task ID and state and shows only the first line, bounded by `footer.titleWidth` (default 60 terminal columns including the pin, controls, tag and title). Overflow ends with `...`. The title remains clickable for preview; task controls are separate. At very small widths controls are hidden (pin only). The pin and controls are bundled in `icons/note.txt`, `icons/check.txt`, `icons/cross.txt`, and `icons/add.txt`; they use terminal fonts, not a Nerd Font or icon theme. Icons are bold; their apparent weight depends on the terminal font, and emoji may look unchanged.
+Open **`/pinote`** (`/pi-note` is an alias). Select or create a task, preview it,
+clear the selection, complete it, respond to suggestions, or edit shared settings.
+Selection/creation and settings changes require confirmation. Nothing submits a
+model prompt automatically; inserting Continue's draft requires confirmation and
+preserves an existing draft.
 
-### Display-only preview
+Menus use Pi's native components and configured selection keys. **Escape** goes
+back; **Ctrl+R** refreshes. Settings with fewer than five choices cycle inline.
+Fullscreen has a native clickable footer: **▤** opens Pinote; clicking a selected
+title previews it and double-clicking completes it. A suggested title requires a
+double-click to accept. Regular mode shows status; `/pinote` provides all actions.
+No Kitty action handler is needed for this extension.
 
-Use **Preview task** in Settings to print the selected task's full Markdown text
-and saved agent fields in the transcript. The preview is labeled **display only · not sent
-to model**: it is a local custom session entry, excluded from subsequent model
-requests, compaction and branch summaries. It survives session resume but does not
-modify the note, editor draft or task selection, and never starts a model call.
-The agent can still read the task separately with `pinote_get_current`.
-Click previews work while the agent is running, provided no other Pinote operation
-is open. Each click saves a fresh snapshot in the transcript, above any currently
-streaming response. Later output scrolls it upward; it does not expire. Preview
-reads never lock out the agent's task updates. Settings also works during a running turn.
+Completion keeps the conversation and editor. With an empty editor, **Ctrl+D**
+(or your configured exit key) offers Cancel, Exit without completing, or Complete
+task and exit. Completion requires idle Pi and a current displayed revision;
+failures leave Pi open. `/quit` exits without completing.
 
-![Preview above a running response](../docs/images/pi-note-active-preview.png)
+Reload/resume restores the active
+branch's selection; `/new` retains it. Unrelated fresh launches start unselected.
+Changing endpoints starts a separate selection namespace. Unsaved Pi sessions
+cannot guarantee selection persistence.
 
-On Linux, the task text (pin, tag and title) is a clickable OSC 8 link to a
-private per-session Unix socket. Overflow at the configured title width stays linked.
-The package ships [a Kitty configuration example](kitty/open-actions.conf).
-Append its block to `~/.config/kitty/open-actions.conf`, preserving existing
-actions. Replace `/absolute/path/to/pi-note` with the installed package directory
-containing `preview-click.cjs`; for this checkout, that directory is `pi/`.
-Keep `${URL}` literal: Kitty substitutes the clicked task's link.
+### Agent tools and context
 
-```conf
-protocol pi-note-preview
-action launch --type=background node /absolute/path/to/pi-note/preview-click.cjs ${URL}
-```
+The extension registers `pinote_search`, `pinote_get_task`, `pinote_get_current`,
+`pinote_update_current`, `pinote_fields`, `pinote_tags`, and `pinote_propose`.
+Suggestions do not create/start/select tasks until accepted in the UI. Reads by ID
+do not change selection. Updates require the task's `expected_updated_at` revision;
+concurrent edits are rejected rather than overwritten.
 
-Do not replace or symlink your entire Kitty configuration to the example: it
-contains only Pinote's handler. Package installation does not edit Kitty files.
+Fresh selected-task context and service guidance are read before every agent run.
+Task text and handoff fields are untrusted data, not authorization. Failed reads
+explicitly report unavailable context; they never reuse a cached task or claim no
+task is selected. Tool results and injected context can reach your configured
+model: do not put secrets in tasks.
 
-Reload Kitty with **Ctrl+Shift+F5**. In Pi's regular mode, click the task text; in
-fullscreen mode, use **Ctrl+Shift+click** so Kitty handles the link instead of
-Pi's system URL opener. The helper sends only an authenticated selection
-identifier, never note content or a model prompt. Stale links after task switching, tree navigation, reload or session exit
-are rejected. The **Preview task** Settings action is also available when the
-socket cannot start; the task remains visible without a link.
+External CLI/GTK/client edits refresh connected views through notifications.
+After a network failure, use `/pinote` or a tool call to reconnect. Mutations are
+**never automatically replayed**: a failed write may already have committed, so
+read fresh state before retrying. Server restart loses HTTP sessions, not notes.
+There is no offline write queue or database replication.
 
-Each Pi session remembers its own task, including several sessions in one folder.
-Resume restores that session's task. `/new` keeps the current task selected and
-prepopulates the editor with `newSessionPrompt`; nothing is submitted automatically.
-A fresh Pi launch starts unselected and does not import an older per-folder selection.
-Completion still starts a clean, unselected session. Retention requires normal
-file-backed Pi sessions; `--no-session` does not retain the selection across `/new`. Pi saves the session after the first submitted message;
-quitting before that leaves the next launch unselected, while the task stays in progress.
-Use **Continue**
-to insert the same configured prompt. Completing, removing, or scheduling a task clears it
-from sessions that refresh it. Switching does not complete or reset the previous task.
-Task fields such as `Worktree` and `PR` stay on the task, so sessions can use separate
-worktrees and pull requests. Task status refreshes at session start, before/after
-agent activity, and after commands/tools. The CLI's per-directory `agent selected`
-command is not this session memory.
+### Shared settings
 
-### Personal configuration
+Settings live in `pi-note.json` on the **service machine**, under its
+`PI_CODING_AGENT_DIR` (default `~/.pi/agent`). The Pinote app edits prompts, injected
+agent guidance and footer definitions with confirmation and revision checks.
+A malformed configuration fails closed; fix it on the server rather than replacing
+it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task data,
+separate from global display settings.
 
-Configure `~/.pi/agent/pi-note.json` (or the agent directory set by
-`PI_CODING_AGENT_DIR`):
+## Migration
 
-```json
-{
-  "handoffPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet.",
-  "newSessionPrompt": "Read the current Pinote task. Summarize your understanding and proposed approach, but don’t start work yet.",
-  "taskOfferPolicy": "github-remote"
-}
-```
+1. Back up the service machine's Pinote data; keep `notes.db` local to that machine.
+2. Start the standalone service against that same database and settings directory.
+3. Remove Pinote's service entry and its unused package entry from the gateway
+   configuration; preserve all other services/packages.
+4. Remove the old gateway-dependent `exit-confirm.ts` companion and any old local
+   `index.ts` extension from Pi's load list. Load this package once.
+5. Finish active gateway jobs before reloading Pi. Configure each VM client with
+   the remote endpoint and token, then select its task in `/pinote`.
 
-`taskOfferPolicy` controls the agent's task-offer guidance:
-
-With no selected task, suggest a note only when implementation is expected to
-span multiple turns. Skip questions, investigation, recon, and small edits (such
-as changing a few configuration lines). If investigation develops into substantial
-implementation, suggest then. No plan is required: a short title identifies the
-work. Explicit user requests to create a task remain allowed under every policy.
-
-- `always` (default): offer for qualifying implementation in any repository.
-- `github-remote`: for qualifying implementation, first verify with Git that the
-  repository has an HTTPS or SSH remote hosted on `github.com`; otherwise do not
-  offer. Local paths and other
-  hosts do not qualify. This is agent guidance, not a network or PR-access check.
-- `never`: do not offer tasks; explicit requests to create one remain allowed.
-
-All policies preserve the existing creation tools, user-consent requirement,
-and selected tasks. Run `/reload` after changing this setting. Invalid policy
-values or unreadable/malformed configuration suppress offers; interactive startup
-warns until you fix the file and reload. No project-local configuration is read.
-
-In `/pi-note → Settings`, select **Task prompt** to edit the text inserted after
-selection or **Continue**. **Shift+Enter** or **Ctrl+J** adds a newline; **Enter** saves it
-globally, **Ctrl+C** clears the edit, and **Esc** cancels that unfinished edit.
-
-**New session prompt** edits the separate draft inserted by `/new` when a task is
-retained. Its default matches the built-in task prompt; an empty/whitespace-only
-value disables insertion without clearing the task. `/new` rereads it each time,
-so changes need no `/reload`. Invalid configuration warns and leaves the retained
-task selected without inserting a prompt. Both prompts are literal text, not templates.
-
-Settings and fields save automatically after each confirmed change; no separate
-Save action is needed. Leaving Settings with **Esc** or **Tab** keeps saved changes
-and discards only unfinished input. Saving never changes existing editor input or submits anything.
-
-Task selection and **Continue** reread `handoffPrompt` each time; changing that
-field needs no `/reload`. Its value is literal text, not a prompt template; use
-`\n` in JSON strings for multiple lines. It must be a nonblank string without control
-characters other than tabs and newlines. A missing file or key uses the default.
-Invalid/unreadable configuration reports an error without starting/switching a
-task or changing the editor. Menu **Done**, footer completion, and agent tools are
-unaffected. If configuration is invalid or unreadable, Settings shows only task,
-suggestion, and CLI actions; repair `pi-note.json` before editing preferences.
-Invalid configuration is never replaced with defaults. This is user-level
-configuration only; project-local files are not read.
-
-### Agent tools
-
-- `pinote_get_current`: read this session's selected task, including its revision.
-  Takes no arguments; returns null when this session has no selected task.
-- `pinote_update_current`: supply `expected_updated_at` from that read and arbitrary
-  `set` label/value pairs or `remove` labels. Updates the selected task only, with no
-  ID argument. Updates merge fields, never replace the task text or tag. Fails if
-  no task is selected or the selection changes during the operation. If another
-  process changed the task, read again before retrying.
-- `pinote_fields`: read the user's global footer definitions (names, display labels,
-  links, formats, widths), even without a task. Agents should read this before
-  populating relevant values with `pinote_update_current`. Empty/missing values
-  stay hidden; this tool does not edit configuration.
-- `pinote_tags`: list saved tag names.
-- `pinote_propose`: show a suggested task beside the pin icon in the footer without
-  creating a note. Optional `tag`; full text is retained, but the footer shows only
-  its title. Requires a TUI with no selected task. A new proposal replaces the
-  unaccepted suggestion without waiting for dismissal. The agent continues your
-  work while the suggestion awaits your choice.
-- `pinote_add`: create an active task. Optional `tag`. `select: true` starts and
-  remembers it for this session only; use that only after the user agrees.
-
-Version 0.7.0 replaces `pinote_get`/`pinote_update` with these current-task tools
-and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
-or retag existing tasks; use `/pi-note` to select an existing task.
-
-When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
-asking in chat. The pin footer shows a pending suggestion, distinct from a selected task:
-
-```text
-📌 ✖  ✚ · [tag] Task title...
-📌 ✔ · [tag] Task title...
-```
-
-![Suggested task controls](../docs/images/pi-task-suggestion.png)
-![Selected task with Done control](../docs/images/pi-task-selected.png)
-
-- Muted **✖** dismisses only the current suggestion without creating a note; the agent can suggest another task while none is selected.
-- Accent **✚** creates, starts, and selects the suggested task.
-- Green **✔** completes the selected task, starts a clean unselected session, and reloads Pi without a completion prompt. Menu **Done** and **Complete task** in Settings do the same.
-
-Done occupies the former ✖ position, not the ✚ position, so clicking Add twice cannot accidentally complete the new task. The selected row removes the former ✚ cell's padding. The selected task's title is a separate preview link.
-
-The configured `footer.titleWidth` bounds the entire row (default 60 columns). Controls stay first; the tag is dropped before truncating the first-line title with `...`. Tiny widths hide controls (pin only). Pi can still clip the combined status row on narrow terminals.
-
-Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. The Settings actions **Accept suggestion** and **Dismiss suggestion** perform the corresponding footer actions. No action submits input or starts an agent turn. Add and Dismiss preserve editor drafts; **Complete task** starts a clean session and reloads Pi, discarding the editor draft, so save unfinished input before completing a task.
-
-Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed. Failed or stale writes never restart Pi. If another extension cancels the new session, the task remains completed and Pi reports the cancellation. The reload runs through the new session's fresh context; retired contexts are not reused.
-
-If another task fits better, the agent can replace an unaccepted suggestion by calling `pinote_propose` again, without waiting for dismissal. Replacement invalidates the old ✚/✖ links; only the latest suggestion can be accepted or dismissed. Pending suggestions survive `/reload` and session resume, including their full text and tag; new links replace stale capabilities. Accepted or dismissed suggestions never reappear on reload, but dismissal does not block new proposals—even in sessions saved by older versions. New sessions and forks start without a suggestion; selecting a task or navigating the tree clears it. Suggestion state is local, display-only session metadata, not model context. Pi saves the session after the first submitted message; quitting before that can still lose unsaved session state. Repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
-tag name when it fits.
-
-![Pending suggestion replaced without creating a task](../docs/images/pi-task-replacement.png)
-
-Task text starts with a short, action-oriented title (aim for at most 60 characters).
-Put context, URLs, commands, and acceptance criteria after a blank line; the title
-should not contain implementation details. This is agent guidance, not a storage limit.
-
-Agents are guided to keep notes to three short bullets total: relevant outcome,
-blocker, and next action. Replace stale notes; omit narration, repeated task text,
-and routine test logs. Keep a GitHub pull request in `PR`. Set configured footer
-fields with Markdown values; remove a field to hide it. Without a configured field
-list, append its label to `Bar`, one label per line. Do not list `PR` in `Bar`.
-Agents use `pinote_update_current`; there is no separate `add_to_bottom_bar` tool.
-This is guidance, not truncation or a storage limit.
-
-Values are Markdown strings; no fields are required. `PR` can display a clickable link without GitHub polling.
-`Bar` chooses extra footer fields unless configuration overrides it:
-
-```markdown
-## Agent
-PR: [Task selection #42](https://github.com/org/repo/pull/42)
-Dashboard: [Metrics](http://127.0.0.1:3000/d/app)
-Next: Address review comments
-Bar: Dashboard
-Next
-Jira: [PROJ-123](https://example.atlassian.net/browse/PROJ-123)
-CWD: `/home/me/project`
-```
-
-The GTK preview renders this section using its existing safe Markdown renderer.
-Fields are stored separately from task text, retained in history, and survive
-sessions. Labels are case-sensitive (trimmed, Unicode-normalized), at most 64
-characters; values are at most 4096 characters. Maximum 64 fields / 32 KiB JSON
-per task. Use removal rather than empty values.
-
-### Footer configuration
-
-Add `footer` to `~/.pi/agent/pi-note.json` (or `pi-note.json` under
-`PI_CODING_AGENT_DIR`), preserving any existing `handoffPrompt`:
-
-```json
-{
-  "footer": {
-    "titleWidth": 40,
-    "fieldWidth": 30,
-    "maxFields": 4,
-    "fields": [
-      { "name": "PR", "label": "", "link": true, "format": "#<number>" },
-      { "name": "Dashboard", "label": "Dashboard", "link": true, "format": "<value>" },
-      { "name": "Next", "label": "", "link": false, "format": "<value>", "width": 24 }
-    ]
-  }
-}
-```
-
-Widths are terminal columns, including the pin, tags or field labels, and must be
-integers from 3 to 1000. Defaults: `titleWidth: 60`, `fieldWidth: 60`,
-`maxFields: 4` (allowed 0–64). Each field can override `fieldWidth` with `width`.
-`fields` selects task field names in order, regardless of a task's `Bar`.
-Names are case-sensitive, trimmed and NFC-normalized, at most 64 characters;
-`Bar` is reserved and duplicate names are rejected. Up to 64 definitions are
-accepted. Missing/blank values do not display and do not consume the field limit.
-`[]` or `maxFields: 0` hides configured fields, including PR.
-
-In `/pi-note → Settings`, **Add field** adds a global display definition, not a
-task value. Select any field to edit **Link**, **Label**, **Format**, and **Width**.
-Label starts as the field name; clear it for no prefix. Link off displays plain
-text without a clickable link. Toggles, field additions/removals, and edits confirmed
-with **Enter** save immediately. **Esc** returns from a field to settings without
-undoing saved changes. Invalid edits and failed saves stay open with an error;
-failed saves leave saved values unchanged and can be retried. Saves include the task
-prompt, preserve unrelated settings (such as `taskOfferPolicy`), and reject external
-configuration changes made since opening settings or the last successful save.
-Concurrent saves use `pi-note.json.lock`; remove stale locks only when no save is
-running. Symlinked configuration must be edited manually; saves never replace the link.
-
-Formats support `<value>` (Markdown display text), `<url>` (one safe link target),
-and `<number>` (a GitHub PR number or numeric field value). With a blank label,
-PR format `#<number>` displays `#123`; Link on makes it clickable. An unavailable
-placeholder hides the field. The template is literal text, not executable code
-or Markdown. Default format is `<value>`, or `#<number>` for PR.
-String definitions and the older `{ "label": "Next", "width": 24 }` form still
-work. Absent/`null` fields retain the legacy automatic PR link plus `Bar` fields;
-the first Settings save turns this legacy list into explicit global definitions.
-
-Settings saves include both prompts and apply immediately in this Pi session. Run `/reload` after manual
-footer edits or in other running sessions; settings are also reread on session start.
-Invalid footer configuration warns and uses footer defaults; missing files silently
-use defaults. The task prompt is also read separately on selection/Continue as
-described above; prompt changes need no reload in any running session.
-This is user-level configuration, not task data; agents should not change it
-without approval. Task values still come from `pinote_update_current`.
-
-### Footer links
-
-The selected active or in-progress task can show fields after its title.
-Legacy configuration automatically shows a valid `PR` as **PR #123**.
-With an explicit field list, PR presentation is configured like any other field.
-Configured `fields`, or otherwise `Bar`, selects field names. Each listed value is
-Markdown: the footer shows its text, and links in it are clickable for any scheme
-except `javascript:`, `data:`, and `vbscript:`. Credentials, control characters,
-and targets over 2048 characters after serialization are shown as text but not
-linked. `Bar` itself is never displayed.
-By default, at most four extra fields are shown, each truncated to 60 columns.
-Overflow ends with `...`, including cuts between Markdown/link segments. Removing
-a listed field hides it even if configuration or `Bar` still names it. Terminal
-OSC 8 support is required for clicking links. Pi joins footer statuses on one
-line and truncates the combined line with `...` when the terminal is narrow.
-Pi's final ellipsis is plain text; click the remaining task text to preview it.
-This extension does not replace other footers. Other fields, such as `Jira` and
-`CWD` in the example, stay off the footer unless selected.
-
-### PR links without polling
-
-Set `PR` with `pinote_update_current` to one `https://github.com/owner/repo/pull/123`
-URL or Markdown link. Legacy footer settings show clickable **PR #123**; global
-field settings can change or hide it. PR and other field links are rendered locally
-for the active selection and disappear when that selection is cleared.
-
-Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on
-PR merges. No GitHub authentication is required. `PINOTE_PR_POLL_SECONDS` is no
-longer used. Other separately installed Pi PR/Git extensions are unaffected.
-
-Tools work without a TUI. `/pi-note` works in a TUI while the agent is running:
-you can select/switch tasks, use Continue, preview tasks, respond to suggestions,
-and edit settings without interrupting the turn or submitting input. Completion
-and CLI installation/upgrades still require an idle session. Another pending
-Pinote operation blocks the menu. Open menus do not block agent handoff updates.
-This package does not synchronize databases or paths between machines. Note text
-and fields loaded into Pi are sent to the configured model when used as context;
-avoid secrets. Agent commands do not send desktop notifications.
+Existing gateway selection entries are not imported; notes and handoff fields are
+unchanged. Remote-safe Ctrl+D handling is built into this extension; the obsolete
+gateway companion is removed. The existing
+[local-only CLI extension](LOCAL.md) remains available explicitly for on-device
+use, but must not be loaded alongside the HTTP extension.
 
 ## Development and releases
 
@@ -385,27 +128,12 @@ npm --prefix pi test
 (cd pi && npm pack --dry-run)
 ```
 
-The load test uses the real Pi loader and checkout's `.venv/bin/note` with temporary
-data. Run visual checks under Xvfb/private D-Bus; never use personal task data.
+Tests use the checkout's own `.venv/bin/note`, real HTTP/stdio servers and temporary
+storage. UI validation must use Xvfb, a private D-Bus session and temporary app data.
 
-`.github/workflows/publish.yml` follows the other Pi packages: every push to
-`main` runs the full Python/GTK/Pi tests, then publishes a new npm version using
-OIDC trusted publishing and provenance. Existing versions are skipped; registry
-failures fail the workflow. No npm token is stored in GitHub.
-
-Only a package's first publication needs this manual bootstrap (not part of
-installation). `pi-note` is already published; use automated releases above.
-
-1. From `pi/`, run `npm login`, then `npm publish --ignore-scripts --access public`
-   to bootstrap `pi-note` after checking name availability.
-2. In npm's package settings configure the GitHub trusted publisher: owner
-   `kvidzibo`, repository `pinote`, workflow `publish.yml`, no environment.
-
-The CLI source pin in `setup.ts` must point to a verified immutable commit with a
-compatible Python package. Update it and the bundled-version setup text together
-when releasing Python changes; verify installation in a temporary uv tool directory.
-
-Subsequent releases: run `npm version patch|minor|major --no-git-tag-version`
-inside `pi/`, commit both version files in a PR, and merge through the normal
-review/check process. Python and npm versions are independent; update the stated
-minimum CLI version whenever the integration contract changes.
+The npm and Python packages are versioned independently. Bump npm with
+`npm version patch|minor|major --no-git-tag-version` inside `pi/` and commit its
+manifest and lockfile together. GitHub CI tests `main`, then publishes new npm
+versions through OIDC trusted publishing; registry failures fail the workflow.
+The trusted publisher is `kvidzibo/pinote`, workflow `publish.yml`, no environment.
+Installation never edits personal Pi, shell, systemd or desktop configuration.

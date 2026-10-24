@@ -9,5 +9,5 @@
     "rootDir": ".",
     "outDir": "dist-mcp"
   },
-  "include": ["mcp/server.ts"]
+  "include": ["mcp/server.ts", "mcp/http.ts"]
 }

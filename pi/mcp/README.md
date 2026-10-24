@@ -1,256 +1,137 @@
-# Pinote native UI over MCP
+# Standalone Pinote service
 
-An opt-in alternative to the Pinote-specific Pi extension. Pinote serves the task
-picker, settings forms, previews, footer data, and action validation through MCP;
-the generic [gateway UI host](https://github.com/kvidzibo/mcp-session-gateway)
-only renders and routes them. No model turn is needed for UI actions.
+Pinote runs independently of the MCP gateway. The [dedicated Pi extension](../README.md)
+connects directly over authenticated **MCP Streamable HTTP**, using `/mcp` for tools,
+resources, notifications and its native terminal UI. No browser UI is served.
 
-This uses the gateway's **private native UI v1 protocol**, not browser MCP Apps or
-the built-in Pi MCP resource renderer. Use gateway 0.12.0+ with its Pi adapter;
-see below for features requiring newer gateways.
+## Build and run
 
-## Setup
+On the machine holding your notes, requires **Node.js 22.19+**, **Python 3.11+**
+and the checkout's `note` CLI:
 
-Requires Node.js 22.19+, Python 3.11+, and `note` 0.12.0+. From the Pinote checkout:
-
-```bash
+```sh
 uv sync --locked
 npm --prefix pi ci --ignore-scripts
 npm --prefix pi run build:mcp
+export PINOTE_NOTE_COMMAND="$PWD/.venv/bin/note"
+# Load PINOTE_TOKEN from a private environment file/secret manager.
+npm --prefix pi run serve
 ```
 
-Merge the service into your gateway's existing `mcpServers` map, preserving other
-services (use absolute paths). Do not mix `mcpServers` with the legacy `servers` key:
+The bearer token is mandatory, including on loopback: use at least 32 random
+non-whitespace characters. Store it in an owner-only regular file (mode `0600`),
+never commit or paste it into a conversation. For a new setup, after creating the
+private agent directory:
 
-```json
-{
-  "mcpServers": {
-    "pinote": {
-      "command": "node",
-      "args": ["/absolute/path/to/pinote/pi/dist-mcp/mcp/server.js"],
-      "env": { "PINOTE_NOTE_COMMAND": "/absolute/path/to/pinote/.venv/bin/note" }
-    }
-  }
-}
+```sh
+(umask 077; openssl rand -hex 32 > /absolute/path/to/private/pinote-token)
+export PINOTE_TOKEN_FILE=/absolute/path/to/private/pinote-token
 ```
 
-Then launch the gateway's generic Pi adapter and open
-`/gateway` → Services → pinote → Open app.
-Do not also load `pi/index.ts` for this workflow. Nothing is automatically
-installed, activated, or migrated; keep the existing integration until you approve
-the switch. To test `/reload`, reload only a disposable session/profile first.
+Do not overwrite an existing token during an upgrade. Copy it securely to each
+client's private token file, or use your secret manager's `PINOTE_TOKEN` environment.
 
-The service shares the existing database and `pi-note.json`. `PINOTE_NOTE_COMMAND`
-selects an executable, not a shell command. Without it, `note` must be on PATH.
-Explicitly pass `PI_CODING_AGENT_DIR`, `XDG_DATA_HOME`, and `XDG_STATE_HOME` in service
-`env` when using overrides or disposable data. Defaults otherwise refer to your
-normal personal data. No desktop notifications are sent.
+| Variable | Default / purpose |
+|---|---|
+| `PINOTE_TOKEN` | Bearer token shared with authorized clients; overrides the file |
+| `PINOTE_TOKEN_FILE` | Owner-only regular file; defaults to `<Pi agent directory>/pinote-token` |
+| `PINOTE_HOST` | `127.0.0.1`; explicit bind address |
+| `PINOTE_PORT` | `8765` |
+| `PINOTE_ALLOWED_HOSTS` | Comma-separated exact HTTP authorities; include port when clients send one |
+| `PINOTE_NOTE_COMMAND` | `note`; executable path, never a shell command |
+| `PINOTE_LOG_PATH` | `app.log` in the launch directory |
+| `PI_CODING_AGENT_DIR` | Server-side settings directory; normally `~/.pi/agent` |
+| `XDG_DATA_HOME` / `XDG_STATE_HOME` | Optional Pinote data/state locations |
 
-## Use
+Children run as your user. The service uses the same local database as the CLI and
+GTK app: normally `~/.local/share/pinote/notes.db`. Only the **service machine**
+needs Python or access to that file. Do not put SQLite/WAL files on a VM network
+share. Point every client at the service instead.
 
-- **Tasks:** filter, select/start, create/select, clear selection, complete, preview,
-  and request insertion of the task prompt. Selecting a task asks for confirmation.
-- **Settings:** edit task/new-session prompts, injected agent guidance, task-offer
-  policy, footer limits, and field definitions
-  (label, link, format, width). Enter text as JSON strings (`\n` for line breaks)
-  so whitespace round-trips exactly. Saves are confirmed, validated, and atomic; concurrent
-  edits are rejected and unrelated settings are preserved. Invalid configuration
-  fails closed; repair it manually rather than replacing it with defaults.
-- **Fullscreen native footer (gateway 0.30.0+):** enabled only when the host
-  negotiates `native-ui/features.footerNativeActions=true` (the gateway advertises
-  `experimental.native-ui-v1.footerNativeActions=true`). **▤** opens the Pinote app;
-  there are no separate complete/accept buttons. Idle status reads “Pinote · No task”.
-  Task titles are plain text, not terminal links: single-click previews without changing state;
-  double-click completes an in-progress task immediately, with no extra confirmation.
-  Suggestions have a `? ` prefix and italic/accent styling when supported;
-  single-click is inert, double-click accepts (starts/selects an existing task or creates/starts/selects a new one). Use the app menu to
-  dismiss a suggestion. Handoff labels are plain text with a separate **↗** link;
-  label and icon share the configured field width and count as one field. Very large
-  footers omit fields beyond the 128-segment protocol limit, keeping label/icon pairs intact.
-  Clicks/double-clicks are handled locally by the fullscreen host. Completion never
-  resets the conversation or editor; app menus remain the accessible keyboard fallback.
-- **Regular/older-host footer:** unchanged when native footer actions are not
-  negotiated (the regular host never sends that feature). Selected task plus
-  configured fields; safe HTTP(S) links are clickable.
-  Single-click the active title to preview; double-click it to complete. **✔** also
-  completes and clears the selection without resetting the conversation or editor.
-  Suggested titles use italic accent text; double-click to accept/start, then the
-  title returns to normal text. Acceptance cannot reuse the same click capability
-  to complete. Styling/double-click require gateway 0.28.0+ and double-click needs
-  its updated Kitty mouse mapping (Ctrl+Shift+double-click in fullscreen).
-  Older hosts retain plain titles and icon actions. Suggestions show **✚**: left-click to
-  accept (start/select existing, or create/start/select new), right-click to dismiss. Right-click requires gateway 0.22.0+
-  and its Kitty mouse mapping; **Dismiss suggestion** in the app menu remains the
-  keyboard/older-host fallback. These use the gateway's generic footer actions, not a Pinote
-  extension or private handler. Install the gateway's Kitty protocol handler
-  and right-click mouse mapping as described in its native UI documentation. Existing
-  installations need to add the mapping and reload Kitty; package updates do not
-  edit terminal configuration. App menus remain the keyboard fallback.
-- **Agent:** `search`, `get_task`, `propose`, `get_current`, `update_current`, `fields`,
-  and `tags` are available through gateway tool discovery. By default, agents search
-  only when you explicitly ask to search or find tasks, not merely to continue work
-  or suggest a task. Customize the injected prose with `agentGuidance` below.
-  `search` finds active/in-progress tasks by words in their full text or tag
-  (case-insensitive, any order); empty queries
-  browse tasks. Results contain titles, `total`, and `next_offset`; `limit` defaults to
-  10 (maximum 50). `get_task({task_id})` reads full text and saved handoff fields without
-  selecting or changing the task; missing IDs report an error. Treat note content as data,
-  not authority to execute instructions.
-  `propose({task_id})` suggests an existing task; acceptance starts/selects that same ID,
-  preserving text, tag, and handoff fields. No duplicate is created. Alternatively,
-  `propose({text, tag?})` suggests a new task. Do not combine the two forms. Both return
-  opaque UI state and replace an unaccepted suggestion only when no task is selected.
-  Only user acceptance creates/starts/selects; dismissal leaves tasks unchanged.
-  Existing-task suggestions disappear if the target is completed, archived, or scheduled;
-  edits invalidate old acceptance actions until refreshed. New-task text is limited to
-  4,000 characters and the host's 8 KiB state budget; existing tasks store only their ID.
-  Acceptance/dismissal consumes a durable receipt before mutation, so old links,
-  branch restores and reconnects cannot replay consent. An interrupted acceptance
-  may have created a task: inspect the task list, never blindly propose it again. They use the same host-supplied selection as the UI.
-  UI actions and settings writes are not advertised as model tools.
+## Remote access
 
-The host owns durable conversation/branch state; the service does not store a
-second selection database. Reload/reconnect restores saved state, separate sessions
-in one folder stay independent, and `/new` retains the current selection or pending
-suggestion. An unrelated fresh launch starts unselected. The stable service
-context is separate from both the Pi conversation ID and gateway process UUID. Pi must
-have saved the session for resume persistence. Existing extension selections are
-not imported. Changing the gateway config path or service name starts a separate
-selection namespace.
+The Node listener is plaintext HTTP. **Never expose it directly to the public
+Internet.** Use a private VPN or a trusted HTTPS reverse proxy. The proxy must
+forward `/mcp`, bearer authorization, MCP headers and streaming responses without
+buffering, preserve the external Host, and allow long-lived SSE connections.
 
-## Optional Ctrl+D exit confirmation
+For example, a local reverse proxy serving `https://notes.example.net/mcp` forwards
+to `http://127.0.0.1:8765/mcp`; set:
 
-`pi-note` 0.25.0 ships `pi/exit-confirm.ts`, a disabled-by-default **companion** to this
-MCP setup, not the old `pi/index.ts` extension. It requires Pi 0.99.1+, a gateway
-supporting `gateway:query-service-tool`, and this version of the Pinote MCP server
-registered as `pinote`. Enable it for one launch:
-
-```bash
-PINOTE_NOTE_COMMAND=/absolute/path/to/pinote/.venv/bin/note \
-  pi -e /absolute/path/to/pinote/pi/exit-confirm.ts
+```sh
+PINOTE_ALLOWED_HOSTS=notes.example.net
 ```
 
-For persistent use, add that absolute extension path to `extensions` in Pi's
-user `settings.json`, preserving other entries, then `/reload`. Remove the path
-and `/reload` to disable it. Installing `pi-note` does not enable the companion.
-Load it after other editor extensions so it can wrap their editor without replacing
-its normal input behavior.
+Without an explicit allowlist, only the bound non-wildcard address/port is accepted.
+A `0.0.0.0` or `::` bind requires an explicit allowlist of client-facing authorities.
+Browser Origin headers are rejected by default; no CORS or browser login is exposed.
+A private-VPN plaintext client must explicitly set `PINOTE_ALLOW_HTTP=1`; this is a
+**client** opt-in, not encryption or server-side authorization.
 
-With an empty editor, Ctrl+D (or your configured `app.exit` key) offers **Complete
-task and exit**, **Exit without completing**, or **Cancel**. Escape cancels. With
-no selected task Pi exits immediately; nonempty text keeps normal editing behavior.
-Completion requires idle Pi, rechecks the selection and displayed revision, and
-uses the local CLI without notifications. Query/completion failures leave Pi open;
-inspect the task before retrying because a failed write may have committed. `/quit`
-and other exit paths bypass the companion and never complete a task.
+An SSH tunnel is also sufficient: on the VM run
+`ssh -N -L 8765:127.0.0.1:8765 host`, then use the default loopback endpoint with
+the same private token. HTTP travels inside SSH; no public listener is needed.
 
-Pi and the MCP service must use the **same local database**: match `XDG_DATA_HOME`
-(and HOME when using defaults). Set `PINOTE_NOTE_COMMAND` in Pi's environment if
-`note` is not on PATH; its executable must use that same database. The companion
-compares the server's database path and task revision before writing; it does not
-fall back to a folder selection or create another selection store. Remote Pinote
-services are unsupported. RPC/print mode is unaffected; no Pi/gateway patch or
-personal configuration change is made by installation.
+One token grants full access to this user's Pinote service, including shared
+settings. It is not multi-user authorization. Protect it like your notes. Token
+rotation requires restarting the service and updating client credentials.
 
-## Injected agent guidance
+## Run continuously
 
-Open **Pinote → Settings → Agent guidance**, alongside the task/new-session
-prompts. The existing prompt editor shows the effective text as a JSON string
-(escape newlines as `\n`); edits save after confirmation. **Reset to default**
-removes a custom override without changing task data or other settings. Opening
-the editor does not create an override. Guidance longer than the host's
-20,000-character editor limit must be edited in the file; reset remains available.
+A [systemd user-unit template](../deploy/pinote.service) is included. Replace its
+absolute checkout, Node and CLI paths and review it before installation. Store the
+environment file outside the repository with mode `0600`:
 
-Alternatively, set `agentGuidance` in your user-level `pi-note.json` (under
-`PI_CODING_AGENT_DIR`, otherwise `~/.pi/agent`), preserving other settings:
-
-```json
-{
-  "agentGuidance": "Search tasks only when I explicitly ask. Use the selected task context without searching."
-}
+```ini
+PINOTE_TOKEN_FILE=/absolute/path/to/private/pinote-token
+PINOTE_NOTE_COMMAND=/absolute/path/to/pinote/.venv/bin/note
+PINOTE_LOG_PATH=/absolute/path/to/private/state/pinote/app.log
+# Set only when using a proxy or a remote bind:
+# PINOTE_ALLOWED_HOSTS=notes.example.net
 ```
 
-This MCP-only string **replaces all default guidance**, including task-offer rules;
-it is not a search-mode toggle or an extra instruction appended to the defaults.
-It is injected literally, with no placeholders or template expansion. An empty
-string omits guidance while retaining task data. Tool descriptions document API
-behavior without imposing a separate search or task-offer policy. Consent and
-selected-task mutation constraints remain enforced by the service.
+Install the reviewed unit under your user systemd directory, then:
 
-Omitting the key uses the built-in default: task content is data, reuse injected
-context, search only on an explicit search/find request, and suggest tasks only
-for genuinely new multi-step work when unselected. Requests to continue work or
-suggest a task do not authorize searching. Known task IDs can still be read;
-unknown continuation targets are left for the user to select/provide rather than
-searched or duplicated. Default guidance also covers concise handoffs and consent.
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now pinote.service
+journalctl --user -u pinote.service
+```
 
-Guidance is reread before each context response; settings saves preserve the key.
-It must be a string of at most 64,000 characters, without control characters except
-tabs/newlines. Invalid guidance or malformed config fails context reads without
-rewriting the file; tool discovery stays available. No personal config is changed
-on install.
+This starts at login and survives closing Pi. Running before login requires
+administrator-approved user lingering. Your machine must remain awake and reachable.
+Installation never creates the unit, changes lingering, or edits personal config
+automatically. Logs go to stdout/journal and `app.log`; arguments, results, tokens
+and task content are not logged. Arrange external rotation if needed.
 
-On gateways supporting automatic agent context, `pinote://agent-context` combines
-the configured guidance with separately generated selected-task text, ID/tag/state,
-`updated_at` revision, handoff notes and effective field definitions. When
-unselected it supplies selection status, saved tags and any valid pending suggestion.
-Changing guidance never replaces this task data. UI previews are never injected.
+## Sessions and failures
 
-The resource uses MIME `application/vnd.mcp-agent-context+json` and a strict
-`{version: 1, text: string}` envelope. Reads use the same host context and consent
-validation as the UI, are serialized and read-only, and never change selection.
-The combined guidance and data must fit 64,000 characters; larger responses fail
-rather than truncate. Read failures propagate so the host can display unavailable
-context. Resource list-change notifications accompany UI changes and external
-storage/config/receipt updates; no resource subscription is required.
+Each HTTP MCP session has its own protocol server. Conversation/branch state is
+supplied by the dedicated Pi extension, so two clients never share a global
+selection. Notes and saved settings remain shared. Read/check/write operations
+serialize within this daemon and mutations use database/config revisions.
 
-On older gateways without automatic context injection, supply your guidance in
-the client's always-loaded agent rules. Tool descriptions alone cannot make an
-agent discover the service.
+The service bounds request bodies and session counts, and expires idle disconnected
+sessions. Active streams and operations are not expired. Shutdown closes sessions;
+a server restart preserves notes but requires clients to reconnect. No durable SSE
+replay, offline writes or automatic mutation retries are provided. After an
+interrupted write, read fresh state before retrying: it may already have committed.
 
-## Initial-version limits
+The native terminal UI protocol and `pinote://agent-context` resource are internal
+to Pinote's extension/service integration. Registering the endpoint through a plain
+MCP client does not supply its conversation state or render the task app. The stdio
+entry point remains available for compatible clients and protocol tests; it is not
+needed for deployment.
 
-This is a working alternative, **not full parity with the old extension**. It does
-not retag/edit existing tasks or install/upgrade the CLI. Completion intentionally
-does not reset conversations. The legacy `taskOfferPolicy` and new-session prompt
-remain editable for native-extension compatibility; the MCP host does not apply
-them automatically. The context resource does not activate these legacy settings
-either; agent-side task offers follow the configured guidance and client rules. Continue requests a separately confirmed draft;
-it never overwrites existing editor text or submits a prompt. Previews are display-only transcript entries (never model context), showing plain
-text/Markdown source limited to 20,000 characters; the task list shows at most 200
-filtered matches (fewer if the serialized display budget is reached). Use the CLI for full text and unsupported task operations.
+## Validate
 
-Consent receipts live under `$XDG_STATE_HOME/pinote/mcp-proposals` (default
-`~/.local/state/pinote/mcp-proposals`). They contain no task content and are retained
-to reject historical proposals. Do not delete them while old sessions may resume.
-They are replay protection, not a second selection database or an authorization
-boundary against local processes.
+From the checkout root:
 
-Each MCP process observes the shared database (including its WAL), settings, and
-proposal receipts with coalesced, one-second stat checks. External CLI/GTK/other-session
-changes refresh connected hosts; Ctrl+R or reopening the app remains a fallback.
-Watchers stop on disconnect and never invoke the CLI or change task data.
-
-Gateway 0.16.0+ negotiates per-control revisions: unrelated task-list changes no
-longer invalidate preview/navigation, task creation, settings saves, or completion
-of an unchanged selected task. Completion checks the displayed task revision;
-selection starts its target with an atomic revision check. Settings writes check
-the original file and resolved field definitions, including task-defined `Bar`
-fields. Older hosts retain full-view revision checks without extra control fields.
-
-Known stale-view rejections occur before writes and report **Action not applied**
-on supporting hosts. Failed actions are never retried automatically: other errors
-can follow a committed or partial write. Read fresh state before retrying.
-Trusted services/agents have ordinary OS permissions; UI-only routing is not a
-secrecy or authorization boundary.
-
-## Validation
-
-```bash
+```sh
+uv sync --locked
 npm --prefix pi test
 ```
 
-The MCP integration test runs the real stdio server and CLI against temporary
-storage, including settings conflicts, host selection isolation, handoff updates,
-completion, and reconnect. Visual validation must use Xvfb, private D-Bus, and
-explicit temporary service data/settings paths.
+Tests use temporary data and real HTTP/stdio connections, including authentication,
+shared notes, independent selections, conflicts and reconnects. Visual checks use
+Xvfb and private D-Bus; never point them at personal data.
