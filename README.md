@@ -88,73 +88,33 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 For full commands, Markdown import/export, and scheduling rules, see the
 [CLI and data guide](docs/usage.md).
 
-### Pi integration
+### Pi integration: shared host/VM tasks
 
-<img src="docs/images/pi-integration.png" width="700" alt="Pi's task menu and selected-task footer with a PR link, above the same task's GTK preview with saved Agent fields.">
+The [pi-note extension](pi/README.md) connects directly to a
+[standalone Pinote HTTP service](pi/mcp/README.md), without an MCP gateway.
 
-*Pi and GTK captures with sample data and a fictitious PR; no model request was sent.*
-
-**Pi workflow:** capture a task → select it in Pi → retain handoff details → complete it.
-
-Choose the [native MCP UI](pi/mcp/README.md) for a generic gateway host, or the
-[pi-note extension](pi/README.md) for extension-specific controls. Load only one.
-The MCP UI lets agents search/read existing tasks and suggest resuming the original
-without duplication; selection/start still requires your acceptance. Completion stays
-in the current conversation; the extension starts a clean session and reloads Pi. MCP users can separately enable the optional
-[Ctrl+D exit companion](pi/mcp/README.md#optional-ctrld-exit-confirmation) to complete
-the selected task before closing Pi. It is disabled by default.
-
-The optional extension adds selected-task status,
-`/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent current-task
-read/update, add, and tag-listing tools.
-
-#### Install the extension
-
-```sh
-pi install npm:pi-note
-# Or from this checkout:
-pi install ./pi
+```text
+Host Pi ─┐
+         ├─ HTTPS → Pinote service → shared notes
+VM Pi ───┘
 ```
 
-Then run `/reload` in Pi. npm itself installs no Python code.
+Run the service on the machine holding your notes; each Pi client gets native
+task menus, footer status, suggestions and fresh selected-task context. Tasks,
+tags and Markdown handoff fields are shared, while task selection remains
+conversation-specific. The agent's file editing and other tools stay on its own
+machine. Neither Python nor a database mount is needed on VM clients.
 
-#### CLI setup and upgrades
+Install the client with `pi install npm:pi-note` or `pi install ./pi`, configure
+the service endpoint and private bearer token, then open **`/pinote`**.
+Completion preserves the conversation and draft. A service restart preserves
+notes; clients reconnect without automatically replaying writes.
 
-At startup Pi compares the installed CLI with the bundled version, without a
-network check:
-
-- **Missing/unrecognized CLI:** `/pi-note` opens Settings with **Install CLI**.
-- **Older CLI:** `/pi-note` opens Settings with **Upgrade CLI**.
-- **Current/newer CLI:** hides both actions and leaves the CLI untouched.
-
-Setup/upgrade requires [uv](https://docs.astral.sh/uv/getting-started/installation/)
-and asks before installing a pinned CLI in an isolated environment. It can
-also download Python 3.11+.
-
-Keep uv's tool bin directory on `PATH` and restart Pi after PATH changes. GTK
-remains optional and separate. For local Python development, install the checkout
-using the command in [Install](#install) instead.
-
-See the [extension setup guide](pi/README.md#cli-setup-and-upgrades) for troubleshooting.
-
-#### Tasks and handoff details
-
-By default, with no selected task, the agent suggests a short note for
-implementation expected to span multiple turns—not questions, investigation,
-recon, or small edits. No plan is required. Creating and selecting it still needs
-your confirmation. [Personal configuration](pi/README.md#personal-configuration)
-can restrict offers to GitHub-backed repositories or disable them.
-
-Each Pi session remembers its own task, even in the same folder. `/new` keeps the
-current task selected and inserts a configurable draft without submitting it;
-completion starts unselected. A fresh Pi launch still starts unselected.
-Arbitrary Markdown handoff fields appear under **Agent** in the GTK preview without changing
-the task text.
-
-A GitHub `PR` field adds a clickable footer link; Pinote does not poll GitHub or
-prompt on PR merges. Pending suggestions survive `/reload`. The footer **✔**
-completes the task, starts a clean session, and reloads Pi. No cross-machine sync
-is provided.
+Requires Pi 1.4.0+ and Node.js 22.19+; the service also needs Python 3.11+.
+Use HTTPS or a trusted private VPN, never a public unauthenticated listener.
+The existing [local-only CLI extension](pi/LOCAL.md) remains available explicitly;
+load only one Pinote extension. Existing gateway users should follow the
+[migration steps](pi/README.md#migration).
 
 ## Important constraints
 

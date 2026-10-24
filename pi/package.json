@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
@@ -27,11 +27,15 @@
   },
   "files": [
     "index.ts",
-    "exit-confirm.ts",
+    "remote.ts",
+    "remote",
+    "LOCAL.md",
+    "deploy",
     "footer-status.ts",
     "footer-links.ts",
     "footer-config.ts",
     "config-path.ts",
+    "token.ts",
     "mcp",
     "dist-mcp",
     "footer-settings.ts",
@@ -47,16 +51,17 @@
   ],
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./remote.ts"
     ]
   },
   "scripts": {
     "build:mcp": "tsc -p tsconfig.mcp.json && node -e \"require('node:fs').cpSync('icons', 'dist-mcp/icons', { recursive: true })\"",
     "prepack": "npm run build:mcp",
     "mcp": "node dist-mcp/mcp/server.js",
+    "serve": "node dist-mcp/mcp/http.js",
     "check": "tsc --noEmit",
     "test:unit": "node --test --experimental-strip-types tests/*.test.ts",
-    "test:load": "node --test --experimental-strip-types test-load.ts",
+    "test:load": "node --test --experimental-strip-types test-load.ts test-remote-load.ts",
     "test": "npm run build:mcp && npm run check && npm run test:unit && npm run test:load"
   },
   "peerDependencies": {
@@ -65,14 +70,14 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.99.1",
-    "@earendil-works/pi-tui": "0.99.1",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "22.20.3",
     "typebox": "1.3.7",
     "typescript": "5.9.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   }
 }

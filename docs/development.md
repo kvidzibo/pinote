@@ -44,8 +44,10 @@ notification rendering, and CLI parsing are separated for focused testing.
 loaded only when launching the GUI. Schema upgrades run transactionally in the
 shared store, so both frontends use the same progress states and history.
 
-`pi/` is the independently versioned `pi-note` npm package. It calls the `note`
-CLI rather than accessing SQLite. Its load test needs the checkout's `.venv/bin/note`
-and exercises the real Pi loader against temporary data. Package publishing runs
+`pi/` is the independently versioned `pi-note` npm package. Its default extension
+connects directly to the standalone Pinote HTTP service; only that service calls
+`note`, never SQLite directly. The explicit local-only compatibility extension also
+uses `note`. Tests need the checkout's own `.venv/bin/note` and exercise real Pi
+loading and HTTP/stdio connections against temporary data. Package publishing runs
 after the full CI suite on pushes to `main`; the [package README](../pi/README.md#development-and-releases)
 documents the one-time npm trusted-publisher setup and version-bump workflow.

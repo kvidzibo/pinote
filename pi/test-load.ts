@@ -77,8 +77,8 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   const load = async () => {
     const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
     const { loadExtensions } = await import(pathToFileURL(join(dirname(piEntry), "core/extensions/loader.js")).href);
-    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-    const result = await loadExtensions(manifest.pi.extensions.map((p: string) => join(root, p)), cwd);
+    // The local-only compatibility extension is explicit; the package defaults to HTTP.
+    const result = await loadExtensions([join(root, "index.ts")], cwd);
     assert.deepEqual(result.errors, []);
     assert.equal(result.extensions.length, 1);
     // Bind the session-storage action supplied by Pi's runtime in interactive sessions.

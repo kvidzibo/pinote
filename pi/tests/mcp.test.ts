@@ -16,7 +16,7 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 const text = z.string().max(20_000);
 const scalar = z.union([text, z.number(), z.boolean(), z.null()]);
 const View = z.object({
-  version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
+  version: z.literal(1), title: text, revision: z.string().min(1).max(256), state: z.record(z.string(), z.unknown()), body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(z.object({ id: z.string().min(1).max(256), label: text, revision: z.string().min(1).max(256).optional(), kind: z.enum(['action', 'text', 'number', 'toggle', 'select']), value: scalar.optional(), icon: z.string().max(8).optional(), description: text.optional(), multiline: z.boolean().optional(), confirm: text.optional(), options: z.array(z.object({ label: text, value: scalar })).max(256).optional() }).strict()).max(256),
   footer: z.array(z.object({ text, openApp: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().optional(), secondaryAction: z.string().optional(), doubleAction: z.string().optional(), style: z.object({ italic: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict();
