@@ -19,6 +19,8 @@ const MIME = 'application/vnd.mcp-native-ui+json';
 const CONTEXT = 'native-ui/context';
 const exec = promisify(execFile);
 const noteCommand = process.env.PINOTE_NOTE_COMMAND || 'note';
+const dataHome = process.env.XDG_DATA_HOME;
+const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
 const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', 'external-link'].map((name) => [name, readFileSync(new URL(`../icons/${name}.txt`, import.meta.url), 'utf8').trim()]));
 const Proposal = z.object({ id: z.string().uuid(), text: z.string().min(1).max(4000), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), state: z.object({
@@ -34,7 +36,7 @@ const Action = z.object({ method: z.literal('native-ui/action'), params: z.objec
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
   value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
 }) });
-const server = new Server({ name: 'pinote', version: '0.24.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.25.0' }, { capabilities: { tools: {}, resources: {}, experimental: { 'native-ui-v1': {} } } });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
 function serial<T>(run: () => Promise<T>): Promise<T> {
@@ -334,15 +336,13 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
       result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal));
       await server.notification({ method: 'notifications/native-ui/changed', params: { uri: URI } });
     } else throw new Error('Unknown tool');
-    return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(outgoing ? { _meta: { 'native-ui/state': outgoing } } : {}) };
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(outgoing ? { _meta: { 'native-ui/state': outgoing } } : request.params.name === 'get_current' ? { _meta: { 'pinote/database': database } } : {}) };
   } catch (error) { return { isError: true, content: [{ type: 'text', text: String(error) }] }; }
 }));
 // Every MCP process observes shared storage, including writes by CLI/GTK/other
 // sessions. Stat polling survives missing files and atomic config replacement.
 server.oninitialized = () => {
   server.oninitialized = undefined;
-  const dataHome = process.env.XDG_DATA_HOME;
-  const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
   const paths = [database, `${database}-wal`, join(getAgentDir(), 'pi-note.json'), receiptDir];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
