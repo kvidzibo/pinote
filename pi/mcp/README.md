@@ -103,6 +103,40 @@ have saved the session for resume persistence. Existing extension selections are
 not imported. Changing the gateway config path or service name starts a separate
 selection namespace.
 
+## Optional Ctrl+D exit confirmation
+
+`pi-note` 0.25.0 ships `pi/exit-confirm.ts`, a disabled-by-default **companion** to this
+MCP setup, not the old `pi/index.ts` extension. It requires Pi 0.99.1+, a gateway
+supporting `gateway:query-service-tool`, and this version of the Pinote MCP server
+registered as `pinote`. Enable it for one launch:
+
+```bash
+PINOTE_NOTE_COMMAND=/absolute/path/to/pinote/.venv/bin/note \
+  pi -e /absolute/path/to/pinote/pi/exit-confirm.ts
+```
+
+For persistent use, add that absolute extension path to `extensions` in Pi's
+user `settings.json`, preserving other entries, then `/reload`. Remove the path
+and `/reload` to disable it. Installing `pi-note` does not enable the companion.
+Load it after other editor extensions so it can wrap their editor without replacing
+its normal input behavior.
+
+With an empty editor, Ctrl+D (or your configured `app.exit` key) offers **Complete
+task and exit**, **Exit without completing**, or **Cancel**. Escape cancels. With
+no selected task Pi exits immediately; nonempty text keeps normal editing behavior.
+Completion requires idle Pi, rechecks the selection and displayed revision, and
+uses the local CLI without notifications. Query/completion failures leave Pi open;
+inspect the task before retrying because a failed write may have committed. `/quit`
+and other exit paths bypass the companion and never complete a task.
+
+Pi and the MCP service must use the **same local database**: match `XDG_DATA_HOME`
+(and HOME when using defaults). Set `PINOTE_NOTE_COMMAND` in Pi's environment if
+`note` is not on PATH; its executable must use that same database. The companion
+compares the server's database path and task revision before writing; it does not
+fall back to a folder selection or create another selection store. Remote Pinote
+services are unsupported. RPC/print mode is unaffected; no Pi/gateway patch or
+personal configuration change is made by installation.
+
 ## Task-offer guidance
 
 Before multi-step implementation or configuration migrations, agents should call

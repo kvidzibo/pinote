@@ -63,7 +63,9 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     const id = view.state.selectedId;
     assert.equal(typeof id, 'number');
     assert.match((await act(view, 'preview')).preview!, /Details/);
-    const task = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
+    const currentResult = await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() });
+    assert.equal(currentResult._meta?.['pinote/database'], join(dir, 'pinote/notes.db'));
+    const task = JSON.parse((currentResult.content as any[])[0].text);
     assert.equal(task.id, id);
     const update = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: task.updated_at, set: { PR: 'https://github.com/example/repo/pull/42', '--Flag': 'remove me', Large: 'https://example.com/' + 'x'.repeat(3000) } }, _meta: meta() });
     assert.equal(update.isError, undefined);

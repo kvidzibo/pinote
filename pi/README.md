@@ -10,6 +10,9 @@ The extension and Python app share a repository but install separately.
 For server-provided UI instead of this Pinote-specific extension, see the opt-in
 [native MCP UI alternative](mcp/README.md). It uses a generic gateway host and has
 explicit initial-version limits; it is not activated by installing this extension.
+MCP users can separately enable the [optional Ctrl+D exit companion](mcp/README.md#optional-ctrld-exit-confirmation).
+It ships as `exit-confirm.ts` but is not loaded by default; do not load `index.ts`
+alongside MCP.
 
 ## Install
 

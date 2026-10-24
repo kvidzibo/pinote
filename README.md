@@ -99,7 +99,9 @@ For full commands, Markdown import/export, and scheduling rules, see the
 Choose the [native MCP UI](pi/mcp/README.md) for a generic gateway host, or the
 [pi-note extension](pi/README.md) for extension-specific controls. Load only one.
 The MCP UI keeps completion in the current conversation; the extension starts a
-clean session and reloads Pi.
+clean session and reloads Pi. MCP users can separately enable the optional
+[Ctrl+D exit companion](pi/mcp/README.md#optional-ctrld-exit-confirmation) to complete
+the selected task before closing Pi. It is disabled by default.
 
 The optional extension adds selected-task status,
 `/pi-note` with searchable tagged tasks, Continue/Done/Switch, and agent current-task
