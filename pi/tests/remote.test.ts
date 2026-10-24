@@ -242,16 +242,19 @@ test('required review has no default approval and non-TUI review cannot authoriz
     select: async () => 'Confirm',
     custom: async (factory: any) => new Promise((resolve) => {
       let completed = false;
-      const tui = { terminal: { rows: 30, columns: 80 }, requestRender() {} };
+      const tui = { terminal: { rows: 30, columns: 80 }, children: [] as any[], requestRender() {} };
       const theme = { fg: (_color: string, value: string) => value };
-      const keys = { matches: (data: string, action: string) => action === 'tui.select.confirm' && data === '\r' };
+      const keys = { matches: (data: string, action: string) =>
+        (action === 'tui.select.confirm' && data === '\r') || (action === 'tui.select.down' && data === '\x1b[B') };
       const component = factory(tui, theme, keys, (value: boolean) => { completed = true; resolve(value); });
+      tui.children = [{ render: () => [] }, { render: () => Array(18).fill('Other dock widget') }, { children: [component] }];
       let rows = component.render(80);
+      assert.ok(rows.length <= 11, 'Disclosure must fit below competing dock widgets');
       const displayed = [...rows];
       component.handleInput('\r');
       assert.equal(completed, false, 'Partial disclosure cannot authorize a write');
-      for (let page = 0; page < 100 && !rows.join('\n').includes('Review complete'); page++) {
-        component.handleInput('\x1b[6~'); rows = component.render(80); displayed.push(...rows);
+      for (let line = 0; line < 1000 && !rows.join('\n').includes('Review complete'); line++) {
+        component.handleInput('\x1b[B'); rows = component.render(80); displayed.push(...rows);
       }
       assert.match(rows.join('\n'), /Review complete/);
       assert.match(displayed.join('\n'), /FINAL_DISCLOSURE_SUFFIX/, 'The saved suffix must be visible before approval');

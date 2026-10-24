@@ -1,10 +1,10 @@
-import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Input, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { DynamicBorder, keyText, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { Input, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
 import { clean, cleanUnbounded, editorText, footerText, literal, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
 import { RemoteSession } from './session.ts';
-import { remoteMenu, type MenuState } from './menu.ts';
+import { inlineHeight, remoteMenu, type MenuState } from './menu.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
 
@@ -19,13 +19,14 @@ export async function review(ctx: ExtensionContext, title: string, text: string,
     let seen = new Set<number>();
     const cancel = () => done(false);
     signal.addEventListener('abort', cancel, { once: true });
-    return {
+    const component: Component & { dispose(): void } = {
       render(width) {
-        const current = `${width}:${tui.terminal.rows}`;
+        const height = inlineHeight(tui, width, component);
+        const current = `${width}:${tui.terminal.rows}:${height}`;
         if (geometry !== current) seen = new Set();
         geometry = current;
-        page = Math.max(1, Math.min(18, tui.terminal.rows - 12));
-        usable = width >= 20 && tui.terminal.rows >= 14;
+        page = Math.max(1, Math.min(18, height - 5));
+        usable = width >= 20 && height >= 6 && tui.terminal.rows >= 14;
         if (!usable) return [truncateToWidth('Enlarge terminal · Esc cancel', width)];
         const lines = disclosure.split('\n').flatMap((s) => wrapTextWithAnsi(s, width));
         max = Math.max(0, lines.length - page); offset = Math.min(offset, max);
@@ -33,11 +34,11 @@ export async function review(ctx: ExtensionContext, title: string, text: string,
         const complete = seen.size === lines.length;
         const border = new DynamicBorder((s) => theme.fg('border', s)).render(width);
         return [...border, truncateToWidth(theme.fg('accent', line(title)), width), ...lines.slice(offset, offset + page), '',
-          truncateToWidth(complete ? 'Review complete · Enter to choose · Esc cancel' : '↑↓ / PgUp/PgDn review ALL · Esc cancel', width), ...border];
+          truncateToWidth(complete ? `Review complete · ${keyText('tui.select.confirm')} to choose · ${keyText('tui.select.cancel')} cancel` : `${keyText('tui.select.up')}/${keyText('tui.select.down')} review ALL · ${keyText('tui.select.cancel')} cancel`, width), ...border];
       },
       handleInput(data) {
         if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.ctrl('c'))) cancel();
-        else if (usable && geometry === `${tui.terminal.columns}:${tui.terminal.rows}`) {
+        else if (usable && geometry === `${tui.terminal.columns}:${tui.terminal.rows}:${inlineHeight(tui, tui.terminal.columns, component)}`) {
           if (keys.matches(data, 'tui.select.confirm') && !signal.aborted) {
             // Every wrapped line must have been visible in this geometry.
             const lines = disclosure.split('\n').flatMap((s) => wrapTextWithAnsi(s, tui.terminal.columns));
@@ -52,6 +53,7 @@ export async function review(ctx: ExtensionContext, title: string, text: string,
       invalidate() {},
       dispose() { signal.removeEventListener('abort', cancel); },
     };
+    return component;
   });
   return reviewed && !signal.aborted && await ctx.ui.select(line(title), ['Cancel', 'Confirm'], { signal }) === 'Confirm';
 }

@@ -7,7 +7,7 @@ export interface MenuChoice { id: string; value?: string }
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
 
 /** Reserve the native dock (including footer/widgets), not just the terminal's last row. */
-function inlineHeight(tui: TUI, width: number, component: Component): number {
+export function inlineHeight(tui: TUI, width: number, component: Component): number {
   const children = tui.children ?? [];
   const owner = children.find((child) => (child as Partial<Container>).children?.includes(component));
   const reserved = owner ? children.slice(1).filter((child) => child !== owner)
