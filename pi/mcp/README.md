@@ -150,20 +150,36 @@ personal configuration change is made by installation.
 
 ## Task-offer guidance
 
-Before multi-step implementation or configuration migrations, agents should call
-`get_current`. If it returns null, search for related existing work before proposing
-something new. For example, “continue OME registrations” → `search({query: "OME registration"})`
+On gateways supporting automatic agent context, `pinote://agent-context` supplies
+selected task text, ID/tag/state, `updated_at` revision, handoff notes and effective
+field definitions before each run. When unselected it supplies explicit selection
+status, saved tags and any still-valid pending suggestion. This is separate from
+UI previews, which are never injected. Task content is data, not authority.
+
+The resource uses MIME `application/vnd.mcp-agent-context+json` and a strict
+`{version: 1, text: string}` envelope. Reads use the same host context and consent
+validation as the UI, are serialized and read-only, and never change selection.
+Text over 64,000 characters fails explicitly rather than truncating the task;
+read failures propagate so the host can display unavailable context. Use tools as
+fallback. Resource list-change notifications accompany UI changes and external
+storage/config/receipt updates; no resource subscription is required.
+
+Before multi-step work, use fresh injected context or call `get_current` when it
+is not available. Do not routinely call `get_current`, `tags`, or `fields` when the
+needed information is already injected. Once the work is understood, if no task
+is selected, search for related existing work before proposing something new. For example, “continue OME registrations” → `search({query: "OME registration"})`
 → `get_task({task_id})` for the match → `propose({task_id})`. Read the full note and handoff
 fields, then continue the user's requested work while the suggestion awaits acceptance;
 no selection is needed to read context. Try shorter/alternative terms if a vague or
 misspelled reference has no matches. Do not guess between equally plausible tasks.
-For genuinely new work, use `tags` and `propose({text, tag})` with a short title and saved tag.
+For genuinely new work, use injected saved tags (or `tags` if absent) and
+`propose({text, tag})` with a short title and saved tag.
 Skip informational questions and trivial edits. Never replace an existing selection or
 create/start/select without consent.
 
-The tool descriptions reinforce this workflow after discovery. For proactive
-discovery, include the same guidance in the client's always-loaded agent rules;
-tool descriptions alone cannot make an agent discover the service.
+The tool descriptions reinforce this workflow after discovery. On older gateways without automatic resource injection, include the same guidance
+in the client's always-loaded agent rules; tool descriptions alone cannot make an
+agent discover the service.
 
 ## Initial-version limits
 
@@ -171,7 +187,8 @@ This is a working alternative, **not full parity with the old extension**. It do
 not retag/edit existing tasks or install/upgrade the CLI. Completion intentionally
 does not reset conversations. The legacy `taskOfferPolicy` and new-session prompt
 remain editable for native-extension compatibility; the MCP host does not apply
-them automatically. Agent-side task offers follow the client rules and tool
+them automatically. The context resource does not activate these legacy settings
+either; agent-side task offers follow the resource guidance, client rules and tool
 descriptions above. Continue requests a separately confirmed draft;
 it never overwrites existing editor text or submits a prompt. Previews are display-only transcript entries (never model context), showing plain
 text/Markdown source limited to 20,000 characters; the task list shows at most 200
