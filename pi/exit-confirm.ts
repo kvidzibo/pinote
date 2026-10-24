@@ -60,7 +60,8 @@ export default function (pi: ExtensionAPI) {
       const generation = epoch;
       const operation = controller = new AbortController();
       const current = () => alive && generation === epoch && !operation.signal.aborted &&
-        ctx.isIdle() && ctx.ui.getEditorText().length === 0;
+        ctx.ui.getEditorText().length === 0;
+      const shutdown = () => { if (!ctx.isIdle()) ctx.abort(); ctx.shutdown(); };
       const run = async (args: string[]) => {
         if (!current()) throw new Error("Pinote exit cancelled: session changed or became busy");
         const result = await pi.exec(process.env.PINOTE_NOTE_COMMAND || "note", args, { timeout: 10_000, signal: operation.signal });
@@ -68,16 +69,16 @@ export default function (pi: ExtensionAPI) {
         return result.stdout;
       };
       try {
-        if (!ctx.isIdle()) throw new Error("Wait for Pi to become idle before exiting");
         const selected = await readCurrent();
         if (!current()) return;
-        if (!selected.task) { ctx.shutdown(); return; }
+        if (!selected.task) { shutdown(); return; }
         const approved = selected.task;
         const title = truncateToWidth(clean(approved.text.split("\n", 1)[0]), 70);
         const choice = await ctx.ui.select(`Pinote · ${title}`, [complete, leave, "Cancel"], { signal: operation.signal });
         if (!current()) return;
-        if (choice === leave) { ctx.shutdown(); return; }
+        if (choice === leave) { shutdown(); return; }
         if (choice !== complete) return;
+        if (!ctx.isIdle()) throw new Error("Wait for Pi to become idle before completing a task");
         const dataHome = process.env.XDG_DATA_HOME;
         const localDatabase = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), ".local/share"), "pinote/notes.db");
         if (!selected.database || !isAbsolute(selected.database) ||
@@ -94,7 +95,7 @@ export default function (pi: ExtensionAPI) {
         }
         const done = task(JSON.parse(await run(["--no-notify", "agent", "done", String(approved.id), "--expected-updated-at", approved.updated_at])));
         if (done?.id !== approved.id || done.state !== "done") throw new Error("Unexpected completion response; inspect the task before retrying");
-        if (current() && !(await readCurrent()).task && current()) ctx.shutdown();
+        if (current() && !(await readCurrent()).task && current()) shutdown();
         else if (current()) ctx.ui.notify("Task completed; Pi stayed open because the selection changed", "info");
       } catch (error) {
         if (alive && generation === epoch) ctx.ui.notify(`Pinote: ${clean(String(error))}. Pi stayed open; inspect the task before retrying. /quit exits without completing.`, "error");

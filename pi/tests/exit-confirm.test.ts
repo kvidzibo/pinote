@@ -38,7 +38,7 @@ test("opt-in exit companion preserves editor input, confirms only current tasks,
   const notices: string[] = [];
   const previous = () => ({ getText: () => draft, handleInput: () => { forwarded++; }, setText: (text: string) => { draft = text; } });
   factory = previous;
-  const ctx: any = { mode: "tui", hasUI: true, isIdle: () => idle, shutdown: () => { exits++; },
+  const ctx: any = { mode: "tui", hasUI: true, isIdle: () => idle, abort: () => { idle = true; }, shutdown: () => { exits++; },
     ui: { getEditorComponent: () => factory, getEditorText: () => draft,
       setEditorComponent: (value: any) => { factory = value; editor = (value || previous)({}, {}, { matches: (data: string, action: string) => action === "app.exit" && data === "\x04" }); },
       notify: (message: string) => { notices.push(message); },
@@ -80,8 +80,8 @@ test("opt-in exit companion preserves editor input, confirms only current tasks,
     selected = 1;
     owned = false; await press(); assert.equal(exits, 2); assert.match(notices.at(-1)!, /unavailable/); owned = true;
     broken = true; await press(); assert.equal(exits, 2); assert.match(notices.at(-1)!, /disconnected/); broken = false;
-    idle = false; await press(); assert.equal(exits, 2); assert.match(notices.at(-1)!, /idle/); idle = true;
     choice = "Complete task and exit";
+    idle = false; await press(); assert.equal(exits, 2); assert.match(notices.at(-1)!, /idle/); idle = true;
     wrongDatabase = true; await press(); await wait(() => /database mismatch/.test(notices.at(-1)!)); wrongDatabase = false;
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "in_progress");
     onSelect = () => { selected = 2; };
@@ -109,6 +109,7 @@ test("opt-in exit companion preserves editor input, confirms only current tasks,
     assert.equal(exits, 3, notices.at(-1));
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
     assert.equal(JSON.parse(cli("agent", "get", "2")).state, "in_progress");
+    idle = false; await press(); assert.equal(exits, 4); assert.equal(idle, true, "no-task exit still aborts a busy run");
     await event("session_shutdown"); assert.equal(factory, previous);
     ctx.mode = "rpc"; await event("session_start"); assert.equal(factory, previous);
   } finally {
