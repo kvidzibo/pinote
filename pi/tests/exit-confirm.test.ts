@@ -93,6 +93,12 @@ test("opt-in exit companion preserves editor input, confirms only current tasks,
     };
     before = notices.length; await press(); await wait(() => notices.length > before);
     assert.match(notices.at(-1)!, /task changed/);
+    onSelect = undefined;
+    let reads = 0;
+    queryHook = () => { if (++reads === 2) idle = false; };
+    before = notices.length; await press(); await wait(() => notices.length > before);
+    assert.match(notices.at(-1)!, /became busy/); assert.equal(exits, 2);
+    idle = true; queryHook = undefined;
     onSelect = () => { void event("session_before_tree"); };
     await press(); assert.equal(exits, 2); assert.equal(JSON.parse(cli("agent", "get", "1")).state, "in_progress");
     onSelect = undefined;

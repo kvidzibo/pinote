@@ -63,7 +63,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.getEditorText().length === 0;
       const shutdown = () => { if (!ctx.isIdle()) ctx.abort(); ctx.shutdown(); };
       const run = async (args: string[]) => {
-        if (!current()) throw new Error("Pinote exit cancelled: session changed or became busy");
+        if (!current() || !ctx.isIdle()) throw new Error("Pinote exit cancelled: session changed or became busy");
         const result = await pi.exec(process.env.PINOTE_NOTE_COMMAND || "note", args, { timeout: 10_000, signal: operation.signal });
         if (result.killed || result.code !== 0) throw new Error(clean(result.stderr || result.stdout || "Pinote CLI failed or timed out"));
         return result.stdout;
