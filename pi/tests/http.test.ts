@@ -56,7 +56,7 @@ test('authenticated HTTP sessions share notes, not host selection, and reconnect
     const initial = await read(a.client);
     const created = await a.client.request({ method: 'native-ui/action', params: {
       uri: 'pinote://ui', revision: initial.revision, action: 'add', value: 'Shared HTTP task', _meta: meta('a'),
-    } }, z.object({ view: z.object({ state: z.record(z.unknown()), revision: z.string() }).passthrough() }));
+    } }, z.object({ view: z.object({ state: z.record(z.string(), z.unknown()), revision: z.string() }).passthrough() }));
     const state = created.view.state;
     const current = await a.client.callTool({ name: 'get_current', arguments: {}, _meta: meta('a', state) });
     const task = content(current);

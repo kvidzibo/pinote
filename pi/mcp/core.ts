@@ -39,7 +39,7 @@ type Scalar = string | number | boolean | null;
 type Control = { id: string; label: string; revision?: string; kind: 'action' | 'text' | 'number' | 'toggle' | 'select'; value?: Scalar; icon?: string; description?: string; multiline?: boolean; confirm?: string; options?: { label: string; value: Scalar }[] };
 const Action = z.object({ method: z.literal('native-ui/action'), params: z.object({
   uri: z.literal(URI), revision: z.string().min(1).max(256), action: z.string().min(1).max(256),
-  value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.unknown()).optional(),
+  value: z.union([z.string().max(20_000), z.number().finite(), z.boolean(), z.null()]).optional(), _meta: z.record(z.string(), z.unknown()).optional(),
 }) });
 // Serialize complete read/check/write cycles even when a host sends parallel calls.
 let queue = Promise.resolve();
@@ -493,7 +493,7 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
     else if (request.params.name === 'fields') result = settings().config;
     else if (request.params.name === 'tags') result = JSON.parse(await note(['agent', 'tags'], extra.signal));
     else if (request.params.name === 'update_current') {
-      const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
+      const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string(), z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
       const task = await selected(state, extra.signal);
       if (!task) throw new Error('No task is selected');
       result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal));
