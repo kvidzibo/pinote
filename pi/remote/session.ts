@@ -171,18 +171,25 @@ export class RemoteSession {
       } catch (error) { if (current()) this.failed(error, mutation && attempted); throw new RemoteFailure(mutation && attempted); }
     }, signal);
   }
-  action(view: NativeView, control: NativeControl, value?: NativeControl['value']): Promise<{ draft?: string; preview?: string }> {
+  action(view: NativeView, control: NativeControl, value?: NativeControl['value'], allow = () => true): Promise<{ draft?: string; preview?: string }> {
     return this.serial(async () => {
       const current = this.current(); let attempted = false;
+      if (!allow()) throw new RemoteFailure(false, true);
       const latest = this.view?.controls.find((c) => c.id === control.id && c.kind === control.kind);
       if (!latest || (control.revision ? latest.revision !== control.revision : this.view?.revision !== view.revision)) throw new RemoteFailure(false, true);
       try {
-        const peer = await this.connected(true); attempted = true;
+        const peer = await this.connected(true);
+        if (!allow()) throw new RemoteFailure(false, true);
+        attempted = true;
         const result = await peer.action({ uri: 'pinote://ui', action: control.id, revision: control.revision ?? view.revision, ...(value === undefined ? {} : { value }), _meta: this.meta() }, this.signal);
         if (!current()) throw new RemoteFailure(true);
         this.apply(result.view);
         return result;
-      } catch (error) { if (current()) this.failed(error, attempted); throw new RemoteFailure(attempted); }
+      } catch (error) {
+        if (!attempted && error instanceof RemoteFailure && error.stale) throw error;
+        if (current()) this.failed(error, attempted);
+        throw new RemoteFailure(attempted);
+      }
     });
   }
 }

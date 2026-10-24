@@ -51,7 +51,7 @@ export function registerRemoteExit(pi: ExtensionAPI, getSession: () => RemoteSes
           throw new Error('changed');
         }
         // Approval belongs to this exact displayed view, never to a refreshed revision.
-        await session.action(view, done);
+        await session.action(view, done, undefined, () => ctx.isIdle());
         if (!current()) return;
         if (session.view && session.view.state.selectedId == null) ctx.shutdown();
         else ctx.ui.notify('Pinote: Pi stayed open because the selection was not cleared. Refresh /pinote before retrying.', 'warning');

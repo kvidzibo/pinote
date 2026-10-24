@@ -99,12 +99,15 @@ export class RemoteUI {
   }
   async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value']): Promise<boolean> {
     if (ctx.mode !== 'tui') throw new Error('Pinote UI actions require TUI mode');
+    if (control.id === 'done' && !ctx.isIdle()) {
+      ctx.ui.notify('Wait for the current agent run before completing this task.', 'warning'); return false;
+    }
     const current = this.session.current(), signal = this.session.signal;
     try {
       if (typeof value === 'string') editorText(value);
       if (control.confirm && !await review(ctx, line(control.label), `${clean(control.confirm)}${control.kind === 'action' ? '' : `\n${literal(value)}`}`, signal)) return false;
       if (!current()) return false;
-      const result = await this.session.action(view, control, value);
+      const result = await this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle());
       if (!current()) return false;
       if (result.preview) this.pi.appendEntry('pinote-remote-preview', { title: line(view.title), text: clean(result.preview) });
       if (result.draft && await review(ctx, 'Insert server draft?', result.draft, signal) && current()) {

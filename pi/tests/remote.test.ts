@@ -103,6 +103,35 @@ test('mutations never replay; transport errors are secret-free, reconnect is exp
   await h.session.stop();
 });
 
+test('menu/footer completion refuses busy agents and rechecks immediately before queued writes', async () => {
+  const { RemoteUI } = await import('../remote/ui.ts');
+  const current = view(); current.controls[0].id = 'done'; current.footer = [{ text: 'Task', doubleAction: 'done' }];
+  let idle = false, actions = 0, release!: () => void, started!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const began = new Promise<void>((resolve) => { started = resolve; });
+  const h = harness({
+    read: async () => resource(current),
+    tool: async () => { started(); await waiting; return { content: [] }; },
+    action: async () => { actions++; return { view: current }; },
+  });
+  await h.session.start([], 'conversation');
+  const notices: string[] = [];
+  const ctx = { mode: 'tui', isIdle: () => idle, ui: { notify: (message: string) => notices.push(message) } } as any;
+  const ui = new RemoteUI({} as any, h.session);
+  assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), false);
+  assert.equal(actions, 0); assert.match(notices[0], /current agent run/);
+  idle = true;
+  const blocker = h.session.tool('get_current', {});
+  await began;
+  const queued = ui.dispatch(ctx, h.session.view!, current.controls[0]);
+  idle = false; release(); await blocker;
+  assert.equal(await queued, false); assert.equal(actions, 0, 'Busy state must be checked again after queueing');
+  idle = true;
+  assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), true);
+  assert.equal(actions, 1);
+  await h.session.stop();
+});
+
 test('server isError throws, failed fresh context is unavailable rather than cached/no-task', async () => {
   let fail = false;
   const h = harness({

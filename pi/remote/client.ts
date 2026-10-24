@@ -23,7 +23,7 @@ export class RemoteFailure extends Error {
   readonly uncertain: boolean;
   readonly stale: boolean;
   constructor(uncertain = false, stale = false) {
-    super(stale ? 'Action not applied: view changed. Refresh and review before retrying.' :
+    super(stale ? 'Action not applied: state changed. Refresh and review before retrying.' :
       `Pinote request failed.${uncertain ? ' The write may have committed; refresh before retrying.' : ' Context unavailable; retry an explicit call to reconnect.'}`);
     this.uncertain = uncertain && !stale; this.stale = stale;
   }
