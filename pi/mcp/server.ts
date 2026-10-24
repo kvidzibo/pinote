@@ -12,7 +12,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSche
 import { z } from 'zod';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
-import { defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
+import { defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 
 const URI = 'pinote://ui';
 const MIME = 'application/vnd.mcp-native-ui+json';
@@ -99,10 +99,9 @@ function settings() {
   return { ...document, handoffPrompt, newSessionPrompt, policy };
 }
 function searchGuidance() {
-  const { raw } = readFooterDocument();
-  const root = raw === null ? {} : JSON.parse(raw);
+  const { value: root } = readConfigDocument();
   const policy = Object.hasOwn(root, 'taskSearchPolicy') ? root.taskSearchPolicy : 'explicit';
-  if (!['explicit', 'automatic'].includes(policy)) throw new Error('Invalid taskSearchPolicy in pi-note.json');
+  if (policy !== 'explicit' && policy !== 'automatic') throw new Error('Invalid taskSearchPolicy in pi-note.json');
   return policy === 'automatic' ? {
     search: 'taskSearchPolicy=automatic. Search for related existing tasks when continuing prior work or before suggesting a new task to avoid duplicates.',
     continuation: 'For continuing work, use a known task ID or search for a matching task, read it with get_task, then propose task_id. Do not guess between equally plausible tasks.',

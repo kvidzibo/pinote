@@ -79,12 +79,17 @@ function readRaw(): string | null {
   try { return readFileSync(join(getAgentDir(), "pi-note.json"), "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
-export function readFooterDocument() {
+export function readConfigDocument() {
   const raw = readRaw();
   let value: unknown = {};
   if (raw !== null) {
     try { value = JSON.parse(raw); } catch { throw new Error("Invalid JSON in pi-note.json."); }
   }
+  if (!object(value)) throw new Error("expected an object");
+  return { raw, value };
+}
+export function readFooterDocument() {
+  const { raw, value } = readConfigDocument();
   return { raw, config: parseFooterConfig(value) };
 }
 export function loadFooterConfig(warn: (message: string) => void): FooterConfig {

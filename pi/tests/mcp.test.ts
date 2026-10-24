@@ -367,6 +367,19 @@ test('agent context is complete, read-only, consent-validated and fails closed',
         await writeFile(config, JSON.stringify({ taskSearchPolicy: policy }));
         await check(policy);
       }
+      for (const policy of [undefined, 'automatic']) {
+        await writeFile(config, JSON.stringify({ footer: { maxFields: -1 }, taskSearchPolicy: policy }));
+        state = {};
+        const rule = new RegExp(`taskSearchPolicy=${policy ?? 'explicit'}`);
+        assert.match(await read(), rule, 'Unselected context does not validate unrelated footer settings');
+        assert.match((await client.listTools()).tools.find((tool) => tool.name === 'search')!.description!, rule);
+      }
+      for (const raw of ['{', 'null']) {
+        await writeFile(config, raw);
+        await assert.rejects(read(), /Invalid JSON|expected an object/);
+        await assert.rejects(client.listTools(), /Invalid JSON|expected an object/);
+        assert.equal(await readFile(config, 'utf8'), raw);
+      }
       await writeFile(config, JSON.stringify({ taskSearchPolicy: null }));
       await assert.rejects(read(), /Invalid taskSearchPolicy/);
       await assert.rejects(client.listTools(), /Invalid taskSearchPolicy/);
