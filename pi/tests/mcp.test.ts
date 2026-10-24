@@ -26,7 +26,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
   const config = join(dir, 'pi-note.json');
-  await writeFile(config, JSON.stringify({ unrelated: true }));
+  await writeFile(config, JSON.stringify({ unrelated: true, taskSearchPolicy: 'automatic' }));
   const connect = async () => {
     const client = new Client({ name: 'native-ui-test', version: '1' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'dist-mcp/mcp/server.js')],
@@ -118,6 +118,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     view = (await act(await read(), 'screen:settings')).view;
     view = (await act(view, 'handoffPrompt', 'Read current task, then wait.')).view;
     assert.equal(JSON.parse(await readFile(config, 'utf8')).unrelated, true);
+    assert.equal(JSON.parse(await readFile(config, 'utf8')).taskSearchPolicy, 'automatic');
     await assert.rejects(act(view, 'maxFields', -1), /maxFields/);
     await writeFile(config, JSON.stringify({ ...JSON.parse(await readFile(config, 'utf8')), external: 1 }));
     await assert.rejects(act(view, 'titleWidth', 30), /changed/);
@@ -314,7 +315,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('agent context is complete, read-only, consent-validated and fails closed', async () => {
+test('agent context is complete, read-only, consent-validated and fails closed', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-context-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
   const env = { PINOTE_NOTE_COMMAND: join(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
@@ -345,6 +346,34 @@ test('agent context is complete, read-only, consent-validated and fails closed',
     assert.match(selectedText, /Effective handoff field definitions/);
     assert.equal(await read(), selectedText);
     assert.deepEqual(await cli('agent', 'get', String(task.id)), updated, 'Resource reads never mutate the task');
+    await t.test('task search policy defaults to explicit and config controls context and tools', async () => {
+      const config = join(dir, 'pi-note.json');
+      const check = async (policy: 'explicit' | 'automatic') => {
+        const rule = policy === 'explicit' ? /Requests to continue work or suggest a task do not authorize searching/ : /Search for related existing tasks/;
+        for (const selectedId of [task.id, undefined]) {
+          state = selectedId ? { selectedId } : {};
+          const text = await read();
+          assert.match(text, new RegExp(`taskSearchPolicy=${policy}`));
+          assert.match(text, rule);
+          if (policy === 'automatic') assert.doesNotMatch(text, /instead of searching/);
+        }
+        const tools = (await client.listTools()).tools;
+        for (const name of ['search', 'propose', 'get_current']) {
+          assert.match(tools.find((tool) => tool.name === name)!.description!, rule);
+        }
+      };
+      await check('explicit');
+      for (const policy of ['automatic', 'explicit'] as const) {
+        await writeFile(config, JSON.stringify({ taskSearchPolicy: policy }));
+        await check(policy);
+      }
+      await writeFile(config, JSON.stringify({ taskSearchPolicy: null }));
+      await assert.rejects(read(), /Invalid taskSearchPolicy/);
+      await assert.rejects(client.listTools(), /Invalid taskSearchPolicy/);
+      assert.equal(JSON.parse(await readFile(config, 'utf8')).taskSearchPolicy, null);
+      await rm(config);
+      await check('explicit');
+    });
     state = {};
     assert.match(await read(), /Saved tags:\n\["Saved"\]/);
     const suggest = async (args: Record<string, unknown>) => {

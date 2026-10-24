@@ -86,9 +86,10 @@ normal personal data. No desktop notifications are sent.
   installations need to add the mapping and reload Kitty; package updates do not
   edit terminal configuration. App menus remain the keyboard fallback.
 - **Agent:** `search`, `get_task`, `propose`, `get_current`, `update_current`, `fields`,
-  and `tags` are available through gateway tool discovery. Agents search only when
-  you explicitly ask to search or find tasks, not merely to continue work or suggest
-  a task. `search` finds active/in-progress tasks by words in their full text or tag
+  and `tags` are available through gateway tool discovery. By default, agents search
+  only when you explicitly ask to search or find tasks, not merely to continue work
+  or suggest a task. Configure this with `taskSearchPolicy` below.
+  `search` finds active/in-progress tasks by words in their full text or tag
   (case-insensitive, any order); empty queries
   browse tasks. Results contain titles, `total`, and `next_offset`; `limit` defaults to
   10 (maximum 50). `get_task({task_id})` reads full text and saved handoff fields without
@@ -152,6 +153,27 @@ personal configuration change is made by installation.
 
 ## Task-offer guidance
 
+Set `taskSearchPolicy` in your user-level `pi-note.json` (under
+`PI_CODING_AGENT_DIR`, otherwise `~/.pi/agent`), preserving other settings:
+
+```json
+{
+  "taskSearchPolicy": "explicit"
+}
+```
+
+- `explicit` (default when omitted): search only on an explicit request to search
+  or find tasks. Continuing work or requesting a suggestion is not permission.
+- `automatic`: allow searches to locate prior work and avoid duplicate proposals.
+
+This MCP-only setting controls agent guidance, not a runtime authorization gate.
+Selected-task context, known-ID reads and consent requirements are unchanged.
+Invalid values fail closed; they do not enable automatic search or overwrite the
+file. Settings saves preserve this key. No personal config is changed on install.
+The service rereads the policy for context and tool discovery; config changes
+notify connected hosts to refresh tool descriptions. Reload/reconnect if your host
+caches descriptions without handling MCP tool-list changes.
+
 On gateways supporting automatic agent context, `pinote://agent-context` supplies
 selected task text, ID/tag/state, `updated_at` revision, handoff notes and effective
 field definitions before each run. When unselected it supplies explicit selection
@@ -168,16 +190,19 @@ storage/config/receipt updates; no resource subscription is required.
 
 Before multi-step work, use fresh injected context or call `get_current` when it
 is not available. Do not routinely call `get_current`, `tags`, or `fields` when the
-needed information is already injected. Search tasks only when the user explicitly
-asks to search or find tasks. Requests to continue work or suggest a task do not
-authorize searching. For example, “find the OME registration task” permits
+needed information is already injected. Follow the configured `taskSearchPolicy`
+in both injected guidance and tool descriptions. With the default `explicit` policy,
+search tasks only when the user explicitly asks to search or find tasks. Requests
+to continue work or suggest a task do not authorize searching. For example, “find the OME registration task” permits
 `search({query: "OME registration"})` → `get_task({task_id})` for a match;
 “continue OME registrations” alone does not. Do not guess between equally plausible tasks.
 
 For continuing work with no selection, read a known task ID with `get_task`, then
-use `propose({task_id})` to suggest the original task without duplicating it. If no
-ID is known, let the user select or provide the task instead of searching or
-suggesting a duplicate. Continue the requested work from available context without
+use `propose({task_id})` to suggest the original task without duplicating it. With
+`explicit`, if no ID is known, let the user select or provide the task instead of
+searching or suggesting a duplicate. With `automatic`, search for matching prior
+work and read a match before proposing that ID; also search before proposing a new
+task to avoid duplicates. Continue the requested work from available context without
 waiting where possible. Reading a task does not require selection.
 For genuinely new multi-step work, use injected saved tags (or `tags` if absent)
 and `propose({text, tag})` with a short title and saved tag.
