@@ -26,7 +26,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
   const config = join(dir, 'pi-note.json');
-  await writeFile(config, JSON.stringify({ unrelated: true }));
+  await writeFile(config, JSON.stringify({ unrelated: true, agentGuidance: 'Custom guidance' }));
   const connect = async () => {
     const client = new Client({ name: 'native-ui-test', version: '1' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'dist-mcp/mcp/server.js')],
@@ -116,8 +116,23 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     native = false; scoped = false;
     await writeFile(config, savedConfig);
     view = (await act(await read(), 'screen:settings')).view;
+    assert.equal(view.controls.find((control) => control.id === 'agentGuidance')?.value, 'Custom guidance');
+    const staleGuidanceView = view;
+    view = (await act(view, 'agentGuidance', 'Updated guidance\nSearch only when asked.')).view;
+    assert.equal(JSON.parse(await readFile(config, 'utf8')).agentGuidance, 'Updated guidance\nSearch only when asked.');
+    await assert.rejects(act(staleGuidanceView, 'agentGuidance', 'Stale edit'), /changed/);
+    const beforeInvalidGuidance = await readFile(config, 'utf8');
+    await assert.rejects(act(view, 'agentGuidance', null), /agentGuidance/);
+    assert.equal(await readFile(config, 'utf8'), beforeInvalidGuidance);
+    view = (await act(view, 'reset-agent-guidance')).view;
+    assert.equal(Object.hasOwn(JSON.parse(await readFile(config, 'utf8')), 'agentGuidance'), false);
+    assert.equal(JSON.parse(await readFile(config, 'utf8')).unrelated, true);
+    assert.match(String(view.controls.find((control) => control.id === 'agentGuidance')?.value), /Search tasks only when the user explicitly asks/);
+    assert.ok(!view.controls.some((control) => control.id === 'reset-agent-guidance'));
+    view = (await act(view, 'agentGuidance', 'Custom guidance')).view;
     view = (await act(view, 'handoffPrompt', 'Read current task, then wait.')).view;
     assert.equal(JSON.parse(await readFile(config, 'utf8')).unrelated, true);
+    assert.equal(JSON.parse(await readFile(config, 'utf8')).agentGuidance, 'Custom guidance');
     await assert.rejects(act(view, 'maxFields', -1), /maxFields/);
     await writeFile(config, JSON.stringify({ ...JSON.parse(await readFile(config, 'utf8')), external: 1 }));
     await assert.rejects(act(view, 'titleWidth', 30), /changed/);
@@ -314,7 +329,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('agent context is complete, read-only, consent-validated and fails closed', async () => {
+test('agent context is complete, read-only, consent-validated and fails closed', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-context-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
   const env = { PINOTE_NOTE_COMMAND: join(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
@@ -345,6 +360,37 @@ test('agent context is complete, read-only, consent-validated and fails closed',
     assert.match(selectedText, /Effective handoff field definitions/);
     assert.equal(await read(), selectedText);
     assert.deepEqual(await cli('agent', 'get', String(task.id)), updated, 'Resource reads never mutate the task');
+    await t.test('configured guidance replaces the defaults without changing task data or tools', async () => {
+      const config = join(dir, 'pi-note.json');
+      const tools = await client.listTools();
+      const contexts = [];
+      for (const selectedId of [task.id, undefined]) {
+        state = selectedId ? { selectedId } : {};
+        const text = await read();
+        assert.match(text, /Search tasks only when the user explicitly asks/);
+        const marker = selectedId ? 'Selected task (complete text, revision and handoff notes):' : 'No task is selected';
+        contexts.push({ state, data: text.slice(text.indexOf(marker)) });
+      }
+      for (const guidance of ['Custom guidance.\nSearch freely; keep {task} literal.', '']) {
+        await writeFile(config, JSON.stringify({ agentGuidance: guidance }));
+        for (const context of contexts) {
+          state = context.state;
+          assert.equal(await read(), guidance ? `${guidance}\n${context.data}` : context.data);
+        }
+        assert.deepEqual(await client.listTools(), tools, 'Tool descriptions do not impose a separate policy');
+      }
+      await writeFile(config, JSON.stringify({ footer: { maxFields: -1 }, agentGuidance: 'Custom guidance' }));
+      state = {};
+      assert.match(await read(), /^Custom guidance\nNo task is selected/);
+      for (const raw of ['{', 'null', ...[null, 42, 'bad\u0000guidance', 'x'.repeat(64_001)].map((agentGuidance) => JSON.stringify({ agentGuidance }))]) {
+        await writeFile(config, raw);
+        await assert.rejects(read(), /Invalid JSON|expected an object|agentGuidance/);
+        assert.equal(await readFile(config, 'utf8'), raw);
+        assert.deepEqual(await client.listTools(), tools, 'Invalid guidance does not block tool discovery');
+      }
+      await rm(config);
+      assert.match(await read(), /Search tasks only when the user explicitly asks/);
+    });
     state = {};
     assert.match(await read(), /Saved tags:\n\["Saved"\]/);
     const suggest = async (args: Record<string, unknown>) => {
