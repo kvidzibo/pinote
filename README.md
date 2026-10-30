@@ -77,6 +77,7 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 - **Add:** press **Enter** or **+**. Unfinished input is restored when reopened.
 - **Task actions:** right-click task text to change its state, edit, tag, or schedule
   it. Unfinished edits are restored when reopened and remain drafts until saved.
+- **Window size:** drag any edge or corner; width and height survive restarts.
 - **Views:** the minimise button cycles all notes, in-progress only, and
   bottom-bar-only views.
 - **Menus:** the bottom menu opens reminders, the archive, and tag management.
@@ -136,7 +137,7 @@ load only one Pinote extension. Existing gateway users should follow the
 project selections, and history.
 
 Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
-`gui-edit-drafts/`, `gui-filter.json`, and `gui-agent-read.json`.
+`gui-edit-drafts/`, `gui-filter.json`, `gui-agent-read.json`, and `gui-window-size.json`.
 See [backup details](docs/usage.md#data-privacy-and-backup).
 
 Back up before upgrading, and update both CLI and GUI installations together.

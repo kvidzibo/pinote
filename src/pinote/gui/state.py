@@ -1,4 +1,4 @@
-"""Saved tag filter, using the same private atomic snapshots as input drafts."""
+"""Saved GUI state, using the same private atomic snapshots as input drafts."""
 
 from __future__ import annotations
 
@@ -34,6 +34,30 @@ class AgentReadCache:
     def mark(self, note_id: int, event_id: int) -> None:
         self.seen[note_id] = max(event_id, self.seen.get(note_id, 0))
         self._cache.update(json.dumps(self.seen, sort_keys=True))
+
+    def save(self) -> None:
+        self._cache.save()
+
+
+class WindowSizeCache:
+    def __init__(self, path: Path):
+        self._cache = DraftCache(path)
+
+    def load(self) -> tuple[int, int | None]:
+        text = self._cache.load()
+        if not text:
+            return 420, None
+        value = json.loads(text)
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or any(type(size) is not int or not 1 <= size <= 2_147_483_647 for size in value)
+        ):
+            raise ValueError("Saved window size must contain positive integer width and height.")
+        return tuple(value)
+
+    def update(self, width: int, height: int) -> None:
+        self._cache.update(json.dumps([width, height]))
 
     def save(self) -> None:
         self._cache.save()

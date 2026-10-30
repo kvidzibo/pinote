@@ -138,7 +138,7 @@ def gtk(request, tmp_path, monkeypatch):
                 and not window.geometry_source
                 and all(
                     not scroll.get_visible()
-                    or scroll.get_allocated_height() == scroll.get_preferred_height()[1]
+                    or scroll.get_allocated_height() >= scroll.get_preferred_height()[1]
                     for scroll in (window.scroll, window.progress_scroll)
                 )
                 and window.get_position()[1] + window.get_size().height == window.anchor_bottom
@@ -362,8 +362,63 @@ def test_horizontal_edge_resize_preserves_width_and_automatic_height(gtk):
     application = window.get_application()
     window.close()
     wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
     reopened = gtk.open(application)
-    assert reopened.get_size().width == 420
+    assert reopened.get_size().width == 370
+
+
+def test_resize_both_axes_remembers_size_without_collapsed_height(gtk):
+    with Store(gtk.paths.database) as store:
+        for index in range(25):
+            store.add(f"Task {index}: resize the checklist and keep its dimensions")
+    window = gtk.open()
+    width, height = window.get_size()
+    x, y = window.get_position()
+    # Drag the top-right corner to grow both dimensions, keeping the bottom fixed.
+    pointer_at(gtk, window, window, width - 2, 2, "mousedown", "1")
+    wait_until(gtk.glib, lambda: True)
+    subprocess.run(
+        ["xdotool", "mousemove", str(x + width + 78), str(y - 58)],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    wait_until(gtk.glib, lambda: tuple(window.get_size()) == (width + 80, height + 60))
+    subprocess.run(["xdotool", "mouseup", "1"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: not window.geometry_source)
+    # Shrink from the bottom edge; the top stays in place during this drag.
+    top = window.get_position()[1]
+    pointer_at(gtk, window, window, (width + 80) // 2, height + 58, "mousedown", "1")
+    wait_until(gtk.glib, lambda: True)
+    subprocess.run(
+        ["xdotool", "mousemove", str(x + (width + 80) // 2), str(top + height - 2)],
+        env=gtk.env,
+        check=True,
+        timeout=5,
+    )
+    wait_until(gtk.glib, lambda: tuple(window.get_size()) == (width + 80, height))
+    subprocess.run(["xdotool", "mouseup", "1"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: not window.geometry_source)
+    assert window.get_position()[1] == top
+    expected = tuple(window.get_size())
+    with Store(gtk.paths.database) as store:
+        store.add("A background task must not change the chosen size")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert tuple(window.get_size()) == expected
+    window._cycle_view(None)
+    wait_until(gtk.glib, lambda: window.get_size().height < expected[1])
+    window._cycle_view(None)
+    window._cycle_view(None)
+    wait_until(gtk.glib, lambda: tuple(window.get_size()) == expected)
+    window._cycle_view(None)
+    wait_until(gtk.glib, lambda: window.get_size().height < expected[1])
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    reopened = gtk.open(application)
+    assert tuple(reopened.get_size()) == expected
 
 
 def test_minimise_cycle_and_context_state_icons(gtk):
