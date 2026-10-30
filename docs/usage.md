@@ -212,8 +212,9 @@ IDs, tags, scheduled times, agent fields, project selections, or history.
   clears that task's draft. Restarting preserves drafts, including empty text and
   whitespace; abrupt termination may lose the latest edits. Drafts are not encrypted.
 - GUI tag filter: `gui-filter.json` beside `notes.db`, private to the current user.
-- GUI window dimensions: `gui-window-size.json` beside `notes.db`.
   Saved when changed and flushed on close; this is separate from the new-task tag selection.
+- GUI window dimensions: `gui-window-size.json` beside `notes.db`, saved when changed
+  and flushed on close.
 - Viewed agent updates: `gui-agent-read.json` beside `notes.db`, private to the current
   user. It stores viewed event IDs, not task content, and is saved after viewing and
   flushed on close. Losing this file makes existing agent updates unread again.

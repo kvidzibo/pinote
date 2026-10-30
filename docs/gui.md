@@ -334,8 +334,9 @@ rows use up to half the budget and half the available list height; the ordinary
 section gets the remaining row budget. With only in-progress tasks, their section
 can use the whole budget. Available screen space also constrains
 height; all matching tasks remain accessible through each section's scrollbar.
-An empty view stays compact until a height is chosen or restored. `markdown_preview` must be a boolean; set it to `false`
-to disable formatting without changing or converting any notes.
+An empty view stays compact until a height is chosen or restored.
+`markdown_preview` must be a boolean; set it to `false` to disable formatting without
+changing or converting any notes.
 Missing configuration uses the defaults;
 invalid configuration reports an error without changing notes. The GUI never
 creates or overwrites this file. **Close and reopen the GUI** after changing it.
