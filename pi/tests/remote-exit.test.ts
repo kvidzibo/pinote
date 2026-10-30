@@ -112,3 +112,85 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
   assert.equal(actions, 2);
   assert.equal(factory, later, 'must not overwrite later editor wrappers');
 });
+
+test('remote /new gates replacement on exact task approval without exiting Pi', async () => {
+  const handlers = new Map<string, Function[]>();
+  const pi = { on: (name: string, handler: Function) =>
+    handlers.set(name, [...handlers.get(name) ?? [], handler]) } as unknown as ExtensionAPI;
+  let draft = 'keep my draft', idle = true, leaf = 'branch', actions = 0, refreshes = 0;
+  let unavailable = false, uncertain = false, unselected = false;
+  let choose: (choice?: string) => void;
+  const notices: string[] = [];
+  const session = {
+    signal: new AbortController().signal, current: () => () => true,
+    view: selected() as NativeView | undefined,
+    refresh: async () => {
+      refreshes++;
+      if (unavailable) throw new Error('unavailable');
+      session.view = unselected ? { ...selected(), state: { selectedId: null } } : selected();
+    },
+    action: async (view: NativeView, control: NativeView['controls'][number], _value: unknown, allow: () => boolean) => {
+      assert.equal(allow(), true);
+      assert.equal(view.revision, 'displayed'); assert.equal(control.revision, 'task-7');
+      actions++;
+      if (uncertain) { session.view = undefined; throw new Error('uncertain write'); }
+      session.view = { ...view, state: { selectedId: null }, controls: [] };
+      return {};
+    },
+  };
+  const ctx = {
+    mode: 'tui', hasUI: true, isIdle: () => idle,
+    shutdown: () => assert.fail('/new must not exit Pi'),
+    sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
+    ui: {
+      getEditorComponent: () => undefined, setEditorComponent() {}, getEditorText: () => draft,
+      notify: (message: string) => notices.push(message),
+      select: async (_title: string, options: string[], { signal }: { signal: AbortSignal }) => {
+        assert.deepEqual(options, ['Cancel', 'Start new session without completing', 'Complete task and start new session']);
+        return new Promise<string | undefined>((resolve) => {
+          choose = resolve;
+          signal.addEventListener('abort', () => resolve(undefined), { once: true });
+        });
+      },
+    },
+  } as unknown as ExtensionContext;
+  const emit = async (name: string, data = {}) => {
+    let result;
+    for (const handler of handlers.get(name) ?? []) result = await handler(data, ctx) ?? result;
+    return result;
+  };
+  const startNew = () => emit('session_before_switch', { reason: 'new' });
+  const decide = async (choice?: string, change = () => {}) => {
+    const result = startNew(); await tick(); change(); choose(choice); return result;
+  };
+  registerRemoteExit(pi, () => session as unknown as RemoteSession);
+  await emit('session_start');
+  assert.equal(await emit('session_before_switch', { reason: 'resume' }), undefined);
+  assert.equal(refreshes, 0, 'resume must not show the new-session prompt');
+  assert.deepEqual(await decide('Cancel'), { cancel: true });
+  assert.deepEqual(await decide(), { cancel: true }, 'Escape cancels /new');
+  assert.equal(await decide('Start new session without completing'), undefined);
+  assert.equal(actions, 0); assert.equal(draft, 'keep my draft');
+  const complete = 'Complete task and start new session';
+  assert.deepEqual(await decide(complete, () => { session.view!.revision = 'changed'; }), { cancel: true });
+  assert.deepEqual(await decide(complete, () => { leaf = 'other'; }), { cancel: true });
+  assert.deepEqual(await decide(complete, () => { idle = false; }), { cancel: true }); idle = true;
+  assert.deepEqual(await decide(complete, () => { draft = 'changed'; }), { cancel: true });
+  const interrupted = startNew(); await tick(); await emit('agent_start');
+  assert.deepEqual(await interrupted, { cancel: true });
+  assert.equal(actions, 0);
+  uncertain = true;
+  assert.deepEqual(await decide(complete), { cancel: true });
+  assert.equal(actions, 1); assert.match(notices.at(-1)!, /refresh .*before retrying/);
+  uncertain = false;
+  assert.equal(await decide(complete), undefined);
+  assert.equal(actions, 2); assert.equal(session.view!.state.selectedId, null);
+  unselected = true;
+  assert.equal(await startNew(), undefined, 'no selected task needs no prompt');
+  unavailable = true;
+  assert.deepEqual(await startNew(), { cancel: true }, 'unavailable is not unselected');
+  (ctx as any).mode = 'rpc';
+  const before = refreshes;
+  assert.equal(await startNew(), undefined); assert.equal(refreshes, before);
+  await emit('session_shutdown');
+});
