@@ -74,11 +74,14 @@ Edits and tag changes retain the task ID and record old/new values in history;
 ### Behavior
 
 - Compact, borderless dark popup: 420 px wide by default, 9 pt monospace text, no title/header
-  bar, and one checkbox/text row per note—no trash button. Drag either side edge to resize
-  horizontally; height remains automatic. The width is kept until you close the window;
-  reopening restores the default. Reminder bells show relative-time
-  tooltips (for example, **Due 2 hours ago**). The bottom edge stays fixed while the window grows
-  upward as notes are added and shrinks as they are removed. The visible-note limit is
+  bar, and one checkbox/text row per note—no trash button. Drag any edge or corner to
+  resize. Width and height are saved in `gui-window-size.json` beside the database
+  and restored on reopening, constrained to the monitor's usable area. Collapsing
+  the checklist never replaces its saved full height. Before the first vertical resize
+  or restart, height adapts to content with the bottom edge fixed; afterward, the
+  chosen height stays fixed as tasks change. Delete the size file while the GUI is
+  closed to restore automatic sizing. Reminder bells show relative-time tooltips
+  (for example, **Due 2 hours ago**). The visible-note limit is
   configurable (default **10**); extra notes scroll. In-progress tasks have a separate
   pinned section just above the input, so scrolling ordinary tasks never hides them.
   Each scrollbar has its own space, with a gap beside the row icons.
@@ -307,8 +310,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
 The window requests floating/keep-above behavior at **x=25**, with its bottom edge
 **25 px above the monitor's usable bottom edge**. It keeps the original monitor
 choice: the monitor containing (or nearest to) desktop point `(25, 1300)`, independent
-of keyboard focus. Additional rows, multiline input, and error notices grow
-upward; the list scrolls earlier if needed to keep the input and controls on-screen. Manual moves establish
+of keyboard focus. Automatic sizing grows upward; a manually resized or restored
+window keeps its height, allowing for input and error notices. The list scrolls
+earlier if needed to keep the input and controls on-screen. Manual moves establish
 a new bottom anchor for that instance and survive remapping/reactivation. Reopening
 after closing restores the default placement. The window manager has the final say
 (Wayland may ignore positioning).
@@ -330,7 +334,7 @@ rows use up to half the budget and half the available list height; the ordinary
 section gets the remaining row budget. With only in-progress tasks, their section
 can use the whole budget. Available screen space also constrains
 height; all matching tasks remain accessible through each section's scrollbar.
-An empty view stays compact. `markdown_preview` must be a boolean; set it to `false`
+An empty view stays compact until a height is chosen or restored. `markdown_preview` must be a boolean; set it to `false`
 to disable formatting without changing or converting any notes.
 Missing configuration uses the defaults;
 invalid configuration reports an error without changing notes. The GUI never
