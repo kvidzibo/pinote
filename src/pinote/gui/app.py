@@ -26,6 +26,7 @@ from pinote.gui.icons import (  # noqa: E402
     icon_menu_item,
     tag_menu_item,
 )
+from pinote.gui.kitty import start_in_kitty  # noqa: E402
 from pinote.gui.model import ReminderModel, TransitionResult, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.state import AgentReadCache, FilterCache  # noqa: E402
@@ -298,6 +299,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.editor: NoteEditor | None = None
         self.tags_window: TagsWindow | None = None
         self.preview: NotePreview | None = None
+        self.launch_dialog: Gtk.FileChooserDialog | None = None
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
         self.view_mode = 0  # All notes → in progress → bottom bar.
@@ -1247,6 +1249,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             "activate",
             lambda _item: Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(note.markdown, -1),
         )
+        launch = icon_menu_item("utilities-terminal-symbolic", "Start in Kitty…")
+        launch.connect("activate", lambda _item: self._open_kitty(note))
         edit = icon_menu_item("document-edit-symbolic", "Edit…")
         edit.connect("activate", lambda _item: self._open_editor(note))
         schedule = icon_menu_item("preferences-system-notifications-symbolic", "Set reminder…")
@@ -1286,6 +1290,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             copy,
             Gtk.SeparatorMenuItem(),
             *state_items,
+            launch,
             Gtk.SeparatorMenuItem(),
             edit,
             schedule,
@@ -1293,6 +1298,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         ):
             menu.append(item)
             item.show()
+        launch.set_sensitive(not self.action_pending)
         edit.set_sensitive(not self.action_pending)
         schedule.set_sensitive(not self.action_pending)
         tag_item.set_sensitive(not self.action_pending)
@@ -1305,6 +1311,43 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self.context_menu = None
             self.context_note_id = None
             self._queue_pin_check()
+
+    def _open_kitty(self, note: Note) -> None:
+        if self.closed or self.action_pending or note.id not in self.rows:
+            return
+        if self.context_menu is not None:
+            self.context_menu.popdown()
+        if self.launch_dialog is not None:
+            self.launch_dialog.present()
+            return
+        dialog = Gtk.FileChooserDialog(
+            title="Start in Kitty — choose directory",
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+            use_header_bar=True,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+        )
+        self.launch_dialog = dialog
+        dialog.set_role("pinote-launch")
+        dialog.set_default_size(760, 500)
+        dialog.set_local_only(True)
+        dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL, "_Start", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+        self._watch_child_focus(dialog)
+
+        def response(_dialog, result):
+            directory = dialog.get_filename()
+            dialog.destroy()
+            if result != Gtk.ResponseType.ACCEPT or not directory or self.closed:
+                return
+            self.action_pending = True
+            self._update_controls()
+            self._submit(lambda: start_in_kitty(directory, note), action=(note.id, "kitty"))
+
+        dialog.connect("response", response)
+        dialog.connect("destroy", lambda _dialog: setattr(self, "launch_dialog", None))
+        dialog.show()
 
     def _open_editor(self, note: Note, *, tag_only: bool = False) -> None:
         if self.closed or self.action_pending or note.id not in self.rows:
@@ -1574,7 +1617,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self.entry.set_text("")
                 self.entry.grab_focus()
             elif action:
-                if action[1] != "tag":
+                if action[1] not in ("tag", "kitty"):
                     self._render(
                         result.notes,
                         action=action if result.changed else None,
@@ -1603,7 +1646,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if mutation or not self.error_is_action:
                 self.notice.hide()
                 self.error_is_action = False
-            if draft_revision is not None or (action and action[1] == "tag"):
+            if draft_revision is not None or (action and action[1] in ("tag", "kitty")):
                 # Refresh separately: read failure cannot disguise a committed save.
                 self._poll()
             if mutation and self.archive_window is not None:
@@ -1751,6 +1794,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.notice.show()
 
     def close(self) -> None:
+        if self.launch_dialog is not None:
+            self.launch_dialog.destroy()
         # GTK ignores close requests to a window blocked by a popup's grab.
         if self.preview is not None:
             self._close_preview(self.preview)
@@ -1767,6 +1812,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _on_destroy(self, _window) -> None:
         self.closed = True
+        if self.launch_dialog is not None:
+            self.launch_dialog.destroy()
         if self.preview is not None:
             self._close_preview(self.preview)
         if self.archive_window is not None and not self.archive_window.closed:

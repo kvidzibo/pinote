@@ -135,6 +135,20 @@ Edits and tag changes retain the task ID and record old/new values in history;
   (triangle) or **Reset** (return arrow), **Complete** (checkmark), and **Remove**
   (archive box), plus editing, scheduling, and tags. Hover for labels; only tag
   choices show text. Remove archives immediately; recover the task from Archive.
+- **Right-click note text → Start in Kitty…** (terminal icon) asks for a local
+  working directory, then opens Pi in a new Kitty tab named after that directory.
+  Cancel changes nothing. Requires `kitty` and `pi` on PATH and **pi-note 0.30.0+**
+  on both client and service. Pi must use the service sharing this GUI's database;
+  the launcher checks the task ID and displayed revision before starting/selecting it.
+  Stale or mismatched tasks stay unselected with a warning in Pi; select manually
+  through `/pinote`. Launching never sends a model prompt or completes a task.
+  Existing Kitty needs remote control and `KITTY_LISTEN_ON`, or on X11 the
+  `listen_on unix:@mykitty` / `allow_remote_control socket-only` configuration.
+  Discovery stays on the same X11 display. Without a reachable instance, a new Kitty
+  window opens without restoring saved tabs. On Wayland, set `KITTY_LISTEN_ON` to
+  reuse an instance. Pi uses its installed extension and normal endpoint/token
+  configuration; the launcher does not copy credentials or install extensions.
+  Launch errors appear in the checklist; check any new tab before retrying.
 - **Right-click note text → Edit…** opens a full multiline editor. Click **Save**
   or press **Ctrl+Enter** to save; **Enter** inserts a newline. Closing the editor,
   pressing **Esc**, or closing the checklist keeps a private draft, restored when you

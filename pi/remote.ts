@@ -14,6 +14,8 @@ const transfers: Map<string, SavedState> = ((globalThis as any)[key] ??= new Map
 export default function pinoteRemote(pi: ExtensionAPI): void {
   let session: RemoteSession | undefined, ui: RemoteUI | undefined;
   let file: string | undefined;
+  let launchRequest = process.env.PINOTE_LAUNCH_TASK;
+  delete process.env.PINOTE_LAUNCH_TASK; // Never inherit consent into another Pi process or /reload.
   const getSession = () => { if (!session) throw new RemoteFailure(); return session; };
   registerTools(pi, getSession);
   registerPreview(pi);
@@ -34,6 +36,7 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
   pi.registerCommand('pinote', { description: 'Open remote Pinote tasks and settings', handler: open });
   pi.registerCommand('pi-note', { description: 'Open remote Pinote (compatibility alias)', handler: open });
   const start = async (ctx: ExtensionContext, reason?: string, previous?: string) => {
+    const request = launchRequest; launchRequest = undefined; // Never replay an uncertain start.
     ui?.detach(); await session?.stop();
     ui = undefined; session = undefined;
     try {
@@ -42,12 +45,34 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
       ui = new RemoteUI(pi, session);
       ui.attach(ctx);
       file = ctx.sessionManager.getSessionFile();
-      const carried = reason === 'new' && previous ? transfers.get(previous) : undefined;
-      await session.start(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionId() || randomUUID(), carried);
+      const branch = ctx.sessionManager.getBranch();
+      let carried = reason === 'new' && previous ? transfers.get(previous) : undefined;
+      let launch: { task_id: number; updated_at: string } | undefined;
+      if (request) {
+        try {
+          if (reason !== 'startup' || branch.some((entry) => entry.type === 'message' || entry.type === 'custom' && entry.customType === ENTRY_TYPE)) throw new Error('Launch requires a fresh Pi session');
+          const parsed = JSON.parse(request);
+          if (!parsed || !Number.isSafeInteger(parsed.task_id) || parsed.task_id < 1 ||
+              typeof parsed.updated_at !== 'string' || !parsed.updated_at.length || parsed.updated_at.length > 128) throw new Error('Invalid launch request');
+          launch = { task_id: parsed.task_id, updated_at: parsed.updated_at };
+          carried = { scope: config.scope, contextId: randomUUID(), state: { launch } };
+        } catch {
+          ctx.ui.notify('Pinote launch ignored: invalid request or nonempty/resumed session. Existing selection is unchanged.', 'warning');
+        }
+      }
+      await session.start(branch, ctx.sessionManager.getSessionId() || randomUUID(), carried);
+      if (launch) {
+        const view = session.view!;
+        // The service exposes this control only for the exact GUI-displayed revision.
+        if (JSON.stringify(view.state.launch) !== JSON.stringify(launch)) throw new Error('Service does not support launch handoffs');
+        const control = view.controls.find((item) => item.id === `select:${launch.task_id}`);
+        if (!control) throw new Error('Launch task changed or belongs to another service');
+        await session.action(view, control); // The directory chooser's Start click granted consent.
+      }
       if (reason === 'new' && previous) transfers.delete(previous);
     } catch (error) {
       // Configuration messages are fixed strings; transport response bodies are never shown.
-      ctx.ui.notify(error instanceof RemoteFailure ? error.message : 'Pinote unavailable: check PINOTE_URL and private token configuration, then /reload.', 'warning');
+      ctx.ui.notify(error instanceof RemoteFailure ? error.message : 'Pinote unavailable or launch task changed: check the service, task revision and private token configuration. Use /pinote to select manually; launch requests are never retried.', 'warning');
     }
   };
   pi.on('session_start', (event, ctx) => start(ctx, event.reason, event.previousSessionFile));

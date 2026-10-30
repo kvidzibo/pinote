@@ -170,6 +170,49 @@ def animations(gtk):
     settings.set_property("gtk-enable-animations", previous)
 
 
+def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(gtk, monkeypatch):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        note = store.add_note("Launch this task")
+    calls = []
+
+    def launch(directory, selected):
+        calls.append((directory, selected))
+        raise OSError("Test launch failure")
+
+    monkeypatch.setattr("pinote.gui.app.start_in_kitty", launch)
+    window = gtk.open()
+    window.entry.set_text("Keep this draft")
+    menu = Gtk.Menu()
+    window._populate_note_menu(note.id, menu)
+    item = next(
+        child
+        for child in menu.get_children()
+        if child.get_accessible().get_name() == "Start in Kitty…"
+    )
+    assert isinstance(item.get_child(), Gtk.Image)
+    item.activate()
+    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
+    window.launch_dialog.response(Gtk.ResponseType.CANCEL)
+    assert window.launch_dialog is None and calls == []
+    item.activate()
+    dialog = window.launch_dialog
+    assert dialog.get_action() == Gtk.FileChooserAction.SELECT_FOLDER
+    assert dialog.get_local_only() and dialog.get_modal()
+    dialog.set_current_folder(str(gtk.paths.data))
+    wait_until(gtk.glib, lambda: dialog.get_filename() == str(gtk.paths.data))
+    dialog.response(Gtk.ResponseType.ACCEPT)
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert calls == [(str(gtk.paths.data), note)]
+    assert "Test launch failure" in window.error_text.get_text()
+    assert window.entry.get_text() == "Keep this draft"
+    assert not window.action_pending and window.rows[note.id].note.state == "active"
+    window._open_kitty(note)
+    window.destroy()
+    assert window.launch_dialog is None
+
+
 def test_compact_dunst_layout_and_accessible_controls(gtk):
     from pinote.gui.app import Gdk, Gtk
 
