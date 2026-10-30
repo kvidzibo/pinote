@@ -177,8 +177,8 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
         note = store.add_note("Launch this task")
     calls = []
 
-    def launch(directory, selected):
-        calls.append((directory, selected))
+    def launch(directory, selected, title):
+        calls.append((directory, selected, title))
         raise OSError("Test launch failure")
 
     monkeypatch.setattr("pinote.gui.app.start_in_kitty", launch)
@@ -203,12 +203,44 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
     dialog.set_current_folder(str(gtk.paths.data))
     wait_until(gtk.glib, lambda: dialog.get_filename() == str(gtk.paths.data))
     dialog.response(Gtk.ResponseType.ACCEPT)
-    wait_until(gtk.glib, lambda: not window.pending)
-    assert calls == [(str(gtk.paths.data), note)]
+    name_dialog = window.launch_dialog
+    assert name_dialog is not dialog and name_dialog.get_modal()
+    entry = next(
+        child
+        for child in name_dialog.get_content_area().get_children()
+        if isinstance(child, Gtk.Entry)
+    )
+    assert entry.get_text() == gtk.paths.data.name
+    assert entry.get_selection_bounds() == (0, len(entry.get_text()))
+    name_dialog.response(Gtk.ResponseType.CANCEL)
+    assert window.launch_dialog is None and calls == []
+    item.activate()
+    dialog = window.launch_dialog
+    dialog.set_current_folder(str(gtk.paths.data))
+    wait_until(gtk.glib, lambda: dialog.get_filename() == str(gtk.paths.data))
+    dialog.response(Gtk.ResponseType.ACCEPT)
+    name_dialog = window.launch_dialog
+    entry = next(
+        child
+        for child in name_dialog.get_content_area().get_children()
+        if isinstance(child, Gtk.Entry)
+    )
+    entry.set_text("   ")
+    assert not name_dialog.get_widget_for_response(Gtk.ResponseType.ACCEPT).get_sensitive()
+    name_dialog.response(Gtk.ResponseType.ACCEPT)
+    assert window.launch_dialog is name_dialog and calls == []
+    entry.set_text("Review tab")
+    entry.emit("activate")
+    wait_until(gtk.glib, lambda: not window.pending and window.launch_dialog is None)
+    assert calls == [(str(gtk.paths.data), note, "Review tab")]
     assert "Test launch failure" in window.error_text.get_text()
     assert window.entry.get_text() == "Keep this draft"
     assert not window.action_pending and window.rows[note.id].note.state == "active"
     window._open_kitty(note)
+    dialog = window.launch_dialog
+    dialog.set_current_folder(str(gtk.paths.data))
+    wait_until(gtk.glib, lambda: dialog.get_filename() == str(gtk.paths.data))
+    dialog.response(Gtk.ResponseType.ACCEPT)
     window.destroy()
     assert window.launch_dialog is None
 

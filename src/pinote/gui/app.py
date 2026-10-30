@@ -6,6 +6,7 @@ import sqlite3
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from importlib.resources import files
+from pathlib import Path
 
 import gi
 
@@ -299,7 +300,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.editor: NoteEditor | None = None
         self.tags_window: TagsWindow | None = None
         self.preview: NotePreview | None = None
-        self.launch_dialog: Gtk.FileChooserDialog | None = None
+        self.launch_dialog: Gtk.Dialog | None = None
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
         self.view_mode = 0  # All notes → in progress → bottom bar.
@@ -1450,13 +1451,60 @@ class ReminderWindow(Gtk.ApplicationWindow):
             dialog.destroy()
             if result != Gtk.ResponseType.ACCEPT or not directory or self.closed:
                 return
-            self.action_pending = True
-            self._update_controls()
-            self._submit(lambda: start_in_kitty(directory, note), action=(note.id, "kitty"))
+            self._name_kitty_tab(directory, note)
 
         dialog.connect("response", response)
         dialog.connect("destroy", lambda _dialog: setattr(self, "launch_dialog", None))
         dialog.show()
+
+    def _name_kitty_tab(self, directory: str, note: Note) -> None:
+        dialog = Gtk.Dialog(
+            title="Start in Kitty — tab name",
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+            use_header_bar=False,
+        )
+        self.launch_dialog = dialog
+        dialog.set_role("pinote-launch")
+        dialog.set_default_size(420, -1)
+        dialog.set_decorated(False)
+        dialog.get_style_context().add_class("pinote-window")
+        dialog.get_style_context().add_class("reminder-menu")
+        cancel = icon_button("window-close-symbolic", "Cancel")
+        start = icon_button("utilities-terminal-symbolic", "Start in Kitty")
+        dialog.add_action_widget(cancel, Gtk.ResponseType.CANCEL)
+        dialog.add_action_widget(start, Gtk.ResponseType.ACCEPT)
+        start.set_can_default(True)
+        dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+        content = dialog.get_content_area()
+        content.set_border_width(16)
+        content.set_spacing(8)
+        entry = Gtk.Entry(text=Path(directory).name or directory, activates_default=True)
+        label = Gtk.Label(label="_Tab name", use_underline=True, xalign=0)
+        label.set_mnemonic_widget(entry)
+        entry.get_accessible().set_name("Tab name")
+        content.add(label)
+        content.add(entry)
+        entry.connect("changed", lambda _entry: start.set_sensitive(bool(entry.get_text().strip())))
+        self._watch_child_focus(dialog)
+
+        def response(_dialog, result):
+            title = entry.get_text().strip()
+            if result == Gtk.ResponseType.ACCEPT and not title:
+                return
+            dialog.destroy()
+            if result != Gtk.ResponseType.ACCEPT or self.closed:
+                return
+            self.action_pending = True
+            self._update_controls()
+            self._submit(lambda: start_in_kitty(directory, note, title), action=(note.id, "kitty"))
+
+        dialog.connect("response", response)
+        dialog.connect("destroy", lambda _dialog: setattr(self, "launch_dialog", None))
+        dialog.show_all()
+        entry.grab_focus()
+        entry.select_region(0, -1)
 
     def _open_editor(self, note: Note, *, tag_only: bool = False) -> None:
         if self.closed or self.action_pending or note.id not in self.rows:

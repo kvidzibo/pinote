@@ -55,14 +55,13 @@ def _address(kitty: str) -> str | None:
     return None
 
 
-def start_in_kitty(directory: str, note: Note) -> None:
+def start_in_kitty(directory: str, note: Note, title: str) -> None:
     folder = Path(directory).resolve(strict=True)
     if not folder.is_dir():
         raise NoteError("Choose an existing directory.")
     kitty, pi = shutil.which("kitty"), shutil.which("pi")
     if not kitty or not pi:
         raise NoteError("Start in Kitty requires kitty and pi on PATH.")
-    title = folder.name or str(folder)
     launch = json.dumps({"task_id": note.id, "updated_at": note.updated_at}, separators=(",", ":"))
     address = _address(kitty)
     if address:
