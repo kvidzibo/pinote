@@ -30,6 +30,7 @@ const ProposalInput = z.union([NewProposal, ExistingProposal]);
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
 const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
+  launch: z.object({ task_id: TaskId, updated_at: z.string().min(1).max(128) }).strict().optional(),
   selectedId: z.number().int().positive().safe().nullable().optional(), screen: z.enum(['tasks', 'settings', 'field']).optional(),
   field: z.string().refine((value) => [...value].length <= 64, 'Field name exceeds 64 code points').optional(), search: z.string().max(256).optional(),
 }).default({}) });
@@ -110,7 +111,10 @@ async function selection(state: State, signal: AbortSignal) {
   return { task, proposal, proposedTask };
 }
 async function snapshot(state: State, signal: AbortSignal) {
-  const tasks: Task[] = JSON.parse(await note(['list', '--json'], signal));
+  const launchTask: Task | null = state.launch ? JSON.parse(await note(['agent', 'get', String(state.launch.task_id)], signal)) : null;
+  const tasks: Task[] = state.launch
+    ? launchTask && ['active', 'in_progress'].includes(launchTask.state) ? [launchTask] : []
+    : JSON.parse(await note(['list', '--json'], signal));
   const { task, proposal, proposedTask } = await selection(state, signal);
   const config = settings();
   const suggestion = proposal && ('task_id' in proposal ? proposedTask : proposal);
@@ -193,7 +197,9 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     }
     controls.push({ id: 'add', label: 'New task', icon: icons.add, kind: 'text', multiline: true, value: '', confirm: 'Create and select this task?' });
     controls.push({ id: 'search', label: 'Filter tasks', kind: 'text', value: state.search ?? '' });
-    const matches = tasks.filter((t) => `${t.text} ${t.tag ?? ''}`.toLowerCase().includes((state.search ?? '').toLowerCase()));
+    const matches = tasks.filter((t) => state.launch
+      ? t.id === state.launch.task_id && t.updated_at === state.launch.updated_at
+      : `${t.text} ${t.tag ?? ''}`.toLowerCase().includes((state.search ?? '').toLowerCase()));
     for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state}`, confirm: 'Select and start this task for this conversation?' });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
@@ -303,6 +309,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
   if (!control || (control.revision ?? before.revision) !== request.params.revision) staleAction();
   const next: State = { ...before.state };
+  delete next.launch; // A launcher filter is one-shot; ordinary navigation restores the list.
   let draft: string | undefined, preview: string | undefined;
   if (action === 'proposal:accept' || action === 'proposal:dismiss') {
     const proposal = before.state.proposal;
@@ -324,7 +331,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     const candidate = before.tasks.find((task) => task.id === id);
     if (!candidate) staleAction();
     const target: Task = JSON.parse(await note(['agent', 'get', String(id)], extra.signal));
-    if (target.text !== candidate.text || target.state !== candidate.state || target.tag !== candidate.tag) staleAction();
+    if (target.text !== candidate.text || target.state !== candidate.state || target.tag !== candidate.tag || state.launch && target.updated_at !== state.launch.updated_at) staleAction();
     if (next.proposal) await consume(next.proposal.id);
     await note(['agent', 'start', String(id), '--expected-updated-at', target.updated_at], extra.signal); next.selectedId = id; next.proposal = null;
   } else if (action === 'add') {
