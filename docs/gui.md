@@ -136,8 +136,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   (archive box), plus editing, scheduling, and tags. Hover for labels; only tag
   choices show text. Remove archives immediately; recover the task from Archive.
 - **Right-click note text → Start in Kitty…** (terminal icon) asks for a local
-  working directory, then opens Pi in a new Kitty tab named after that directory.
-  Cancel changes nothing. Requires `kitty` and `pi` on PATH and **pi-note 0.31.0+**
+  working directory, then asks for a tab name prefilled with the directory name.
+  Confirm the name to open Pi in a new Kitty tab. Blank names are not accepted;
+  cancelling either dialog changes nothing. Requires `kitty` and `pi` on PATH and **pi-note 0.31.0+**
   on both client and service. Pi must use the service sharing this GUI's database;
   the launcher checks the task ID and displayed revision before starting/selecting it.
   Stale or mismatched tasks stay unselected with a warning in Pi; select manually
