@@ -75,6 +75,8 @@ cannot guarantee selection persistence.
 
 The extension registers `pinote_search`, `pinote_get_task`, `pinote_get_current`,
 `pinote_update_current`, `pinote_fields`, `pinote_tags`, and `pinote_propose`.
+Default guidance suggests tasks only for substantial work requiring changes, not
+questions, explanations, research, read-only inspection, or trivial edits.
 Suggestions do not create/start/select tasks until accepted in the UI. Reads by ID
 do not change selection. Updates require the task's `expected_updated_at` revision;
 concurrent edits are rejected rather than overwritten.

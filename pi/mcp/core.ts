@@ -273,7 +273,7 @@ function serial<T>(run: () => Promise<T>): Promise<T> {
   options.onBusy?.(1);
   return sharedSerial(run).finally(() => options.onBusy?.(-1));
 }
-const server = new Server({ name: 'pinote', version: '0.29.0' }, { capabilities: { tools: {}, resources: { listChanged: true }, experimental: { 'native-ui-v1': {} } } });
+const server = new Server({ name: 'pinote', version: '0.29.1' }, { capabilities: { tools: {}, resources: { listChanged: true }, experimental: { 'native-ui-v1': {} } } });
 let cleanup = () => {};
 if (options.onError) server.onerror = () => options.onError?.();
 server.onclose = () => { cleanup(); options.onClose?.(); };
