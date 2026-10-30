@@ -63,11 +63,14 @@ No Kitty action handler is needed for this extension.
 
 Completion keeps the conversation and editor. With an empty editor, **Ctrl+D**
 (or your configured exit key) offers Cancel, Exit without completing, or Complete
-task and exit. Completion requires idle Pi and a current displayed revision;
-failures leave Pi open. `/quit` exits without completing.
+task and exit. **`/new`** offers Cancel, Start new session without completing, or
+Complete task and start new session. With no selected task, `/new` proceeds normally.
+Completion requires idle Pi and a current displayed revision; failures keep the
+current session open. `/quit` exits without completing.
 
-Reload/resume restores the active
-branch's selection; `/new` retains it. Unrelated fresh launches start unselected.
+Reload/resume restores the active branch's selection. Starting a new session
+without completing retains the selection; completing starts it unselected.
+Unrelated fresh launches start unselected.
 Changing endpoints starts a separate selection namespace. Unsaved Pi sessions
 cannot guarantee selection persistence.
 
