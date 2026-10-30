@@ -1354,11 +1354,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
             transient_for=self,
             modal=True,
             destroy_with_parent=True,
-            use_header_bar=True,
+            use_header_bar=False,
         )
         self.launch_dialog = dialog
         dialog.set_role("pinote-launch")
         dialog.set_default_size(420, -1)
+        dialog.set_decorated(False)
+        dialog.get_style_context().add_class("pinote-window")
+        dialog.get_style_context().add_class("reminder-menu")
         cancel = icon_button("window-close-symbolic", "Cancel")
         start = icon_button("utilities-terminal-symbolic", "Start in Kitty")
         dialog.add_action_widget(cancel, Gtk.ResponseType.CANCEL)
