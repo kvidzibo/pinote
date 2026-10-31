@@ -16,7 +16,8 @@ const launches: Map<string, number> = ((globalThis as any)[Symbol.for('pinote.re
 
 export default function pinoteRemote(pi: ExtensionAPI): void {
   let session: RemoteSession | undefined, ui: RemoteUI | undefined;
-  let file: string | undefined;
+  let file: string | undefined, launchKey = '';
+  const ownsLaunch = (taskId: number) => launches.get(launchKey) === taskId;
   let launchRequest = process.env.PINOTE_LAUNCH_TASK;
   delete process.env.PINOTE_LAUNCH_TASK; // Never inherit consent into another Pi process or /reload.
   const getSession = () => { if (!session) throw new RemoteFailure(); return session; };
@@ -45,8 +46,8 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
     try {
       const config = remoteConfig();
       session = new RemoteSession(config, (saved) => pi.appendEntry(ENTRY_TYPE, saved));
-      const launchKey = `${config.scope}:${ctx.sessionManager.getSessionId()}`;
-      ui = new RemoteUI(pi, session, (taskId) => launches.get(launchKey) === taskId);
+      launchKey = `${config.scope}:${ctx.sessionManager.getSessionId()}`;
+      ui = new RemoteUI(pi, session, ownsLaunch);
       ui.attach(ctx);
       file = ctx.sessionManager.getSessionFile();
       const branch = ctx.sessionManager.getBranch();
@@ -111,5 +112,5 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
         (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`),
     ].join('\n\n');
   });
-  registerRemoteExit(pi, () => session);
+  registerRemoteExit(pi, () => session, ownsLaunch);
 }

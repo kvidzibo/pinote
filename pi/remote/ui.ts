@@ -4,6 +4,7 @@ import { NativeFooter } from './footer.ts';
 import { clean, cleanUnbounded, editorText, footerText, literal, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
 import { RemoteSession } from './session.ts';
+import { pullBeforeExit } from './exit.ts';
 import { inlineHeight, remoteMenu, type MenuState } from './menu.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
@@ -113,8 +114,10 @@ export class RemoteUI {
       if (!current()) return false;
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
           this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
-        this.closing = true;
-        ctx.shutdown();
+        if (await pullBeforeExit(this.pi, ctx, signal, current)) {
+          this.closing = true;
+          ctx.shutdown();
+        }
         return true;
       }
       if (result.preview) this.pi.appendEntry('pinote-remote-preview', { title: line(view.title), text: clean(result.preview) });
