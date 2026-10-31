@@ -63,10 +63,12 @@ export class RemoteUI {
   private repaint = () => {};
   private menuChanged?: () => void;
   private opening = false;
+  private closing = false;
   private pi: ExtensionAPI;
   private session: RemoteSession;
-  constructor(pi: ExtensionAPI, session: RemoteSession) {
-    this.pi = pi; this.session = session;
+  private exitOnComplete: (taskId: number) => boolean;
+  constructor(pi: ExtensionAPI, session: RemoteSession, exitOnComplete = (_taskId: number) => false) {
+    this.pi = pi; this.session = session; this.exitOnComplete = exitOnComplete;
     session.onChange = () => { this.render(); this.menuChanged?.(); };
   }
   attach(ctx: ExtensionContext): void {
@@ -109,6 +111,12 @@ export class RemoteUI {
       if (!current()) return false;
       const result = await this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle());
       if (!current()) return false;
+      if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
+          this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
+        this.closing = true;
+        ctx.shutdown();
+        return true;
+      }
       if (result.preview) this.pi.appendEntry('pinote-remote-preview', { title: line(view.title), text: clean(result.preview) });
       if (result.draft && await review(ctx, 'Insert server draft?', result.draft, signal) && current()) {
         if (ctx.ui.getEditorText().length) ctx.ui.notify('Draft not inserted: clear the editor first.', 'warning');
@@ -131,7 +139,7 @@ export class RemoteUI {
     const menus = new Map<string, MenuState>();
     try {
       await this.session.refresh(true);
-      while (current() && !signal.aborted) {
+      while (current() && !signal.aborted && !this.closing) {
         const view = this.session.view;
         if (!view) return;
         const screen = String(view.state.screen ?? 'tasks');

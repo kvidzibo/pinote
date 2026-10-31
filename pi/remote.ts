@@ -11,6 +11,8 @@ import { editorText } from './remote/protocol.ts';
 // Reload/resume/fork restore branch entries, never this map or a folder-global store.
 const key = Symbol.for('pinote.remote.new-transfer.v1');
 const transfers: Map<string, SavedState> = ((globalThis as any)[key] ??= new Map());
+// Process-local launch ownership survives /reload, never resume in another process.
+const launches: Map<string, number> = ((globalThis as any)[Symbol.for('pinote.remote.kitty-launch.v1')] ??= new Map());
 
 export default function pinoteRemote(pi: ExtensionAPI): void {
   let session: RemoteSession | undefined, ui: RemoteUI | undefined;
@@ -37,12 +39,14 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
   pi.registerCommand('pinote', { description: 'Open remote Pinote tasks and settings', handler: open });
   const start = async (ctx: ExtensionContext, reason?: string, previous?: string) => {
     const request = launchRequest; launchRequest = undefined; // Never replay an uncertain start.
+    if (reason !== 'reload') launches.clear();
     ui?.detach(); await session?.stop();
     ui = undefined; session = undefined;
     try {
       const config = remoteConfig();
       session = new RemoteSession(config, (saved) => pi.appendEntry(ENTRY_TYPE, saved));
-      ui = new RemoteUI(pi, session);
+      const launchKey = `${config.scope}:${ctx.sessionManager.getSessionId()}`;
+      ui = new RemoteUI(pi, session, (taskId) => launches.get(launchKey) === taskId);
       ui.attach(ctx);
       file = ctx.sessionManager.getSessionFile();
       const branch = ctx.sessionManager.getBranch();
@@ -73,6 +77,7 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
         const control = view.controls.find((item) => item.id === `select:${launch.task_id}`);
         if (!control) throw new Error('Launch task changed or belongs to another service');
         await session.action(view, control); // The directory chooser's Start click granted consent.
+        if (session.view?.state.selectedId === launch.task_id) launches.set(launchKey, launch.task_id);
         if (prompt?.trim() && ctx.mode === 'tui' && ctx.isIdle()) {
           if (ctx.ui.getEditorText().length) ctx.ui.notify('Launch draft not inserted: the editor already contains a draft.', 'warning');
           else ctx.ui.setEditorText(prompt);
@@ -86,7 +91,8 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
   };
   pi.on('session_start', (event, ctx) => start(ctx, event.reason, event.previousSessionFile));
   pi.on('session_tree', (_event, ctx) => start(ctx));
-  pi.on('session_shutdown', async () => {
+  pi.on('session_shutdown', async (event) => {
+    if (event.reason !== 'reload') launches.clear();
     const saved = session?.snapshot();
     if (file && saved?.retainOnNew) {
       if (transfers.size >= 32) transfers.delete(transfers.keys().next().value!);

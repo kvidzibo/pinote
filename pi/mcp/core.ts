@@ -162,7 +162,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   // Footer actions remain valid on every screen, including Settings.
   if (task) {
     action('preview', 'Preview full task', { description: 'Display only; never sent to the model' });
-    action('done', 'Complete task', { icon: icons.check, ...(features.footerNativeActions ? { description: 'Complete task; keep this conversation and draft' } : {}) });
+    action('done', 'Complete task', { icon: icons.check, ...(features.footerNativeActions ? { description: 'Complete the selected task' } : {}) });
   } else if (state.proposal) {
     const acceptance = 'task_id' in state.proposal ? `Start and select existing task #${state.proposal.task_id}; no new task is created.` : 'Create, start, and select this suggestion.';
     action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: `${acceptance} ${features.footerNativeActions ? 'Double-click the suggested footer title to accept; use Dismiss suggestion to dismiss.' : 'Left-click to accept; right-click to dismiss.'}\n${suggestion!.text.slice(0, 4000)}` });

@@ -21,29 +21,36 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
   });
   mkdirSync(join(temp, 'agent'));
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));
-  const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui') => {
+  const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui', sessionId = `client-${clients.length}`) => {
     const previous = clients.at(-1);
-    if (previous) await previous.handlers.get('session_shutdown')!({}, previous.ctx);
-    process.env.PINOTE_LAUNCH_TASK = typeof request === 'string' ? request : JSON.stringify(request);
-    const handlers = new Map<string, Function>(), notices: string[] = [];
+    if (previous) await previous.handlers.get('session_shutdown')!({ reason: reason === 'reload' ? 'reload' : 'quit' }, previous.ctx);
+    if (request === undefined) delete process.env.PINOTE_LAUNCH_TASK;
+    else process.env.PINOTE_LAUNCH_TASK = typeof request === 'string' ? request : JSON.stringify(request);
+    const handlers = new Map<string, Function>(), commands = new Map<string, any>(), notices: string[] = [];
+    const choices: unknown[] = [];
+    let shutdowns = 0, idle = true;
     const pi: any = {
       on: (name: string, handler: Function) => {
         const previous = handlers.get(name);
         handlers.set(name, async (...args: any[]) => { await previous?.(...args); return handler(...args); });
       },
-      events: { on() {} }, registerTool() {}, registerCommand() {}, registerShortcut() {}, registerEntryRenderer() {},
+      events: { on() {} }, registerTool() {}, registerCommand: (name: string, command: any) => commands.set(name, command), registerShortcut() {}, registerEntryRenderer() {},
       appendEntry: (customType: string, data: unknown) => entries.push({ type: 'custom', customType, data }),
     };
     pinoteRemote(pi);
     assert.equal(process.env.PINOTE_LAUNCH_TASK, undefined);
     const editor = { text: draft, writes: [] as string[] };
-    const ctx: any = { cwd: temp, mode, hasUI: mode === 'tui', isIdle: () => true,
-      sessionManager: { getBranch: () => entries, getSessionId: () => `client-${clients.length}`, getSessionFile: () => join(temp, `${clients.length}.jsonl`) },
+    const ctx: any = { cwd: temp, mode, hasUI: mode === 'tui', isIdle: () => idle, shutdown: () => { shutdowns++; },
+      sessionManager: { getBranch: () => entries, getSessionId: () => sessionId, getSessionFile: () => join(temp, `${sessionId}.jsonl`) },
       ui: { setWidget() {}, setStatus() {}, getEditorComponent() {}, setEditorComponent() {},
         notify: (message: string) => notices.push(message),
+        custom: async () => choices.shift(), select: async () => 'Confirm',
         getEditorText: () => editor.text,
         setEditorText: (text: string) => { editor.text = text; editor.writes.push(text); } } };
-    const client = { handlers, ctx, entries, notices, editor }; clients.push(client);
+    const client = { handlers, ctx, entries, notices, editor,
+      get shutdowns() { return shutdowns; }, setIdle: (value: boolean) => { idle = value; },
+      choose: async (...values: unknown[]) => { choices.push(...values); await commands.get('pinote').handler('', ctx); } };
+    clients.push(client);
     await handlers.get('session_start')!({ reason }, ctx);
     return client;
   };
@@ -97,6 +104,38 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal(resumed.entries.at(-1).data.state.selectedId, task.id);
     assert.deepEqual(resumed.editor.writes, []);
     assert.equal(cli('agent', 'get', String(other.id)).state, 'active');
+    // Only acknowledged completion of the launch task closes its dedicated session.
+    const closingTask = cli('agent', 'add', '--text=Close dedicated Kitty tab');
+    const dedicated = await open({ task_id: closingTask.id, updated_at: closingTask.updated_at });
+    dedicated.setIdle(false);
+    await dedicated.choose({ id: 'done' });
+    dedicated.setIdle(true);
+    await dedicated.choose(undefined); // Cancel the task menu.
+    assert.equal(dedicated.shutdowns, 0);
+    assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'in_progress');
+    const reloaded = await open(undefined, [...dedicated.entries], 'reload', '', 'tui', dedicated.ctx.sessionManager.getSessionId());
+    await reloaded.choose({ id: 'done' });
+    assert.equal(reloaded.shutdowns, 1);
+    assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'done');
+    assert.equal(reloaded.entries.at(-1).data.state.selectedId, null);
+
+    const next = cli('agent', 'add', '--text=Normal Pi completion stays open');
+    const normal = await open(undefined);
+    await normal.choose({ id: `select:${next.id}` });
+    await normal.choose({ id: 'done' });
+    assert.equal(normal.shutdowns, 0);
+    assert.equal(cli('agent', 'get', String(next.id)).state, 'done');
+
+    const originalTask = cli('agent', 'add', '--text=Launch ownership does not follow other tasks');
+    const switched = await open({ task_id: originalTask.id, updated_at: originalTask.updated_at });
+    const replacement = cli('agent', 'add', '--text=Replacement task');
+    await switched.choose({ id: 'clear' });
+    await switched.choose({ id: `select:${replacement.id}` });
+    await switched.choose({ id: 'done' });
+    assert.equal(switched.shutdowns, 0);
+    assert.equal(cli('agent', 'get', String(originalTask.id)).state, 'in_progress');
+    assert.equal(cli('agent', 'get', String(replacement.id)).state, 'done');
+
     const saved = JSON.stringify(clients.map((client) => client.entries));
     assert.ok(!saved.includes(process.env.PINOTE_TOKEN!));
     assert.ok(!saved.includes('is task clear?') && !saved.includes('Clarify scope'));
