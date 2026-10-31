@@ -1113,10 +1113,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 menu.child_set_property(item, "top-attach", index)
                 menu.child_set_property(item, "bottom-attach", index + 1)
         for item in tags:
-            visible = active[item.filter_tag] > 0
+            selected = self.tag_filter is None or item.filter_tag in self.tag_filter
+            visible = active[item.filter_tag] > 0 or (
+                bool(item.filter_tag) and self.tag_filter is not None and selected
+            )
             item.set_no_show_all(not visible)
             item.set_visible(visible)
-            selected = self.tag_filter is None or item.filter_tag in self.tag_filter
             # set_active emits activate; syncing checks must not toggle the filter.
             item.handler_block(item.filter_handler)
             try:
@@ -1260,6 +1262,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self._remember_filter()
         if new is not None and new not in self.tags:
             self.tags.append(new)
+        if old is None and new is not None and self.tag_filter is not None:
+            self.tag_filter = self.tag_filter | {new}
+            self._remember_filter()
         self._update_filter_label()
         self._poll()
         for child in (self.archive_window, self.scheduled_window, self.tags_window):
@@ -1788,9 +1793,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
                         completed_ids=result.completed_ids,
                     )
             else:
-                notes, self.tags, completed_ids = result
+                notes, tags, completed_ids = result
+                added = set(tags) - set(self.tags) if self.loaded_notes else set()
+                self.tags = tags
                 if self.tag_filter is not None:
-                    remaining = self.tag_filter & {"", *self.tags}
+                    remaining = (self.tag_filter | added) & {"", *self.tags}
                     if remaining != self.tag_filter:
                         self.tag_filter = remaining or None
                         self._remember_filter()

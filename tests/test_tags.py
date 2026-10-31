@@ -11,6 +11,38 @@ from pinote.paths import Paths, display_lock
 from pinote.store import NoteError, Store, validate_tag
 
 
+@pytest.mark.parametrize("attach", [False, True])
+def test_create_tag_with_optional_folder_is_atomic_and_preserves_saved_defaults(tmp_path, attach):
+    model = ReminderModel(Paths(tmp_path / "data", tmp_path / "state"))
+    with Store(model.paths.database) as store:
+        note = store.add_note("Task") if attach else None
+    assert model.create_tag("  Project  ", folder=str(tmp_path), note=note) == "Project"
+    if attach:
+        with Store(model.paths.database) as store:
+            note = store.get(note.id)
+    assert model.create_tag("project", note=note) == "Project"
+    with pytest.raises(NoteError, match="cannot be empty"):
+        model.create_tag("  ", note=note)
+    with pytest.raises(NoteError, match="existing directory"):
+        model.create_tag("Invalid", folder=str(tmp_path / "missing"), note=note)
+    with Store(model.paths.database) as store:
+        assert store.tag_folders() == {"Project": str(tmp_path)}
+        if attach:
+            store.edit(note.id, "Changed elsewhere", expected_updated_at=note.updated_at)
+    if attach:
+        with pytest.raises(NoteError, match="changed elsewhere"):
+            model.create_tag("Stale", folder=str(tmp_path), note=note)
+    else:
+        with Store(model.paths.database) as store:
+            store.connection.execute(
+                "CREATE TRIGGER fail_folder BEFORE UPDATE OF default_folder ON tags "
+                "BEGIN SELECT RAISE(ABORT, 'failed folder'); END"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="failed folder"):
+            model.create_tag("Rolled back", folder=str(tmp_path))
+    assert model.tag_folders() == {"Project": str(tmp_path)}
+
+
 @pytest.mark.parametrize("version", [1, 2])
 def test_legacy_upgrade_allows_edits_and_tags_without_losing_history(tmp_path, version):
     path = tmp_path / "notes.db"
