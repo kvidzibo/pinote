@@ -50,9 +50,10 @@ state routing, tools and UI.
 
 Open **`/pinote`** (`/pi-note` is an alias). Select or create a task, preview it,
 clear the selection, complete it, respond to suggestions, or edit shared settings.
-Selection/creation and settings changes require confirmation. Nothing submits a
-model prompt automatically; inserting Continue's draft requires confirmation and
-preserves an existing draft.
+Selecting an existing task starts it immediately and returns focus to the prompt,
+with no extra confirmation. Creation and settings changes still require confirmation.
+Nothing submits a model prompt automatically; inserting Continue's draft requires
+confirmation and preserves an existing draft.
 
 Menus use Pi's native components and configured selection keys. **Escape** goes
 back; **Ctrl+R** refreshes. Settings with fewer than five choices cycle inline.
