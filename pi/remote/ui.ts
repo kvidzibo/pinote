@@ -172,7 +172,7 @@ export class RemoteUI {
             ctx.ui.notify('Value does not match the field type.', 'warning'); continue;
           }
         }
-        if (current()) await this.dispatch(ctx, view, control, value);
+        if (current() && await this.dispatch(ctx, view, control, value) && control.id.startsWith('select:')) return;
       }
     } catch (error) { if (current()) ctx.ui.notify(error instanceof RemoteFailure ? error.message : 'Pinote unavailable', 'error'); }
     finally { this.opening = false; }

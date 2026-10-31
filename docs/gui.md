@@ -142,7 +142,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   choices show text. Remove archives immediately; recover the task from Archive.
 - **Right-click note text → Start in Kitty…** (terminal icon) uses the tag's default
   folder when available, otherwise asks for a local working directory. It then asks
-  for a tab name prefilled with the directory name.
+  for a tab name prefilled with `[tag]` for a tagged task or the directory name for
+  an untagged task.
   Confirm the name to open Pi in a new Kitty tab. Blank names are not accepted;
   cancelling either dialog changes nothing. Requires `kitty` and `pi` on PATH and **pi-note 0.31.0+**
   on both client and service. Pi must use the service sharing this GUI's database;
