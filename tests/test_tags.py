@@ -60,7 +60,7 @@ def test_edit_tag_lifecycle_uses_lock_revision_and_atomic_snapshots(tmp_path, mo
     assert not model.edit(edited, edited.text)
     assert model.set_tag(edited, "  Cafe\u0301  ")
     tagged = model.notes()[0]
-    assert tagged.tag == "Café" and model.tags() == ["Café", "Work"]
+    assert tagged.tag == "Café" and model.tags() == ["Work", "Café"]
     assert not model.set_tag(tagged, "Café")
     for change in (lambda: model.edit(original, "Overwrite"), lambda: model.set_tag(edited, None)):
         with pytest.raises(NoteError, match="changed"):
@@ -79,7 +79,7 @@ def test_edit_tag_lifecycle_uses_lock_revision_and_atomic_snapshots(tmp_path, mo
     for change in (lambda: model.edit(archived, "Archived"), lambda: model.set_tag(archived, None)):
         with pytest.raises(NoteError, match="changed"):
             change()
-    assert model.tags() == ["Café", "Work"]  # Archived and unused tags can be reused.
+    assert model.tags() == ["Work", "Café"]  # Archived tags sort after unused tags.
     assert model.restore(archived)
     restored = model.notes()[0]
     assert restored.tag == "Café"

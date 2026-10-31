@@ -64,7 +64,12 @@ class ReminderModel:
 
     def tags(self) -> list[str]:
         with Store(self.paths.database, timeout=0.1) as store:
-            return store.tags()
+            latest = dict(
+                store.connection.execute(
+                    "SELECT tag, MAX(created_at) FROM notes WHERE tag IS NOT NULL GROUP BY tag"
+                )
+            )
+            return sorted(store.tags(), key=lambda tag: (latest.get(tag, ""), tag.casefold(), tag))
 
     def tag_folders(self) -> dict[str, str | None]:
         with Store(self.paths.database, timeout=0.1) as store:

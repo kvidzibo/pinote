@@ -1051,17 +1051,19 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
     subprocess.run(["xdotool", "key", "End", "Up"], env=gtk.env, check=True, timeout=5)
-    work = next(item for item in menu.get_children() if getattr(item, "filter_tag", None) == "Work")
+    last_tag = next(
+        item for item in menu.get_children() if getattr(item, "filter_tag", None) == "Tag 79"
+    )
     first = menu.get_children()[0]
     wait_until(
         gtk.glib,
         lambda: (
-            menu.get_selected_item() is work
+            menu.get_selected_item() is last_tag
             and first.translate_coordinates(menu.get_toplevel(), 0, 0)[1] < 0
         ),
     )  # Selection can settle before the scrolling bin moves.
-    click(work)
-    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Work"}))
+    click(last_tag)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Tag 79"}))
     assert menu.get_mapped()
     select_all, clear = menu.get_children()[-2:]
     click(clear)
@@ -1070,9 +1072,9 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     click(select_all)
     wait_until(gtk.glib, lambda: window.tag_filter is None)
     assert menu.get_mapped()
-    pointer_at(gtk, work.get_toplevel(), work, 12, 12, "click", "3")
+    pointer_at(gtk, last_tag.get_toplevel(), last_tag, 12, 12, "click", "3")
     wait_until(
-        gtk.glib, lambda: window.tags_window is not None and window.tags_window.selected == "Work"
+        gtk.glib, lambda: window.tags_window is not None and window.tags_window.selected == "Tag 79"
     )
     window.tags_window.close()
     wait_until(gtk.glib, lambda: window.tags_window is None)
@@ -1176,6 +1178,57 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
         assert len(store.history()) == 5  # Filtering never mutates tasks.
 
 
+def test_tag_menus_order_by_latest_creation_across_states(gtk, monkeypatch):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.create_tag("Unused")
+        for when, tag in (
+            ("2030-01-01T00:00:00+00:00", "Zulu"),
+            ("2030-01-02T00:00:00+00:00", "Alpha"),
+            ("2030-01-02T00:00:00+00:00", "Beta"),
+            ("2030-01-03T00:00:00+00:00", "Zulu"),
+        ):
+            monkeypatch.setattr("pinote.store.timestamp", lambda when=when: when)
+            store.add(f"{tag} task", tag=tag)
+        store.transition(4, "done")
+        store.schedule(
+            3, datetime(2031, 1, 1, tzinfo=UTC), expected_updated_at=store.get(3).updated_at
+        )
+        store.edit(2, "Edited later", expected_updated_at=store.get(2).updated_at)
+    window = gtk.open()
+    assert window.tags == ["Unused", "Alpha", "Beta", "Zulu"]
+    window._prepare_composer_tags(window.composer_tag_menu)
+    assert [
+        item.get_accessible().get_name() for item in window.composer_tag_menu.get_children()[:-2]
+    ] == ["Untagged", "Unused", "Alpha", "Beta", "Zulu"]
+    window._prepare_visible_filters(window.visible_filter_menu)
+    assert [
+        item.filter_tag
+        for item in window.visible_filter_menu.get_children()
+        if isinstance(item, Gtk.CheckMenuItem) and item.get_visible()
+    ] == ["Alpha", "Zulu"]
+    window._set_filter(frozenset({"Alpha"}))
+    with Store(gtk.paths.database) as store:
+        monkeypatch.setattr("pinote.store.timestamp", lambda: "2030-01-04T00:00:00+00:00")
+        note_id = store.add("Newest Alpha task", tag="Alpha")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and note_id in window.rows)
+    assert window.tags == ["Unused", "Beta", "Zulu", "Alpha"]
+    choices = [
+        item
+        for item in window.visible_filter_menu.get_children()
+        if isinstance(item, Gtk.CheckMenuItem) and item.get_visible()
+    ]
+    assert [item.filter_tag for item in choices] == ["Zulu", "Alpha"]
+    assert [
+        window.visible_filter_menu.child_get_property(item, "top-attach") for item in choices
+    ] == sorted(
+        window.visible_filter_menu.child_get_property(item, "top-attach") for item in choices
+    )
+    assert window.tag_filter == frozenset({"Alpha"})
+
+
 def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk):
     with Store(gtk.paths.database) as store:
         store.create_tag("MCP")
@@ -1214,7 +1267,7 @@ def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk
         note = store.add("New MCP task", tag="MCP")
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending and note in window.rows)
-    assert visible_tags(window.visible_filter_menu) == ["MCP (1)", "Work (1)"]
+    assert visible_tags(window.visible_filter_menu) == ["Work (1)", "MCP (1)"]
     with Store(gtk.paths.database) as store:
         store.transition(note, "done")
         store.transition(work, "done")
