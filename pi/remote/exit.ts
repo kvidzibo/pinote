@@ -10,8 +10,11 @@ export async function pullBeforeExit(pi: ExtensionAPI, ctx: ExtensionContext, si
   const unchanged = () => current() && !signal.aborted && ctx.isIdle() &&
     ctx.sessionManager.getSessionId() === sessionId && ctx.sessionManager.getLeafId() === branch && ctx.ui.getEditorText() === draft;
   if (!unchanged()) return false;
-  ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
   try {
+    const repository = await pi.exec('git', ['rev-parse', '--show-toplevel'], { cwd: ctx.cwd, signal, timeout: 30_000 });
+    if (!repository.killed && repository.code === 128 && repository.stderr.startsWith('fatal: not a git repository')) return unchanged();
+    if (repository.code !== 0 || repository.killed || !unchanged()) throw new Error('Git repository check failed');
+    ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
     const result = await pi.exec('git', ['pull', '--ff-only', '--no-rebase', '--no-autostash'], { cwd: ctx.cwd, signal, timeout: 30_000 });
     if (result.code === 0 && !result.killed && unchanged()) return true;
   } catch { /* Completion succeeded; only the local pull failed. */ }
