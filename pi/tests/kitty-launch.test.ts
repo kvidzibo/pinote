@@ -20,6 +20,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state'),
   });
   mkdirSync(join(temp, 'agent'));
+  execFileSync('git', ['init', '--quiet', temp]);
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));
   const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui', sessionId = `client-${clients.length}`) => {
     const previous = clients.at(-1);
@@ -32,13 +33,9 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const pulls: any[][] = [];
     const pi: any = {
       exec: async (...args: any[]) => {
-        assert.equal(entries.at(-1).data.state.selectedId, null, 'Git only after acknowledged completion');
-        assert.equal(shutdowns, 0, 'Git must finish before shutdown');
-        if (args[1][0] === 'rev-parse') {
-          assert.deepEqual(args.slice(0, 2), ['git', ['rev-parse', '--show-toplevel']]);
-          return { code: 0, killed: false, stdout: `${temp}\n`, stderr: '' };
-        }
         pulls.push(args);
+        assert.equal(entries.at(-1).data.state.selectedId, null, 'pull only after acknowledged completion');
+        assert.equal(shutdowns, 0, 'pull must finish before shutdown');
         return { code: pullCode, killed: false, stdout: '', stderr: '' };
       },
       on: (name: string, handler: Function) => {

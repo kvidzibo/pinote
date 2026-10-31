@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { pullBeforeExit, registerRemoteExit } from '../remote/exit.ts';
@@ -12,6 +12,7 @@ import type { NativeView } from '../remote/protocol.ts';
 const selected = (): NativeView => ({ version: 1, title: 'Pinote', body: 'Selected task', revision: 'displayed',
   state: { selectedId: 7 }, controls: [{ id: 'done', kind: 'action', label: 'Complete task', revision: 'task-7' }] });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const root = fileURLToPath(new URL('../../', import.meta.url));
 
 test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async () => {
   const handlers = new Map<string, Function[]>();
@@ -21,12 +22,8 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     exec: async (command: string, args: string[]) => {
       assert.equal(launch, true, 'only dedicated launch completion may pull');
       assert.equal(command, 'git');
-      assert.equal(session.view?.state.selectedId, null);
-      if (args[0] === 'rev-parse') {
-        assert.deepEqual(args, ['rev-parse', '--show-toplevel']);
-        return { code: 0, killed: false, stdout: '/repo\n', stderr: '' };
-      }
       assert.deepEqual(args, ['pull', '--ff-only', '--no-rebase', '--no-autostash']);
+      assert.equal(session.view?.state.selectedId, null);
       pulls++;
       return { code: pullCode, killed: false, stdout: '', stderr: '' };
     },
@@ -57,7 +54,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     NonNullable<ReturnType<ExtensionContext['ui']['getEditorComponent']>>;
   let factory: ReturnType<ExtensionContext['ui']['getEditorComponent']> = previous;
   const ctx = {
-    mode: 'tui', hasUI: true,
+    cwd: root, mode: 'tui', hasUI: true,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     isIdle: () => idle, abort: () => { aborts++; }, shutdown: () => { shutdowns++; },
     ui: {
@@ -219,63 +216,49 @@ test('remote /new gates replacement on exact task approval without exiting Pi', 
   await emit('session_shutdown');
 });
 
-test('completion skips the pull outside a Git repository, but not on other Git errors', async () => {
+test('completion skips pulls in non-Git folders even with a translated locale, but preserves Git errors', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pinote-no-git-'));
+  const locale = process.env.LC_ALL, language = process.env.LANGUAGE;
   const notices: string[] = [];
+  const pi = { exec: async () => assert.fail('must not pull outside a repository') } as unknown as ExtensionAPI;
   const ctx = {
     cwd, isIdle: () => true,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => 'branch' },
     ui: { getEditorText: () => '', notify: (message: string) => notices.push(message) },
   } as unknown as ExtensionContext;
   try {
-    const probe = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } });
-    assert.equal(probe.status, 128);
-    const absent = { code: probe.status!, killed: false, stdout: probe.stdout, stderr: probe.stderr };
-    for (const [result, expected] of [[absent, true], [{ ...absent, killed: true }, false],
-      [{ ...absent, stderr: 'fatal: detected dubious ownership in repository' }, false]] as const) {
-      notices.length = 0;
-      let checks = 0;
-      const pi = { exec: async (command: string, args: string[], options: { cwd: string }) => {
-        assert.equal(command, 'git');
-        assert.deepEqual(args, ['rev-parse', '--show-toplevel'], 'must never pull');
-        assert.equal(options.cwd, cwd);
-        checks++;
-        return result;
-      } } as unknown as ExtensionAPI;
-      assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), expected);
-      assert.equal(checks, 1);
-      if (expected) assert.deepEqual(notices, [], 'no misleading pull or failure notice');
-      else assert.match(notices.at(-1)!, /Pi stayed open/);
-    }
-  } finally { rmSync(cwd, { recursive: true, force: true }); }
+    process.env.LC_ALL = 'fr_FR.UTF-8';
+    process.env.LANGUAGE = 'fr';
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), true);
+    assert.deepEqual(notices, [], 'no misleading pull or failure notice');
+    let checks = 0;
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => ++checks === 1), false,
+      'non-Git exit must recheck session ownership');
+    writeFileSync(join(cwd, '.git'), 'invalid gitfile\n');
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false);
+    assert.match(notices.at(-1)!, /Pi stayed open/);
+  } finally {
+    if (locale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = locale;
+    if (language === undefined) delete process.env.LANGUAGE; else process.env.LANGUAGE = language;
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
-test('repository check or pull cannot close a session or draft that changed while it ran', async () => {
+test('successful pull cannot close a session or draft that changed while it ran', async () => {
   let draft = '', leaf = 'branch', idle = true, current = true;
-  let finish: (result: { code: number; killed: boolean; stderr?: string }) => void;
-  let delayedCommand = 'rev-parse';
-  const pi = { exec: (_command: string, args: string[]) => args[0] === delayedCommand
-    ? new Promise((resolve) => { finish = resolve; })
-    : Promise.resolve({ code: 0, killed: false, stdout: '/repo\n', stderr: '' }) } as unknown as ExtensionAPI;
+  let finish: (result: { code: number; killed: boolean }) => void;
+  const pi = { exec: () => new Promise((resolve) => { finish = resolve; }) } as unknown as ExtensionAPI;
   const ctx = {
-    cwd: '/tmp', isIdle: () => idle,
+    cwd: root, isIdle: () => idle,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     ui: { getEditorText: () => draft, notify() {} },
   } as unknown as ExtensionContext;
-  for (const [command, result] of [
-    ['rev-parse', { code: 0, killed: false }],
-    ['rev-parse', { code: 128, killed: false, stderr: 'fatal: not a git repository' }],
-    ['pull', { code: 0, killed: false }],
-  ] as const) {
-    delayedCommand = command;
-    for (const change of [() => { draft = 'new draft'; }, () => { leaf = 'other'; },
-      () => { idle = false; }, () => { current = false; }]) {
-      draft = ''; leaf = 'branch'; idle = true; current = true;
-      const pulling = pullBeforeExit(pi, ctx, new AbortController().signal, () => current);
-      await tick();
-      change();
-      finish!(result);
-      assert.equal(await pulling, false);
-    }
+  for (const change of [() => { draft = 'new draft'; }, () => { leaf = 'other'; },
+    () => { idle = false; }, () => { current = false; }]) {
+    draft = ''; leaf = 'branch'; idle = true; current = true;
+    const pulling = pullBeforeExit(pi, ctx, new AbortController().signal, () => current);
+    change();
+    finish!({ code: 0, killed: false });
+    assert.equal(await pulling, false);
   }
 });
