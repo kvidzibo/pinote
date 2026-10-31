@@ -239,6 +239,9 @@ MIGRATION_6 = (
 )
 
 
+MIGRATION_7 = ("ALTER TABLE tags ADD COLUMN default_folder TEXT",)
+
+
 class Store:
     def __init__(self, path: Path, *, timeout: float = 10):
         private_directory(path.parent)
@@ -254,15 +257,15 @@ class Store:
 
     def _initialize(self) -> None:
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 6:
+        if version == 7:
             return  # Ordinary reads must not take a write lock.
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             # Another process may have upgraded while this connection waited.
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            if version == 6:
+            if version == 7:
                 return
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise NoteError(f"Unsupported database version {version}; update pinote.")
             if version == 0:
                 for statement in SCHEMA:
@@ -279,9 +282,12 @@ class Store:
             if version < 5:
                 for statement in MIGRATION_5:
                     self.connection.execute(statement)
-            for statement in MIGRATION_6:
+            if version < 6:
+                for statement in MIGRATION_6:
+                    self.connection.execute(statement)
+            for statement in MIGRATION_7:
                 self.connection.execute(statement)
-            self.connection.execute("PRAGMA user_version = 6")
+            self.connection.execute("PRAGMA user_version = 7")
 
     def __enter__(self) -> Store:
         return self
@@ -334,6 +340,32 @@ class Store:
         rows = self.connection.execute("SELECT name FROM tags")
         return sorted((r[0] for r in rows), key=lambda x: (x.casefold(), x))
 
+    def tag_folders(self) -> dict[str, str | None]:
+        return {
+            row["name"]: row["default_folder"]
+            for row in self.connection.execute(
+                "SELECT name, default_folder FROM tags ORDER BY name"
+            )
+        }
+
+    def set_tag_folder(self, name: str, folder: str | None) -> bool:
+        if folder is not None:
+            path = Path(folder).expanduser().resolve()
+            if not path.is_dir():
+                raise NoteError("Choose an existing directory.")
+            folder = str(path)
+        with self.connection:
+            self.connection.execute("BEGIN IMMEDIATE")
+            row = self.connection.execute(
+                "SELECT default_folder FROM tags WHERE name=?", (name,)
+            ).fetchone()
+            if row is None:
+                raise NoteError("This tag no longer exists. Reopen Tags and try again.")
+            if row["default_folder"] == folder:
+                return False
+            self.connection.execute("UPDATE tags SET default_folder=? WHERE name=?", (folder, name))
+        return True
+
     def _matching_tag(self, tag: str) -> str | None:
         tags = self.tags()
         if tag in tags:
@@ -376,7 +408,11 @@ class Store:
                 name != old_tag and name.casefold() == new_tag.casefold() for name in self.tags()
             ):
                 raise NoteError("A tag with that name already exists. Choose another name.")
-            self.connection.execute("INSERT INTO tags(name) VALUES (?)", (new_tag,))
+            self.connection.execute(
+                "INSERT INTO tags(name, default_folder) "
+                "SELECT ?, default_folder FROM tags WHERE name=?",
+                (new_tag, old_tag),
+            )
             self._retag_all(old_tag, new_tag)
             self.connection.execute("DELETE FROM tags WHERE name=?", (old_tag,))
         return True

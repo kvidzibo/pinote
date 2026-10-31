@@ -77,6 +77,8 @@ cannot guarantee selection persistence.
 
 The GTK app's **Start in Kitty…** action (note 0.13.0+) chooses a working directory
 and opens a named tab with this task selected, without submitting a prompt.
+In note 0.16.0+, it uses the tag's default folder when available, otherwise keeps
+the directory chooser. Set or clear defaults in **Manage tags…**.
 With note 0.15.0+ and pi-note 0.32.0+, successful selection prefills an empty Pi editor
 with `is task clear?`. Configure `gui.kitty_start_prompt` in the
 [GUI config](../docs/gui.md#gui-configuration), or set it to `""` to disable; existing

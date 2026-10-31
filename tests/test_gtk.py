@@ -201,6 +201,7 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
     window.launch_dialog.response(Gtk.ResponseType.CANCEL)
     assert window.launch_dialog is None and calls == []
     item.activate()
+    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
     dialog = window.launch_dialog
     assert dialog.get_action() == Gtk.FileChooserAction.SELECT_FOLDER
     assert dialog.get_local_only() and dialog.get_modal()
@@ -219,6 +220,7 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
     name_dialog.response(Gtk.ResponseType.CANCEL)
     assert window.launch_dialog is None and calls == []
     item.activate()
+    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
     dialog = window.launch_dialog
     dialog.set_current_folder(str(gtk.paths.data))
     wait_until(gtk.glib, lambda: dialog.get_filename() == str(gtk.paths.data))
@@ -241,12 +243,101 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
     assert window.entry.get_text() == "Keep this draft"
     assert not window.action_pending and window.rows[note.id].note.state == "active"
     window._open_kitty(note)
+    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
     dialog = window.launch_dialog
     dialog.set_current_folder(str(gtk.paths.data))
     wait_until(gtk.glib, lambda: dialog.get_filename() == str(gtk.paths.data))
     dialog.response(Gtk.ResponseType.ACCEPT)
     window.destroy()
     assert window.launch_dialog is None
+
+
+def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        note = store.add_note("Launch tagged task", tag="Work")
+        history = [dict(event) for event in store.history()]
+        # Exercise a real schema-6 upgrade with an existing tag and task.
+        store.connection.execute("ALTER TABLE tags DROP COLUMN default_folder")
+        store.connection.execute("PRAGMA user_version = 6")
+    calls = []
+    monkeypatch.setattr(
+        "pinote.gui.app.start_in_kitty",
+        lambda directory, selected, title, prompt: calls.append(
+            (directory, selected.id, title, prompt)
+        ),
+    )
+    window = gtk.open()
+    window._set_filter(None)
+    window._open_tags("Work")
+    manager = window.tags_window
+    wait_until(gtk.glib, lambda: not manager.pending and manager.selected == "Work")
+    assert manager.folders == {"Work": None}
+    assert not manager.clear_folder_button.get_sensitive()
+    manager.folder_button.clicked()
+    chooser = manager.folder_dialog
+    chooser.response(Gtk.ResponseType.CANCEL)
+    assert manager.folders == {"Work": None}
+    manager.folder_button.clicked()
+    chooser = manager.folder_dialog
+    chooser.set_current_folder(str(gtk.paths.data))
+    wait_until(gtk.glib, lambda: chooser.get_filename() == str(gtk.paths.data))
+    chooser.response(Gtk.ResponseType.ACCEPT)
+    wait_until(
+        gtk.glib,
+        lambda: not manager.pending and manager.folders.get("Work") == str(gtk.paths.data),
+    )
+    assert manager.folder_label.get_text() == str(gtk.paths.data)
+    assert manager.clear_folder_button.get_sensitive()
+    # Renaming must carry the folder to the new tag.
+    manager.entry.set_text("Project")
+    manager.save_button.clicked()
+    wait_until(gtk.glib, lambda: not manager.pending and "Project" in manager.rows)
+    assert manager.folders == {"Project": str(gtk.paths.data)}
+    manager.close()
+    with Store(gtk.paths.database) as store:
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        note = store.get(note.id)
+        assert [dict(event) for event in store.history()][:-1] == history
+        assert store.tag_folders() == {"Project": str(gtk.paths.data)}
+    window._open_kitty(note)
+    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
+    dialog = window.launch_dialog
+    assert not isinstance(dialog, Gtk.FileChooserDialog)
+    dialog.response(Gtk.ResponseType.ACCEPT)
+    wait_until(gtk.glib, lambda: not window.pending)
+    assert calls == [(str(gtk.paths.data), note.id, "[Project]", "is task clear?")]
+    assert window.model.notes()[0].state == "active"
+    # Missing or permission-denied defaults must not block manual selection.
+    locked = gtk.paths.data / "locked"
+    child = locked / "child"
+    child.mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        for unavailable in (gtk.paths.data / "missing", locked, child):
+            with Store(gtk.paths.database) as store:
+                store.connection.execute(
+                    "UPDATE tags SET default_folder=? WHERE name='Project'", (str(unavailable),)
+                )
+                store.connection.commit()
+            window._open_kitty(note)
+            wait_until(gtk.glib, lambda: window.launch_dialog is not None)
+            assert isinstance(window.launch_dialog, Gtk.FileChooserDialog)
+            window.launch_dialog.response(Gtk.ResponseType.CANCEL)
+    finally:
+        locked.chmod(0o700)
+    window._open_tags("Project")
+    manager = window.tags_window
+    wait_until(gtk.glib, lambda: not manager.pending and manager.selected == "Project")
+    manager.clear_folder_button.clicked()
+    wait_until(gtk.glib, lambda: not manager.pending and manager.folders == {"Project": None})
+    manager.close()
+    window._open_kitty(note)
+    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
+    assert isinstance(window.launch_dialog, Gtk.FileChooserDialog)
+    window.launch_dialog.response(Gtk.ResponseType.CANCEL)
+    assert calls == [(str(gtk.paths.data), note.id, "[Project]", "is task clear?")]
 
 
 def test_compact_dunst_layout_and_accessible_controls(gtk):
@@ -2829,17 +2920,29 @@ def test_multiline_entry_and_read_only_preview(gtk):
     with Store(gtk.paths.database) as store:
         store.transition(2, "rm")
     window._poll()
-    wait_until(gtk.glib, lambda: not window.pending and 2 not in window.rows)
+    # Finish shrinking before restoring, or the old resize can overtake the next click.
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not window.pending
+            and 2 not in window.rows
+            and not window.geometry_source
+            and window.get_size().height == initial_height
+            and window.get_position()[1] + window.get_size().height == bottom
+        ),
+    )
     assert window.preview is None and not window.closed
     assert Gtk.grab_get_current() is None
     with Store(gtk.paths.database) as store:
         store.transition(2, "restore")
     window._poll()
+    # Row allocation can finish before the toplevel acknowledges its restored height.
     wait_until(
         gtk.glib,
         lambda: (
             not window.pending
             and 2 in window.rows
+            and window.get_size().height == height
             and not window.geometry_source
             and window.scroll.get_allocated_height()
             == sum(

@@ -98,7 +98,7 @@ def test_agent_handoff_upgrade_restart_and_revision_safe_updates(cli, tmp_path):
         )
     assert agent("get", "7") == current
     with Store(cli.database) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
         assert store.history(7)[0]["id"] == 9 and store.history(7)[1]["id"] == 81
         assert json.loads(store.history(7)[2]["previous_agent_notes"]) == {}
         assert json.loads(store.history(7)[2]["agent_notes"]) == patch

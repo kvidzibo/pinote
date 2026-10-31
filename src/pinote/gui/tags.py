@@ -33,6 +33,8 @@ class TagsWindow(Gtk.ApplicationWindow):
         self.selected: str | None = None
         self.requested_tag: str | None = None
         self.tags: list[str] = []
+        self.folders: dict[str, str | None] = {}
+        self.folder_dialog = None
         self.rows: dict[str, Gtk.ListBoxRow] = {}
         self.set_role("pinote-tags")
         self.set_decorated(False)
@@ -85,6 +87,17 @@ class TagsWindow(Gtk.ApplicationWindow):
         self.delete_button.connect("clicked", lambda _button: self._confirm_delete())
         form.pack_start(self.delete_button, False, False, 0)
         layout.pack_start(form, False, False, 0)
+        folder_form = Gtk.Box(spacing=8)
+        self.folder_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE)
+        self.folder_label.set_max_width_chars(32)
+        folder_form.pack_start(self.folder_label, True, True, 0)
+        self.folder_button = icon_button("folder-symbolic", "Choose default folder")
+        self.folder_button.connect("clicked", lambda _button: self._choose_folder())
+        folder_form.pack_start(self.folder_button, False, False, 0)
+        self.clear_folder_button = icon_button("window-close-symbolic", "Clear default folder")
+        self.clear_folder_button.connect("clicked", lambda _button: self._set_folder(None))
+        folder_form.pack_start(self.clear_folder_button, False, False, 0)
+        layout.pack_start(folder_form, False, False, 0)
         self.confirmation = Gtk.Box(spacing=8)
         self.confirmation.set_no_show_all(True)
         self.confirm_text = Gtk.Label(xalign=0, wrap=True, hexpand=True)
@@ -128,6 +141,11 @@ class TagsWindow(Gtk.ApplicationWindow):
         ):
             widget.set_sensitive(not self.saving)
         self.delete_button.set_sensitive(not self.saving and self.selected is not None)
+        self.folder_button.set_sensitive(not self.saving and self.selected is not None)
+        self.clear_folder_button.set_sensitive(
+            not self.saving and bool(self.folders.get(self.selected))
+        )
+        self._update_folder()
         self.confirm_button.set_sensitive(not self.saving)
         self.cancel_button.set_sensitive(not self.saving)
 
@@ -159,6 +177,50 @@ class TagsWindow(Gtk.ApplicationWindow):
             old = self.selected
             self._mutate(lambda: self.owner.model.delete_tag(old), old, None)
 
+    def _update_folder(self) -> None:
+        folder = self.folders.get(self.selected)
+        text = folder or "No default folder — choose when starting"
+        self.folder_label.set_text(text)
+        self.folder_label.set_tooltip_text(text)
+
+    def _choose_folder(self) -> None:
+        if self.selected is None or self.saving or self.owner.action_pending:
+            return
+        if self.folder_dialog is not None:
+            self.folder_dialog.present()
+            return
+        tag = self.selected
+        dialog = Gtk.FileChooserDialog(
+            title="Choose default folder",
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+            use_header_bar=True,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+        )
+        self.folder_dialog = dialog
+        dialog.set_local_only(True)
+        dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL, "_Select", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+        if self.folders.get(tag):
+            dialog.set_current_folder(self.folders[tag])
+        self.owner._watch_child_focus(dialog)
+
+        def response(_dialog, result):
+            folder = dialog.get_filename()
+            dialog.destroy()
+            if result == Gtk.ResponseType.ACCEPT and folder and not self.closed:
+                self._mutate(lambda: self.owner.model.set_tag_folder(tag, folder), tag, tag)
+
+        dialog.connect("response", response)
+        dialog.connect("destroy", lambda _dialog: setattr(self, "folder_dialog", None))
+        dialog.show()
+
+    def _set_folder(self, folder: str | None) -> None:
+        if self.selected is not None:
+            tag = self.selected
+            self._mutate(lambda: self.owner.model.set_tag_folder(tag, folder), tag, tag)
+
     def _save(self) -> None:
         try:
             name = validate_tag(self.entry.get_text())
@@ -189,7 +251,7 @@ class TagsWindow(Gtk.ApplicationWindow):
         if self.closed:
             return GLib.SOURCE_REMOVE
         if not self.pending and not self.saving:
-            self._submit(self.owner.model.tags)
+            self._submit(self.owner.model.tag_folders)
         return GLib.SOURCE_CONTINUE
 
     def _submit(self, operation, *, change=None) -> None:
@@ -232,7 +294,8 @@ class TagsWindow(Gtk.ApplicationWindow):
                 self.owner._tags_changed(old, new)
                 if not self.closed:
                     self.error_text.hide()
-                    self._new()
+                    if old != new:
+                        self._new()
                     self._poll()
         if not self.closed:
             self._controls()
@@ -246,7 +309,10 @@ class TagsWindow(Gtk.ApplicationWindow):
         else:
             self.requested_tag = tag
 
-    def _render(self, tags: list[str]) -> None:
+    def _render(self, folders: dict[str, str | None]) -> None:
+        self.folders = folders
+        self._update_folder()
+        tags = sorted(folders, key=lambda tag: (tag.casefold(), tag))
         if tags == self.tags:
             return
         self.tags = tags

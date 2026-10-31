@@ -1430,6 +1430,16 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if self.launch_dialog is not None:
             self.launch_dialog.present()
             return
+        self.action_pending = True
+        self._update_controls()
+        self._submit(
+            lambda: (self.model.tag_folder(note.tag), note), action=(note.id, "kitty-folder")
+        )
+
+    def _choose_kitty_directory(self, directory: str | None, note: Note) -> None:
+        if directory:
+            self._name_kitty_tab(directory, note)
+            return
         dialog = Gtk.FileChooserDialog(
             title="Start in Kitty — choose directory",
             transient_for=self,
@@ -1778,7 +1788,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
                     self.entry.set_text("")
                 self.entry.grab_focus()
             elif action:
-                if action[1] not in ("tag", "kitty"):
+                if action[1] == "kitty-folder":
+                    self._choose_kitty_directory(*result)
+                elif action[1] not in ("tag", "kitty"):
                     self._render(
                         result.notes,
                         action=action if result.changed else None,
