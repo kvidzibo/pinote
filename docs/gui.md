@@ -141,11 +141,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
   (archive box), plus editing, scheduling, and tags. Hover for labels; only tag
   choices show text. Remove archives immediately; recover the task from Archive.
 - **Right-click note text → Start in Kitty…** (terminal icon) uses the tag's default
-  folder when available, otherwise asks for a local working directory. It then asks
-  for a tab name prefilled with up to 30 characters from the task’s first line,
-  prefixed with `[tag] ` when tagged. The prefix does not count toward the limit.
-  Confirm the name to open Pi in a new Kitty tab. Blank names are not accepted;
-  cancelling either dialog changes nothing. After successful selection, Pi prefills
+  folder when available, otherwise asks for a local working directory. It opens Pi
+  in a new Kitty tab named automatically from up to 30 characters of the task’s first
+  line, prefixed with `[tag] ` when tagged. The prefix does not count toward the limit.
+  There is no tab-name prompt; cancelling the folder chooser changes nothing.
+  After launching, Pi prefills
   its empty editor with `is task clear?` without submitting it. Configure or disable
   this draft with `kitty_start_prompt` below; existing drafts are preserved.
   Requires `kitty` and `pi` on PATH, **pi-note 0.32.0+** on the client and **0.31.0+**
@@ -210,7 +210,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
   folder changes save immediately
   and survive renaming and restarts. Without a default (or if its folder is no longer
   available on this machine), starting still asks you to choose a folder. Untagged
-  tasks always use the chooser. The tab-name prompt is unchanged.
+  tasks always use the chooser. With an available default, launching needs no dialog.
 - The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
   and matching active-task count. Click it to toggle one or more tags, including **Untagged**;
   tasks matching **any** selected tag appear. **In-progress tasks always bypass tag filtering**,
