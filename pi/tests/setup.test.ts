@@ -63,7 +63,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   calls.length = 0;
   results = [{ code: 0, stdout: "pinote 0.2.9" }];
   await setupCLI(pi, context(async () => true), false, active, signal);
-  assert.match(notices.at(-1)!.message, /\/pi-note.*Settings.*Upgrade CLI/);
+  assert.match(notices.at(-1)!.message, /\/pinote.*Settings.*Upgrade CLI/);
   assert.deepEqual(calls.at(-1), { command: "note", args: ["--version"] });
   calls.length = 0;
   results = [{ code: 0, stdout: "pinote 1.0.0" }];
@@ -137,17 +137,17 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   } as any);
   const commandCtx: any = { ...ctx, mode: "tui", hasUI: true, isIdle: () => true,
     sessionManager: { getBranch: () => [] }, ui: { ...ctx.ui, ...settingsUI("Upgrade CLI"), setStatus() {}, addAutocompleteProvider() {} } };
-  assert.deepEqual([...commands.keys()], ["pi-note"]);
+  assert.deepEqual([...commands.keys()], ["pinote"]);
   // Missing and incompatible CLIs must reach Settings without task commands.
   cliVersion = "";
   const missingCtx = { ...commandCtx, ui: { ...commandCtx.ui, ...settingsUI("Install CLI"), confirm: async () => false } };
   await events.get("session_start")({}, missingCtx);
-  await commands.get("pi-note").handler("", missingCtx);
+  await commands.get("pinote").handler("", missingCtx);
   assert.equal(installs, 0, "declining setup must not install");
   assert.equal(taskCalls.length, 0, "missing CLIs never receive task commands");
   cliVersion = "pinote 0.2.0";
   await events.get("session_start")({}, commandCtx);
-  const setup = commands.get("pi-note").handler("", commandCtx);
+  const setup = commands.get("pinote").handler("", commandCtx);
   await installing;
   const replacementCtx = { ...commandCtx, cwd: "/tmp/replacement-project" };
   await events.get("session_start")({}, replacementCtx);
@@ -156,7 +156,7 @@ test("setup CLI gates installation and uses the immutable uv source", async (t) 
   await Promise.resolve();
   assert.equal(taskCalls.length, countWhileInstalling, "PR polls stay paused during setup");
   assert.ok(!notices.some(({ message }) => message.includes("PR check failed")));
-  await commands.get("pi-note").handler("", commandCtx);
+  await commands.get("pinote").handler("", commandCtx);
   assert.equal(installs, 1);
   assert.match(notices.at(-1)!.message, /Wait until the pinote operation has finished/);
   await assert.rejects(tools.get("pinote_get_current").execute("get", {}, undefined, undefined, commandCtx), /setup is still running/);
@@ -213,7 +213,7 @@ test("CLI recovery remains accessible without overwriting invalid settings", asy
       };
       await events.get("session_start")({}, ctx);
       try {
-        await commands.get("pi-note").handler("", ctx);
+        await commands.get("pinote").handler("", ctx);
         assert.equal(confirmations, 1, "CLI installation confirmation is reachable");
         assert.equal(readFileSync(path, "utf8"), raw);
       } finally { await events.get("session_shutdown")({}, ctx); }
@@ -264,7 +264,7 @@ test("tree navigation during setup restores the active branch", async () => {
     },
   };
   await events.get("session_start")({}, ctx);
-  const setup = commands.get("pi-note").handler("", ctx);
+  const setup = commands.get("pinote").handler("", ctx);
   await installing;
   entries.push({ type: "custom", customType: "pinote-selection", data: { id: 4 } });
   await events.get("session_tree")({}, ctx);

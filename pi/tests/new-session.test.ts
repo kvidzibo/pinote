@@ -91,7 +91,7 @@ test("real /new runtime replacement retains an unsaved selection and rereads its
       sessionStartEvent: { type: "session_start", reason: "startup" } });
     assert.ok(!unrelated.session.sessionManager.getBranch().some((entry: any) => entry.customType === "pinote-selection"));
     await new AgentSessionRuntime(unrelated.session, unrelated.services, createRuntime).dispose();
-    await runtime.session.prompt("/pi-note");
+    await runtime.session.prompt("/pinote");
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
     assert.equal(selection(), undefined, "Done's new session remains unselected");
     assert.equal(draft, "");

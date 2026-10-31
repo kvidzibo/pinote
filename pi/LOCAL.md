@@ -1,9 +1,9 @@
 # Local-only Pi extension
 
-[npm](https://www.npmjs.com/package/pi-note) · [Pi package directory](https://pi.dev/packages/pi-note)
+[npm](https://www.npmjs.com/package/pinote) · [Pi package directory](https://pi.dev/packages/pinote)
 
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
-in Pi: selected-task footer status, `/pi-note`, and agent current-task read/update,
+in Pi: selected-task footer status, `/pinote`, and agent current-task read/update,
 add, and tag-listing tools.
 The extension and Python app share a repository but install separately.
 
@@ -30,8 +30,8 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
 restart Pi with `uv` on PATH. At startup the extension checks `note --version`
 against its bundled CLI version (currently 0.4.0), without network requests:
 
-- Missing/unrecognized CLI: `/pi-note` opens Settings directly, where **Install CLI** is available.
-- Older CLI: `/pi-note` opens Settings directly, where **Upgrade CLI** is available.
+- Missing/unrecognized CLI: `/pinote` opens Settings directly, where **Install CLI** is available.
+- Older CLI: `/pinote` opens Settings directly, where **Upgrade CLI** is available.
 - Equal/newer CLI: neither installation action is shown; no upgrade notification.
 
 Install and upgrade recheck the CLI version and ask before installing into uv's
@@ -54,7 +54,7 @@ Check `note --version`, then restart Pi or `/reload`. Network/build failures and
 conflicting executables are reported without forcibly overwriting another
 installer's commands. Fix the reported cause and retry; installs time out after
 three minutes. Installation actions are unavailable while installation runs.
-Setup hints direct users to `/pi-note` → Settings.
+Setup hints direct users to `/pinote` → Settings.
 Missing uv is reported with its installation link, not installed
 automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
 and still requires separate system dependencies.
@@ -65,16 +65,16 @@ standalone `settings/pi/extensions/pinote.ts` entry if installed; load only one 
 
 ## Use
 
-When the CLI is ready and no task is selected, `/pi-note` opens the task picker.
+When the CLI is ready and no task is selected, `/pinote` opens the task picker.
 It marks the chosen task in progress and adds this default prompt to the editor:
 “Read the current Pinote task. Summarize your understanding, but don’t start work yet.”
-If the CLI is missing or older than the bundled version, `/pi-note` opens Settings
+If the CLI is missing or older than the bundled version, `/pinote` opens Settings
 directly so the relevant CLI installation action remains accessible. **Tab** opens
 Settings from the picker or task view; **Tab** from Settings returns to tasks.
 The agent fetches current task text and saved handoff fields when you submit;
 they are not copied into the draft. The default prompt asks for a summary, not implementation.
 Existing drafts are preserved; nothing is submitted automatically.
-With a selected task, `/pi-note` offers **Continue**, **Done**, **Switch task**, and
+With a selected task, `/pinote` offers **Continue**, **Done**, **Switch task**, and
 **Settings**. Settings provides **Preview task**, **Complete task (new session)**,
 **Accept suggestion**, and **Dismiss suggestion** when applicable, plus
 **Install CLI** or **Upgrade CLI** only when needed. Settings also lists fields found
@@ -170,7 +170,7 @@ and selected tasks. Run `/reload` after changing this setting. Invalid policy
 values or unreadable/malformed configuration suppress offers; interactive startup
 warns until you fix the file and reload. No project-local configuration is read.
 
-In `/pi-note → Settings`, select **Task prompt** to edit the text inserted after
+In `/pinote → Settings`, select **Task prompt** to edit the text inserted after
 selection or **Continue**. **Shift+Enter** or **Ctrl+J** adds a newline; **Enter** saves it
 globally, **Ctrl+C** clears the edit, and **Esc** cancels that unfinished edit.
 
@@ -219,7 +219,7 @@ configuration only; project-local files are not read.
 
 Version 0.7.0 replaces `pinote_get`/`pinote_update` with these current-task tools
 and removes `pinote_tag`, without aliases. Agents cannot read/update tasks by ID
-or retag existing tasks; use `/pi-note` to select an existing task.
+or retag existing tasks; use `/pinote` to select an existing task.
 
 When allowed by `taskOfferPolicy`, the agent uses `pinote_propose` instead of
 asking in chat. The pin footer shows a pending suggestion, distinct from a selected task:
@@ -242,7 +242,7 @@ The configured `footer.titleWidth` bounds the entire row (default 60 columns). C
 
 Controls use the [Kitty preview handler](#display-only-preview), with no additional configuration. Fullscreen Kitty uses **Ctrl+Shift+click**. The Settings actions **Accept suggestion** and **Dismiss suggestion** perform the corresponding footer actions. No action submits input or starts an agent turn. Add and Dismiss preserve editor drafts; **Complete task** starts a clean session and reloads Pi, discarding the editor draft, so save unfinished input before completing a task.
 
-Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pi-note` before retrying, because a write may already have committed. Failed or stale writes never restart Pi. If another extension cancels the new session, the task remains completed and Pi reports the cancellation. The reload runs through the new session's fresh context; retired contexts are not reused.
+Completion requires an idle Pi session and no pending Pinote operation. It rejects stale selected-task links and externally changed revisions. Accepted mutations drain even if the helper disconnects. On an error, check `/pinote` before retrying, because a write may already have committed. Failed or stale writes never restart Pi. If another extension cancels the new session, the task remains completed and Pi reports the cancellation. The reload runs through the new session's fresh context; retired contexts are not reused.
 
 If another task fits better, the agent can replace an unaccepted suggestion by calling `pinote_propose` again, without waiting for dismissal. Replacement invalidates the old ✚/✖ links; only the latest suggestion can be accepted or dismissed. Pending suggestions survive `/reload` and session resume, including their full text and tag; new links replace stale capabilities. Accepted or dismissed suggestions never reappear on reload, but dismissal does not block new proposals—even in sessions saved by older versions. New sessions and forks start without a suggestion; selecting a task or navigating the tree clears it. Suggestion state is local, display-only session metadata, not model context. Pi saves the session after the first submitted message; quitting before that can still lose unsaved session state. Repeated acceptance cannot duplicate a note. A busy Pinote operation blocks acceptance. Noninteractive agents still ask in chat before using `pinote_add` with `select: true`. An existing selection is not replaced unless the user asks to switch. Reuse a saved
 tag name when it fits.
@@ -310,7 +310,7 @@ Names are case-sensitive, trimmed and NFC-normalized, at most 64 characters;
 accepted. Missing/blank values do not display and do not consume the field limit.
 `[]` or `maxFields: 0` hides configured fields, including PR.
 
-In `/pi-note → Settings`, **Add field** adds a global display definition, not a
+In `/pinote → Settings`, **Add field** adds a global display definition, not a
 task value. Select any field to edit **Link**, **Label**, **Format**, and **Width**.
 Label starts as the field name; clear it for no prefix. Link off displays plain
 text without a clickable link. Toggles, field additions/removals, and edits confirmed
@@ -369,7 +369,7 @@ Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on
 PR merges. No GitHub authentication is required. `PINOTE_PR_POLL_SECONDS` is no
 longer used. Other separately installed Pi PR/Git extensions are unaffected.
 
-Tools work without a TUI. `/pi-note` works in a TUI while the agent is running:
+Tools work without a TUI. `/pinote` works in a TUI while the agent is running:
 you can select/switch tasks, use Continue, preview tasks, respond to suggestions,
 and edit settings without interrupting the turn or submitting input. Completion
 and CLI installation/upgrades still require an idle session. Another pending

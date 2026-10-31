@@ -146,7 +146,7 @@ if(argv[0]==='agent'&&argv[1]==='get'&&!fs.existsSync(${JSON.stringify(reading)}
     const brokenConfig = join(overrides.PI_CODING_AGENT_DIR, "pi-note.json");
     mkdirSync(overrides.PI_CODING_AGENT_DIR, { recursive: true });
     writeFileSync(brokenConfig, '{"handoffPrompt":""}');
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(previews().length, 3, "Settings preview works even with invalid preferences");
     rmSync(brokenConfig);
     await event("session_tree");
@@ -192,8 +192,8 @@ setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},ar
     let completion: Promise<void> | undefined;
     loaded.runtime.sendUserMessage = (message: string, options: any) => {
       assert.equal(options.expandPromptTemplates, true);
-      assert.match(message, /^\/pi-note [a-f0-9:]+$/u);
-      completion = extension.commands.get("pi-note").handler(message.slice("/pi-note ".length), ctx);
+      assert.match(message, /^\/pinote [a-f0-9:]+$/u);
+      completion = extension.commands.get("pinote").handler(message.slice("/pinote ".length), ctx);
     };
     ctx.reload = () => { throw new Error("cannot reload a stale command context"); };
     ctx.newSession = async (options: any) => {

@@ -48,7 +48,7 @@ state routing, tools and UI.
 
 ## Use
 
-Open **`/pinote`** (`/pi-note` is an alias). Select or create a task, preview it,
+Open **`/pinote`**. Select or create a task, preview it,
 clear the selection, complete it, respond to suggestions, or edit shared settings.
 Selecting an existing task starts it immediately and returns focus to the prompt,
 with no extra confirmation. Creation and settings changes still require confirmation.
@@ -120,6 +120,10 @@ it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task da
 separate from global display settings.
 
 ## Migration
+
+Since pi-note 0.33.0, `/pinote` is the only slash command in both modes.
+The `/pi-note` alias is removed; update saved shortcuts to `/pinote`.
+The npm package name and `pi-note.json` configuration filename are unchanged.
 
 1. Back up the service machine's Pinote data; keep `notes.db` local to that machine.
 2. Start the standalone service against that same database and settings directory.

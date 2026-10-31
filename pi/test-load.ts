@@ -92,9 +92,9 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   try {
     cli("add", "Resume the task", "--no-notify");
     extension = await load();
-    assert.deepEqual([...extension.commands.keys()], ["pi-note"]);
+    assert.deepEqual([...extension.commands.keys()], ["pinote"]);
     await event(extension, "session_start");
-    assert.ok(!notices.some((message) => /\/pi-note-(?:setup|upgrade|done|preview|yes|no)/u.test(message)));
+    assert.ok(!notices.some((message) => /\/pinote-(?:setup|upgrade|done|preview|yes|no)/u.test(message)));
     assert.deepEqual([...extension.tools.keys()].sort(), [
       "pinote_add", "pinote_fields", "pinote_get_current", "pinote_propose", "pinote_tags", "pinote_update_current",
     ]);
@@ -111,20 +111,20 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     const config = join(temp, "pi", "pi-note.json");
     mkdirSync(dirname(config), { recursive: true });
     writeFileSync(config, '{"handoffPrompt":false}');
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.match(notices.at(-1)!, /handoffPrompt/);
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "active");
     assert.equal(entries.length, 0, "invalid configuration cannot select an initial task");
     assert.equal(draft, "Existing draft");
     rmSync(config);
     mkdirSync(config); // A directory is an unreadable configuration file, even when running as root.
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.match(notices.at(-1)!, /Cannot read .*pi-note\.json/);
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "active");
     assert.equal(entries.length, 0);
     assert.equal(draft, "Existing draft");
     rmSync(config, { recursive: true });
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(stripVTControlCharacters(statuses.at(-1)!), "📌 ✔ · [Untagged] Resume the task");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null, "session selection must not bind the folder");
     const prompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
@@ -171,7 +171,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     assert.equal(configuredFields.fields[0].format, "#<number>");
     assert.equal(draft, "", "startup never overwrites/submits the editor");
     choice = "Continue";
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(draft, prompt);
     const resumed = JSON.parse((await extension.tools.get("pinote_get_current").definition.execute(
       "resume", {}, undefined, undefined, ctx)).content[0].text);
@@ -190,25 +190,25 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       const customPrompt = `Read the current Pinote task.\nExplain ${action} 日本語; wait for approval.`;
       writeFileSync(config, JSON.stringify({ handoffPrompt: customPrompt }));
       draft = "Keep this draft";
-      await extension.commands.get("pi-note").handler("", ctx);
+      await extension.commands.get("pinote").handler("", ctx);
       assert.equal(draft, `Keep this draft\n\n${customPrompt}`);
     }
     choice = "Continue";
     writeFileSync(config, "{}");
     draft = "";
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(draft, prompt, "a missing key keeps the default");
     choice = "Settings";
     draft = "Preserve existing input";
     const beforeSettings = JSON.parse(cli("agent", "get", "1"));
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(draft, "Preserve existing input");
     assert.deepEqual(JSON.parse(cli("agent", "get", "1")), beforeSettings);
     assert.equal(JSON.parse(readFileSync(config, "utf8")).footer.titleWidth, 42);
     const savedPrompt = "Read the selected task.\nExplain Settings 日本語; wait.";
     assert.equal(JSON.parse(readFileSync(config, "utf8")).handoffPrompt, savedPrompt);
     choice = "Continue";
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(draft, `Preserve existing input\n\n${savedPrompt}`, "Settings prompt applies without reload");
     const beforeInvalid = JSON.parse(cli("agent", "get", "1"));
     const selectionsBeforeInvalid = entries.filter((entry) => entry.customType === "pinote-selection").length;
@@ -218,7 +218,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
       (handoffPrompt) => JSON.stringify({ handoffPrompt }))]) {
       writeFileSync(config, invalid);
       draft = "Unchanged draft";
-      await extension.commands.get("pi-note").handler("", ctx);
+      await extension.commands.get("pinote").handler("", ctx);
       assert.equal(draft, "Unchanged draft");
       assert.match(notices.at(-1)!, /pi-note\.json/);
       assert.deepEqual(JSON.parse(cli("agent", "get", "1")), beforeInvalid);
@@ -226,7 +226,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
     }
     assert.equal(notices.length - configNotices, 10, "every invalid configuration reports an error");
     choice = "Done"; // Invalid prompt configuration must not prevent completion.
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "1")).state, "done");
     assert.equal(JSON.parse(cli("agent", "selected", "--cwd", cwd)), null);
   } finally {

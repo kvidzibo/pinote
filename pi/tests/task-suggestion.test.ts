@@ -81,8 +81,8 @@ test("native suggestion and completion controls require consent and reject stale
     loaded.runtime.sendMessage = () => { throw new Error("must not start agent turns"); };
     loaded.runtime.sendUserMessage = (message: string, options: any) => {
       assert.equal(options.expandPromptTemplates, true);
-      assert.match(message, /^\/pi-note [a-f0-9:]+$/u, "footer dispatches a private token through the sole command");
-      completion = extension.commands.get("pi-note").handler(message.slice("/pi-note ".length), ctx);
+      assert.match(message, /^\/pinote [a-f0-9:]+$/u, "footer dispatches a private token through the sole command");
+      completion = extension.commands.get("pinote").handler(message.slice("/pinote ".length), ctx);
     };
   };
   try {
@@ -212,7 +212,7 @@ test("native suggestion and completion controls require consent and reject stale
     await event("session_start", { reason: "fork" });
     assert.equal(status, undefined);
     await propose("Keyboard fallback");
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(list().length, 2, "Settings can accept a suggestion while the agent is running");
     assert.equal((await get()).details.state, "in_progress");
     session.appendCustomEntry("pinote-selection", { id: null });
@@ -267,7 +267,7 @@ process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/n
     session.appendCustomEntry("pinote-selection", { id: 2 });
     await event("session_tree");
     settingsChoice = "Complete task (new session)";
-    await extension.commands.get("pi-note").handler("", ctx);
+    await extension.commands.get("pinote").handler("", ctx);
     assert.equal(JSON.parse(cli("agent", "get", "2")).state, "done", "keyboard completion uses the guarded path");
     assert.equal(draft, "", "completion clears only the new session's editor");
     assert.equal(replacements, 2);

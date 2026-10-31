@@ -50,7 +50,7 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
     };
     const host = await load(entries), vm = await load(otherEntries);
     await event(host, 'session_start', ctx); await event(vm, 'session_start', otherCtx);
-    assert.deepEqual([...host.commands.keys()], ['pinote', 'pi-note']);
+    assert.deepEqual([...host.commands.keys()], ['pinote']);
     assert.equal(host.tools.size, 7);
     const call = (extension: any, name: string, args: any, context: any) => extension.tools.get(`pinote_${name}`).definition.execute(name, args, undefined, undefined, context);
     const parsed = (result: any) => JSON.parse(result.content[0].text);

@@ -353,7 +353,7 @@ test('extension registers seven tools before startup and injects unavailable ins
   } as any);
   assert.equal(tools.length, 7);
   assert.ok(tools.every((name) => name.startsWith('pinote_')));
-  assert.deepEqual(commands, ['pinote', 'pi-note']);
+  assert.deepEqual(commands, ['pinote']);
   const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
   await handlers.get('before_agent_start')!(event, {});
   assert.match(event.systemPromptOptions.sections.pinote_remote, /UNAVAILABLE/);
