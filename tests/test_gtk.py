@@ -877,9 +877,8 @@ def test_visible_filter_count_and_empty_state_recovery(gtk):
     assert window.creation_tag == "Work"
     click_button(gtk, window, window.filter_button)
     wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
-    choices = window.visible_filter_menu.get_children()
+    choices = [item for item in window.visible_filter_menu.get_children() if item.get_visible()]
     assert [item.get_accessible().get_name() for item in choices if item.get_child()] == [
-        "Untagged (0)",
         "Work (1)",
         "Select all tags",
         "Clear selection",
@@ -1035,7 +1034,7 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     with Store(gtk.paths.database) as store:
         assert len(store.history()) == 8  # Filtering and opening Tags write no task history.
         for index in range(80):
-            store.create_tag(f"Unused {index:02}")
+            store.add(f"Task {index:02}", tag=f"Tag {index:02}")
     window.tags_window.close()
     wait_until(gtk.glib, lambda: window.tags_window is None)
     window._poll()
@@ -1229,6 +1228,11 @@ def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk
             if item.get_accessible().get_name() in {"Select all tags", "Clear selection"}
         )
     assert window.tag_filter == frozenset({"MCP"})
+    subprocess.run(["xdotool", "key", "Home", "Return"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.tag_filter is None)
+    clear = window.visible_filter_menu.get_children()[-1]
+    click_button(gtk, clear.get_toplevel(), clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
     window.visible_filter_menu.deactivate()
 
 
