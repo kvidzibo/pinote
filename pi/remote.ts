@@ -5,6 +5,7 @@ import { ENTRY_TYPE, RemoteSession, type SavedState } from './remote/session.ts'
 import { registerTools } from './remote/tools.ts';
 import { registerPreview, RemoteUI } from './remote/ui.ts';
 import { registerRemoteExit } from './remote/exit.ts';
+import { editorText } from './remote/protocol.ts';
 
 // Only an accepted /new (previousSessionFile) may carry this process-local selection.
 // Reload/resume/fork restore branch entries, never this map or a folder-global store.
@@ -48,12 +49,17 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
       const branch = ctx.sessionManager.getBranch();
       let carried = reason === 'new' && previous ? transfers.get(previous) : undefined;
       let launch: { task_id: number; updated_at: string } | undefined;
+      let prompt: string | undefined;
       if (request) {
         try {
           if (reason !== 'startup' || branch.some((entry) => entry.type === 'message' || entry.type === 'custom' && entry.customType === ENTRY_TYPE)) throw new Error('Launch requires a fresh Pi session');
           const parsed = JSON.parse(request);
           if (!parsed || !Number.isSafeInteger(parsed.task_id) || parsed.task_id < 1 ||
               typeof parsed.updated_at !== 'string' || !parsed.updated_at.length || parsed.updated_at.length > 128) throw new Error('Invalid launch request');
+          if (parsed.prompt !== undefined) {
+            if (typeof parsed.prompt !== 'string' || [...parsed.prompt].length > 4000) throw new Error('Invalid launch prompt');
+            prompt = editorText(parsed.prompt);
+          }
           launch = { task_id: parsed.task_id, updated_at: parsed.updated_at };
           carried = { scope: config.scope, contextId: randomUUID(), state: { launch } };
         } catch {
@@ -68,6 +74,10 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
         const control = view.controls.find((item) => item.id === `select:${launch.task_id}`);
         if (!control) throw new Error('Launch task changed or belongs to another service');
         await session.action(view, control); // The directory chooser's Start click granted consent.
+        if (prompt?.trim() && ctx.mode === 'tui' && ctx.isIdle()) {
+          if (ctx.ui.getEditorText().length) ctx.ui.notify('Launch draft not inserted: the editor already contains a draft.', 'warning');
+          else ctx.ui.setEditorText(prompt);
+        }
       }
       if (reason === 'new' && previous) transfers.delete(previous);
     } catch (error) {

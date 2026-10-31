@@ -8,6 +8,7 @@ from pinote.gui.config import ConfigError, GuiConfig
 def test_missing_config_uses_defaults_without_creating_files(tmp_path):
     path = tmp_path / "pinote/config.toml"
     assert GuiConfig.load(path).max_visible_notes == 10
+    assert GuiConfig.load(path).kitty_start_prompt == "is task clear?"
     assert not path.parent.exists()
 
 
@@ -52,6 +53,28 @@ def test_rejects_invalid_document(tmp_path, contents):
     path.write_text(contents)
     with pytest.raises(ConfigError, match=str(path)):
         GuiConfig.load(path)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ('"Check scope"', "Check scope"),
+        ('""', ""),
+        ('"Line 1\\nLine 2"', "Line 1\nLine 2"),
+        ("true", None),
+        ('"\\u001b[31m"', None),
+        ('"\\u202e"', None),
+        ('"' + "x" * 4001 + '"', None),
+    ],
+)
+def test_kitty_start_prompt_configuration(tmp_path, value, expected):
+    path = tmp_path / "config.toml"
+    path.write_text(f"[gui]\nkitty_start_prompt = {value}\n")
+    if expected is None:
+        with pytest.raises(ConfigError, match="kitty_start_prompt must be a string"):
+            GuiConfig.load(path)
+    else:
+        assert GuiConfig.load(path).kitty_start_prompt == expected
 
 
 def test_unreadable_config_is_not_treated_as_missing(tmp_path, monkeypatch):

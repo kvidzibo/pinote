@@ -180,8 +180,8 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
         note = store.add_note("Launch this task", tag=tag)
     calls = []
 
-    def launch(directory, selected, title):
-        calls.append((directory, selected, title))
+    def launch(directory, selected, title, prompt):
+        calls.append((directory, selected, title, prompt))
         raise OSError("Test launch failure")
 
     monkeypatch.setattr("pinote.gui.app.start_in_kitty", launch)
@@ -236,7 +236,7 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
     entry.set_text("Review tab")
     entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and window.launch_dialog is None)
-    assert calls == [(str(gtk.paths.data), note, "Review tab")]
+    assert calls == [(str(gtk.paths.data), note, "Review tab", "is task clear?")]
     assert "Test launch failure" in window.error_text.get_text()
     assert window.entry.get_text() == "Keep this draft"
     assert not window.action_pending and window.rows[note.id].note.state == "active"

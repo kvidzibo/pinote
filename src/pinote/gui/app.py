@@ -1499,7 +1499,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 return
             self.action_pending = True
             self._update_controls()
-            self._submit(lambda: start_in_kitty(directory, note, title), action=(note.id, "kitty"))
+            self._submit(
+                lambda: start_in_kitty(directory, note, title, self.config.kitty_start_prompt),
+                action=(note.id, "kitty"),
+            )
 
         dialog.connect("response", response)
         dialog.connect("destroy", lambda _dialog: setattr(self, "launch_dialog", None))

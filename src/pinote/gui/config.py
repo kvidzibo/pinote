@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ class ConfigError(ValueError):
 class GuiConfig:
     max_visible_notes: int = 10
     markdown_preview: bool = True
+    kitty_start_prompt: str = "is task clear?"
 
     @classmethod
     def load(cls, path: Path | None = None) -> GuiConfig:
@@ -40,4 +42,14 @@ class GuiConfig:
         markdown = section.get("markdown_preview", cls.markdown_preview)
         if type(markdown) is not bool:
             raise ConfigError(f"Invalid GUI config {path}: gui.markdown_preview must be a boolean.")
-        return cls(max_visible_notes=limit, markdown_preview=markdown)
+        prompt = section.get("kitty_start_prompt", cls.kitty_start_prompt)
+        if (
+            not isinstance(prompt, str)
+            or len(prompt) > 4000
+            or re.search(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", prompt)
+        ):
+            raise ConfigError(
+                f"Invalid GUI config {path}: gui.kitty_start_prompt must be a string of at most "
+                "4000 characters without control characters (except tabs/newlines)."
+            )
+        return cls(max_visible_notes=limit, markdown_preview=markdown, kitty_start_prompt=prompt)
