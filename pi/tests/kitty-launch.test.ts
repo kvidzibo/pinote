@@ -32,15 +32,9 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     else process.env.PINOTE_LAUNCH_TASK = typeof request === 'string' ? request : JSON.stringify(request);
     const handlers = new Map<string, Function>(), commands = new Map<string, any>(), notices: string[] = [];
     const choices: unknown[] = [];
-    let shutdowns = 0, idle = true, pullCode = 0;
-    const pulls: any[][] = [];
+    let shutdowns = 0, idle = true;
     const pi: any = {
-      exec: async (...args: any[]) => {
-        pulls.push(args);
-        assert.equal(entries.at(-1).data.state.selectedId, null, 'pull only after acknowledged completion');
-        assert.equal(shutdowns, 0, 'pull must finish before shutdown');
-        return { code: pullCode, killed: false, stdout: '', stderr: '' };
-      },
+      exec: async () => assert.fail('completion must not run Git, even with an unavailable upstream'),
       on: (name: string, handler: Function) => {
         const previous = handlers.get(name);
         handlers.set(name, async (...args: any[]) => { await previous?.(...args); return handler(...args); });
@@ -59,7 +53,6 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
         getEditorText: () => editor.text,
         setEditorText: (text: string) => { editor.text = text; editor.writes.push(text); } } };
     const client = { handlers, ctx, entries, notices, editor,
-      pulls, setPullCode: (code: number) => { pullCode = code; },
       get shutdowns() { return shutdowns; }, setIdle: (value: boolean) => { idle = value; },
       choose: async (...values: unknown[]) => { choices.push(...values); await commands.get('pinote').handler('', ctx); } };
     clients.push(client);
@@ -128,9 +121,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const reloaded = await open(undefined, [...dedicated.entries], 'reload', '', 'tui', dedicated.ctx.sessionManager.getSessionId());
     await reloaded.choose({ id: 'done' });
     assert.equal(reloaded.shutdowns, 1);
-    assert.equal(reloaded.pulls.length, 1);
-    assert.deepEqual(reloaded.pulls[0].slice(0, 2), ['git', ['pull', '--ff-only', '--no-rebase', '--no-autostash']]);
-    assert.equal(reloaded.pulls[0][2].cwd, temp);
+    assert.deepEqual(reloaded.notices, [], 'completion exits without Git warnings');
     assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'done');
     assert.equal(reloaded.entries.at(-1).data.state.selectedId, null);
 
@@ -139,7 +130,6 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     await normal.choose({ id: `select:${next.id}` });
     await normal.choose({ id: 'done' });
     assert.equal(normal.shutdowns, 0);
-    assert.equal(normal.pulls.length, 0);
     assert.equal(cli('agent', 'get', String(next.id)).state, 'done');
 
     const originalTask = cli('agent', 'add', '--text=Launch ownership does not follow other tasks');
@@ -149,20 +139,8 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     await switched.choose({ id: `select:${replacement.id}` });
     await switched.choose({ id: 'done' });
     assert.equal(switched.shutdowns, 0);
-    assert.equal(switched.pulls.length, 0);
     assert.equal(cli('agent', 'get', String(originalTask.id)).state, 'in_progress');
     assert.equal(cli('agent', 'get', String(replacement.id)).state, 'done');
-
-    const failedTask = cli('agent', 'add', '--text=Failed pull keeps completed session open');
-    const failed = await open({ task_id: failedTask.id, updated_at: failedTask.updated_at });
-    failed.setPullCode(1);
-    await failed.choose({ id: 'done' });
-    assert.equal(failed.shutdowns, 0);
-    assert.equal(failed.pulls.length, 1);
-    assert.equal(cli('agent', 'get', String(failedTask.id)).state, 'done');
-    assert.ok(failed.notices.some((notice) => notice.includes('git pull failed')));
-    await failed.choose({ id: 'done' }); // Completion cannot be replayed after a pull failure.
-    assert.equal(failed.pulls.length, 1);
 
     const saved = JSON.stringify(clients.map((client) => client.entries));
     assert.ok(!saved.includes(process.env.PINOTE_TOKEN!));

@@ -1,45 +1,19 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { test, type TestContext } from 'node:test';
+import { test } from 'node:test';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { pullBeforeExit, registerRemoteExit } from '../remote/exit.ts';
+import { registerRemoteExit } from '../remote/exit.ts';
 import type { RemoteSession } from '../remote/session.ts';
 import type { NativeView } from '../remote/protocol.ts';
 
 const selected = (): NativeView => ({ version: 1, title: 'Pinote', body: 'Selected task', revision: 'displayed',
   state: { selectedId: 7 }, controls: [{ id: 'done', kind: 'action', label: 'Complete task', revision: 'task-7' }] });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-const pullRepository = (t: TestContext): string => {
-  const cwd = mkdtempSync(join(tmpdir(), 'pinote-pull-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  for (const args of [
-    ['init', '--quiet', '--initial-branch=completion-test'],
-    ['remote', 'add', 'origin', join(cwd, 'upstream')],
-    ['config', 'branch.completion-test.remote', 'origin'],
-    ['config', 'branch.completion-test.merge', 'refs/heads/main'],
-  ]) {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-  }
-  return cwd;
-};
 
-test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async (t) => {
+test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async () => {
   const handlers = new Map<string, Function[]>();
-  let launch = false, pulls = 0, pullCode = 0;
   const pi = {
     on: (name: string, handler: Function) => handlers.set(name, [...handlers.get(name) ?? [], handler]),
-    exec: async (command: string, args: string[]) => {
-      assert.equal(launch, true, 'only dedicated launch completion may pull');
-      assert.equal(command, 'git');
-      assert.deepEqual(args, ['pull', '--ff-only', '--no-rebase', '--no-autostash']);
-      assert.equal(session.view?.state.selectedId, null);
-      pulls++;
-      return { code: pullCode, killed: false, stdout: '', stderr: '' };
-    },
+    exec: async () => assert.fail('completion must not run Git'),
     events: { emit: () => assert.fail('must not use gateway events') },
   } as unknown as ExtensionAPI;
   let text = '', idle = true, leaf = 'branch', shutdowns = 0, aborts = 0, forwarded = 0;
@@ -67,7 +41,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     NonNullable<ReturnType<ExtensionContext['ui']['getEditorComponent']>>;
   let factory: ReturnType<ExtensionContext['ui']['getEditorComponent']> = previous;
   const ctx = {
-    cwd: pullRepository(t), mode: 'tui', hasUI: true,
+    mode: 'tui', hasUI: true,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     isIdle: () => idle, abort: () => { aborts++; }, shutdown: () => { shutdowns++; },
     ui: {
@@ -87,7 +61,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     },
   } as unknown as ExtensionContext;
   const emit = async (name: string) => { for (const handler of handlers.get(name) ?? []) await handler({}, ctx); };
-  registerRemoteExit(pi, () => session as unknown as RemoteSession, (taskId) => launch && taskId === 7);
+  registerRemoteExit(pi, () => session as unknown as RemoteSession);
   await emit('session_start');
   let editor = factory!({} as any, {} as any, { matches: (data: string, action: string) => action === 'app.exit' && data === 'configured-exit' } as any);
   const press = async () => { editor.handleInput('configured-exit'); await tick(); };
@@ -120,19 +94,11 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
   uncertain = false;
   await press(); await choose('Complete task and exit');
   assert.equal(actions, 2); assert.equal(shutdowns, 1); assert.equal(aborts, 0);
-  assert.equal(pulls, 0);
-  launch = true; pullCode = 1;
-  await press(); await choose('Complete task and exit');
-  assert.equal(actions, 3); assert.equal(pulls, 1); assert.equal(shutdowns, 1);
-  assert.match(notices.at(-1)!, /git pull failed/);
-  pullCode = 0;
-  await press(); await choose('Complete task and exit');
-  assert.equal(actions, 4); assert.equal(pulls, 2); assert.equal(shutdowns, 2);
   idle = false;
   await press(); await choose('Exit without completing');
-  assert.equal(actions, 4); assert.equal(shutdowns, 3); assert.equal(aborts, 1);
+  assert.equal(actions, 2); assert.equal(shutdowns, 2); assert.equal(aborts, 1);
   session.refresh = async () => { session.view = { ...selected(), state: { selectedId: null } }; };
-  await press(); assert.equal(shutdowns, 4);
+  await press(); assert.equal(shutdowns, 3);
   await emit('session_shutdown'); assert.equal(factory, previous);
   await emit('session_start');
   editor = factory!({} as any, {} as any, { matches: () => true } as any);
@@ -143,7 +109,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
   await emit('session_shutdown');
   assert.equal(dialogSignal?.aborted, true);
   await choose('Complete task and exit');
-  assert.equal(actions, 4);
+  assert.equal(actions, 2);
   assert.equal(factory, later, 'must not overwrite later editor wrappers');
 });
 
@@ -227,105 +193,4 @@ test('remote /new gates replacement on exact task approval without exiting Pi', 
   const before = refreshes;
   assert.equal(await startNew(), undefined); assert.equal(refreshes, before);
   await emit('session_shutdown');
-});
-
-test('completion skips pulls in non-Git folders even with a translated locale, but preserves Git errors', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'pinote-no-git-'));
-  const locale = process.env.LC_ALL, language = process.env.LANGUAGE, gitDir = process.env.GIT_DIR;
-  const notices: string[] = [];
-  const pi = { exec: async () => assert.fail('must not pull outside a repository') } as unknown as ExtensionAPI;
-  const ctx = {
-    cwd, isIdle: () => true,
-    sessionManager: { getSessionId: () => 'session', getLeafId: () => 'branch' },
-    ui: { getEditorText: () => '', notify: (message: string) => notices.push(message) },
-  } as unknown as ExtensionContext;
-  try {
-    process.env.LC_ALL = 'fr_FR.UTF-8';
-    process.env.LANGUAGE = 'fr';
-    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), true);
-    assert.deepEqual(notices, [], 'no misleading pull or failure notice');
-    let checks = 0;
-    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => ++checks === 1), false,
-      'non-Git exit must recheck session ownership');
-    writeFileSync(join(cwd, '.git'), 'invalid gitfile\n');
-    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false);
-    assert.match(notices.at(-1)!, /Pi stayed open/);
-    process.env.GIT_DIR = join(cwd, 'missing.git');
-    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false,
-      'an invalid explicit Git directory is not an ordinary non-Git folder');
-  } finally {
-    if (gitDir === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = gitDir;
-    if (locale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = locale;
-    if (language === undefined) delete process.env.LANGUAGE; else process.env.LANGUAGE = language;
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('completion quietly skips missing remotes/upstreams, but preserves configured Git failures', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'pinote-local-git-'));
-  const git = (...args: string[]) => {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-  };
-  const notices: string[] = [];
-  let pulls = 0;
-  const pi = { exec: async () => {
-    pulls++;
-    return { code: 1, killed: false, stdout: '', stderr: 'upstream unavailable' };
-  } } as unknown as ExtensionAPI;
-  const ctx = {
-    cwd, isIdle: () => true,
-    sessionManager: { getSessionId: () => 'session', getLeafId: () => 'branch' },
-    ui: { getEditorText: () => '', notify: (message: string) => notices.push(message) },
-  } as unknown as ExtensionContext;
-  const complete = (current = () => true) => pullBeforeExit(pi, ctx, new AbortController().signal, current);
-  const skipped = async () => {
-    assert.equal(await complete(), true);
-    assert.equal(pulls, 0);
-    assert.deepEqual(notices, []);
-    let checks = 0;
-    assert.equal(await complete(() => ++checks < 3), false, 'skip must recheck session ownership');
-    const controller = new AbortController(); controller.abort();
-    assert.equal(await pullBeforeExit(pi, ctx, controller.signal, () => true), false);
-  };
-  try {
-    git('init', '--initial-branch=completion-test');
-    await skipped();
-    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'initial');
-    await skipped();
-    git('remote', 'add', 'origin', join(cwd, 'missing-remote'));
-    await skipped();
-    git('config', 'branch.completion-test.remote', 'origin');
-    await skipped();
-    git('config', 'branch.completion-test.merge', 'refs/heads/main');
-    git('tag', 'completion-test'); // Ambiguous short names must still use the branch's upstream.
-    assert.equal(await complete(), false, 'configured but unavailable upstream must not be skipped');
-    assert.equal(pulls, 1);
-    assert.match(notices.at(-1)!, /git pull failed/);
-    git('checkout', '--detach');
-    assert.equal(await complete(), false, 'detached HEAD in a remote-backed repo remains a warning');
-    assert.equal(pulls, 1);
-    writeFileSync(join(cwd, '.git/config'), '[invalid config\n');
-    assert.equal(await complete(), false, 'broken configuration must not be treated as local-only');
-    assert.equal(pulls, 1);
-  } finally { rmSync(cwd, { recursive: true, force: true }); }
-});
-
-test('successful pull cannot close a session or draft that changed while it ran', async (t) => {
-  let draft = '', leaf = 'branch', idle = true, current = true;
-  let finish: (result: { code: number; killed: boolean }) => void;
-  const pi = { exec: () => new Promise((resolve) => { finish = resolve; }) } as unknown as ExtensionAPI;
-  const ctx = {
-    cwd: pullRepository(t), isIdle: () => idle,
-    sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
-    ui: { getEditorText: () => draft, notify() {} },
-  } as unknown as ExtensionContext;
-  for (const change of [() => { draft = 'new draft'; }, () => { leaf = 'other'; },
-    () => { idle = false; }, () => { current = false; }]) {
-    draft = ''; leaf = 'branch'; idle = true; current = true;
-    const pulling = pullBeforeExit(pi, ctx, new AbortController().signal, () => current);
-    change();
-    finish!({ code: 0, killed: false });
-    assert.equal(await pulling, false);
-  }
 });
