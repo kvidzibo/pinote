@@ -1123,6 +1123,8 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     wait_until(gtk.glib, lambda: window.tags_window is None)
     window._poll()
     wait_until(gtk.glib, lambda: len(window.tags) == 82)
+    assert window.tag_filter == selected | {f"Tag {index:02}" for index in range(80)}
+    window._set_filter(selected)  # Explicit exclusions still work for newly discovered tags.
     # Without a window manager, closing the modal leaves X focus on the root window.
     subprocess.run(
         ["xdotool", "windowfocus", "--sync", str(window.get_window().get_xid())],
