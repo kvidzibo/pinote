@@ -15,7 +15,7 @@ export async function pullBeforeExit(pi: ExtensionAPI, ctx: ExtensionContext, si
     const repository = spawnSync('git', ['rev-parse', '--show-toplevel'], {
       cwd: ctx.cwd, encoding: 'utf8', timeout: 3000, env: { ...process.env, LC_ALL: 'C' },
     });
-    if (!repository.error && repository.status === 128 && repository.stderr.startsWith('fatal: not a git repository')) return unchanged();
+    if (!repository.error && repository.status === 128 && repository.stderr.startsWith('fatal: not a git repository (or any ')) return unchanged();
     if (repository.error || repository.status !== 0 || !unchanged()) throw new Error('Git repository check failed');
     ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
     const result = await pi.exec('git', ['pull', '--ff-only', '--no-rebase', '--no-autostash'], { cwd: ctx.cwd, signal, timeout: 30_000 });

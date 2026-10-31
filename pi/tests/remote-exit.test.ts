@@ -218,7 +218,7 @@ test('remote /new gates replacement on exact task approval without exiting Pi', 
 
 test('completion skips pulls in non-Git folders even with a translated locale, but preserves Git errors', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pinote-no-git-'));
-  const locale = process.env.LC_ALL, language = process.env.LANGUAGE;
+  const locale = process.env.LC_ALL, language = process.env.LANGUAGE, gitDir = process.env.GIT_DIR;
   const notices: string[] = [];
   const pi = { exec: async () => assert.fail('must not pull outside a repository') } as unknown as ExtensionAPI;
   const ctx = {
@@ -237,7 +237,11 @@ test('completion skips pulls in non-Git folders even with a translated locale, b
     writeFileSync(join(cwd, '.git'), 'invalid gitfile\n');
     assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false);
     assert.match(notices.at(-1)!, /Pi stayed open/);
+    process.env.GIT_DIR = join(cwd, 'missing.git');
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false,
+      'an invalid explicit Git directory is not an ordinary non-Git folder');
   } finally {
+    if (gitDir === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = gitDir;
     if (locale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = locale;
     if (language === undefined) delete process.env.LANGUAGE; else process.env.LANGUAGE = language;
     rmSync(cwd, { recursive: true, force: true });
