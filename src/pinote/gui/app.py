@@ -6,7 +6,6 @@ import sqlite3
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from importlib.resources import files
-from pathlib import Path
 
 import gi
 
@@ -1494,7 +1493,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
         content = dialog.get_content_area()
         content.set_border_width(16)
         content.set_spacing(8)
-        title = f"[{note.tag}]" if note.tag else Path(directory).name or directory
+        summary = note.text.splitlines()[0][:30]
+        title = f"[{note.tag}] {summary}" if note.tag else summary
         entry = Gtk.Entry(text=title, activates_default=True)
         label = Gtk.Label(label="_Tab name", use_underline=True, xalign=0)
         label.set_mnemonic_widget(entry)

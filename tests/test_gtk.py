@@ -171,13 +171,17 @@ def animations(gtk):
 
 
 @pytest.mark.parametrize("tag", [None, "pinote"])
+@pytest.mark.parametrize(
+    ("text", "summary"),
+    [("Launch this task", "Launch this task"), ("界" * 31 + "\nIgnore this line", "界" * 30)],
+)
 def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
-    gtk, monkeypatch, tag
+    gtk, monkeypatch, tag, text, summary
 ):
     from pinote.gui.app import Gtk
 
     with Store(gtk.paths.database) as store:
-        note = store.add_note("Launch this task", tag=tag)
+        note = store.add_note(text, tag=tag)
     calls = []
 
     def launch(directory, selected, title, prompt):
@@ -215,7 +219,7 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
         for child in name_dialog.get_content_area().get_children()
         if isinstance(child, Gtk.Entry)
     )
-    assert entry.get_text() == (f"[{tag}]" if tag else gtk.paths.data.name)
+    assert entry.get_text() == (f"[{tag}] {summary}" if tag else summary)
     assert entry.get_selection_bounds() == (0, len(entry.get_text()))
     name_dialog.response(Gtk.ResponseType.CANCEL)
     assert window.launch_dialog is None and calls == []
@@ -308,7 +312,9 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     assert not isinstance(dialog, Gtk.FileChooserDialog)
     dialog.response(Gtk.ResponseType.ACCEPT)
     wait_until(gtk.glib, lambda: not window.pending)
-    assert calls == [(str(gtk.paths.data), note.id, "[Project]", "is task clear?")]
+    assert calls == [
+        (str(gtk.paths.data), note.id, "[Project] Launch tagged task", "is task clear?")
+    ]
     assert window.model.notes()[0].state == "active"
     # Missing or permission-denied defaults must not block manual selection.
     locked = gtk.paths.data / "locked"
@@ -338,7 +344,9 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     wait_until(gtk.glib, lambda: window.launch_dialog is not None)
     assert isinstance(window.launch_dialog, Gtk.FileChooserDialog)
     window.launch_dialog.response(Gtk.ResponseType.CANCEL)
-    assert calls == [(str(gtk.paths.data), note.id, "[Project]", "is task clear?")]
+    assert calls == [
+        (str(gtk.paths.data), note.id, "[Project] Launch tagged task", "is task clear?")
+    ]
 
 
 def test_compact_dunst_layout_and_accessible_controls(gtk):
