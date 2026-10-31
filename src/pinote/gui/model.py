@@ -6,6 +6,7 @@ import hashlib
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from pinote.paths import Paths, display_lock
 from pinote.store import Note, NoteError, Store
@@ -64,6 +65,19 @@ class ReminderModel:
     def tags(self) -> list[str]:
         with Store(self.paths.database, timeout=0.1) as store:
             return store.tags()
+
+    def tag_folders(self) -> dict[str, str | None]:
+        with Store(self.paths.database, timeout=0.1) as store:
+            return store.tag_folders()
+
+    def tag_folder(self, tag: str | None) -> str | None:
+        folder = self.tag_folders().get(tag) if tag is not None else None
+        return folder if folder and Path(folder).is_dir() else None
+
+    def set_tag_folder(self, name: str, folder: str | None) -> bool:
+        with display_lock(self.paths, blocking=False):
+            with Store(self.paths.database, timeout=0.1) as store:
+                return store.set_tag_folder(name, folder)
 
     def create_tag(self, name: str) -> str:
         with display_lock(self.paths, blocking=False):

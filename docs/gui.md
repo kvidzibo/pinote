@@ -63,11 +63,13 @@ does not reinstall packages or change desktop configuration.
 Update **both** the CLI and GUI installations before reopening the GUI. For the
 editable setup above, update the checkout and run `uv tool install --reinstall .`
 for the separately installed CLI. Back up `notes.db` first ([backup instructions](usage.md#data-privacy-and-backup)).
-The first database open upgrades schema 1–5 to **6** atomically, retaining note IDs,
+The first database open upgrades schema 1–6 to **7** atomically, retaining note IDs,
 timestamps, tags, reminders, history, and import markers. Schema 5 stores tags separately,
 including unused tags; schema 6 adds agent fields, history snapshots, and per-directory
 Pi task selections. Existing tasks start with no agent fields; schema 1/2 tasks start
-untagged. Older pinote versions cannot read schema 6.
+untagged. Schema 7 adds optional default folders to saved tags; existing tags have
+none. Versions before 0.15.0 cannot read schema 7. Upgrade every CLI/GUI installation
+using the database, including the CLI used by the Pinote service.
 Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Historical text is preserved, not replaced when a task is edited.
 
@@ -190,6 +192,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
   updates all attached tasks, including archived and scheduled tasks. **Delete**
   asks for confirmation, then clears the tag from tasks and removes it from the registry;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
+  Select a saved tag and use the **folder icon** to set its default working folder
+  for **Start in Kitty…**. The adjacent **×** clears it. Folder changes save immediately
+  and survive renaming and restarts. Without a default (or if its folder is no longer
+  available on this machine), starting still asks you to choose a folder. Untagged
+  tasks always use the chooser. The tab-name prompt is unchanged.
 - The **filter control** (funnel icon) in the bottom toolbar shows the current tag filter
   and matching active-task count. Click it to toggle one or more tags, including **Untagged**;
   tasks matching **any** selected tag appear. **In-progress tasks always bypass tag filtering**,

@@ -82,7 +82,8 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
   bottom-bar-only views.
 - **Menus:** the bottom menu opens reminders, the archive, and tag management.
 - **Tags:** the dropdown below the input tags new tasks. Tags stay saved even
-  without tasks.
+  without tasks. Manage tags can set a default folder for **Start in Kitty…**;
+  otherwise, choose a folder when starting.
 - **Filters:** the separate funnel control selects one or more tags to view
   together and shows the matching task count.
 
@@ -141,7 +142,7 @@ Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
 See [backup details](docs/usage.md#data-privacy-and-backup).
 
 Back up before upgrading, and update both CLI and GUI installations together.
-Older versions cannot read schema 6. See the
+Versions before 0.15.0 cannot read schema 7. See the
 [upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
 
 ## Validation
