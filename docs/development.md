@@ -48,6 +48,8 @@ shared store, so both frontends use the same progress states and history.
 connects directly to the standalone Pinote HTTP service; only that service calls
 `note`, never SQLite directly. The explicit local-only compatibility extension also
 uses `note`. Tests need the checkout's own `.venv/bin/note` and exercise real Pi
-loading and HTTP/stdio connections against temporary data. Package publishing runs
-after the full CI suite on pushes to `main`; the [package README](../pi/README.md#development-and-releases)
+loading and HTTP/stdio connections against temporary data. The full CI suite runs
+once per pull request update. On pushes to `main`, the publish workflow calls that
+same suite once before publishing; there is no
+standalone push-triggered test run. The [package README](../pi/README.md#development-and-releases)
 documents the one-time npm trusted-publisher setup and version-bump workflow.
