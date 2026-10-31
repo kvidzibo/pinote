@@ -1,6 +1,6 @@
 # Local-only Pi extension
 
-[npm](https://www.npmjs.com/package/pinote) · [Pi package directory](https://pi.dev/packages/pinote)
+[npm](https://www.npmjs.com/package/pi-note) · [Pi package directory](https://pi.dev/packages/pi-note)
 
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
 in Pi: selected-task footer status, `/pinote`, and agent current-task read/update,
