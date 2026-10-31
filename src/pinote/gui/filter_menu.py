@@ -19,6 +19,8 @@ class FilterMenu(Gtk.Menu):
         if not (0 <= x < popup.get_allocated_width() and 0 <= y < popup.get_allocated_height()):
             return None
         for item in self.get_children():
+            if not item.get_visible():
+                continue
             allocation = item.get_allocation()
             # Menu children live in a scrolling bin; allocations alone ignore its offset.
             left, top = item.translate_coordinates(popup, 0, 0)

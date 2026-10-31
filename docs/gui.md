@@ -178,7 +178,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   scheduled, or archived tasks are available for reuse. Tags remain saved even when unused.
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;
-  scheduled-only and archived-only tags show **(0)**. In filter lists, the play icon and
+  scheduled-only, archived-only, and unused tags show **(0)** in the task tag menu
+  but are hidden in filter lists. **Untagged** is also hidden from filters when empty.
+  In filter lists, the play icon and
   adjacent number show how many tasks on each tag are in progress. Counts use the latest loaded list.
 - Task tags sit after the note text as muted labels; hover to read a truncated tag.
   In-progress tasks keep neutral text, with a subtle row tint and amber checkbox.

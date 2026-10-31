@@ -877,9 +877,8 @@ def test_visible_filter_count_and_empty_state_recovery(gtk):
     assert window.creation_tag == "Work"
     click_button(gtk, window, window.filter_button)
     wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
-    choices = window.visible_filter_menu.get_children()
+    choices = [item for item in window.visible_filter_menu.get_children() if item.get_visible()]
     assert [item.get_accessible().get_name() for item in choices if item.get_child()] == [
-        "Untagged (0)",
         "Work (1)",
         "Select all tags",
         "Clear selection",
@@ -1035,7 +1034,7 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     with Store(gtk.paths.database) as store:
         assert len(store.history()) == 8  # Filtering and opening Tags write no task history.
         for index in range(80):
-            store.create_tag(f"Unused {index:02}")
+            store.add(f"Task {index:02}", tag=f"Tag {index:02}")
     window.tags_window.close()
     wait_until(gtk.glib, lambda: window.tags_window is None)
     window._poll()
@@ -1177,6 +1176,66 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
         assert len(store.history()) == 5  # Filtering never mutates tasks.
 
 
+def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk):
+    with Store(gtk.paths.database) as store:
+        store.create_tag("MCP")
+        store.add("Archived task", tag="Archived")
+        store.transition(1, "done")
+        store.add("Scheduled task", tag="Scheduled")
+        store.schedule(
+            2,
+            datetime.now(UTC) + timedelta(days=1),
+            expected_updated_at=store.get(2).updated_at,
+        )
+        work = store.add("Active task", tag="Work")
+        store.transition(work, "start")
+    window = gtk.open()
+    window._set_filter(frozenset({"MCP"}))
+    window._prepare_filters()
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
+
+    def visible_tags(menu):
+        return [
+            item.get_accessible().get_name()
+            for item in menu.get_children()
+            if hasattr(item, "filter_tag") and item.get_visible()
+        ]
+
+    for menu in (window.visible_filter_menu, window.filter_menu):
+        menu.show_all()
+        assert visible_tags(menu) == ["Work (1)"]
+    window.filter_menu.hide()
+    window._prepare_composer_tags(window.composer_tag_menu)
+    assert "MCP" in [
+        item.get_accessible().get_name() for item in window.composer_tag_menu.get_children()
+    ]
+    with Store(gtk.paths.database) as store:
+        note = store.add("New MCP task", tag="MCP")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and note in window.rows)
+    assert visible_tags(window.visible_filter_menu) == ["MCP (1)", "Work (1)"]
+    with Store(gtk.paths.database) as store:
+        store.transition(note, "done")
+        store.transition(work, "done")
+    window._poll()
+    wait_until(gtk.glib, lambda: not window.pending and not window.notes_snapshot)
+    for menu in (window.visible_filter_menu, window.filter_menu):
+        assert visible_tags(menu) == []
+        assert all(
+            item.get_visible()
+            for item in menu.get_children()
+            if item.get_accessible().get_name() in {"Select all tags", "Clear selection"}
+        )
+    assert window.tag_filter == frozenset({"MCP"})
+    subprocess.run(["xdotool", "key", "Home", "Return"], env=gtk.env, check=True, timeout=5)
+    wait_until(gtk.glib, lambda: window.tag_filter is None)
+    clear = window.visible_filter_menu.get_children()[-1]
+    click_button(gtk, clear.get_toplevel(), clear)
+    wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
+    window.visible_filter_menu.deactivate()
+
+
 def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     from pinote.gui.app import Gtk
 
@@ -1192,10 +1251,9 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert [
         item.get_accessible().get_name()
         for item in window.filter_menu.get_children()
-        if item.get_child()
+        if item.get_child() and item.get_visible()
     ] == [
         "Untagged (1)",
-        "Archived (0)",
         "Work (1)",
         "Select all tags",
         "Clear selection",
@@ -1263,7 +1321,7 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         subprocess.run(["xdotool", "key", "Home", "Right"], env=gtk.env, check=True, timeout=5)
         wait_until(gtk.glib, lambda: window.filter_menu.get_mapped())
         for item in window.filter_menu.get_children():
-            if isinstance(item, Gtk.CheckMenuItem):
+            if isinstance(item, Gtk.CheckMenuItem) and item.get_visible():
                 assert item.progress_count.get_mapped()
         previous = window.tag_filter
         select(window.filter_menu, label)
@@ -1304,10 +1362,8 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert [
         item.get_accessible().get_name()
         for item in window.filter_menu.get_children()
-        if item.get_child()
+        if item.get_child() and item.get_visible()
     ] == [
-        "Untagged (0)",
-        "Archived (0)",
         "Personal 🐦 (1)",
         "Work (1)",
         "Select all tags",
@@ -1352,12 +1408,10 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     assert [
         item.get_accessible().get_name()
         for item in window.filter_menu.get_children()
-        if item.get_child()
+        if item.get_child() and item.get_visible()
     ] == [
         "Untagged (1)",
-        "Archived (0)",
         "Personal 🐦 (1)",
-        "Work (0)",
         "Select all tags",
         "Clear selection",
     ]
