@@ -72,7 +72,12 @@ class ReminderModel:
 
     def tag_folder(self, tag: str | None) -> str | None:
         folder = self.tag_folders().get(tag) if tag is not None else None
-        return folder if folder and Path(folder).is_dir() else None
+        try:
+            if folder and Path(folder).is_dir() and os.access(folder, os.R_OK | os.X_OK):
+                return folder
+        except OSError:
+            pass  # Defaults unavailable on this machine use the manual chooser.
+        return None
 
     def set_tag_folder(self, name: str, folder: str | None) -> bool:
         with display_lock(self.paths, blocking=False):

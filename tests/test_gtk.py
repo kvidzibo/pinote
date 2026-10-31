@@ -303,17 +303,24 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     wait_until(gtk.glib, lambda: not window.pending)
     assert calls == [(str(gtk.paths.data), note.id, gtk.paths.data.name)]
     assert window.model.notes()[0].state == "active"
-    # A folder from another machine or one removed later must not block launching.
-    with Store(gtk.paths.database) as store:
-        store.connection.execute(
-            "UPDATE tags SET default_folder=? WHERE name='Project'",
-            (str(gtk.paths.data / "missing"),),
-        )
-        store.connection.commit()
-    window._open_kitty(note)
-    wait_until(gtk.glib, lambda: window.launch_dialog is not None)
-    assert isinstance(window.launch_dialog, Gtk.FileChooserDialog)
-    window.launch_dialog.response(Gtk.ResponseType.CANCEL)
+    # Missing or permission-denied defaults must not block manual selection.
+    locked = gtk.paths.data / "locked"
+    child = locked / "child"
+    child.mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        for unavailable in (gtk.paths.data / "missing", locked, child):
+            with Store(gtk.paths.database) as store:
+                store.connection.execute(
+                    "UPDATE tags SET default_folder=? WHERE name='Project'", (str(unavailable),)
+                )
+                store.connection.commit()
+            window._open_kitty(note)
+            wait_until(gtk.glib, lambda: window.launch_dialog is not None)
+            assert isinstance(window.launch_dialog, Gtk.FileChooserDialog)
+            window.launch_dialog.response(Gtk.ResponseType.CANCEL)
+    finally:
+        locked.chmod(0o700)
     window._open_tags("Project")
     manager = window.tags_window
     wait_until(gtk.glib, lambda: not manager.pending and manager.selected == "Project")
