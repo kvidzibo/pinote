@@ -18,6 +18,11 @@ export PINOTE_NOTE_COMMAND="$PWD/.venv/bin/note"
 npm --prefix pi run serve
 ```
 
+After building, production installs may prune development/peer-only packages:
+`npm --prefix pi prune --omit=dev --omit=peer --ignore-scripts`.
+Run `npm --prefix pi run check:runtime` before restarting the service; its required
+terminal-width helpers are runtime dependencies, not development-only packages.
+
 The bearer token is mandatory, including on loopback: use at least 32 random
 non-whitespace characters. Store it in an owner-only regular file (mode `0600`),
 never commit or paste it into a conversation. For a new setup, after creating the
