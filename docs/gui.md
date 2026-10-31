@@ -226,10 +226,10 @@ Edits and tag changes retain the task ID and record old/new values in history;
   retagged task may be hidden by the current filter; use **Select all tags** to see every task.
   The new-task draft is kept when switching filters.
   Archive and CLI/Dunst listings ignore tag filters, and restored tasks retain
-  their tags. A saved or restored task hidden by the filter or collapsed view shows
-  a brief explanation with **Show task** and dismissal icons. Showing it explicitly
-  opens the full list, selects all tags, and scrolls to the task; saving/restoring
-  alone never changes the filter, view, input draft, or new-task tag.
+  their tags. A saved or restored task hidden by the filter shows a brief explanation
+  with **Show task** and dismissal icons. Showing it explicitly selects all tags and
+  scrolls to the task; saving/restoring alone never changes the filter, input draft,
+  or new-task tag.
 - Left-click note text or empty space in the checklist to focus **Add a task…**.
   Drag to select text: releasing the mouse copies the selection to the clipboard,
   then focuses the input. A plain click leaves the clipboard unchanged. Buttons,
@@ -265,13 +265,6 @@ Edits and tag changes retain the task ID and record old/new values in history;
   the pointer to reposition the window; release to stop dragging.
   Action buttons use bundled icons with tooltips and accessible names, independent
   of the desktop icon theme. Tag choices keep their text labels.
-- The **minimise button** next to the drag handle cycles with each click:
-  **all notes → in-progress notes and bottom bar → bottom bar only → all notes**.
-  Tag filters apply only to tasks not in progress. The in-progress view includes
-  newly started tasks immediately.
-  Hidden tasks are unchanged; the input draft is preserved. The chosen view stays in
-  effect during updates: added tasks, reset tasks, and due reminders are ordinary
-  tasks, so switch to all notes to see them. Reopening starts fully open.
 - The bottom **menu** beside **+** and the drag handle contains icon-only actions:
   **Filter by tag** (funnel), **Reminders…** (bell), **Archive…** (box),
   **Manage tags…** (tag), and **Close** (×).

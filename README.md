@@ -78,8 +78,6 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 - **Task actions:** right-click task text to change its state, edit, tag, or schedule
   it. Unfinished edits are restored when reopened and remain drafts until saved.
 - **Window size:** drag any edge or corner; width and height survive restarts.
-- **Views:** the minimise button cycles all notes, in-progress only, and
-  bottom-bar-only views.
 - **Menus:** the bottom menu opens reminders, the archive, and tag management.
 - **Tags:** the dropdown below the input tags new tasks. Tags stay saved even
   without tasks. Manage tags can set a default folder for **Start in Kitty…**;

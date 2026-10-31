@@ -389,7 +389,6 @@ def test_compact_dunst_layout_and_accessible_controls(gtk):
     assert window.toolbar.get_children()[2:] == [
         window.filter_button,
         window.drag_button,
-        window.minimise_button,
         window.menu_button,
     ]
     assert window.entry_box.get_allocated_width() > 350
@@ -494,7 +493,7 @@ def test_horizontal_edge_resize_preserves_width_and_automatic_height(gtk):
     assert reopened.get_size().width == 370
 
 
-def test_resize_both_axes_remembers_size_without_collapsed_height(gtk):
+def test_resize_both_axes_remembers_size(gtk):
     with Store(gtk.paths.database) as store:
         for index in range(25):
             store.add(f"Task {index}: resize the checklist and keep its dimensions")
@@ -533,13 +532,6 @@ def test_resize_both_axes_remembers_size_without_collapsed_height(gtk):
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending)
     assert tuple(window.get_size()) == expected
-    window._cycle_view(None)
-    wait_until(gtk.glib, lambda: window.get_size().height < expected[1])
-    window._cycle_view(None)
-    window._cycle_view(None)
-    wait_until(gtk.glib, lambda: tuple(window.get_size()) == expected)
-    window._cycle_view(None)
-    wait_until(gtk.glib, lambda: window.get_size().height < expected[1])
     application = window.get_application()
     window.close()
     wait_until(gtk.glib, lambda: window.closed)
@@ -548,7 +540,7 @@ def test_resize_both_axes_remembers_size_without_collapsed_height(gtk):
     assert tuple(reopened.get_size()) == expected
 
 
-def test_minimise_cycle_and_context_state_icons(gtk):
+def test_context_state_icons(gtk):
     from pinote.gui.app import Gdk, Gtk
 
     with Store(gtk.paths.database) as store:
@@ -556,34 +548,10 @@ def test_minimise_cycle_and_context_state_icons(gtk):
         store.add("Started task")
         store.transition(2, "start")
     window = gtk.open()
-    window.entry.set_text("Preserved draft")
-    window.deferred_progress.add(2)
-    window._arrange_rows()
 
     def settle():
         ready = time.monotonic() + 0.2
         wait_until(gtk.glib, lambda: time.monotonic() >= ready and not window.geometry_source)
-
-    def cycle(mode, ordinary, progress):
-        settle()
-        click_button(gtk, window, window.minimise_button)
-        wait_until(gtk.glib, lambda: window.view_mode == mode)
-        window._render(window.notes_snapshot)
-        settle()
-        assert window.scroll.get_visible() == ordinary
-        assert window.progress_scroll.get_visible() == progress
-        assert window.composer.get_mapped()
-        assert window.entry.get_text() == "Preserved draft"
-        assert window.minimise_button.get_image().get_gicon() is not None
-        return window.get_size().height
-
-    settle()
-    full_height = window.get_size().height
-    progress_height = cycle(1, False, True)
-    assert window.rows[2].get_parent() is window.progress_list
-    bar_height = cycle(2, False, False)
-    assert bar_height < progress_height < full_height
-    cycle(0, True, window.rows[2].get_parent() is window.progress_list)
 
     def menu_action(label):
         settle()
@@ -621,15 +589,11 @@ def test_minimise_cycle_and_context_state_icons(gtk):
     assert window.rows[1].note.state == "active"
     menu_action("Complete")
     wait_until(gtk.glib, lambda: 1 not in window.rows)
-    cycle(1, False, True)
-    cycle(2, False, False)
     with Store(gtk.paths.database) as store:
         store.transition(2, "done")
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending and not window.rows)
-    assert not window.scroll.get_visible() and not window.progress_scroll.get_visible()
-    cycle(0, True, False)
-    cycle(1, False, False)
+    assert window.scroll.get_visible() and not window.progress_scroll.get_visible()
 
 
 def test_escape_dismisses_menus_then_clears_creation_tag_then_closes(gtk):
@@ -1172,11 +1136,6 @@ def test_multi_tag_filter_toggles_union_with_real_pointer(gtk):
     toggle("Personal", frozenset({"Work", "Personal"}), {2, 3})
     assert window.rows[3].get_parent() is window.progress_list
     assert "Personal, Work" in window.filter_button.get_tooltip_text()
-    window._cycle_view(window.minimise_button)
-    assert not window.scroll.get_visible() and window.progress_scroll.get_visible()
-    window._cycle_view(window.minimise_button)
-    assert not window.scroll.get_visible() and not window.progress_scroll.get_visible()
-    window._cycle_view(window.minimise_button)
     toggle("Work", frozenset({"Personal"}), {3})
     toggle("Personal", frozenset(), {3})
     assert window.filter_label.get_text() == "No tags"
@@ -1648,7 +1607,7 @@ def test_edit_and_new_tag_errors_keep_input_and_reject_stale_revision(gtk, tag_o
 @pytest.mark.parametrize(
     "action", ["add", "restore", "restore-close", "stale-restore", "failed-add", "stale-checklist"]
 )
-@pytest.mark.parametrize("hidden_by", ["filter", "collapsed", "visible"])
+@pytest.mark.parametrize("hidden_by", ["filter", "visible"])
 def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
     gtk, monkeypatch, action, hidden_by
 ):
@@ -1664,9 +1623,7 @@ def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
         gtk.glib.source_remove(window.refresh_source)
         window.refresh_source = gtk.glib.timeout_add(60000, window._poll)
     window._set_filter(frozenset({"Work"}) if hidden_by == "filter" else None)
-    if hidden_by == "collapsed":
-        window._cycle_view(None)
-    current_filter, current_view = window.tag_filter, window.view_mode
+    current_filter = window.tag_filter
     window.entry.set_text("Keep unrelated input")
     if action in {"add", "failed-add"}:
         window._select_creation_tag("Personal")
@@ -1709,14 +1666,13 @@ def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
             ),
         )
         note_id, verb = 2, "Restored"
-    assert window.tag_filter == current_filter and window.view_mode == current_view
+    assert window.tag_filter == current_filter
     if action in {"failed-add", "stale-restore"} or hidden_by == "visible":
         assert not window.feedback.get_visible()
         assert window.saved_feedback is None
     else:
         assert window.feedback.get_visible()
-        reason = "current filter" if hidden_by == "filter" else "collapsed view"
-        assert window.feedback_text.get_text() == f"{verb} — hidden by {reason}."
+        assert window.feedback_text.get_text() == f"{verb} — hidden by current filter."
         assert (
             window.feedback_show.get_tooltip_text()
             == window.feedback_show.get_accessible().get_name()
@@ -1725,7 +1681,7 @@ def test_saved_hidden_tasks_explain_success_and_reveal_only_on_request(
         draft = window.entry.get_text()
         window.feedback_show.clicked()
         wait_until(gtk.glib, lambda: note_id in window.rows and window.reveal_note_id is None)
-        assert window.tag_filter is None and window.view_mode == 0
+        assert window.tag_filter is None
         assert window.entry.get_text() == draft
         assert window.creation_tag == ("Personal" if action == "add" else None)
         assert not window.feedback.get_visible() and window.saved_feedback is None
@@ -1952,7 +1908,6 @@ def test_only_action_controls_have_tooltips_on_ordinary_notes(gtk):
         window.add_button,
         window.menu_button,
         window.drag_button,
-        window.minimise_button,
         window.rows[1].preview_button,
         window.show_all_button,
         window.feedback_show,

@@ -303,7 +303,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.launch_dialog: Gtk.Dialog | None = None
         self.context_menu: Gtk.Menu | None = None
         self.context_note_id: int | None = None
-        self.view_mode = 0  # All notes → in progress → bottom bar.
         self.tag_filter: frozenset[str] | None = frozenset({""})  # "" = Untagged; None = All.
         self.creation_tag: str | None = None
         self.tags: list[str] = []
@@ -323,7 +322,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self._configured_geometry = None
         self._requested_height: int | None = None
         self.manual_height: int | None = None
-        self.full_height: int | None = None
         self._remembered_size: tuple[int, int] | None = None
         self.size_source = 0
         self.size_cache = WindowSizeCache(model.paths.data / "gui-window-size.json")
@@ -493,9 +491,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.drag_button = icon_button("move-symbolic", "Hold and drag to move window")
         self.drag_button.set_valign(Gtk.Align.CENTER)
         self.drag_button.connect("button-press-event", self._begin_drag)
-        self.minimise_button = icon_button("view-collapse-symbolic", "Show only in-progress notes")
-        self.minimise_button.set_valign(Gtk.Align.CENTER)
-        self.minimise_button.connect("clicked", self._cycle_view)
         # Native menus stay visible above even an empty, very short checklist.
         self.menu = Gtk.Menu()
         self.menu.set_no_show_all(True)
@@ -572,7 +567,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.toolbar.pack_start(Gtk.Box(hexpand=True), True, True, 0)
         self.toolbar.pack_start(self.filter_button, False, False, 0)
         self.toolbar.pack_start(self.drag_button, False, False, 0)
-        self.toolbar.pack_start(self.minimise_button, False, False, 0)
         self.toolbar.pack_start(self.menu_button, False, False, 0)
         self.composer.pack_start(self.input_row, False, False, 0)
         self.composer.pack_start(self.toolbar, False, False, 0)
@@ -720,7 +714,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # The WM grab can consume button-release, including a click without a drag.
         # Preserve the panel's normal click-to-type behavior before handing it off.
         self.entry.grab_focus()
-        if self.view_mode == 0 and edge not in (Gdk.WindowEdge.WEST, Gdk.WindowEdge.EAST):
+        if edge not in (Gdk.WindowEdge.WEST, Gdk.WindowEdge.EAST):
             self.manual_height = self.get_size().height
         self.begin_resize_drag(edge, event.button, int(event.x_root), int(event.y_root), event.time)
         return True
@@ -761,9 +755,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 scroll.set_max_content_height(limit)
         self.get_child().set_child_packing(
             self.progress_scroll,
-            self.view_mode == 0
-            and self.manual_height is not None
-            and not self.scroll.get_visible(),
+            self.manual_height is not None and not self.scroll.get_visible(),
             True,
             0,
             Gtk.PackType.START,
@@ -771,9 +763,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         width = size.width
         minimum, natural = self.get_child().get_preferred_height_for_width(width)
         desired_height = (
-            max(minimum, self.manual_height)
-            if (self.view_mode == 0 and self.manual_height is not None)
-            else natural
+            max(minimum, self.manual_height) if self.manual_height is not None else natural
         )
         desired_height = min(desired_height, max(minimum, area.height - 50))
         hints = Gdk.Geometry()
@@ -783,11 +773,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
         hints.max_width = max(hints.min_width, area.width - 24)
         self.set_geometry_hints(None, hints, Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE)
         self._requested_height = desired_height
-        if self.view_mode == 0:
-            self.full_height = desired_height
         if height != desired_height:
             self.resize(width, desired_height)
-        self._remember_size(width)
+        self._remember_size(width, desired_height)
         position = (self.anchor_x, max(area.y, self.anchor_bottom - height))
         # Compare with the same snapshot used to update the anchor. A fresh
         # query can see a later manual move and undo it before its event arrives.
@@ -847,7 +835,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if scroll.get_visible()
         )
         budget = self.anchor_bottom - monitor_top - 25
-        if self.view_mode == 0 and self.manual_height is not None:
+        if self.manual_height is not None:
             budget = min(budget, self.manual_height)
         available = max(2, budget - chrome)
         pinned_limit = min(pinned_height, max(1, available // 2) if ordinary else available)
@@ -873,7 +861,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
             and self.manual_height is not None
             and self._requested_height is not None
             and event.height != self._requested_height
-            and self.view_mode == 0
         ):
             self.manual_height = event.height
             self.anchor_x = event.x
@@ -890,10 +877,8 @@ class ReminderWindow(Gtk.ApplicationWindow):
             self._queue_geometry()
         return False
 
-    def _remember_size(self, width: int) -> None:
-        if self.full_height is None:
-            return
-        size = (width, self.full_height)
+    def _remember_size(self, width: int, height: int) -> None:
+        size = (width, height)
         if size == self._remembered_size:
             return
         self._remembered_size = size
@@ -1658,14 +1643,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
             if note is not None
             else self.tag_filter is not None and (tag or "") not in self.tag_filter
         )
-        collapsed = self.view_mode == 2 or (
-            self.view_mode == 1 and (note is None or note.state != "in_progress")
-        )
-        if not filtered and not collapsed:
+        if not filtered:
             self._dismiss_feedback()
             return
-        reason = "current filter" if filtered else "collapsed view"
-        self.feedback_text.set_text(f"{verb} — hidden by {reason}.")
+        self.feedback_text.set_text(f"{verb} — hidden by current filter.")
         description = "Show saved task" if verb == "Saved" else "Show restored task"
         self.feedback_show.set_tooltip_text(description)
         self.feedback_show.get_accessible().set_name(description)
@@ -1681,10 +1662,6 @@ class ReminderWindow(Gtk.ApplicationWindow):
             return
         note_id = self.saved_feedback[0]
         self._dismiss_feedback()
-        self.view_mode = 0
-        self.minimise_button.set_image(icon_image("view-collapse-symbolic"))
-        self.minimise_button.set_tooltip_text("Show only in-progress notes")
-        self.minimise_button.get_accessible().set_name("Show only in-progress notes")
         self._set_filter(None)
         self.reveal_note_id = note_id
         self._queue_geometry()
@@ -1902,8 +1879,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
     def _place_row(self, row: NoteRow) -> None:
         target = (
             self.progress_list
-            if row.note.state == "in_progress"
-            and (self.view_mode == 1 or row.note.id not in self.deferred_progress)
+            if row.note.state == "in_progress" and row.note.id not in self.deferred_progress
             else self.list_box
         )
         parent = row.get_parent()
@@ -1921,26 +1897,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 self._place_row(row)
         self._update_sections()
 
-    def _cycle_view(self, _button) -> None:
-        self.view_mode = (self.view_mode + 1) % 3
-        icon, description = (
-            ("view-collapse-symbolic", "Show only in-progress notes"),
-            ("view-bottom-bar-symbolic", "Show only bottom bar"),
-            ("view-expand-symbolic", "Show all notes"),
-        )[self.view_mode]
-        self.minimise_button.set_image(icon_image(icon))
-        self.minimise_button.set_tooltip_text(description)
-        self.minimise_button.get_accessible().set_name(description)
-        self._arrange_rows()
-
     def _update_sections(self) -> None:
         ordinary = self.list_box.get_children()
         progress = self.progress_list.get_children()
-        self.scroll.set_visible(self.view_mode == 0 and (bool(ordinary) or not progress))
-        self.progress_scroll.set_visible(self.view_mode != 2 and bool(progress))
-        self.progress_separator.set_visible(
-            self.view_mode == 0 and bool(ordinary) and bool(progress)
-        )
+        self.scroll.set_visible(bool(ordinary) or not progress)
+        self.progress_scroll.set_visible(bool(progress))
+        self.progress_separator.set_visible(bool(ordinary) and bool(progress))
         for list_box, rows, name in (
             (self.list_box, ordinary, "Reminders"),
             (self.progress_list, progress, "In progress"),
