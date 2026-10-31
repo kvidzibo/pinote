@@ -35,7 +35,6 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
     await ui.open(ctx);
   };
   pi.registerCommand('pinote', { description: 'Open remote Pinote tasks and settings', handler: open });
-  pi.registerCommand('pi-note', { description: 'Open remote Pinote (compatibility alias)', handler: open });
   const start = async (ctx: ExtensionContext, reason?: string, previous?: string) => {
     const request = launchRequest; launchRequest = undefined; // Never replay an uncertain start.
     ui?.detach(); await session?.stop();

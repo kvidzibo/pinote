@@ -131,17 +131,17 @@ test("task selection, handoff, guarded Done and tools stay session-local without
     } as any);
     return {
       commands,
-      command: () => commands.get("pi-note").handler("", session),
+      command: () => commands.get("pinote").handler("", session),
       event: (name: string) => events.get(name)({}, session),
       tool: (name: string, params: object, context = session, signal?: AbortSignal) =>
         tools.get(name).execute("call", params, signal, undefined, context),
     };
   }
   let extension = load();
-  assert.deepEqual([...extension.commands.keys()], ["pi-note"]);
+  assert.deepEqual([...extension.commands.keys()], ["pinote"]);
   await extension.event("session_start");
   assert.match(status!, /unavailable/);
-  assert.ok(!notices.some((message) => /\/pi-note-(?:setup|upgrade|done|preview|yes|no)/u.test(message)));
+  assert.ok(!notices.some((message) => /\/pinote-(?:setup|upgrade|done|preview|yes|no)/u.test(message)));
   await assert.rejects(extension.tool("pinote_get_current", {}), /requires pinote 0\.3\.0/);
   assert.ok(calls.some((args) => args[0] === "--version"), "unselected current-task reads still probe the CLI version");
   assert.ok(calls.every((args) => args[0] === "--version"), "old CLIs must never receive unknown commands");

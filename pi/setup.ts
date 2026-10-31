@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 // Immutable source: the Python app is not yet published to PyPI.
 export const cliSource = "https://github.com/kvidzibo/pinote/archive/1597baf60bff8bc96893be40781f152a001623d1.tar.gz";
 export const bundledCLIVersion = "0.4.0";
-export const setupHint = "Open /pi-note → Settings to install or upgrade the CLI; note must be on PATH.";
+export const setupHint = "Open /pinote → Settings to install or upgrade the CLI; note must be on PATH.";
 export type CLIAction = "setup" | "upgrade" | "ready";
 
 export function cliAction(version: string): CLIAction {
@@ -51,10 +51,10 @@ export async function setupCLI(
   const action = await detectCLI(pi, signal);
   if (!canAct() || signal.aborted) return;
   if (action === "ready") {
-    ctx.ui.notify(`Pinote CLI is ready (bundled version ${bundledCLIVersion} or newer). Use /pi-note.`, "info");
+    ctx.ui.notify(`Pinote CLI is ready (bundled version ${bundledCLIVersion} or newer). Use /pinote.`, "info");
     return;
   }
-  const command = `/pi-note → Settings → ${action === "upgrade" ? "Upgrade CLI" : "Install CLI"}`;
+  const command = `/pinote → Settings → ${action === "upgrade" ? "Upgrade CLI" : "Install CLI"}`;
   if (upgrade !== (action === "upgrade")) {
     ctx.ui.notify(`Use ${command} ${action === "upgrade" ? "to upgrade the older CLI" : "to install the missing CLI"}.`, "info");
     return;
@@ -88,7 +88,7 @@ export async function setupCLI(
   try {
     const version = await exec("note", ["--version"]);
     if (version.killed || version.code !== 0 || cliAction(version.stdout) !== "ready") throw new Error("note unavailable or older than bundled CLI");
-    if (canAct()) ctx.ui.notify(`${clean(version.stdout.trim())} is ready. Use /pi-note. GTK is optional and installed separately.`, "info");
+    if (canAct()) ctx.ui.notify(`${clean(version.stdout.trim())} is ready. Use /pinote. GTK is optional and installed separately.`, "info");
   } catch {
     if (canAct()) ctx.ui.notify("Pinote installed, but note on PATH is missing or older than the bundled CLI. Run uv tool dir --bin in your terminal, add that directory to PATH before older note executables, then restart Pi.", "warning");
   }

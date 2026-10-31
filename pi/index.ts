@@ -107,7 +107,7 @@ function task(raw: string): Task | null {
 }
 function requiredTask(raw: string, id?: number): Task {
   const value = task(raw);
-  if (!value) throw new Error("No selected pinote task. Select one with /pi-note first.");
+  if (!value) throw new Error("No selected pinote task. Select one with /pinote first.");
   if (id !== undefined && value.id !== id) throw new Error(compatible);
   return value;
 }
@@ -187,7 +187,7 @@ export default function (pi: ExtensionAPI) {
     if (!alive || generation !== epoch || setupAbort) return;
     cliState = action;
     if (suggest && action === "upgrade") {
-      ctx.ui.notify(`Pinote CLI ${bundledCLIVersion} is bundled with this extension. Open /pi-note → Settings → Upgrade CLI to update your older CLI.`, "info");
+      ctx.ui.notify(`Pinote CLI ${bundledCLIVersion} is bundled with this extension. Open /pinote → Settings → Upgrade CLI to update your older CLI.`, "info");
     }
   };
 
@@ -314,7 +314,7 @@ export default function (pi: ExtensionAPI) {
       if (alive && generation === epoch && serial === refreshSerial) {
         previewBridge?.invalidate();
         clearTaskFooter(ctx);
-        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${ctx.ui.theme.bold(noteIcon)} Pinote unavailable · /pi-note → Settings`);
+        ctx.ui.setStatus("pinote", suggestionStatus(ctx) ?? `${ctx.ui.theme.bold(noteIcon)} Pinote unavailable · /pinote → Settings`);
       }
     }
   };
@@ -357,10 +357,10 @@ export default function (pi: ExtensionAPI) {
       };
       const timer = setTimeout(() => {
         finish(false);
-        if (alive && activeContext === ctx) ctx.ui.notify("Pinote completion could not start. Open /pi-note → Settings → Complete task.", "warning");
+        if (alive && activeContext === ctx) ctx.ui.notify("Pinote completion could not start. Open /pinote → Settings → Complete task.", "warning");
       }, 4000);
       completionDispatch = { token, selection, task: displayed, started: () => clearTimeout(timer), finish };
-      try { pi.sendUserMessage(`/pi-note ${token}`, { expandPromptTemplates: true }); }
+      try { pi.sendUserMessage(`/pinote ${token}`, { expandPromptTemplates: true }); }
       catch { finish(false); }
     });
   };
@@ -454,7 +454,7 @@ export default function (pi: ExtensionAPI) {
       } catch {
         await bridge.stop();
         if (previewBridge === bridge) previewBridge = undefined;
-        ctx.ui.notify("Pinote task link unavailable; open /pi-note → Settings → Preview task.", "warning");
+        ctx.ui.notify("Pinote task link unavailable; open /pinote → Settings → Preview task.", "warning");
       }
     }
     if (!alive || generation !== epoch) return;
@@ -553,7 +553,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
-  pi.registerCommand("pi-note", {
+  pi.registerCommand("pinote", {
     description: "Continue, complete, switch tasks, or edit global settings (Tab)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || ctx.mode !== "tui") return;
@@ -564,7 +564,7 @@ export default function (pi: ExtensionAPI) {
         await completeSelected(token, ctx);
         return;
       }
-      if (token) { ctx.ui.notify("Usage: /pi-note", "warning"); return; }
+      if (token) { ctx.ui.notify("Usage: /pinote", "warning"); return; }
       if (pending || menuPending) {
         ctx.ui.notify("Wait until the pinote operation has finished.", "warning");
         return;
@@ -724,7 +724,7 @@ export default function (pi: ExtensionAPI) {
       const canRun = () => alive && generation === epoch && branch === branchEpoch && selectedId === id;
       const current = await selected(ctx, signal);
       if (!canRun()) throw new Error("Pinote operation cancelled: the session or selected task changed.");
-      if (!current) throw new Error("No selected pinote task. Select one with /pi-note first.");
+      if (!current) throw new Error("No selected pinote task. Select one with /pinote first.");
       const argv = ["agent", "update", String(current.id), "--expected-updated-at", params.expected_updated_at,
         "--set-json", JSON.stringify(params.set ?? {})];
       for (const label of params.remove ?? []) argv.push(`--remove=${label}`);
@@ -789,7 +789,7 @@ export default function (pi: ExtensionAPI) {
       return true;
     } catch (error) {
       if (alive && generation === epoch) ctx.ui.notify(
-        `Pinote suggestion: ${clean(String(error))}${created ? ` Note #${created.id} was created; use /pi-note to select it. Do not add it again.` : " A write may have committed; check /pi-note before retrying."}`, "error");
+        `Pinote suggestion: ${clean(String(error))}${created ? ` Note #${created.id} was created; use /pinote to select it. Do not add it again.` : " A write may have committed; check /pinote before retrying."}`, "error");
       return false;
     } finally {
       if (pending === operation) pending = undefined;
@@ -854,10 +854,10 @@ export default function (pi: ExtensionAPI) {
       clearSuggestion(ctx);
       try {
         const created = requiredTask(await run(argv, signal, canAct, "0.4.0"));
-        if (!canAct()) throw new Error("Pinote operation cancelled: the session changed. The note was created; check /pi-note before retrying.");
+        if (!canAct()) throw new Error("Pinote operation cancelled: the session changed. The note was created; check /pinote before retrying.");
         const chosen = await startTask(created.id, canAct, signal);
         if (!chosen || !alive || generation !== epoch || branch !== branchEpoch || selectedId !== chosen.id) {
-          throw new Error("Pinote operation cancelled: the session changed. The note may have started; check /pi-note before retrying.");
+          throw new Error("Pinote operation cancelled: the session changed. The note may have started; check /pinote before retrying.");
         }
         return toolResult(chosen);
       } finally {
