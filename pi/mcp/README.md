@@ -18,6 +18,11 @@ export PINOTE_NOTE_COMMAND="$PWD/.venv/bin/note"
 npm --prefix pi run serve
 ```
 
+After building, production installs may prune development/peer-only packages:
+`npm --prefix pi prune --omit=dev --omit=peer --ignore-scripts`.
+Run `npm --prefix pi run check:runtime` before restarting the service; its required
+terminal-width helpers are runtime dependencies, not development-only packages.
+
 The bearer token is mandatory, including on loopback: use at least 32 random
 non-whitespace characters. Store it in an owner-only regular file (mode `0600`),
 never commit or paste it into a conversation. For a new setup, after creating the
@@ -52,7 +57,7 @@ share. Point every client at the service instead.
 
 The Node listener is plaintext HTTP. **Never expose it directly to the public
 Internet.** Use a private VPN or a trusted HTTPS reverse proxy. The proxy must
-forward `/mcp`, bearer authorization, MCP headers and streaming responses without
+forward `/mcp` and `/events`, bearer authorization, MCP headers and streaming responses without
 buffering, preserve the external Host, and allow long-lived SSE connections.
 
 For example, a local reverse proxy serving `https://notes.example.net/mcp` forwards
@@ -113,8 +118,8 @@ serialize within this daemon and mutations use database/config revisions.
 
 The service bounds request bodies and session counts, and expires idle disconnected
 sessions. Active streams and operations are not expired. Shutdown closes sessions;
-a server restart preserves notes but requires clients to reconnect. No durable SSE
-replay, offline writes or automatic mutation retries are provided. After an
+a server restart preserves notes but requires clients to reconnect. MCP notifications have no durable
+replay; offline writes and automatic mutation retries are not provided. After an
 interrupted write, read fresh state before retrying: it may already have committed.
 
 The native terminal UI protocol and `pinote://agent-context` resource are internal
@@ -135,3 +140,52 @@ npm --prefix pi test
 Tests use temporary data and real HTTP/stdio connections, including authentication,
 shared notes, independent selections, conflicts and reconnects. Visual checks use
 Xvfb and private D-Bus; never point them at personal data.
+
+## Task-completion events
+
+`GET /events` on the same listener requires the same bearer token, Host allowlist
+and Origin policy as `/mcp`; it does not require an MCP session. Only GET is
+accepted (405 otherwise). Use `Accept: text/event-stream` and disable proxy buffering.
+The service requires `note` 0.21.0+ via `PINOTE_NOTE_COMMAND` (or `note` on PATH).
+
+With no `Last-Event-ID`, subscription starts at the current durable history tail,
+not with historical replay. Persist the numeric ID from **both** event types:
+
+```text
+id: 0
+event: checkpoint
+data: {}
+
+id: 3
+event: task.completed
+data: {"task_id":1,"timestamp":"2030-01-02T03:04:05.000000+00:00"}
+
+```
+
+An initial checkpoint is always sent, even at cursor 0. Completion IDs are event
+row IDs, not task IDs. Only committed `done` transitions emit completions, whether
+made by CLI, GUI or Pi. Re-marking done, starting/removing tasks and importing
+archived notes do not. Checkpoints advance past unrelated history; idle streams
+receive heartbeat comments every approximately 15 seconds.
+
+Reconnect with `Last-Event-ID: <persisted ID>` to scan subsequent durable history.
+Delivery is **at-least-once**, not exactly once; consumers should deduplicate by
+event ID. IDs must be nonnegative decimal integers no greater than
+9007199254740991. Malformed or future cursors return 400 with a plain-text error
+before streaming begins; unavailable history returns 503. Database replacement or
+restoring an older backup can invalidate a saved cursor and requires an explicit
+consumer decision to establish a fresh baseline.
+
+At most 64 streams (including pending subscriptions) are allowed; excess streams
+return 503. One shared poller scans at most 256 history rows per roughly one-second
+tick using the CLI, with one additional tail read when accepting new subscribers.
+Catchup therefore has bounded throughput. Slow writers are disconnected rather
+than buffered indefinitely and must reconnect. Poll failures close streams; the
+last disconnect stops polling, and service shutdown aborts the CLI and ends streams.
+
+For local integrations, `note events [--after CURSOR] [--limit N]` returns
+`{"cursor":number,"events":[{"id":number,"task_id":number,"timestamp":string}]}`.
+Without `--after` it returns the current tail and an empty array. With `--after`
+(including 0), it scans up to N rows in ascending order (default 256, range 1–1000),
+includes only completions, and advances the cursor across all scanned rows.
+It is a read-only operation with the same safe cursor range and future-cursor rejection.

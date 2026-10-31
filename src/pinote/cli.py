@@ -23,6 +23,7 @@ COMMANDS = {
     "rm",
     "restore",
     "history",
+    "events",
     "show",
     "import",
     "export",
@@ -40,6 +41,22 @@ def positive_id(value: str) -> int:
         raise argparse.ArgumentTypeError("ID must be a positive integer") from exc
     if result < 1 or result > 9223372036854775807:
         raise argparse.ArgumentTypeError("ID must be a positive SQLite integer")
+    return result
+
+
+def event_cursor(value: str) -> int:
+    if not value.isascii() or not value.isdecimal() or len(value) > 16:
+        raise argparse.ArgumentTypeError("Cursor must be a nonnegative safe integer")
+    result = int(value)
+    if result > 9007199254740991:
+        raise argparse.ArgumentTypeError("Cursor must be a nonnegative safe integer")
+    return result
+
+
+def event_limit(value: str) -> int:
+    result = event_cursor(value)
+    if not 1 <= result <= 1000:
+        raise argparse.ArgumentTypeError("Limit must be between 1 and 1000")
     return result
 
 
@@ -61,6 +78,7 @@ def parser() -> argparse.ArgumentParser:
         ("rm", "archive a note without erasing history"),
         ("restore", "return an archived/scheduled note to active, or clear progress"),
         ("history", "show timestamped activity, optionally for one note"),
+        ("events", "read bounded task-completion events as JSON"),
         ("show", "show or reopen the desktop reminder"),
         ("import", "import a Markdown file once, without changing it"),
         ("export", "write active notes as Markdown to stdout"),
@@ -113,6 +131,9 @@ def parser() -> argparse.ArgumentParser:
                     choice = operation.add_mutually_exclusive_group(required=True)
                     choice.add_argument("--tag")
                     choice.add_argument("--clear", action="store_true")
+        elif name == "events":
+            sub.add_argument("--after", type=event_cursor)
+            sub.add_argument("--limit", type=event_limit, default=256)
         elif name == "add":
             sub.add_argument("text", nargs="+", help="note text; quote shell metacharacters")
         elif name in {"done", "start", "rm", "restore", "history"}:
@@ -228,7 +249,7 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         # No nested lock, and ordinary reads stay lock-free unless a timer is due.
         if needs_lock:
             store.activate_due()
-        elif store.has_due():
+        elif args.command != "events" and store.has_due():
             with display_lock(paths):
                 store.activate_due()
         if args.command == "agent":
@@ -280,6 +301,8 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                     print(f"{note.id}. {state}{text}{scheduled}")
                 if not notes:
                     print("No notes." if args.all else "No active notes.")
+        elif args.command == "events":
+            print(json.dumps(store.completion_events(args.after, args.limit)))
         elif args.command == "history":
             events = store.history(args.id)
             for event in events:
