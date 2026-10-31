@@ -52,7 +52,7 @@ wheels = [
 
 [[package]]
 name = "pinote"
-version = "0.20.1"
+version = "0.20.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
