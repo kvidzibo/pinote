@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -92,7 +92,7 @@ test('authenticated HTTP sessions share notes, not host selection, and reconnect
   }
 });
 
-test('completion SSE authenticates, checkpoints, resumes durable history and cleans up', async () => {
+test('completion SSE authenticates, checkpoints, resumes durable history and cleans up', { timeout: 30_000 }, async () => {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const exec = promisify(execFile);
@@ -169,8 +169,42 @@ test('completion SSE authenticates, checkpoints, resumes durable history and cle
     await readers[1].cancel();
     const fresh = await open();
     assert.equal(await fresh(), 'id: 5\nevent: checkpoint\ndata: {}');
+
+    // A later subscriber must not be checked against an earlier in-flight tail read.
+    const command = process.env.PINOTE_NOTE_COMMAND!;
+    const gate = join(dir, 'tail-gate'), entered = join(dir, 'tail-entered');
+    const delayed = join(dir, 'delayed-note.cjs');
+    await writeFile(gate, '');
+    await writeFile(delayed, `#!${process.execPath}\nconst fs = require('node:fs');
+const args = process.argv.slice(2);
+const output = require('node:child_process').execFileSync(${JSON.stringify(command)}, args);
+(async () => {
+  if (args.includes('events') && !args.includes('--after') && fs.existsSync(${JSON.stringify(gate)})) {
+    fs.writeFileSync(${JSON.stringify(entered)}, '');
+    while (fs.existsSync(${JSON.stringify(gate)})) await new Promise(r => setTimeout(r, 10));
+  }
+  process.stdout.write(output);
+})();\n`, { mode: 0o700 });
+    process.env.PINOTE_NOTE_COMMAND = delayed;
+    const earlier = fetch(url, { headers });
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      try { await access(entered); break; } catch { /* Wait for the captured tail. */ }
+      assert.ok(Date.now() < deadline, 'tail scan reached the gate');
+      await new Promise(r => setTimeout(r, 10));
+    }
+    await note('add', 'Concurrent completion');
+    await note('done', '3');
+    const joined = new Promise<void>(resolve => service.listener.once('request', () => resolve()));
+    const later = fetch(url, { headers: { ...headers, 'Last-Event-ID': '7' } });
+    await joined;
+    await rm(gate);
+    const responses = await Promise.all([earlier, later]);
+    assert.deepEqual(responses.map(response => response.status), [200, 200]);
+    await Promise.all(responses.map(response => response.body!.cancel()));
+    process.env.PINOTE_NOTE_COMMAND = command;
     await service.close();
-    assert.equal((await readers[2].read()).done, true);
+    while (!(await readers[2].read()).done) { /* Drain in-flight events before EOF. */ }
   } finally {
     await Promise.allSettled(readers.map((reader) => reader.cancel()));
     await service.close();

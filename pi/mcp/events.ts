@@ -46,10 +46,12 @@ export function completionEvents(log: () => void) {
   const tick = async () => {
     controller = new AbortController();
     try {
-      if ([...subscribers].some((sub) => !sub.ready)) {
+      const pending = [...subscribers].filter((sub) => !sub.ready);
+      if (pending.length) {
         const tail = (await read()).cursor;
-        for (const sub of subscribers) {
-          if (sub.ready) continue;
+        // New arrivals must not be validated against a tail captured before they joined.
+        for (const sub of pending) {
+          if (!subscribers.has(sub)) continue;
           if (sub.cursor !== undefined && sub.cursor > tail) {
             drop(sub); reject(sub.res, 400, 'Last-Event-ID is ahead of current event history'); continue;
           }
