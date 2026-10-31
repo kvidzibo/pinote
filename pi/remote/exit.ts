@@ -12,11 +12,22 @@ export async function pullBeforeExit(pi: ExtensionAPI, ctx: ExtensionContext, si
     ctx.sessionManager.getSessionId() === sessionId && ctx.sessionManager.getLeafId() === branch && ctx.ui.getEditorText() === draft;
   if (!unchanged()) return false;
   try {
-    const repository = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+    const git = (args: string[]) => spawnSync('git', args, {
       cwd: ctx.cwd, encoding: 'utf8', timeout: 3000, env: { ...process.env, LC_ALL: 'C' },
     });
+    const repository = git(['rev-parse', '--show-toplevel']);
     if (!repository.error && repository.status === 128 && repository.stderr.startsWith('fatal: not a git repository (or any ')) return unchanged();
     if (repository.error || repository.status !== 0 || !unchanged()) throw new Error('Git repository check failed');
+    const remotes = git(['remote']);
+    if (remotes.error || remotes.status !== 0) throw new Error('Git remote check failed');
+    if (!remotes.stdout.trim()) return unchanged();
+    const branch = git(['symbolic-ref', '--quiet', 'HEAD']);
+    if (branch.error || branch.status !== 0 || !branch.stdout.startsWith('refs/heads/')) throw new Error('Git branch check failed');
+    const branchName = branch.stdout.trim().slice('refs/heads/'.length);
+    const upstream = git(['config', '--get', `branch.${branchName}.merge`]);
+    if (upstream.error || (upstream.status !== 0 && upstream.status !== 1)) throw new Error('Git upstream check failed');
+    if (upstream.status === 1) return unchanged();
+    if (!upstream.stdout.trim() || !unchanged()) throw new Error('Git upstream or session changed');
     ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
     const result = await pi.exec('git', ['pull', '--ff-only', '--no-rebase', '--no-autostash'], { cwd: ctx.cwd, signal, timeout: 30_000 });
     if (result.code === 0 && !result.killed && unchanged()) return true;
