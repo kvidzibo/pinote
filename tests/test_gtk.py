@@ -2920,17 +2920,29 @@ def test_multiline_entry_and_read_only_preview(gtk):
     with Store(gtk.paths.database) as store:
         store.transition(2, "rm")
     window._poll()
-    wait_until(gtk.glib, lambda: not window.pending and 2 not in window.rows)
+    # Finish shrinking before restoring, or the old resize can overtake the next click.
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not window.pending
+            and 2 not in window.rows
+            and not window.geometry_source
+            and window.get_size().height == initial_height
+            and window.get_position()[1] + window.get_size().height == bottom
+        ),
+    )
     assert window.preview is None and not window.closed
     assert Gtk.grab_get_current() is None
     with Store(gtk.paths.database) as store:
         store.transition(2, "restore")
     window._poll()
+    # Row allocation can finish before the toplevel acknowledges its restored height.
     wait_until(
         gtk.glib,
         lambda: (
             not window.pending
             and 2 in window.rows
+            and window.get_size().height == height
             and not window.geometry_source
             and window.scroll.get_allocated_height()
             == sum(
