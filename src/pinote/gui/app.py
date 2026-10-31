@@ -1104,9 +1104,15 @@ class ReminderWindow(Gtk.ApplicationWindow):
             note.tag or "" for note in self.notes_snapshot if note.state == "in_progress"
         )
         counts = dict(self._tag_choices(None, filtering=True))
-        for item in menu.get_children():
-            if not isinstance(item, Gtk.CheckMenuItem):
-                continue
+        order = {tag: index for index, tag in enumerate(counts)}
+        tags = [item for item in menu.get_children() if isinstance(item, Gtk.CheckMenuItem)]
+        ordered = sorted(tags, key=lambda item: order.get(item.filter_tag, len(order)))
+        if tags != ordered:
+            for index, item in enumerate(ordered):
+                menu.reorder_child(item, index)
+                menu.child_set_property(item, "top-attach", index)
+                menu.child_set_property(item, "bottom-attach", index + 1)
+        for item in tags:
             visible = active[item.filter_tag] > 0
             item.set_no_show_all(not visible)
             item.set_visible(visible)
@@ -1174,7 +1180,12 @@ class ReminderWindow(Gtk.ApplicationWindow):
         choices = [("" if filtering else None, f"Untagged ({counts[None]})")]
         choices.extend(
             (tag, f"{tag} ({counts[tag]})")
-            for tag in sorted(tags, key=lambda tag: (tag.casefold(), tag))
+            for tag in (
+                [tag for tag in self.tags if tag in tags]
+                + sorted(tags - set(self.tags), key=lambda tag: (tag.casefold(), tag))
+                if filtering
+                else sorted(tags, key=lambda tag: (tag.casefold(), tag))
+            )
         )
         return choices
 
@@ -1201,8 +1212,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         for child in menu.get_children():
             child.destroy()
         menu.set_reserve_toggle_size(False)
-        tags = set(self.tags)
-        for tag in [None, *sorted(tags, key=lambda tag: (tag.casefold(), tag))]:
+        for tag in [None, *self.tags]:
             item = tag_menu_item(tag or "Untagged", selected=tag == self.creation_tag)
             item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
             menu.append(item)

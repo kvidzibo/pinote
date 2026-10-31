@@ -189,6 +189,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   List-filter menus also show checkboxes for their independently selected tags.
 - **Tag dropdown below the input** lists tags and **Untagged**, without radio buttons.
   Select a tag to assign it to subsequent new tasks; this does not filter the list.
+  Here and in tag filters, tags sort by their newest task’s creation time, oldest first
+  and most recent at the bottom, including archived and scheduled tasks. **Untagged**
+  stays first; unused saved tags precede used tags. Ties sort alphabetically.
   Right-click the tag below the input, or press **Esc** with no menu or preview open,
   to reset it to **Untagged**, keeping the draft, existing tasks, and list filter unchanged.
   Once the tag is **Untagged**, **Esc** closes the checklist.
