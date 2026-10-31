@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { clean } from './protocol.ts';
@@ -10,8 +11,13 @@ export async function pullBeforeExit(pi: ExtensionAPI, ctx: ExtensionContext, si
   const unchanged = () => current() && !signal.aborted && ctx.isIdle() &&
     ctx.sessionManager.getSessionId() === sessionId && ctx.sessionManager.getLeafId() === branch && ctx.ui.getEditorText() === draft;
   if (!unchanged()) return false;
-  ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
   try {
+    const repository = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: ctx.cwd, encoding: 'utf8', timeout: 3000, env: { ...process.env, LC_ALL: 'C' },
+    });
+    if (!repository.error && repository.status === 128 && repository.stderr.startsWith('fatal: not a git repository (or any ')) return unchanged();
+    if (repository.error || repository.status !== 0 || !unchanged()) throw new Error('Git repository check failed');
+    ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
     const result = await pi.exec('git', ['pull', '--ff-only', '--no-rebase', '--no-autostash'], { cwd: ctx.cwd, signal, timeout: 30_000 });
     if (result.code === 0 && !result.killed && unchanged()) return true;
   } catch { /* Completion succeeded; only the local pull failed. */ }

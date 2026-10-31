@@ -20,6 +20,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state'),
   });
   mkdirSync(join(temp, 'agent'));
+  execFileSync('git', ['init', '--quiet', temp]);
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));
   const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui', sessionId = `client-${clients.length}`) => {
     const previous = clients.at(-1);

@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { pullBeforeExit, registerRemoteExit } from '../remote/exit.ts';
@@ -8,6 +12,7 @@ import type { NativeView } from '../remote/protocol.ts';
 const selected = (): NativeView => ({ version: 1, title: 'Pinote', body: 'Selected task', revision: 'displayed',
   state: { selectedId: 7 }, controls: [{ id: 'done', kind: 'action', label: 'Complete task', revision: 'task-7' }] });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const root = fileURLToPath(new URL('../../', import.meta.url));
 
 test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async () => {
   const handlers = new Map<string, Function[]>();
@@ -49,7 +54,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     NonNullable<ReturnType<ExtensionContext['ui']['getEditorComponent']>>;
   let factory: ReturnType<ExtensionContext['ui']['getEditorComponent']> = previous;
   const ctx = {
-    mode: 'tui', hasUI: true,
+    cwd: root, mode: 'tui', hasUI: true,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     isIdle: () => idle, abort: () => { aborts++; }, shutdown: () => { shutdowns++; },
     ui: {
@@ -211,12 +216,44 @@ test('remote /new gates replacement on exact task approval without exiting Pi', 
   await emit('session_shutdown');
 });
 
+test('completion skips pulls in non-Git folders even with a translated locale, but preserves Git errors', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pinote-no-git-'));
+  const locale = process.env.LC_ALL, language = process.env.LANGUAGE, gitDir = process.env.GIT_DIR;
+  const notices: string[] = [];
+  const pi = { exec: async () => assert.fail('must not pull outside a repository') } as unknown as ExtensionAPI;
+  const ctx = {
+    cwd, isIdle: () => true,
+    sessionManager: { getSessionId: () => 'session', getLeafId: () => 'branch' },
+    ui: { getEditorText: () => '', notify: (message: string) => notices.push(message) },
+  } as unknown as ExtensionContext;
+  try {
+    process.env.LC_ALL = 'fr_FR.UTF-8';
+    process.env.LANGUAGE = 'fr';
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), true);
+    assert.deepEqual(notices, [], 'no misleading pull or failure notice');
+    let checks = 0;
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => ++checks === 1), false,
+      'non-Git exit must recheck session ownership');
+    writeFileSync(join(cwd, '.git'), 'invalid gitfile\n');
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false);
+    assert.match(notices.at(-1)!, /Pi stayed open/);
+    process.env.GIT_DIR = join(cwd, 'missing.git');
+    assert.equal(await pullBeforeExit(pi, ctx, new AbortController().signal, () => true), false,
+      'an invalid explicit Git directory is not an ordinary non-Git folder');
+  } finally {
+    if (gitDir === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = gitDir;
+    if (locale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = locale;
+    if (language === undefined) delete process.env.LANGUAGE; else process.env.LANGUAGE = language;
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('successful pull cannot close a session or draft that changed while it ran', async () => {
   let draft = '', leaf = 'branch', idle = true, current = true;
   let finish: (result: { code: number; killed: boolean }) => void;
   const pi = { exec: () => new Promise((resolve) => { finish = resolve; }) } as unknown as ExtensionAPI;
   const ctx = {
-    cwd: '/tmp', isIdle: () => idle,
+    cwd: root, isIdle: () => idle,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     ui: { getEditorText: () => draft, notify() {} },
   } as unknown as ExtensionContext;

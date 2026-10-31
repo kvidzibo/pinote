@@ -96,8 +96,9 @@ Pi's working directory before exiting, so Kitty closes its dedicated tab (or the
 standalone window's last tab). It never merges, rebases or stashes local changes.
 If Git fails, times out (30 seconds), or the session/draft changes, Pi stays open;
 the task remains completed and is not retried. Check Git manually, then `/quit`.
-Non-Git directories or branches without an upstream also stay open after the
-failed pull. `/quit` and Exit without completing do not pull.
+With pi-note 0.33.2+, directories outside a Git repository skip the pull and exit
+normally. Branches without an upstream still stay open after a failed pull.
+`/quit` and Exit without completing do not pull.
 This ownership survives `/reload`, but not `/new`, resume, fork, tree navigation
 or process restart. Completing a different task or an externally completed task
 does not pull or close Pi; failed/uncertain completion stays open.
