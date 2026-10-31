@@ -1,10 +1,26 @@
-import { CustomEditor, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { clean } from './protocol.ts';
 import type { RemoteSession } from './session.ts';
 
+/** Completion is already committed: pull failures must never retry the task action. */
+export async function pullBeforeExit(pi: ExtensionAPI, ctx: ExtensionContext, signal: AbortSignal, current: () => boolean): Promise<boolean> {
+  const sessionId = ctx.sessionManager.getSessionId(), branch = ctx.sessionManager.getLeafId();
+  const draft = ctx.ui.getEditorText();
+  const unchanged = () => current() && !signal.aborted && ctx.isIdle() &&
+    ctx.sessionManager.getSessionId() === sessionId && ctx.sessionManager.getLeafId() === branch && ctx.ui.getEditorText() === draft;
+  if (!unchanged()) return false;
+  ctx.ui.notify('Task completed. Running git pull --ff-only before closing Pi…', 'info');
+  try {
+    const result = await pi.exec('git', ['pull', '--ff-only', '--no-rebase', '--no-autostash'], { cwd: ctx.cwd, signal, timeout: 30_000 });
+    if (result.code === 0 && !result.killed && unchanged()) return true;
+  } catch { /* Completion succeeded; only the local pull failed. */ }
+  if (current()) ctx.ui.notify('Task completed, but Pi stayed open: git pull failed or the session changed. Check Git manually, then /quit. Completion will not be retried.', 'warning');
+  return false;
+}
+
 /** Default remote companion. /quit and nonempty-editor exit input remain Pi-owned. */
-export function registerRemoteExit(pi: ExtensionAPI, getSession: () => RemoteSession | undefined): void {
+export function registerRemoteExit(pi: ExtensionAPI, getSession: () => RemoteSession | undefined, ownsLaunch = (_taskId: number) => false): void {
   let invalidate: (() => void) | undefined;
   let stop: (() => void) | undefined;
   let confirm: ((reason: 'exit' | 'new') => Promise<boolean>) | undefined;
@@ -54,7 +70,12 @@ export function registerRemoteExit(pi: ExtensionAPI, getSession: () => RemoteSes
         // Approval belongs to this exact displayed view, never to a refreshed revision.
         await session.action(view, done, undefined, () => current() && ctx.isIdle() && ctx.sessionManager.getLeafId() === branch);
         if (!current()) return false;
-        if (session.view && session.view.state.selectedId == null) return true;
+        if (session.view && session.view.state.selectedId == null) {
+          if (reason === 'exit' && typeof view.state.selectedId === 'number' && ownsLaunch(view.state.selectedId)) {
+            return await pullBeforeExit(pi, ctx, operation.signal, current);
+          }
+          return true;
+        }
         ctx.ui.notify('Pinote: Pi stayed in this session because the selection was not cleared. Refresh /pinote before retrying.', 'warning');
       } catch {
         if (alive && generation === epoch) ctx.ui.notify('Pinote: Pi stayed in this session. Completion was not confirmed and may have committed; refresh /pinote before retrying. /quit exits without completing.', 'warning');

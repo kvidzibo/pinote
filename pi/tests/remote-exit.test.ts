@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { registerRemoteExit } from '../remote/exit.ts';
+import { pullBeforeExit, registerRemoteExit } from '../remote/exit.ts';
 import type { RemoteSession } from '../remote/session.ts';
 import type { NativeView } from '../remote/protocol.ts';
 
@@ -11,9 +11,17 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async () => {
   const handlers = new Map<string, Function[]>();
+  let launch = false, pulls = 0, pullCode = 0;
   const pi = {
     on: (name: string, handler: Function) => handlers.set(name, [...handlers.get(name) ?? [], handler]),
-    exec: () => assert.fail('must not execute local CLI'),
+    exec: async (command: string, args: string[]) => {
+      assert.equal(launch, true, 'only dedicated launch completion may pull');
+      assert.equal(command, 'git');
+      assert.deepEqual(args, ['pull', '--ff-only', '--no-rebase', '--no-autostash']);
+      assert.equal(session.view?.state.selectedId, null);
+      pulls++;
+      return { code: pullCode, killed: false, stdout: '', stderr: '' };
+    },
     events: { emit: () => assert.fail('must not use gateway events') },
   } as unknown as ExtensionAPI;
   let text = '', idle = true, leaf = 'branch', shutdowns = 0, aborts = 0, forwarded = 0;
@@ -61,7 +69,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     },
   } as unknown as ExtensionContext;
   const emit = async (name: string) => { for (const handler of handlers.get(name) ?? []) await handler({}, ctx); };
-  registerRemoteExit(pi, () => session as unknown as RemoteSession);
+  registerRemoteExit(pi, () => session as unknown as RemoteSession, (taskId) => launch && taskId === 7);
   await emit('session_start');
   let editor = factory!({} as any, {} as any, { matches: (data: string, action: string) => action === 'app.exit' && data === 'configured-exit' } as any);
   const press = async () => { editor.handleInput('configured-exit'); await tick(); };
@@ -94,11 +102,19 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
   uncertain = false;
   await press(); await choose('Complete task and exit');
   assert.equal(actions, 2); assert.equal(shutdowns, 1); assert.equal(aborts, 0);
+  assert.equal(pulls, 0);
+  launch = true; pullCode = 1;
+  await press(); await choose('Complete task and exit');
+  assert.equal(actions, 3); assert.equal(pulls, 1); assert.equal(shutdowns, 1);
+  assert.match(notices.at(-1)!, /git pull failed/);
+  pullCode = 0;
+  await press(); await choose('Complete task and exit');
+  assert.equal(actions, 4); assert.equal(pulls, 2); assert.equal(shutdowns, 2);
   idle = false;
   await press(); await choose('Exit without completing');
-  assert.equal(actions, 2); assert.equal(shutdowns, 2); assert.equal(aborts, 1);
+  assert.equal(actions, 4); assert.equal(shutdowns, 3); assert.equal(aborts, 1);
   session.refresh = async () => { session.view = { ...selected(), state: { selectedId: null } }; };
-  await press(); assert.equal(shutdowns, 3);
+  await press(); assert.equal(shutdowns, 4);
   await emit('session_shutdown'); assert.equal(factory, previous);
   await emit('session_start');
   editor = factory!({} as any, {} as any, { matches: () => true } as any);
@@ -109,7 +125,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
   await emit('session_shutdown');
   assert.equal(dialogSignal?.aborted, true);
   await choose('Complete task and exit');
-  assert.equal(actions, 2);
+  assert.equal(actions, 4);
   assert.equal(factory, later, 'must not overwrite later editor wrappers');
 });
 
@@ -193,4 +209,23 @@ test('remote /new gates replacement on exact task approval without exiting Pi', 
   const before = refreshes;
   assert.equal(await startNew(), undefined); assert.equal(refreshes, before);
   await emit('session_shutdown');
+});
+
+test('successful pull cannot close a session or draft that changed while it ran', async () => {
+  let draft = '', leaf = 'branch', idle = true, current = true;
+  let finish: (result: { code: number; killed: boolean }) => void;
+  const pi = { exec: () => new Promise((resolve) => { finish = resolve; }) } as unknown as ExtensionAPI;
+  const ctx = {
+    cwd: '/tmp', isIdle: () => idle,
+    sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
+    ui: { getEditorText: () => draft, notify() {} },
+  } as unknown as ExtensionContext;
+  for (const change of [() => { draft = 'new draft'; }, () => { leaf = 'other'; },
+    () => { idle = false; }, () => { current = false; }]) {
+    draft = ''; leaf = 'branch'; idle = true; current = true;
+    const pulling = pullBeforeExit(pi, ctx, new AbortController().signal, () => current);
+    change();
+    finish!({ code: 0, killed: false });
+    assert.equal(await pulling, false);
+  }
 });

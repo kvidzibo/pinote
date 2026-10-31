@@ -62,7 +62,8 @@ title previews it and double-clicking completes it. A suggested title requires a
 double-click to accept. Regular mode shows status; `/pinote` provides all actions.
 No Kitty action handler is needed for this extension.
 
-Completion keeps the conversation and editor. With an empty editor, **Ctrl+D**
+Completion keeps the conversation and editor, except for dedicated **Start in Kitty…**
+sessions (see below). With an empty editor, **Ctrl+D**
 (or your configured exit key) offers Cancel, Exit without completing, or Complete
 task and exit. **`/new`** offers Cancel, Start new session without completing, or
 Complete task and start new session. With no selected task, `/new` proceeds normally.
@@ -89,6 +90,17 @@ client-local and is never sent to the service or persisted as launch state.
 Only a fresh session can consume it. The service must share the GUI's database;
 missing/stale revisions fail closed. Resume, reload and `/new` never replay the
 handoff or replace another selection. Pi keeps its normal endpoint/token settings.
+With pi-note 0.33.1+, completing the launched task from the menu, footer or
+**Complete task and exit** runs `git pull --ff-only --no-rebase --no-autostash` in
+Pi's working directory before exiting, so Kitty closes its dedicated tab (or the
+standalone window's last tab). It never merges, rebases or stashes local changes.
+If Git fails, times out (30 seconds), or the session/draft changes, Pi stays open;
+the task remains completed and is not retried. Check Git manually, then `/quit`.
+Non-Git directories or branches without an upstream also stay open after the
+failed pull. `/quit` and Exit without completing do not pull.
+This ownership survives `/reload`, but not `/new`, resume, fork, tree navigation
+or process restart. Completing a different task or an externally completed task
+does not pull or close Pi; failed/uncertain completion stays open.
 
 ### Agent tools and context
 
