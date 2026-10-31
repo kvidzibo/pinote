@@ -200,7 +200,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     const matches = tasks.filter((t) => state.launch
       ? t.id === state.launch.task_id && t.updated_at === state.launch.updated_at
       : `${t.text} ${t.tag ?? ''}`.toLowerCase().includes((state.search ?? '').toLowerCase()));
-    for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state}`, confirm: 'Select and start this task for this conversation?' });
+    for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state} · Select and start this task` });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
   const footer: { text: string; openApp?: true; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic: boolean; color: 'accent' }; width?: number }[] = features.footerNativeActions
