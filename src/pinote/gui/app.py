@@ -1099,6 +1099,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self._sync_filter_menu(menu)
 
     def _sync_filter_menu(self, menu) -> None:
+        active = Counter(note.tag or "" for note in self.notes_snapshot)
         progress = Counter(
             note.tag or "" for note in self.notes_snapshot if note.state == "in_progress"
         )
@@ -1106,6 +1107,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
         for item in menu.get_children():
             if not isinstance(item, Gtk.CheckMenuItem):
                 continue
+            visible = active[item.filter_tag] > 0
+            item.set_no_show_all(not visible)
+            item.set_visible(visible)
             selected = self.tag_filter is None or item.filter_tag in self.tag_filter
             # set_active emits activate; syncing checks must not toggle the filter.
             item.handler_block(item.filter_handler)
