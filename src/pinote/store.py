@@ -79,6 +79,12 @@ class Note:
         return self.text + "\n\n## Agent\n" + "\n\n".join(fields)
 
 
+@dataclass(frozen=True)
+class ImportSummary:
+    notes: int
+    tags: int
+
+
 def note_from_row(row: sqlite3.Row) -> Note:
     values = dict(row)
     values["agent_notes"] = json.loads(values["agent_notes"])
@@ -817,10 +823,17 @@ class Store:
             params = (note_id,)
         return list(self.connection.execute(query + " ORDER BY id", params))
 
-    def import_notes(self, source: str, entries: list[tuple[str, str]]) -> int | None:
-        """Import a canonical source path once; None means already imported."""
-        clean = [(validate_text(text), state) for text, state in entries]
-        if any(state not in {"active", "in_progress", "done"} for _, state in clean):
+    def import_notes(
+        self, source: str, entries: list[tuple[str, str, str | None]]
+    ) -> ImportSummary | None:
+        """Import notes and tags atomically; None means already imported."""
+        clean = []
+        for text, state, tag in entries:
+            saved_tag = validate_tag(tag)
+            if tag is not None and saved_tag is None:
+                raise NoteError("Tag name cannot be empty.")
+            clean.append((validate_text(text), state, saved_tag))
+        if any(state not in {"active", "in_progress", "done"} for _, state, _ in clean):
             raise NoteError("Imported notes must be active, in progress, or done.")
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
@@ -829,12 +842,15 @@ class Store:
             ).fetchone():
                 return None
             if not clean:
-                return 0
+                return ImportSummary(0, 0)
+            tags_before = len(self.tags())
             when = timestamp()
-            for text, state in clean:
-                self._insert(text, state, "import", when)
+            for text, state, tag in clean:
+                tag = self._register_tag(tag)
+                self._insert(text, state, "import", when, tag)
+            tags_created = len(self.tags()) - tags_before
             self.connection.execute(
                 "INSERT INTO imports(source, imported_at, note_count) VALUES (?, ?, ?)",
                 (source, when, len(clean)),
             )
-        return len(clean)
+        return ImportSummary(len(clean), tags_created)

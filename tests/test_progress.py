@@ -134,7 +134,7 @@ def test_v1_upgrade_preserves_all_data_ids_and_import_markers(legacy):
             assert actual == rows
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert store.import_notes("/original.md", [("Duplicate", "active")]) is None
+        assert store.import_notes("/original.md", [("Duplicate", "active", None)]) is None
         assert store.transition(1, "start")
         assert store.history(1)[-1]["id"] == 81
         assert store.add("Next ID") == 41
@@ -225,8 +225,8 @@ def test_cli_lists_completes_and_restores_progress(cli):
 
 def test_progress_markdown_round_trip_and_notification(tmp_path):
     with Store(tmp_path / "notes.db") as store:
-        store.import_notes("/source", [("A 🐦 <task>\nNext line", "in_progress")])
+        store.import_notes("/source", [("A 🐦 <task>\nNext line", "in_progress", None)])
         notes = store.notes()
-        assert markdown.parse(markdown.export(notes)) == [(notes[0].text, "in_progress")]
+        assert markdown.parse(markdown.export(notes)) == [(notes[0].text, "in_progress", None)]
         body = notify.render(notes)
         assert "[in progress]" in body and "&lt;task&gt;" in body

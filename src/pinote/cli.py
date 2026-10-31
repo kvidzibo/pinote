@@ -308,11 +308,11 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         elif args.command == "import":
             source = args.path.expanduser().resolve(strict=True)
             entries = markdown.parse(source.read_text(encoding="utf-8"))
-            count = store.import_notes(str(source), entries)
+            summary = store.import_notes(str(source), entries)
             print(
                 "Source already imported; nothing added."
-                if count is None
-                else f"Imported {count} notes."
+                if summary is None
+                else f"Imported {summary.notes} notes. Tags created: {summary.tags}."
             )
         elif args.command == "export":
             print(markdown.export(store.notes(all_states=args.all)), end="")
