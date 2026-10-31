@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -246,6 +247,55 @@ test('completion skips pulls in non-Git folders even with a translated locale, b
     if (language === undefined) delete process.env.LANGUAGE; else process.env.LANGUAGE = language;
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test('completion quietly skips missing remotes/upstreams, but preserves configured Git failures', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pinote-local-git-'));
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  const notices: string[] = [];
+  let pulls = 0;
+  const pi = { exec: async () => {
+    pulls++;
+    return { code: 1, killed: false, stdout: '', stderr: 'upstream unavailable' };
+  } } as unknown as ExtensionAPI;
+  const ctx = {
+    cwd, isIdle: () => true,
+    sessionManager: { getSessionId: () => 'session', getLeafId: () => 'branch' },
+    ui: { getEditorText: () => '', notify: (message: string) => notices.push(message) },
+  } as unknown as ExtensionContext;
+  const complete = (current = () => true) => pullBeforeExit(pi, ctx, new AbortController().signal, current);
+  const skipped = async () => {
+    assert.equal(await complete(), true);
+    assert.equal(pulls, 0);
+    assert.deepEqual(notices, []);
+    let checks = 0;
+    assert.equal(await complete(() => ++checks < 3), false, 'skip must recheck session ownership');
+    const controller = new AbortController(); controller.abort();
+    assert.equal(await pullBeforeExit(pi, ctx, controller.signal, () => true), false);
+  };
+  try {
+    git('init', '--initial-branch=completion-test');
+    await skipped();
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'initial');
+    await skipped();
+    git('remote', 'add', 'origin', join(cwd, 'missing-remote'));
+    await skipped();
+    git('config', 'branch.completion-test.remote', 'origin');
+    await skipped();
+    git('config', 'branch.completion-test.merge', 'refs/heads/main');
+    assert.equal(await complete(), false, 'configured but unavailable upstream must not be skipped');
+    assert.equal(pulls, 1);
+    assert.match(notices.at(-1)!, /git pull failed/);
+    git('checkout', '--detach');
+    assert.equal(await complete(), false, 'detached HEAD in a remote-backed repo remains a warning');
+    assert.equal(pulls, 1);
+    writeFileSync(join(cwd, '.git/config'), '[invalid config\n');
+    assert.equal(await complete(), false, 'broken configuration must not be treated as local-only');
+    assert.equal(pulls, 1);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
 test('successful pull cannot close a session or draft that changed while it ran', async () => {

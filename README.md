@@ -111,8 +111,9 @@ the service endpoint and private bearer token, then open **`/pinote`**.
 Completion preserves the conversation and draft, except that completing the
 launched task in a dedicated **Start in Kitty…** session first pulls Git updates
 (fast-forward only), then exits Pi and closes its tab. A failed pull leaves Pi
-open with the task completed. A service restart preserves notes; clients reconnect
-without replaying writes.
+open with the task completed. Non-Git folders, local-only repositories and branches
+without an upstream skip pulling and exit normally. A service restart preserves
+notes; clients reconnect without replaying writes.
 
 Requires Pi 1.4.0+ and Node.js 22.19+; the service also needs Python 3.11+.
 Use HTTPS or a trusted private VPN, never a public unauthenticated listener.
