@@ -1230,6 +1230,19 @@ def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk
     assert window.tag_filter == frozenset({"MCP"})
     subprocess.run(["xdotool", "key", "Home", "Return"], env=gtk.env, check=True, timeout=5)
     wait_until(gtk.glib, lambda: window.tag_filter is None)
+    # Reopen after keyboard activation and let refresh/geometry settle before
+    # using the clear item's screen coordinates.
+    window.visible_filter_menu.deactivate()
+    wait_until(
+        gtk.glib,
+        lambda: (
+            not window.pending
+            and not window.geometry_source
+            and not window.visible_filter_menu.get_mapped()
+        ),
+    )
+    click_button(gtk, window, window.filter_button)
+    wait_until(gtk.glib, lambda: window.visible_filter_menu.get_mapped())
     clear = window.visible_filter_menu.get_children()[-1]
     click_button(gtk, clear.get_toplevel(), clear)
     wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
