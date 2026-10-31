@@ -91,3 +91,90 @@ test('authenticated HTTP sessions share notes, not host selection, and reconnect
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('completion SSE authenticates, checkpoints, resumes durable history and cleans up', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const dir = await mkdtemp(join(tmpdir(), 'pinote-events-'));
+  const names = ['PINOTE_NOTE_COMMAND', 'XDG_DATA_HOME', 'XDG_STATE_HOME'];
+  const previous = names.map((name) => process.env[name]);
+  Object.assign(process.env, {
+    PINOTE_NOTE_COMMAND: fileURLToPath(new URL('../../.venv/bin/note', import.meta.url)),
+    XDG_DATA_HOME: dir, XDG_STATE_HOME: dir,
+  });
+  const { startPinoteHttpServer } = await import('../mcp/http.ts');
+  const token = 'events-test-secret-'.repeat(3);
+  const service = await startPinoteHttpServer({ token, port: 0, logPath: join(dir, 'app.log') });
+  const url = service.url.replace('/mcp', '/events');
+  const headers = { Authorization: `Bearer ${token}` };
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  const note = async (...args: string[]) => (await exec(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args])).stdout;
+  const open = async (cursor?: string) => {
+    const response = await fetch(url, { headers: { ...headers, ...(cursor === undefined ? {} : { 'Last-Event-ID': cursor }) } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type')!, /text\/event-stream/);
+    const reader = response.body!.getReader();
+    readers.push(reader);
+    let buffer = '';
+    return async () => {
+      const deadline = setTimeout(() => { void reader.cancel(); }, 8000);
+      try {
+        while (!buffer.includes('\n\n')) {
+          const chunk = await reader.read();
+          assert.equal(chunk.done, false, 'stream ended before event');
+          buffer += new TextDecoder().decode(chunk.value);
+        }
+        const index = buffer.indexOf('\n\n');
+        const frame = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        return frame;
+      } finally { clearTimeout(deadline); }
+    };
+  };
+  try {
+    assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(url, { headers: { ...headers, Origin: 'https://evil.invalid' } })).status, 403);
+    assert.equal(await new Promise<number>((ok, fail) => {
+      const req = request(url, { headers: { ...headers, Host: 'evil.invalid' } }, (res) => { res.resume(); ok(res.statusCode!); });
+      req.on('error', fail); req.end();
+    }), 403);
+    assert.equal((await fetch(url, { method: 'POST', headers })).status, 405);
+    for (const cursor of ['-1', 'bad', '1.5', '9007199254740992', '1']) {
+      const response = await fetch(url, { headers: { ...headers, 'Last-Event-ID': cursor } });
+      assert.equal(response.status, 400);
+      assert.match(await response.text(), /Last-Event-ID/);
+    }
+    const next = await open();
+    assert.equal(await next(), 'id: 0\nevent: checkpoint\ndata: {}');
+    await note('add', 'Live completion');
+    await note('start', '1');
+    let checkpoint = await next();
+    if (checkpoint === 'id: 1\nevent: checkpoint\ndata: {}') checkpoint = await next();
+    assert.equal(checkpoint, 'id: 2\nevent: checkpoint\ndata: {}');
+    await note('done', '1');
+    const frame = await next();
+    assert.match(frame, /^id: 3\nevent: task.completed\ndata: /);
+    const payload = JSON.parse(frame.split('data: ')[1]);
+    assert.equal(payload.task_id, 1);
+    assert.equal(typeof payload.timestamp, 'string');
+    await readers[0].cancel();
+    await note('done', '1'); // Re-marking does not append history.
+    await note('add', 'Ignored removal');
+    await note('rm', '2');
+    const catchup = await open('2');
+    assert.equal(await catchup(), 'id: 2\nevent: checkpoint\ndata: {}');
+    assert.equal(await catchup(), frame);
+    assert.equal(await catchup(), 'id: 5\nevent: checkpoint\ndata: {}');
+    await readers[1].cancel();
+    const fresh = await open();
+    assert.equal(await fresh(), 'id: 5\nevent: checkpoint\ndata: {}');
+    await service.close();
+    assert.equal((await readers[2].read()).done, true);
+  } finally {
+    await Promise.allSettled(readers.map((reader) => reader.cancel()));
+    await service.close();
+    names.forEach((name, i) => { if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i]; });
+    await rm(dir, { recursive: true, force: true });
+  }
+});

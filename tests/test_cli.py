@@ -106,7 +106,7 @@ def test_argument_errors(cli, argv):
 
 def test_help_and_version_have_no_side_effects(cli):
     assert "durable history" in cli("--help").stdout
-    assert "pinote 0.20.2" in cli("--version").stdout
+    assert "pinote 0.21.0" in cli("--version").stdout
     assert not cli.database.exists()
     assert not cli.log.exists()
 
@@ -272,4 +272,29 @@ def test_installed_console_entrypoint(cli):
         capture_output=True,
         check=True,
     )
-    assert result.stdout == "pinote 0.20.2\n"
+    assert result.stdout == "pinote 0.21.0\n"
+
+
+def test_bounded_completion_events(cli):
+    assert json.loads(cli("events").stdout) == {"cursor": 0, "events": []}
+    cli("add", "Task", "--no-notify")
+    cli("start", "1", "--no-notify")
+    cli("done", "1", "--no-notify")
+    cli("done", "1", "--no-notify")
+    assert json.loads(cli("events").stdout) == {"cursor": 3, "events": []}
+    assert json.loads(cli("events", "--after", "0", "--limit", "2").stdout) == {
+        "cursor": 2,
+        "events": [],
+    }
+    page = json.loads(cli("events", "--after", "2").stdout)
+    assert page["cursor"] == 3
+    assert page["events"] == [{"id": 3, "task_id": 1, "timestamp": page["events"][0]["timestamp"]}]
+    with Store(cli.database) as store:
+        store.import_notes("archived", [("Old", "done", None)])
+        store.add("Removed")
+        store.transition(3, "rm")
+    assert json.loads(cli("events", "--after", "3").stdout) == {"cursor": 6, "events": []}
+    for cursor in ("-1", "+1", "1.0", "bad", "9007199254740992", "7"):
+        assert cli("events", "--after", cursor, check=False).returncode != 0
+    for limit in ("0", "1001"):
+        assert cli("events", "--limit", limit, check=False).returncode != 0

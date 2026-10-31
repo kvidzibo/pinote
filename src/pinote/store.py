@@ -808,6 +808,39 @@ class Store:
             )
             return self.get(note_id)
 
+    def completion_events(self, after: int | None = None, limit: int = 256) -> dict:
+        """Scan bounded durable rows, advancing even when none are completions."""
+        maximum = 9007199254740991
+        if after is not None and (type(after) is not int or not 0 <= after <= maximum):
+            raise NoteError("Cursor must be a nonnegative safe integer.")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise NoteError("Limit must be between 1 and 1000.")
+        tail = self.connection.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
+        if tail > maximum:
+            raise NoteError("Event history exceeds the safe cursor range.")
+        if after is None:
+            return {"cursor": tail, "events": []}
+        if after > tail:
+            raise NoteError("Cursor is ahead of current event history.")
+        rows = self.connection.execute(
+            "SELECT id, note_id, occurred_at, action, state, previous_state FROM events "
+            "WHERE id > ? AND id <= ? ORDER BY id LIMIT ?",
+            (after, tail, limit),
+        ).fetchall()
+        events = []
+        for row in rows:
+            if (
+                row["action"] == "done"
+                and row["state"] == "done"
+                and row["previous_state"] in {"active", "in_progress"}
+            ):
+                if row["note_id"] > maximum:
+                    raise NoteError("Task ID exceeds the safe integer range.")
+                events.append(
+                    {"id": row["id"], "task_id": row["note_id"], "timestamp": row["occurred_at"]}
+                )
+        return {"cursor": rows[-1]["id"] if rows else after, "events": events}
+
     def history(self, note_id: int | None = None) -> list[sqlite3.Row]:
         if (
             note_id is not None

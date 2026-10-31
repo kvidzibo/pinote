@@ -1,3 +1,3 @@
 """Pinote: persistent desktop reminders with durable history."""
 
-__version__ = "0.20.2"
+__version__ = "0.21.0"

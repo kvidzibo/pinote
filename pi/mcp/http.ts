@@ -7,6 +7,7 @@ import { isIP } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createPinoteServer } from './core.ts';
+import { completionEvents } from './events.ts';
 import { pinoteToken } from '../token.ts';
 
 export interface PinoteHttpOptions {
@@ -48,6 +49,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   // Fail startup if the configured log is not writable.
   appendFileSync(logPath, '', { mode: 0o600 });
   const log = (event: string) => diagnostic(logPath, event);
+  const events = completionEvents(() => log('event polling failed'));
   const digest = (value: string) => createHash('sha256').update(value).digest();
   const expected = digest(`Bearer ${token}`);
   type Session = { transport: StreamableHTTPServerTransport; server: ReturnType<typeof createPinoteServer>; busy: number; streams: number; touched: number };
@@ -74,8 +76,9 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
       }
       if (!allowedHosts.has(req.headers.host ?? '')) return reject(res, 403);
       if (req.headers.origin !== undefined && !options.allowedOrigins?.includes(req.headers.origin)) return reject(res, 403);
-      if (req.url !== '/mcp') return reject(res, 404);
       if (stopping) return reject(res, 503);
+      if (req.url === '/events') return events.handle(req, res);
+      if (req.url !== '/mcp') return reject(res, 404);
       if (!['GET', 'POST', 'DELETE'].includes(req.method ?? '')) { res.setHeader('Allow', 'GET, POST, DELETE'); return reject(res, 405); }
       const id = req.headers['mcp-session-id'];
       if (id !== undefined && (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) return reject(res, 400);
@@ -162,6 +165,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
     const closed = new Promise<void>((ok) => listener.close(() => ok()));
     const force = setTimeout(() => listener.closeAllConnections(), 3000);
     try {
+      await events.close();
       await Promise.allSettled([...all].map((session) => session.server.close()));
       await closed;
     } finally { clearTimeout(force); log('stopped'); }
