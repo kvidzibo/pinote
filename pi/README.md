@@ -90,20 +90,13 @@ client-local and is never sent to the service or persisted as launch state.
 Only a fresh session can consume it. The service must share the GUI's database;
 missing/stale revisions fail closed. Resume, reload and `/new` never replay the
 handoff or replace another selection. Pi keeps its normal endpoint/token settings.
-With pi-note 0.33.1+, completing the launched task from the menu, footer or
-**Complete task and exit** runs `git pull --ff-only --no-rebase --no-autostash` in
-Pi's working directory before exiting, so Kitty closes its dedicated tab (or the
-standalone window's last tab). It never merges, rebases or stashes local changes.
-If Git fails, times out (30 seconds), or the session/draft changes, Pi stays open;
-the task remains completed and is not retried. Check Git manually, then `/quit`.
-With pi-note 0.33.3+, directories outside Git, repositories without remotes, and
-branches without a configured upstream skip the pull and exit without a warning.
-Broken Git configuration, detached HEAD in a remote-backed repository, and failures
-to pull a configured upstream still keep Pi open.
-`/quit` and Exit without completing do not pull.
+With pi-note 0.33.4+, completing the launched task from the menu, footer or
+**Complete task and exit** exits Pi directly, so Kitty closes its dedicated tab
+(or the standalone window's last tab). Completion never runs Git commands;
+Git configuration and network availability do not affect closing the session.
 This ownership survives `/reload`, but not `/new`, resume, fork, tree navigation
 or process restart. Completing a different task or an externally completed task
-does not pull or close Pi; failed/uncertain completion stays open.
+does not close Pi; failed/uncertain completion stays open.
 
 ### Agent tools and context
 

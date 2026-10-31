@@ -112,5 +112,5 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
         (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`),
     ].join('\n\n');
   });
-  registerRemoteExit(pi, () => session, ownsLaunch);
+  registerRemoteExit(pi, () => session);
 }
