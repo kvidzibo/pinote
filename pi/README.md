@@ -76,11 +76,16 @@ Changing endpoints starts a separate selection namespace. Unsaved Pi sessions
 cannot guarantee selection persistence.
 
 The GTK app's **Start in Kitty…** action (note 0.13.0+) chooses a working directory
-and opens a named tab with this task selected, without submitting a prompt. In
-note 0.15.0+, it uses the tag's default folder when available, otherwise keeps the
-directory chooser. Set or clear defaults in **Manage tags…**. Client
-and service both need pi-note 0.31.0+. The one-shot `PINOTE_LAUNCH_TASK` environment
-handoff carries only the task ID and displayed revision, never task text or tokens.
+and opens a named tab with this task selected, without submitting a prompt.
+In note 0.16.0+, it uses the tag's default folder when available, otherwise keeps
+the directory chooser. Set or clear defaults in **Manage tags…**.
+With note 0.15.0+ and pi-note 0.32.0+, successful selection prefills an empty Pi editor
+with `is task clear?`. Configure `gui.kitty_start_prompt` in the
+[GUI config](../docs/gui.md#gui-configuration), or set it to `""` to disable; existing
+drafts are never replaced. The service needs pi-note 0.31.0+.
+The one-shot `PINOTE_LAUNCH_TASK` environment handoff carries the task ID, displayed
+revision and optional editor draft, never task text or tokens. The draft stays
+client-local and is never sent to the service or persisted as launch state.
 Only a fresh session can consume it. The service must share the GUI's database;
 missing/stale revisions fail closed. Resume, reload and `/new` never replay the
 handoff or replace another selection. Pi keeps its normal endpoint/token settings.

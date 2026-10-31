@@ -68,7 +68,7 @@ timestamps, tags, reminders, history, and import markers. Schema 5 stores tags s
 including unused tags; schema 6 adds agent fields, history snapshots, and per-directory
 Pi task selections. Existing tasks start with no agent fields; schema 1/2 tasks start
 untagged. Schema 7 adds optional default folders to saved tags; existing tags have
-none. Versions before 0.15.0 cannot read schema 7. Upgrade every CLI/GUI installation
+none. Versions before 0.16.0 cannot read schema 7. Upgrade every CLI/GUI installation
 using the database, including the CLI used by the Pinote service.
 Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Historical text is preserved, not replaced when a task is edited.
@@ -145,8 +145,11 @@ Edits and tag changes retain the task ID and record old/new values in history;
   for a tab name prefilled with `[tag]` for a tagged task or the directory name for
   an untagged task.
   Confirm the name to open Pi in a new Kitty tab. Blank names are not accepted;
-  cancelling either dialog changes nothing. Requires `kitty` and `pi` on PATH and **pi-note 0.31.0+**
-  on both client and service. Pi must use the service sharing this GUI's database;
+  cancelling either dialog changes nothing. After successful selection, Pi prefills
+  its empty editor with `is task clear?` without submitting it. Configure or disable
+  this draft with `kitty_start_prompt` below; existing drafts are preserved.
+  Requires `kitty` and `pi` on PATH, **pi-note 0.32.0+** on the client and **0.31.0+**
+  on the service. Pi must use the service sharing this GUI's database;
   the launcher checks the task ID and displayed revision before starting/selecting it.
   Stale or mismatched tasks stay unselected with a warning in Pi; select manually
   through `/pinote`. Launching never sends a model prompt or completes a task.
@@ -336,7 +339,12 @@ Read from `$XDG_CONFIG_HOME/pinote/config.toml` (default
 [gui]
 max_visible_notes = 10
 markdown_preview = true
+kitty_start_prompt = "is task clear?"
 ```
+
+`kitty_start_prompt` is the editable draft for **Start in Kitty…**, not a submitted
+prompt. Set it to `""` to disable prefilling. It accepts up to 4000 characters,
+including tabs/newlines but no other terminal controls. Restart the GUI after changes.
 
 The limit must be a positive integer. Both sections share this visible-row budget,
 with at least one row per nonempty section. While ordinary tasks remain, in-progress

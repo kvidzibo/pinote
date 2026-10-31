@@ -142,7 +142,7 @@ Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
 See [backup details](docs/usage.md#data-privacy-and-backup).
 
 Back up before upgrading, and update both CLI and GUI installations together.
-Versions before 0.15.0 cannot read schema 7. See the
+Versions before 0.16.0 cannot read schema 7. See the
 [upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
 
 ## Validation

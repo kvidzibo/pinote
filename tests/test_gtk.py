@@ -180,8 +180,8 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
         note = store.add_note("Launch this task", tag=tag)
     calls = []
 
-    def launch(directory, selected, title):
-        calls.append((directory, selected, title))
+    def launch(directory, selected, title, prompt):
+        calls.append((directory, selected, title, prompt))
         raise OSError("Test launch failure")
 
     monkeypatch.setattr("pinote.gui.app.start_in_kitty", launch)
@@ -238,7 +238,7 @@ def test_start_in_kitty_chooses_directory_and_preserves_task_on_cancel_or_error(
     entry.set_text("Review tab")
     entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and window.launch_dialog is None)
-    assert calls == [(str(gtk.paths.data), note, "Review tab")]
+    assert calls == [(str(gtk.paths.data), note, "Review tab", "is task clear?")]
     assert "Test launch failure" in window.error_text.get_text()
     assert window.entry.get_text() == "Keep this draft"
     assert not window.action_pending and window.rows[note.id].note.state == "active"
@@ -264,7 +264,9 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     calls = []
     monkeypatch.setattr(
         "pinote.gui.app.start_in_kitty",
-        lambda directory, selected, title: calls.append((directory, selected.id, title)),
+        lambda directory, selected, title, prompt: calls.append(
+            (directory, selected.id, title, prompt)
+        ),
     )
     window = gtk.open()
     window._set_filter(None)
@@ -305,7 +307,7 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     assert not isinstance(dialog, Gtk.FileChooserDialog)
     dialog.response(Gtk.ResponseType.ACCEPT)
     wait_until(gtk.glib, lambda: not window.pending)
-    assert calls == [(str(gtk.paths.data), note.id, "[Project]")]
+    assert calls == [(str(gtk.paths.data), note.id, "[Project]", "is task clear?")]
     assert window.model.notes()[0].state == "active"
     # Missing or permission-denied defaults must not block manual selection.
     locked = gtk.paths.data / "locked"
@@ -335,7 +337,7 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     wait_until(gtk.glib, lambda: window.launch_dialog is not None)
     assert isinstance(window.launch_dialog, Gtk.FileChooserDialog)
     window.launch_dialog.response(Gtk.ResponseType.CANCEL)
-    assert calls == [(str(gtk.paths.data), note.id, "[Project]")]
+    assert calls == [(str(gtk.paths.data), note.id, "[Project]", "is task clear?")]
 
 
 def test_compact_dunst_layout_and_accessible_controls(gtk):
