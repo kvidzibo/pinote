@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pinote.paths import Paths, display_lock
-from pinote.store import Note, NoteError, Store
+from pinote.store import Note, NoteError, Store, validate_tag
 
 
 @dataclass(frozen=True)
@@ -89,10 +89,18 @@ class ReminderModel:
             with Store(self.paths.database, timeout=0.1) as store:
                 return store.set_tag_folder(name, folder)
 
-    def create_tag(self, name: str) -> str:
+    def create_tag(self, name: str, *, folder: str | None = None, note: Note | None = None) -> str:
+        name = validate_tag(name)
+        if name is None:
+            raise NoteError("Tag name cannot be empty.")
         with display_lock(self.paths, blocking=False):
             with Store(self.paths.database, timeout=0.1) as store:
-                return store.create_tag(name)
+                if note is None:
+                    return store.create_tag(name, folder=folder)
+                store.set_tag(note.id, name, expected_updated_at=note.updated_at, folder=folder)
+                tag = store.get(note.id).tag
+                assert tag is not None
+                return tag
 
     def rename_tag(self, old: str, new: str) -> bool:
         with display_lock(self.paths, blocking=False):

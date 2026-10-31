@@ -179,7 +179,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   The task tag menu and list filter show active-note counts, including in-progress tasks, for example
   **Work (3)**. Counts cover all active tasks regardless of the current filter;
   scheduled-only, archived-only, and unused tags show **(0)** in the task tag menu
-  but are hidden in filter lists. **Untagged** is also hidden from filters when empty.
+  but are hidden in filter lists unless explicitly selected. Explicit selections
+  remain visible even at **(0)**. **Untagged** is hidden from filters when empty.
   In filter lists, the play icon and
   adjacent number show how many tasks on each tag are in progress. Counts use the latest loaded list.
 - Task tags sit after the note text as muted labels; hover to read a truncated tag.
@@ -195,15 +196,18 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Right-click the tag below the input, or press **Esc** with no menu or preview open,
   to reset it to **Untagged**, keeping the draft, existing tasks, and list filter unchanged.
   Once the tag is **Untagged**, **Esc** closes the checklist.
-  **+** saves a new tag in the database immediately and selects it, even without a task.
+  **+** opens the new-tag form with a name and an optional default-folder picker.
+  Saving registers the tag and selects it, even without a task.
   Saved tags survive reopening; the new-task tag selection resets to **Untagged**.
 - **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
   **Save** to add a tag, or select one and change its name to rename it. Renaming
   updates all attached tasks, including archived and scheduled tasks. **Delete**
   asks for confirmation, then clears the tag from tasks and removes it from the registry;
   tasks and their history are kept. Existing names cannot be overwritten by renaming.
-  Select a saved tag and use the **folder icon** to set its default working folder
-  for **Start in Kitty…**. The adjacent **×** clears it. Folder changes save immediately
+  Use the **folder icon** to choose an optional default working folder for
+  **Start in Kitty…**, either when creating a tag or after selecting a saved tag.
+  The adjacent **×** clears it. New-tag folders save with the tag; existing-tag
+  folder changes save immediately
   and survive renaming and restarts. Without a default (or if its folder is no longer
   available on this machine), starting still asks you to choose a folder. Untagged
   tasks always use the chooser. The tab-name prompt is unchanged.
@@ -222,6 +226,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   This is separate from the tag icon on the left, which assigns tags to new tasks.
   The filter is saved in `gui-filter.json` beside the database and restored on restart.
   **Untagged** is the first-launch default; older single-tag filters are also restored.
+  New tags created while the checklist is open are automatically checked without
+  changing other selections. Their tasks are visible by default, and the selection survives restarts.
   Renaming a tag updates its selection. Deleting a selected tag keeps other selections;
   if no selections remain after deletion, the filter falls back to **All**.
   If the filter hides every active task, the empty state says **No tasks match this filter**;

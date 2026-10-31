@@ -32,6 +32,15 @@ def validate_tag(tag: str | None) -> str | None:
     return tag or None
 
 
+def validate_folder(folder: str | None) -> str | None:
+    if folder is None:
+        return None
+    path = Path(folder).expanduser().resolve()
+    if not path.is_dir():
+        raise NoteError("Choose an existing directory.")
+    return str(path)
+
+
 def validate_text(text: str) -> str:
     text = text.replace("\r\n", "\n").strip()
     if not text:
@@ -349,11 +358,7 @@ class Store:
         }
 
     def set_tag_folder(self, name: str, folder: str | None) -> bool:
-        if folder is not None:
-            path = Path(folder).expanduser().resolve()
-            if not path.is_dir():
-                raise NoteError("Choose an existing directory.")
-            folder = str(path)
+        folder = validate_folder(folder)
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
@@ -382,13 +387,18 @@ class Store:
         self.connection.execute("INSERT INTO tags(name) VALUES (?)", (tag,))
         return tag
 
-    def create_tag(self, name: str) -> str:
+    def create_tag(self, name: str, *, folder: str | None = None) -> str:
         tag = validate_tag(name)
         if tag is None:
             raise NoteError("Tag name cannot be empty.")
+        folder = validate_folder(folder)
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             saved = self._register_tag(tag)
+            if folder is not None:
+                self.connection.execute(
+                    "UPDATE tags SET default_folder=? WHERE name=?", (folder, saved)
+                )
         assert saved is not None
         return saved
 
@@ -460,10 +470,22 @@ class Store:
     def edit(self, note_id: int, text: str, *, expected_updated_at: str) -> bool:
         return self._update(note_id, "edit", validate_text(text), expected_updated_at)
 
-    def set_tag(self, note_id: int, tag: str | None, *, expected_updated_at: str) -> bool:
-        return self._update(note_id, "tag", validate_tag(tag), expected_updated_at)
+    def set_tag(
+        self, note_id: int, tag: str | None, *, expected_updated_at: str, folder: str | None = None
+    ) -> bool:
+        return self._update(
+            note_id, "tag", validate_tag(tag), expected_updated_at, folder=validate_folder(folder)
+        )
 
-    def _update(self, note_id: int, action: str, value: str | None, expected: str) -> bool:
+    def _update(
+        self,
+        note_id: int,
+        action: str,
+        value: str | None,
+        expected: str,
+        *,
+        folder: str | None = None,
+    ) -> bool:
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -480,6 +502,10 @@ class Store:
             new_tag = value if action == "tag" else row["tag"]
             if action == "tag" and new_tag is not None:
                 new_tag = self._register_tag(new_tag)
+                if folder is not None:
+                    self.connection.execute(
+                        "UPDATE tags SET default_folder=? WHERE name=?", (folder, new_tag)
+                    )
             if new_text == row["text"] and new_tag == row["tag"]:
                 return False
             when = timestamp()

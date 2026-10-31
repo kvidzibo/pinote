@@ -19,6 +19,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from pinote.gui.draft import DraftCache  # noqa: E402
+from pinote.gui.folder import FolderPicker  # noqa: E402
 from pinote.gui.icons import icon_button  # noqa: E402
 from pinote.gui.placement import place_child  # noqa: E402
 
@@ -102,6 +103,10 @@ class NoteEditor(Gtk.ApplicationWindow):
             self.entry.get_accessible().set_name("Tag name")
             self.entry.connect("activate", lambda _entry: self._save())
             layout.pack_start(self.entry, False, False, 0)
+            self.folder_picker = FolderPicker(
+                owner, lambda folder: self.folder_picker.set_folder(folder)
+            )
+            layout.pack_start(self.folder_picker, False, False, 0)
         else:
             self.entry = Gtk.TextView(
                 wrap_mode=Gtk.WrapMode.WORD_CHAR,
@@ -263,6 +268,8 @@ class NoteEditor(Gtk.ApplicationWindow):
         controls = [self.entry, self.save_button, self.cancel_button]
         if self.schedule_only:
             controls.extend((self.hour, self.minute))
+        elif self.tag_only:
+            controls.append(self.folder_picker)
         if self.draft is not None:
             controls.append(self.discard_button)
         return controls
@@ -291,13 +298,13 @@ class NoteEditor(Gtk.ApplicationWindow):
             buffer = self.entry.get_buffer()
             value = buffer.get_text(*buffer.get_bounds(), True)
 
+        folder = self.folder_picker.folder if self.tag_only else None
+
         def operation():
-            if self.note is None:
-                return self.owner.model.create_tag(value)
+            if self.tag_only:
+                return self.owner.model.create_tag(value, folder=folder, note=self.note)
             if self.schedule_only:
                 return self.owner.model.schedule(self.note, value)
-            if self.tag_only:
-                return self.owner.model.set_tag(self.note, value)
             result = self.owner.model.edit(self.note, value)
             self.draft.submitted(draft_revision)
             self._persist_draft()  # Cache failure must not disguise a committed edit.
@@ -332,9 +339,10 @@ class NoteEditor(Gtk.ApplicationWindow):
             LOGGER.exception("Cannot save task changes.")
             self._error("Unexpected failure. Run note to check the saved state.")
         else:
-            if self.note is None:
+            if self.tag_only:
                 self.owner._tags_changed(None, result)
-                self.owner._select_creation_tag(result)
+                if self.note is None:
+                    self.owner._select_creation_tag(result)
             self.owner._poll()
             if self.owner.scheduled_window is not None:
                 self.owner.scheduled_window._poll()

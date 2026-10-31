@@ -274,13 +274,14 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     manager = window.tags_window
     wait_until(gtk.glib, lambda: not manager.pending and manager.selected == "Work")
     assert manager.folders == {"Work": None}
-    assert not manager.clear_folder_button.get_sensitive()
-    manager.folder_button.clicked()
-    chooser = manager.folder_dialog
+    picker = manager.folder_picker
+    assert not picker.clear_button.get_sensitive()
+    picker.choose_button.clicked()
+    chooser = picker.dialog
     chooser.response(Gtk.ResponseType.CANCEL)
     assert manager.folders == {"Work": None}
-    manager.folder_button.clicked()
-    chooser = manager.folder_dialog
+    picker.choose_button.clicked()
+    chooser = picker.dialog
     chooser.set_current_folder(str(gtk.paths.data))
     wait_until(gtk.glib, lambda: chooser.get_filename() == str(gtk.paths.data))
     chooser.response(Gtk.ResponseType.ACCEPT)
@@ -288,8 +289,8 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
         gtk.glib,
         lambda: not manager.pending and manager.folders.get("Work") == str(gtk.paths.data),
     )
-    assert manager.folder_label.get_text() == str(gtk.paths.data)
-    assert manager.clear_folder_button.get_sensitive()
+    assert picker.label.get_text() == str(gtk.paths.data)
+    assert picker.clear_button.get_sensitive()
     # Renaming must carry the folder to the new tag.
     manager.entry.set_text("Project")
     manager.save_button.clicked()
@@ -330,7 +331,7 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     window._open_tags("Project")
     manager = window.tags_window
     wait_until(gtk.glib, lambda: not manager.pending and manager.selected == "Project")
-    manager.clear_folder_button.clicked()
+    manager.folder_picker.clear_button.clicked()
     wait_until(gtk.glib, lambda: not manager.pending and manager.folders == {"Project": None})
     manager.close()
     window._open_kitty(note)
@@ -731,6 +732,89 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     assert window.rows[5].note.tag is None
 
 
+@pytest.mark.parametrize("source", ["composer", "task", "manager"])
+@pytest.mark.parametrize("with_folder", [False, True])
+def test_new_tag_is_visible_and_saves_optional_folder(gtk, source, with_folder):
+    from pinote.gui.app import Gtk
+
+    with Store(gtk.paths.database) as store:
+        store.add("Visible task", tag="Work")
+        store.add("Keep hidden", tag="Hidden")
+    window = gtk.open()
+    window._set_filter(frozenset({"Work"}))
+    window.entry.set_text("Keep this draft")
+    if source == "manager":
+        window._open_tags()
+        form = window.tags_window
+        wait_until(gtk.glib, lambda: not form.pending)
+    else:
+        if source == "task":
+            window._open_editor(window.rows[1].note, tag_only=True)
+        else:
+            window._open_creation_tag()
+        form = window.editor
+    form.entry.set_text("New")
+    picker = form.folder_picker
+    assert picker.choose_button.is_sensitive()
+    picker.choose_button.clicked()
+    picker.dialog.response(Gtk.ResponseType.CANCEL)
+    assert picker.folder is None
+    if with_folder:
+        for clear in (True, False):
+            picker.choose_button.clicked()
+            chooser = picker.dialog
+            chooser.set_current_folder(str(gtk.paths.data))
+            wait_until(
+                gtk.glib, lambda chooser=chooser: chooser.get_filename() == str(gtk.paths.data)
+            )
+            chooser.response(Gtk.ResponseType.ACCEPT)
+            assert picker.folder == str(gtk.paths.data)
+            if clear:
+                picker.clear_button.clicked()
+                assert picker.folder is None
+    form.save_button.clicked()
+    wait_until(
+        gtk.glib,
+        lambda: not form.saving and not window.pending and "New" in window.tags,
+    )
+    assert window.tag_filter == frozenset({"Work", "New"})
+    assert window.entry.get_text() == "Keep this draft"
+    if source == "manager":
+        wait_until(gtk.glib, lambda: not form.pending)
+        assert form.folder_picker.folder is None  # Next tag starts without a folder.
+        form.close()
+    with Store(gtk.paths.database) as store:
+        assert store.tag_folders()["New"] == (str(gtk.paths.data) if with_folder else None)
+        if source == "task":
+            assert store.get(1).tag == "New"
+    window._prepare_visible_filters(window.visible_filter_menu)
+    item = next(
+        child
+        for child in window.visible_filter_menu.get_children()
+        if getattr(child, "filter_tag", None) == "New"
+    )
+    assert item.get_visible() and item.get_active()  # Visible even before it has tasks.
+    if source != "task":
+        window._select_creation_tag("New")
+        window.entry.set_text("New tagged task")
+        window.entry.emit("activate")
+        wait_until(gtk.glib, lambda: not window.pending and 3 in window.rows)
+    assert 2 not in window.rows
+    application = window.get_application()
+    window.close()
+    wait_until(gtk.glib, lambda: window.closed)
+    window.worker.shutdown(wait=True)
+    window = gtk.open(application)
+    assert window.tag_filter == frozenset({"Work", "New"})
+    assert 2 not in window.rows
+    if source == "composer" and not with_folder:
+        with Store(gtk.paths.database) as store:
+            store.create_tag("External")
+        window._poll()
+        wait_until(gtk.glib, lambda: not window.pending)
+        assert window.tag_filter == frozenset({"Work", "New", "External"})
+
+
 def test_tag_manager_persists_unused_tags_and_updates_tasks(gtk):
     with Store(gtk.paths.database) as store:
         store.add("Keep this task", tag="Work")
@@ -1039,6 +1123,8 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     wait_until(gtk.glib, lambda: window.tags_window is None)
     window._poll()
     wait_until(gtk.glib, lambda: len(window.tags) == 82)
+    assert window.tag_filter == selected | {f"Tag {index:02}" for index in range(80)}
+    window._set_filter(selected)  # Explicit exclusions still work for newly discovered tags.
     # Without a window manager, closing the modal leaves X focus on the root window.
     subprocess.run(
         ["xdotool", "windowfocus", "--sync", str(window.get_window().get_xid())],
@@ -1229,7 +1315,7 @@ def test_tag_menus_order_by_latest_creation_across_states(gtk, monkeypatch):
     assert window.tag_filter == frozenset({"Alpha"})
 
 
-def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk):
+def test_tag_filters_keep_selected_zero_counts_and_refresh_without_changing_selection(gtk):
     with Store(gtk.paths.database) as store:
         store.create_tag("MCP")
         store.add("Archived task", tag="Archived")
@@ -1257,7 +1343,7 @@ def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk
 
     for menu in (window.visible_filter_menu, window.filter_menu):
         menu.show_all()
-        assert visible_tags(menu) == ["Work (1)"]
+        assert visible_tags(menu) == ["MCP (0)", "Work (1)"]
     window.filter_menu.hide()
     window._prepare_composer_tags(window.composer_tag_menu)
     assert "MCP" in [
@@ -1274,7 +1360,7 @@ def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk
     window._poll()
     wait_until(gtk.glib, lambda: not window.pending and not window.notes_snapshot)
     for menu in (window.visible_filter_menu, window.filter_menu):
-        assert visible_tags(menu) == []
+        assert visible_tags(menu) == ["MCP (0)"]
         assert all(
             item.get_visible()
             for item in menu.get_children()
@@ -1291,8 +1377,9 @@ def test_tag_filters_hide_zero_counts_and_refresh_without_changing_selection(gtk
         return 0 <= y and y + clear.get_allocated_height() <= menu.get_allocated_height()
 
     wait_until(gtk.glib, actions_allocated)
-    subprocess.run(["xdotool", "key", "Home", "Return"], env=gtk.env, check=True, timeout=5)
+    subprocess.run(["xdotool", "key", "Home", "Down", "Return"], env=gtk.env, check=True, timeout=5)
     wait_until(gtk.glib, lambda: window.tag_filter is None)
+    wait_until(gtk.glib, actions_allocated)
     # Process pointer entry (and dismiss any tooltip) before sending the click,
     # as in the other real-menu interaction tests.
     pointer_at(gtk, clear.get_toplevel(), clear, 8, 8)
@@ -1421,9 +1508,13 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
     editor.entry.set_text("Personal 🐦")
     click_button(gtk, editor, editor.save_button)
     wait_until(
-        gtk.glib, lambda: window.editor is None and not window.pending and set(window.rows) == {2}
+        gtk.glib,
+        lambda: window.editor is None and not window.pending and set(window.rows) == {1, 2},
     )
+    assert window.tag_filter == frozenset({"", "Personal 🐦"})
     assert not window.show_all_button.get_visible()
+    filter_by("Personal 🐦 (1)")
+    assert set(window.rows) == {2}  # Newly created tags start checked; this unchecks it.
     filter_by("Personal 🐦 (1)")
     assert set(window.rows) == {1, 2}
     assert [
