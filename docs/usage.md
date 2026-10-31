@@ -183,17 +183,31 @@ note import ~/Documents/reminders.md
 ```
 
 This is explicit and never runs during installation. The source file is read
-only; headings/blank lines are ignored, bullets and plain lines become notes,
-`- [x]` entries import as done, and `- [~]` entries import as in progress.
-Export uses the same markers to preserve progress. Four-space-indented continuation lines belong
-to the preceding note. This is a small reminder format, not a full Markdown
-parser (nested lists and code blocks are not supported).
+only. Use top-level bullets for untagged notes, or a plain parent bullet for a
+tag with indented child notes:
+
+```markdown
+- untagged note
+- Work
+  - prepare report
+  - [x] send invoice
+```
+
+Missing tags are created; existing tags are reused case-insensitively. The summary
+reports notes imported and tags created. Headings, blank lines, and other non-list
+text are ignored. Only one child-list level is supported; this is a small reminder
+format, not a full Markdown parser (code blocks are not supported).
+
+Checkbox bullets always represent notes: `- [ ]` is active, `- [x]` is done,
+and `- [~]` is in progress. For these notes, continuation lines indented four
+spaces beyond the bullet's indentation preserve literal multiline text, including
+headings and bullets. Export uses this format to preserve text and progress.
 
 Each canonical source path is imported at most once, atomically. Re-running the
 import does not duplicate notes, even if the file changes. An empty import does
 not mark the source as imported. A copy at another path is a separate source.
 SQLite becomes the source of truth; editing the old Markdown file does not
-change pinote. Import creates untagged tasks; export omits tag metadata.
+change pinote. Export omits tag metadata.
 Scheduled notes are excluded from Markdown exports, even with `--all`; use
 `note reminders` to list them. Export is a readable snapshot, **not** a backup of
 IDs, tags, scheduled times, agent fields, project selections, or history.

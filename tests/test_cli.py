@@ -12,6 +12,7 @@ import pytest
 
 from pinote.cli import arguments, main
 from pinote.paths import Paths, display_lock, xdg_path
+from pinote.store import Store
 
 
 def test_full_cli_lifecycle(cli):
@@ -105,7 +106,7 @@ def test_argument_errors(cli, argv):
 
 def test_help_and_version_have_no_side_effects(cli):
     assert "durable history" in cli("--help").stdout
-    assert "pinote 0.17.1" in cli("--version").stdout
+    assert "pinote 0.20.0" in cli("--version").stdout
     assert not cli.database.exists()
     assert not cli.log.exists()
 
@@ -162,6 +163,41 @@ def test_import_and_export(cli, tmp_path):
     assert cli("export", "--all").stdout == "# Reminders\n\n- [ ] existing\n- [x] finished\n"
     assert "import" in cli("history").stdout
     assert cli("import", str(tmp_path / "missing"), check=False).returncode == 1
+
+
+def test_import_tagged_markdown_summary(cli, tmp_path):
+    with Store(cli.database) as store:
+        store.create_tag("Work")
+    source = tmp_path / "tagged.md"
+    original = (
+        "# Heading\nIgnored prose\n  - orphan\n"
+        "- loose note\n- work\n  - first task\n    - unsupported deeper list\n"
+        "  - [~] ongoing\n      more detail\n"
+        "- Personal\n    - [x] finished\n"
+        "- WORK\n  * another task\n- last note\nIgnored ending\n"
+    )
+    source.write_text(original)
+    assert "Imported 6 notes. Tags created: 1." in cli("import", str(source), "--no-notify").stdout
+    assert source.read_text() == original
+    with Store(cli.database) as store:
+        notes = store.notes(all_states=True)
+        assert [(n.text, n.state, n.tag) for n in notes] == [
+            ("loose note", "active", None),
+            ("first task", "active", "Work"),
+            ("ongoing\nmore detail", "in_progress", "Work"),
+            ("finished", "done", "Personal"),
+            ("another task", "active", "Work"),
+            ("last note", "active", None),
+        ]
+        assert store.tags() == ["Personal", "Work"]
+        assert [e["tag"] for e in store.history()] == [n.tag for n in notes]
+    assert "already imported" in cli("import", str(source), "--no-notify").stdout
+    invalid = tmp_path / "invalid.md"
+    invalid.write_text("- New\n  - valid\n- " + "x" * 65 + "\n  - invalid tag\n")
+    assert cli("import", str(invalid), "--no-notify", check=False).returncode == 1
+    with Store(cli.database) as store:
+        assert len(store.notes(all_states=True)) == 6
+        assert store.tags() == ["Personal", "Work"]
 
 
 def test_invalid_text_does_not_save(cli):
@@ -236,4 +272,4 @@ def test_installed_console_entrypoint(cli):
         capture_output=True,
         check=True,
     )
-    assert result.stdout == "pinote 0.17.1\n"
+    assert result.stdout == "pinote 0.20.0\n"

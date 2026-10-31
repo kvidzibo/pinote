@@ -47,7 +47,7 @@ def test_reminder_lifecycle_survives_v3_upgrade_restart_and_stale_actions(tmp_pa
         assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert store.import_notes("/old.md", [("duplicate", "active")]) is None
+        assert store.import_notes("/old.md", [("duplicate", "active", None)]) is None
         assert store.history(7)[0]["text"] == "Call"
         assert store.history(7)[-1]["id"] == 81
         assert "Call" not in markdown.export(store.notes(all_states=True))

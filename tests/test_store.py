@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from pinote.store import NoteError, Store, validate_text
+from pinote.store import ImportSummary, NoteError, Store, validate_text
 
 
 @pytest.fixture
@@ -86,17 +86,22 @@ def test_transaction_rolls_back_both_state_and_history(store):
 
 def test_import_is_atomic_idempotent_and_keeps_done(store):
     source = "/original/REMINDER.md"
-    entries = [("active", "active"), ("finished", "done")]
-    assert store.import_notes(source, entries) == 2
-    assert store.import_notes(source, [("new contents", "active")]) is None
+    entries = [("active", "active", "Work"), ("finished", "done", None)]
+    assert store.import_notes(source, entries) == ImportSummary(2, 1)
+    assert store.import_notes(source, [("new contents", "active", "Unused")]) is None
+    assert store.tags() == ["Work"]
+    assert [e["tag"] for e in store.history()] == ["Work", None]
     assert len(store.notes(all_states=True)) == 2
     assert [e["action"] for e in store.history()] == ["import", "import"]
     assert [e["state"] for e in store.history()] == ["active", "done"]
     with pytest.raises(NoteError):
-        store.import_notes("/another", [("valid", "active"), ("", "active")])
+        store.import_notes("/another", [("valid", "active", "New"), ("", "active", None)])
     assert len(store.notes(all_states=True)) == 2
-    assert store.import_notes("/empty", []) == 0
-    assert store.import_notes("/empty", [("now has content", "active")]) == 1
+    assert store.tags() == ["Work"]
+    assert store.import_notes("/empty", []) == ImportSummary(0, 0)
+    assert store.import_notes("/empty", [("now has content", "active", None)]) == ImportSummary(
+        1, 0
+    )
 
 
 def test_import_rollback_on_event_failure(store):
@@ -105,7 +110,8 @@ def test_import_rollback_on_event_failure(store):
         "WHEN NEW.note_id = 2 BEGIN SELECT RAISE(ABORT, 'failed event'); END"
     )
     with pytest.raises(sqlite3.IntegrityError):
-        store.import_notes("/source", [("one", "active"), ("two", "done")])
+        store.import_notes("/source", [("one", "active", "New"), ("two", "done", None)])
+    assert not store.tags()
     assert not store.notes(all_states=True)
     assert not store.history()
     assert not store.connection.execute("SELECT * FROM imports").fetchall()

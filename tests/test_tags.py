@@ -72,7 +72,7 @@ def test_legacy_upgrade_allows_edits_and_tags_without_losing_history(tmp_path, v
             (82, "Edited\nDetails", "Work"),
         ]
         assert store.add("Next") == 41
-        assert store.import_notes("/old.md", [("Duplicate", "active")]) is None
+        assert store.import_notes("/old.md", [("Duplicate", "active", None)]) is None
         assert store.connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert store.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
