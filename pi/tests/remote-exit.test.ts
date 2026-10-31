@@ -3,8 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { pullBeforeExit, registerRemoteExit } from '../remote/exit.ts';
 import type { RemoteSession } from '../remote/session.ts';
@@ -13,9 +12,22 @@ import type { NativeView } from '../remote/protocol.ts';
 const selected = (): NativeView => ({ version: 1, title: 'Pinote', body: 'Selected task', revision: 'displayed',
   state: { selectedId: 7 }, controls: [{ id: 'done', kind: 'action', label: 'Complete task', revision: 'task-7' }] });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-const root = fileURLToPath(new URL('../../', import.meta.url));
+const pullRepository = (t: TestContext): string => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pinote-pull-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  for (const args of [
+    ['init', '--quiet', '--initial-branch=completion-test'],
+    ['remote', 'add', 'origin', join(cwd, 'upstream')],
+    ['config', 'branch.completion-test.remote', 'origin'],
+    ['config', 'branch.completion-test.merge', 'refs/heads/main'],
+  ]) {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  return cwd;
+};
 
-test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async () => {
+test('remote editor exit: cancellation, exact approval revision, direct completion and orderly exit', async (t) => {
   const handlers = new Map<string, Function[]>();
   let launch = false, pulls = 0, pullCode = 0;
   const pi = {
@@ -55,7 +67,7 @@ test('remote editor exit: cancellation, exact approval revision, direct completi
     NonNullable<ReturnType<ExtensionContext['ui']['getEditorComponent']>>;
   let factory: ReturnType<ExtensionContext['ui']['getEditorComponent']> = previous;
   const ctx = {
-    cwd: root, mode: 'tui', hasUI: true,
+    cwd: pullRepository(t), mode: 'tui', hasUI: true,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     isIdle: () => idle, abort: () => { aborts++; }, shutdown: () => { shutdowns++; },
     ui: {
@@ -299,12 +311,12 @@ test('completion quietly skips missing remotes/upstreams, but preserves configur
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
-test('successful pull cannot close a session or draft that changed while it ran', async () => {
+test('successful pull cannot close a session or draft that changed while it ran', async (t) => {
   let draft = '', leaf = 'branch', idle = true, current = true;
   let finish: (result: { code: number; killed: boolean }) => void;
   const pi = { exec: () => new Promise((resolve) => { finish = resolve; }) } as unknown as ExtensionAPI;
   const ctx = {
-    cwd: root, isIdle: () => idle,
+    cwd: pullRepository(t), isIdle: () => idle,
     sessionManager: { getSessionId: () => 'session', getLeafId: () => leaf },
     ui: { getEditorText: () => draft, notify() {} },
   } as unknown as ExtensionContext;
