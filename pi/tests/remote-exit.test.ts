@@ -286,6 +286,7 @@ test('completion quietly skips missing remotes/upstreams, but preserves configur
     git('config', 'branch.completion-test.remote', 'origin');
     await skipped();
     git('config', 'branch.completion-test.merge', 'refs/heads/main');
+    git('tag', 'completion-test'); // Ambiguous short names must still use the branch's upstream.
     assert.equal(await complete(), false, 'configured but unavailable upstream must not be skipped');
     assert.equal(pulls, 1);
     assert.match(notices.at(-1)!, /git pull failed/);

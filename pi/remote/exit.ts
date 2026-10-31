@@ -21,9 +21,10 @@ export async function pullBeforeExit(pi: ExtensionAPI, ctx: ExtensionContext, si
     const remotes = git(['remote']);
     if (remotes.error || remotes.status !== 0) throw new Error('Git remote check failed');
     if (!remotes.stdout.trim()) return unchanged();
-    const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
-    if (branch.error || branch.status !== 0) throw new Error('Git branch check failed');
-    const upstream = git(['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
+    const branch = git(['symbolic-ref', '--quiet', 'HEAD']);
+    if (branch.error || branch.status !== 0 || !branch.stdout.startsWith('refs/heads/')) throw new Error('Git branch check failed');
+    const branchName = branch.stdout.trim().slice('refs/heads/'.length);
+    const upstream = git(['config', '--get', `branch.${branchName}.merge`]);
     if (upstream.error || (upstream.status !== 0 && upstream.status !== 1)) throw new Error('Git upstream check failed');
     if (upstream.status === 1) return unchanged();
     if (!upstream.stdout.trim() || !unchanged()) throw new Error('Git upstream or session changed');
