@@ -539,6 +539,20 @@ def test_context_state_icons(gtk):
         )
         menu = window.context_menu
         assert menu.get_allocated_width() < 80
+        assert [
+            child.get_accessible().get_name()
+            for child in menu.get_children()
+            if not isinstance(child, Gtk.SeparatorMenuItem)
+        ] == [
+            "Start in Kitty…",
+            "Copy note",
+            "Reset" if window.rows[1].note.state == "in_progress" else "Start",
+            "Complete",
+            "Remove",
+            "Edit…",
+            "Set reminder…",
+            "Tag",
+        ]
         for child in menu.get_children():
             if isinstance(child, Gtk.SeparatorMenuItem):
                 continue
