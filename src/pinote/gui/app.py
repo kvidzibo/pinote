@@ -1400,10 +1400,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
             item.set_sensitive(not self.action_pending)
             state_items.append(item)
         for item in (
+            launch,
             copy,
             Gtk.SeparatorMenuItem(),
             *state_items,
-            launch,
             Gtk.SeparatorMenuItem(),
             edit,
             schedule,

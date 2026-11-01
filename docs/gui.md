@@ -136,7 +136,8 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Markdown uses the optional `gui` install extra; without its parser, previews stay plain text.
 - Right-clicking note text outlines that row while its context menu or tag submenu
   is open. Dismissing the menu clears the outline without changing the task's state.
-  The compact, icon-only menu offers **Copy note** (copies the full text), **Start**
+  The compact, icon-only menu starts with **Start in Kitty…** (terminal icon),
+  followed by **Copy note** (copies the full text), **Start**
   (triangle) or **Reset** (return arrow), **Complete** (checkmark), and **Remove**
   (archive box), plus editing, scheduling, and tags. Hover for labels; only tag
   choices show text. Remove archives immediately; recover the task from Archive.
