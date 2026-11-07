@@ -1,0 +1,39 @@
+{
+  "name": "pinote-electron",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional isolated desktop frontend for Pinote's Python backend",
+  "license": "MIT",
+  "main": "dist/main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "setup": "install-electron",
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "start": "npm run build && electron --class=pinote-electron dist/main.cjs",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test:e2e": "npm run build && node tests/e2e.mjs",
+    "test:package": "node tests/package-smoke.mjs",
+    "package": "npm run build && node package.mjs"
+  },
+  "overrides": {
+    "glob": "14.0.4",
+    "minimatch": "11.0.5"
+  },
+  "dependencies": {
+    "markdown-it": "15.0.3"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@electron/packager": "20.3.0",
+    "@types/markdown-it": "14.2.0",
+    "@types/node": "22.20.3",
+    "electron": "45.2.3",
+    "esbuild": "0.28.2",
+    "playwright": "1.65.0",
+    "typescript": "5.9.3"
+  }
+}

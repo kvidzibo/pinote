@@ -2713,7 +2713,9 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             "for_window [floating] border normal 0\n"
             'for_window [window_role="^pinote-"] floating enable, border none\n'
         )
-    config.write_text(f"font pango:monospace 9\nipc-socket {socket}\n{rules}")
+    config.write_text(
+        f"# i3 config file (v4)\nfont pango:monospace 9\nipc-socket {socket}\n{rules}"
+    )
     window = None
     with (tmp_path / "i3.log").open("w") as output:
         process = subprocess.Popen(
@@ -2735,6 +2737,8 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                 return json.loads(result.stdout)
 
             tree()  # ensure this private WM is ready before mapping the popup
+            # Legacy-config migration adds an unwanted bar and races popup placement.
+            assert "Automatically converted" not in (tmp_path / "i3.log").read_text()
             with Store(gtk.paths.database) as store:
                 for index in range(3):
                     store.add(
@@ -2748,7 +2752,17 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             def expected_position():
                 return (25, screen_bottom - 25 - window.get_size().height)
 
-            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
+            try:
+                wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
+            except AssertionError:
+                pytest.fail(
+                    f"Popup placement: actual={tuple(window.get_position())}, "
+                    f"expected={expected_position()}, size={tuple(window.get_size())}, "
+                    f"anchor={(window.anchor_x, window.anchor_bottom)}, "
+                    f"workarea={(geometry.x, geometry.y, geometry.width, geometry.height)}, "
+                    f"i3={tree()}",
+                    pytrace=False,
+                )
             assert window.get_size().width == 420
             assert window.get_size().height < 175  # Two-line composer, still content-sized.
             nodes = [tree()]
@@ -5088,7 +5102,7 @@ def test_restart_helper_preserves_hidden_workspace_and_environment(gtk, tmp_path
     env = {**gtk.env, "I3SOCK": socket}
     config = tmp_path / "i3.conf"
     config.write_text(
-        f"font pango:monospace 9\nipc-socket {socket}\n"
+        f"# i3 config file (v4)\nfont pango:monospace 9\nipc-socket {socket}\n"
         'for_window [window_role="^pinote-"] floating enable, border none\n'
     )
 

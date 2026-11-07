@@ -56,6 +56,14 @@ cover non-uv installation, i3 login startup, filtering, editing, and configurati
 After GUI source changes, use `./scripts/restart-pinote.sh`; it preserves the
 running instance's workspace and leaves a stopped GUI stopped.
 
+### Experimental Electron frontend
+
+GTK remains the default desktop frontend and fallback. An optional Electron
+trial frontend shares the Python backend and task database; it does not replace
+GTK or change desktop startup/configuration. Requires Node.js 22.12+ in addition
+to Python 3.11+. See [Electron installation, use, packaging, and limitations](docs/electron.md).
+Only Linux/X11/i3 is a validation target; pixel-for-pixel GTK parity is not promised.
+
 ## Use
 
 ```sh
@@ -165,6 +173,8 @@ npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 GUI tests require the documented desktop tools and always run under Xvfb with a
 private D-Bus session. [Development guide](docs/development.md) includes GTK tests,
 prerequisites, and the smaller-display checks. Tests use temporary storage.
+The optional Electron frontend has [additional checks](docs/development.md#electron-frontend)
+including sandboxed, isolated Xvfb/i3 end-to-end and packaged-app checks.
 
 ## License
 

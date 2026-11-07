@@ -38,6 +38,51 @@ on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK 
 against the built wheel (including its bundled stylesheet and isolated i3 placement).
 GTK regressions also exercise manual window moves during geometry synchronization.
 
+## Electron frontend
+
+The [experimental Electron guide](electron.md) covers installation, state,
+recovery, packaging, and limitations. These checks supplement, not replace, all
+Python, Dunst, GTK (including smaller-display and i3 regressions), and Pi checks
+above. Keep the Python package and Pi package versions independent of Electron.
+
+Use Node.js 22.12+ (CI uses Node 24), the locked local `.venv` backend, and Linux
+Electron runtime libraries: GTK 3, NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11
+libraries. End-to-end tests additionally need `xvfb-run`, `dbus-run-session`,
+`xauth`, `i3-wm`, and `xdotool`. System Python with `python3-gi` and
+`gir1.2-gtk-3.0` is needed for GTK coexistence coverage. The Electron scenario
+also uses the real Pi HTTP service/client without making model requests.
+
+```sh
+uv sync --locked
+uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
+uv pip install --python .venv-gui/bin/python -e '.[gui]'
+npm --prefix pi ci --ignore-scripts && npm --prefix pi run build:mcp
+npm --prefix electron ci --ignore-scripts
+npm --prefix electron run setup
+export PINOTE_ELECTRON_BACKEND="$PWD/.venv/bin/pinote-electron-backend"
+xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c 'npm --prefix electron run check && npm --prefix electron test && npm --prefix electron run test:e2e'
+xvfb-run -a -s '-screen 0 800x600x24' dbus-run-session -- npm --prefix electron run test:e2e
+npm --prefix electron run build
+npm --prefix electron run package
+xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:package
+```
+
+`setup` explicitly downloads Electron; `ci --ignore-scripts` installs locked npm
+packages (including esbuild's optional native binary) without lifecycle scripts.
+The end-to-end harness uses its own HOME/XDG directories, private i3 configuration
+and socket, and clears inherited real i3/Kitty sockets. Always use Xvfb and a
+private D-Bus session, never the actual desktop. Test screenshots stay in temporary
+artifact directories; do not commit them or attach them to PRs.
+
+Sandboxing must stay enabled. If Ubuntu AppArmor restricts unprivileged user
+namespaces, CI provisions the downloaded `chrome-sandbox` helper as root-owned,
+mode 4755 on its **ephemeral runner**, including the packaged copy before its
+smoke test. This is Chromium's SUID sandbox setup, not permission to use
+`--no-sandbox` or disable security sysctls globally. Do not modify a user's
+machine configuration as a test workaround.
+
+## Architecture and integration
+
 The package uses `src/pinote/` with `python -m pinote` support. Storage, Markdown,
 notification rendering, and CLI parsing are separated for focused testing.
 `gui/` contains the optional presentation and a GTK-free data adapter; GTK is

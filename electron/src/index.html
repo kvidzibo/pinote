@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pinote</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app" aria-label="Pinote checklist">
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <section id="checklist" aria-label="Tasks">
+      <div id="ordinary" class="task-list" aria-label="Tasks not started"></div>
+      <div id="pinned" class="task-list pinned" aria-label="In progress"></div>
+    </section>
+    <form id="composer" aria-label="Add task">
+      <textarea id="draft" rows="1" placeholder="Add a task…" aria-label="Add a task…" spellcheck="false"></textarea>
+      <div id="toolbar"></div>
+    </form>
+  </main>
+  <div id="popups"></div>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>
