@@ -6,6 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
+import { createEventBus } from '@earendil-works/pi-coding-agent';
 import { remoteConfig, RemoteFailure, type Peer, type PeerFactory } from '../remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, restoreState, type SavedState } from '../remote/session.ts';
 import { UI_CONTEXT, UI_FEATURES, UI_STATE, type NativeView } from '../remote/protocol.ts';
@@ -431,19 +432,22 @@ test('acknowledged Done awaits bounded local hooks outside the queue without wea
 
   // Rejection, cancellation and the total deadline preserve acknowledged success.
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  for (const scenario of ['reject', 'cancel', 'timeout', 'throw']) {
+  const diagnostics = t.mock.method(console, 'error', () => {});
+  for (const scenario of ['reject', 'cancel', 'timeout', 'sync-work']) {
     const h = harness({ read: async () => resource(selectedDone()) });
     await h.session.start([], 'conversation');
     let entered!: () => void, warnings = 0, emitted = 0;
     const began = new Promise<void>((resolve) => { entered = resolve; });
     let event!: import('../remote/completion.ts').TaskCompletedEvent;
-    h.session.onCompleted = (id, signal) => taskCompleted({ emit: (_name, data) => {
+    const events = createEventBus();
+    events.on('pinote:task-completed', (data) => {
       emitted++; event = data as typeof event;
       entered();
-      if (scenario === 'throw') throw new Error(token);
-      event.waitUntil(scenario === 'reject' ? Promise.reject(new Error(token)) : new Promise(() => {}));
+      event.waitUntil(scenario === 'sync-work' ? Promise.resolve().then(() => { throw new Error(token); }) :
+        scenario === 'reject' ? Promise.reject(new Error(token)) : new Promise(() => {}));
       if (scenario === 'timeout') event.waitUntil(new Promise(() => {}));
-    } }, id, signal, () => { warnings++; });
+    });
+    h.session.onCompleted = (id, signal) => taskCompleted(events, id, signal, () => { warnings++; });
     const current = h.session.view!;
     let returned = false;
     const action = h.session.action(current, current.controls[0]).then(() => { returned = true; });
@@ -460,6 +464,8 @@ test('acknowledged Done awaits bounded local hooks outside the queue without wea
     if (scenario !== 'cancel') assert.ok(h.session.view, 'Hook failure must not invalidate a valid view');
     t.mock.timers.tick(25_000);
     assert.equal(warnings, scenario === 'cancel' ? 0 : 1, 'Deadline must be cleared');
+    assert.equal(diagnostics.mock.calls.length, 0, 'Registered failures never reach Pi’s raw event-bus logger');
     await h.session.stop();
   }
+  diagnostics.mock.restore();
 });

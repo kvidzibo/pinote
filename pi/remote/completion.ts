@@ -39,7 +39,7 @@ export async function taskCompleted(
           if (registered) work.push(observed);
         },
       } satisfies TaskCompletedEvent);
-    } catch { warning(); }
+    } catch { warning(); } // Dispatch failures only; Pi itself catches listener exceptions.
     finally { accepting = false; }
     if (work.length) await Promise.race([Promise.all(work), cancelled]);
   } finally {

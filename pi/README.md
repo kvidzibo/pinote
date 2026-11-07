@@ -109,7 +109,7 @@ pi.events.on('pinote:task-completed', (event) => {
     signal: AbortSignal;
     waitUntil(work: Promise<unknown>): void;
   };
-  waitUntil(doLocalWork(taskId, signal)); // Register synchronously, before any await.
+  waitUntil(Promise.resolve().then(() => doLocalWork(taskId, signal))); // Register before any await.
 });
 ```
 
@@ -121,6 +121,9 @@ attempts do not emit it. Pinote does not submit a model prompt for this event.
 
 Pi's event bus is synchronous fire-and-forget: returning an async handler's promise
 is insufficient. Call `waitUntil` during dispatch; late registrations are ignored.
+Put potentially throwing work inside the registered promise, as above. Exceptions
+thrown by the listener itself before registration are handled by Pi's own logger,
+which may print their raw text; Pinote cannot intercept those bus errors.
 All registered work is awaited outside Pinote's serial queue (so listeners may use
 `pinote:query-current`) before Done returns or a launched session auto-exits.
 Without registered work, completion proceeds immediately. Ordinary Done still
@@ -130,9 +133,9 @@ There is one fixed **25-second total deadline**, shared by all listeners. The si
 aborts on session lifetime cancellation, deadline, or hook settlement; listeners
 must honor it and avoid blocking synchronous work. Timers cannot preempt JavaScript
 that blocks the event loop. Hook rejection, timeout or cancellation never undo an
-acknowledged completion, invalidate its state, or retry remote writes. Failures and
-timeouts produce only a generic warning when UI is available; no listener error or
-response text is displayed. This is a trusted local extension API, not remote task
+acknowledged completion, invalidate its state, or retry remote writes. Registered
+promise rejections and timeouts produce only a generic warning when UI is available;
+Pinote does not display their error or response text. This is a trusted local extension API, not remote task
 instructions or authorization to run models or external actions.
 
 ### Agent tools and context
