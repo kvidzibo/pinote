@@ -13,6 +13,8 @@ import { bundledCLIVersion, detectCLI, setupCLI, setupHint, versionAtLeast, type
 import { createPreviewBridge } from "./preview-bridge.ts";
 import { renderSuggestion, renderSelectedTask } from "./task-suggestion.ts";
 
+import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from "./proposal.ts";
+
 const handoffGuidance = "Keep agent notes to at most three short bullets total: outcome, blocker, next action, only when relevant. Replace stale notes; omit narration, repeated task text, and routine test logs. Keep a GitHub pull request in the PR field. Read pinote_fields to learn the user's globally configured footer field names and presentation. Populate those fields with meaningful task values when relevant using pinote_update_current; fields without values stay hidden. Footer fields and widths are chosen by the user's pi-note.json config. Set configured fields with Markdown values; links are clickable. When footer.fields is unset, Bar selects labels, one per line. Do not list PR in Bar. Remove a field to hide it. Do not modify config without user approval.";
 const implementationOfferGuidance = "When no pinote task is selected, suggest one only when implementation is expected to span multiple turns. Skip suggestions for questions, investigation, recon, and small edits such as changing a few configuration lines. If investigation develops into substantial implementation, suggest then. No plan is required; use a short title describing the work. Explicit user requests to create one remain allowed.";
 const offerGuidance = {
@@ -802,11 +804,12 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: createGuidance,
     description: "Show a suggested task beside the pin icon in the footer, without creating it or asking in chat. + creates, starts and selects it; ✕ dismisses it. Continue the requested work while awaiting consent. Requires an interactive TUI with no selected task. A new proposal replaces the unaccepted suggestion and invalidates its old links; no dismissal is needed. Dismissal clears only the current suggestion and allows later proposals. In noninteractive modes ask in chat, then use pinote_add only after consent.",
     parameters: Type.Object({
-      text: Type.String({ minLength: 1, description: "Short action-oriented title, then optional details after a blank line." }),
+      title: Type.String(proposalTitleOptions),
+      description: Type.Optional(Type.String(proposalDescriptionOptions)),
       tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
     }, { additionalProperties: false }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (!text(params.text) || !params.text.trim()) throw new Error("text must be a non-empty note.");
+      const taskText = proposalText(params.title, params.description);
       if (params.tag !== undefined && (!text(params.tag) || !params.tag.trim() || params.tag.trim().length > 64)) throw new Error("tag must be a non-empty name of at most 64 characters.");
       if (!alive || !ctx.hasUI || ctx.mode !== "tui") throw new Error("Task suggestions need an interactive TUI. Ask in chat before using pinote_add.");
       const generation = epoch;
@@ -816,7 +819,7 @@ export default function (pi: ExtensionAPI) {
       if (current || selectedId !== null) throw new Error("A task is already selected; keep it unless the user asks to switch.");
       if (pending || menuPending || setupAbort) throw new Error("A pinote operation is already open. Retry after it finishes.");
       const result = (status: string) => ({ content: [{ type: "text" as const, text: JSON.stringify({ status }) }], details: { status } });
-      suggestion = { text: params.text, ...(params.tag === undefined ? {} : { tag: params.tag.trim() }) };
+      suggestion = { text: taskText, ...(params.tag === undefined ? {} : { tag: params.tag.trim() }) };
       saveSuggestion();
       previewBridge?.setSuggestion((choice) => respondToSuggestion(choice, ctx));
       ctx.ui.setStatus("pinote", suggestionStatus(ctx));

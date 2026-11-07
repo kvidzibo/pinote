@@ -62,7 +62,7 @@ test('find, read, suggest, and accept an existing task without duplication or au
     assert.deepEqual(data(await call('get_task', { task_id: task.id })), saved);
     assert.equal((await call('get_task', { task_id: 999999 })).isError, true);
     assert.equal(data(await call('get_current')), null);
-    for (const args of [{}, { task_id: 0 }, { task_id: 999999 }, { task_id: completed.id }, { task_id: task.id, text: 'Duplicate' }, { task_id: task.id, tag: 'new' }]) {
+    for (const args of [{}, { task_id: 0 }, { task_id: 999999 }, { task_id: completed.id }, { task_id: task.id, text: 'Duplicate' }, { task_id: task.id, title: 'Duplicate' }, { task_id: task.id, description: 'Duplicate' }, { task_id: task.id, tag: 'new' }]) {
       assert.equal((await call('propose', args)).isError, true);
     }
     assert.equal((await call('propose', { task_id: task.id })).isError, undefined);
@@ -100,7 +100,7 @@ test('find, read, suggest, and accept an existing task without duplication or au
     assert.deepEqual(await cli('agent', 'get', String(task.id)), beforeDismiss);
     await call('propose', { task_id: task.id });
     const pending = state;
-    await call('propose', { text: 'Genuinely new work' });
+    await call('propose', { title: 'Genuinely new work' });
     state = pending;
     assert.equal((await read()).state.proposal, null, 'Replacing an existing-task suggestion consumes its receipt');
     state = {};

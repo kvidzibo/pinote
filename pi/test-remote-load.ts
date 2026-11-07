@@ -61,6 +61,10 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
     assert.equal(parsed(await queried).id, task.id);
     assert.equal(parsed(await call(vm, 'get_current', {}, otherCtx)), null);
     assert.equal(parsed(await call(vm, 'get_task', { task_id: task.id }, otherCtx)).text, task.text);
+    await assert.rejects(call(vm, 'propose', { title: 'x'.repeat(61) }, otherCtx), /title/);
+    await call(vm, 'propose', { title: 'Review task formatting', description: 'Preserve the full description.\n\n- Keep Markdown', tag: 'pinote' }, otherCtx);
+    assert.equal(otherEntries.at(-1).data.state.proposal.text, 'Review task formatting\n\nPreserve the full description.\n\n- Keep Markdown');
+    assert.equal(parsed(await call(vm, 'get_current', {}, otherCtx)), null);
     const updated = parsed(await call(host, 'update_current', { expected_updated_at: task.updated_at, set: { Next: 'Continue in VM' } }, ctx));
     assert.equal(updated.agent_notes.Next, 'Continue in VM');
     assert.equal(parsed(await call(vm, 'get_task', { task_id: task.id }, otherCtx)).agent_notes.Next, 'Continue in VM');
