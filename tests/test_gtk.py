@@ -2735,6 +2735,11 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                 return json.loads(result.stdout)
 
             tree()  # ensure this private WM is ready before mapping the popup
+            # IPC readiness alone does not refresh the shared GDK display's WM cache.
+            # Observe i3 from GTK before constructing a window with WM-dependent hints.
+            from pinote.gui.app import Gdk
+
+            wait_until(gtk.glib, lambda: Gdk.Screen.get_default().get_window_manager_name() == "i3")
             with Store(gtk.paths.database) as store:
                 for index in range(3):
                     store.add(
@@ -2748,7 +2753,17 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             def expected_position():
                 return (25, screen_bottom - 25 - window.get_size().height)
 
-            wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
+            try:
+                wait_until(gtk.glib, lambda: tuple(window.get_position()) == expected_position())
+            except AssertionError:
+                pytest.fail(
+                    f"Popup placement: actual={tuple(window.get_position())}, "
+                    f"expected={expected_position()}, size={tuple(window.get_size())}, "
+                    f"anchor={(window.anchor_x, window.anchor_bottom)}, "
+                    f"workarea={(geometry.x, geometry.y, geometry.width, geometry.height)}, "
+                    f"i3={tree()}",
+                    pytrace=False,
+                )
             assert window.get_size().width == 420
             assert window.get_size().height < 175  # Two-line composer, still content-sized.
             nodes = [tree()]
