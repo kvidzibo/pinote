@@ -6,6 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
+import { createEventBus } from '@earendil-works/pi-coding-agent';
 import { remoteConfig, RemoteFailure, type Peer, type PeerFactory } from '../remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, restoreState, type SavedState } from '../remote/session.ts';
 import { UI_CONTEXT, UI_FEATURES, UI_STATE, type NativeView } from '../remote/protocol.ts';
@@ -359,4 +360,113 @@ test('extension registers seven tools before startup and injects unavailable ins
   assert.match(event.systemPromptOptions.sections.pinote_remote, /UNAVAILABLE/);
   assert.match(event.systemPromptOptions.sections.pinote_remote, /UNTRUSTED TASK DATA/);
   assert.match(event.systemPromptOptions.sections.pinote_remote, /Do not infer no task/);
+});
+
+const selectedDone = (selectedId: unknown = 7) => {
+  const current = view({ selectedId });
+  current.controls[0].id = 'done';
+  current.footer = [];
+  return current;
+};
+
+test('acknowledged Done awaits bounded local hooks outside the queue without weakening completion guards', async (t) => {
+  const { taskCompleted } = await import('../remote/completion.ts');
+  let actions = 0, emitted = 0, release!: () => void, entered!: () => void;
+  const began = new Promise<void>((resolve) => { entered = resolve; });
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  const h = harness({ read: async (_uri, meta) => resource(selectedDone((meta[UI_CONTEXT] as SavedState).state.selectedId ?? null)),
+    action: async () => { actions++; return { view: view({ selectedId: null }) }; } });
+  await h.session.start([], 'conversation', { scope: config.scope, contextId: 'test', state: { selectedId: 7 } });
+  let hookSignal!: AbortSignal;
+  h.session.onCompleted = (id, signal) => taskCompleted({ emit: (name, data) => {
+    emitted++; assert.equal(name, 'pinote:task-completed');
+    const event = data as import('../remote/completion.ts').TaskCompletedEvent;
+    assert.equal(id, 7); assert.equal(event.taskId, 7); hookSignal = event.signal;
+    assert.equal(h.session.snapshot()?.state.selectedId, null);
+    event.waitUntil((async () => {
+      await h.session.tool('get_current', {}); // Would deadlock inside the serial queue.
+      entered(); await waiting;
+    })());
+  } }, id, signal, () => assert.fail('unexpected warning'));
+  const current = h.session.view!;
+  let returned = false;
+  const action = h.session.action(current, current.controls[0]).then(() => { returned = true; });
+  await began;
+  assert.equal(returned, false); assert.equal(actions, 1); assert.equal(emitted, 1);
+  release(); await action;
+  assert.equal(hookSignal.aborted, true);
+  assert.equal(h.session.snapshot()?.state.selectedId, null);
+  await h.session.stop();
+
+  // Invalid, failed and external completions must not emit.
+  for (const scenario of ['stale', 'denied', 'failed', 'uncleared', 'other', 'invalid', 'external']) {
+    const current = selectedDone(scenario === 'invalid' ? '7' : 7);
+    if (scenario === 'other') current.controls[0].id = 'clear';
+    const h = harness({ read: async () => resource(current), action: async () => {
+      if (scenario === 'failed') throw new Error(token);
+      return { view: scenario === 'uncleared' ? current : view({ selectedId: null }) };
+    } });
+    let emitted = 0;
+    h.session.onCompleted = async () => { emitted++; };
+    await h.session.start([], 'conversation');
+    if (scenario === 'external') { current.state.selectedId = null; await h.session.refresh(); }
+    else {
+      const displayed = structuredClone(h.session.view!);
+      if (scenario === 'stale') displayed.controls[0].revision = 'old';
+      const action = h.session.action(displayed, displayed.controls[0], undefined, () => scenario !== 'denied');
+      if (['stale', 'denied', 'failed'].includes(scenario)) await assert.rejects(action, RemoteFailure);
+      else await action;
+    }
+    assert.equal(emitted, 0, scenario);
+    await h.session.stop();
+  }
+
+  // No listeners and late registrations cannot delay completion.
+  const lifetime = new AbortController();
+  await taskCompleted({ emit() {} }, 7, lifetime.signal, () => assert.fail('unexpected warning'));
+  let lateEvent!: import('../remote/completion.ts').TaskCompletedEvent;
+  await taskCompleted({ emit: (_name, data) => { lateEvent = data as typeof lateEvent; } }, 7, lifetime.signal, () => assert.fail('unexpected warning'));
+  lateEvent.waitUntil(Promise.reject(new Error(token)));
+  await Promise.resolve();
+  assert.equal(lateEvent.signal.aborted, true);
+
+  // Rejection, cancellation and the total deadline preserve acknowledged success.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const diagnostics = t.mock.method(console, 'error', () => {});
+  for (const scenario of ['reject', 'cancel', 'timeout', 'sync-work']) {
+    const h = harness({ read: async () => resource(selectedDone()) });
+    await h.session.start([], 'conversation');
+    let entered!: () => void, warnings = 0, emitted = 0;
+    const began = new Promise<void>((resolve) => { entered = resolve; });
+    let event!: import('../remote/completion.ts').TaskCompletedEvent;
+    const events = createEventBus();
+    events.on('pinote:task-completed', (data) => {
+      emitted++; event = data as typeof event;
+      entered();
+      event.waitUntil(scenario === 'sync-work' ? Promise.resolve().then(() => { throw new Error(token); }) :
+        scenario === 'reject' ? Promise.reject(new Error(token)) : new Promise(() => {}));
+      if (scenario === 'timeout') event.waitUntil(new Promise(() => {}));
+    });
+    h.session.onCompleted = (id, signal) => taskCompleted(events, id, signal, () => { warnings++; });
+    const current = h.session.view!;
+    let returned = false;
+    const action = h.session.action(current, current.controls[0]).then(() => { returned = true; });
+    await began;
+    if (scenario === 'cancel') await h.session.stop('quit');
+    if (scenario === 'timeout') {
+      t.mock.timers.tick(24_999); await Promise.resolve(); assert.equal(returned, false);
+      t.mock.timers.tick(1);
+    }
+    await action; // Must resolve, not become an uncertain RemoteFailure.
+    assert.equal(emitted, 1); assert.equal(event.signal.aborted, true);
+    if (scenario === 'cancel') assert.equal(event.signal.reason, 'quit', 'Shutdown reason reaches completion listeners');
+    assert.equal(warnings, scenario === 'cancel' ? 0 : 1);
+    assert.equal(h.session.snapshot()?.state.selectedId, null);
+    if (scenario !== 'cancel') assert.ok(h.session.view, 'Hook failure must not invalidate a valid view');
+    t.mock.timers.tick(25_000);
+    assert.equal(warnings, scenario === 'cancel' ? 0 : 1, 'Deadline must be cleared');
+    assert.equal(diagnostics.mock.calls.length, 0, 'Registered failures never reach Pi’s raw event-bus logger');
+    await h.session.stop();
+  }
+  diagnostics.mock.restore();
 });

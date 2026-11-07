@@ -39,7 +39,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
         const previous = handlers.get(name);
         handlers.set(name, async (...args: any[]) => { await previous?.(...args); return handler(...args); });
       },
-      events: { on() {} }, registerTool() {}, registerCommand: (name: string, command: any) => commands.set(name, command), registerShortcut() {}, registerEntryRenderer() {},
+      events: { on() {}, emit() {} }, registerTool() {}, registerCommand: (name: string, command: any) => commands.set(name, command), registerShortcut() {}, registerEntryRenderer() {},
       appendEntry: (customType: string, data: unknown) => entries.push({ type: 'custom', customType, data }),
     };
     pinoteRemote(pi);

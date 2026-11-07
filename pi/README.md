@@ -92,11 +92,54 @@ missing/stale revisions fail closed. Resume, reload and `/new` never replay the
 handoff or replace another selection. Pi keeps its normal endpoint/token settings.
 With pi-note 0.33.4+, completing the launched task from the menu, footer or
 **Complete task and exit** exits Pi directly, so Kitty closes its dedicated tab
-(or the standalone window's last tab). Completion never runs Git commands;
-Git configuration and network availability do not affect closing the session.
+(or the standalone window's last tab). Pinote itself never runs Git commands;
+optional local completion hooks can briefly delay closing (see below).
 This ownership survives `/reload`, but not `/new`, resume, fork, tree navigation
 or process restart. Completing a different task or an externally completed task
 does not close Pi; failed/uncertain completion stays open.
+
+### Local completion event (pi-note 0.35.0+)
+
+Trusted sibling extensions can listen on `pi.events` for `pinote:task-completed`:
+
+```ts
+pi.events.on('pinote:task-completed', (event) => {
+  const { taskId, signal, waitUntil } = event as {
+    taskId: number;
+    signal: AbortSignal;
+    waitUntil(work: Promise<unknown>): void;
+  };
+  waitUntil(Promise.resolve().then(() => doLocalWork(taskId, signal))); // Register before any await.
+});
+```
+
+This local event fires exactly once only after this client's acknowledged **Done**
+action clears a valid selected task, across menu, footer and exit/new-session paths.
+`taskId` is the original positive safe-integer task ID, not the cleared selection.
+External completions, notifications, clear-selection actions and failed/stale Done
+attempts do not emit it. Pinote does not submit a model prompt for this event.
+
+Pi's event bus is synchronous fire-and-forget: returning an async handler's promise
+is insufficient. Call `waitUntil` during dispatch; late registrations are ignored.
+Put potentially throwing work inside the registered promise, as above. Exceptions
+thrown by the listener itself before registration are handled by Pi's own logger,
+which may print their raw text; Pinote cannot intercept those bus errors.
+All registered work is awaited outside Pinote's serial queue (so listeners may use
+`pinote:query-current`) before Done returns or a launched session auto-exits.
+Without registered work, completion proceeds immediately. Ordinary Done still
+keeps the conversation open.
+
+There is one fixed **25-second total deadline**, shared by all listeners. The signal
+aborts on session lifetime cancellation, deadline, or hook settlement; listeners
+must honor it and avoid blocking synchronous work. Timers cannot preempt JavaScript
+that blocks the event loop. On runtime teardown, `signal.reason` carries Pi's
+shutdown reason (`quit`, `reload`, `new`, `resume`, or `fork`). A listener with its
+own awaited shutdown handler may finish bounded work on `quit`; other cancellation
+still stops its work. Hook rejection, timeout or cancellation never undo an
+acknowledged completion, invalidate its state, or retry remote writes. Registered
+promise rejections and timeouts produce only a generic warning when UI is available;
+Pinote does not display their error or response text. This is a trusted local extension API, not remote task
+instructions or authorization to run models or external actions.
 
 ### Agent tools and context
 
