@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The Python package is 0.23.0; the independently
-versioned `electron/` npm package is private, version 0.1.0.
+versioned `electron/` npm package is private, version 0.1.1.
 Run from the repository root:
 
 ```sh
@@ -42,15 +42,21 @@ Icons are bundled rather than taken from the host icon theme.
 
 ## Controls and deliberate differences
 
-- Add with **Enter** or **+**; **Shift+Enter** inserts a newline. The composer and
-  in-progress tasks stay accessible while the ordinary list scrolls.
-- Click a task checkbox to start, then complete it. Right-click task text or use
-  its actions button for editing, tags, reminders, archive, and **Start in Kitty…**.
+- Add with **Enter** or **+**; **Shift+Enter** inserts a newline. The composer grows
+  and shrinks with its text. Ordinary tasks use the available window height;
+  in-progress tasks stay above the composer and scroll separately when needed.
+  Manual window sizing is preserved.
+- Click a task's play icon to start it, then its checkmark to complete it.
+  Right-click task text or use its actions button for editing, tags, reminders,
+  archive, and **Start in Kitty…**.
 - Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
   menu includes draft recovery; stale drafts must be copied/reconciled rather
   than silently overwriting a changed task.
 - Search tag selectors and filters; create/manage saved tags and optional default
-  Kitty folders. In-progress tasks remain visible regardless of tag filters.
+  Kitty folders. Use arrow keys to move through tags and **Space** to toggle a
+  focused filter. The highlighted funnel indicates a tag filter is active; its
+  count includes all visible tasks, including in-progress tasks that remain
+  visible regardless of tag filters.
 - The menu opens scheduled reminders and Archive, where tasks can be restored.
 - The always-visible eye opens a safe Markdown preview, including agent fields
   and unread updates. Raw HTML and remote images are not loaded. Supported links

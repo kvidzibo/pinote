@@ -24,7 +24,7 @@ function call(operation, params) {
   const response = JSON.parse(run.stdout); assert.ok(response.ok,JSON.stringify(response)); return response.result;
 }
 call('create_tag',{name:'Work',folder:null});
-const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available.\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
+const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
 const progress = call('add',{text:'Check GTK, CLI and Pi coexistence',tag:'Work'}).id;
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
 call('transition',{id:t.id,revision:t.updated_at,state:t.state,action:'start'});
@@ -75,6 +75,120 @@ try {
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
   assert.ok(await page.locator('img').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
   await page.screenshot({path:join(root,'checklist.png')});
+  // task393: allocation and keyboard focus with the complete benchmark dataset.
+  {
+    const filter = page.locator('#toolbar button').filter({has:page.locator('img[src*="view-filter-symbolic"]')});
+    const draft = page.locator('#draft');
+    const resize = async (width, height) => {
+      await app.evaluate(({BrowserWindow, screen}, {width,height}) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        const area = screen.getDisplayMatching(win.getBounds()).workArea;
+        win.setBounds({x:area.x,y:area.y,width,height:Math.min(height,area.height)});
+      }, {width,height});
+      await page.waitForFunction(width => window.innerWidth === width, width);
+    };
+    await resize(580,620);
+    await filter.click();
+    await page.getByRole('button',{name:'Select all tags',exact:true}).click();
+    const filters = page.getByRole('group',{name:'Tag filters',exact:true});
+    const work = filters.getByRole('checkbox').filter({hasText:'Work'});
+    assert.equal(await work.getAttribute('aria-checked'),'true');
+    await work.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await work.getAttribute('aria-checked'),'false');
+    assert.ok(await work.evaluate(node=>node===document.activeElement),'Space redraw must retain the filter checkbox focus');
+    await page.keyboard.press('Space');
+    assert.equal(await work.getAttribute('aria-checked'),'true');
+    assert.ok(await work.evaluate(node=>node===document.activeElement));
+    await page.keyboard.press('Escape');
+    assert.ok(await filter.evaluate(node=>node===document.activeElement),'Escape must return focus to the toolbar opener');
+    assert.equal(await page.locator('.task-row').count(),103);
+    assert.equal(await page.locator('#ordinary .task-row').count(),102);
+    assert.equal(await page.locator('#pinned .task-row').count(),1);
+    assert.match(await page.locator(`#pinned [data-id="${progress}"] [role="checkbox"] img`).getAttribute('src'),/task-complete-symbolic\.svg$/);
+
+    // Each idle refresh writes the toolbar count, even when its value is unchanged.
+    // Observe actual redraws instead of assuming two refreshes from a sleep duration.
+    await filter.evaluate(node=>{
+      window.__task393Refreshes=0;
+      window.__task393FocusKept=true;
+      window.__task393Observer=new MutationObserver(()=>{
+        window.__task393Refreshes++;
+        window.__task393FocusKept &&= document.activeElement===node;
+      });
+      window.__task393Observer.observe(node.querySelector('span'),{childList:true});
+    });
+    await page.waitForFunction(()=>window.__task393Refreshes>=2);
+    assert.ok(await page.evaluate(()=>window.__task393FocusKept),'Toolbar focus must survive at least two observed refreshes');
+    await page.evaluate(()=>{window.__task393Observer.disconnect();delete window.__task393Observer;delete window.__task393Refreshes;delete window.__task393FocusKept;});
+
+    const layout = () => page.evaluate(()=>{
+      const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,left:r.left,right:r.right};};
+      const ordinary=document.getElementById('ordinary');
+      return {ordinary:box('ordinary'),pinned:box('pinned'),composer:box('composer'),checklist:box('checklist'),toolbar:box('toolbar'),draft:box('draft'),scrollHeight:ordinary.scrollHeight,scrollTop:ordinary.scrollTop,width:innerWidth,height:innerHeight};
+    });
+    const assertAllocation = box => {
+      assert.ok(box.ordinary.height>170,'Ordinary list must use available height, not the old 170px cap');
+      assert.ok(Math.abs(box.ordinary.top-box.checklist.top)<=1);
+      assert.ok(Math.abs(box.pinned.top-box.ordinary.bottom-4)<=1,'Pinned list must follow ordinary list without wasted space');
+      assert.ok(Math.abs(box.composer.top-box.pinned.bottom-5)<=1,'Pinned row must sit immediately above composer');
+      assert.ok(Math.abs(box.composer.bottom-(box.height-6))<=1,'Composer must stay at the bottom');
+      assert.ok(box.scrollHeight>box.ordinary.height,'All seeded ordinary tasks must overflow');
+    };
+    const tall = await layout();
+    assertAllocation(tall);
+    await page.locator('#ordinary').hover();
+    await page.mouse.wheel(0,700);
+    await page.waitForFunction(()=>document.getElementById('ordinary').scrollTop>0);
+    const scrolled = await layout();
+    assert.deepEqual(scrolled.pinned,tall.pinned,'Ordinary scrolling must not move the pinned row');
+    assert.deepEqual(scrolled.composer,tall.composer,'Ordinary scrolling must not move the composer');
+    await page.screenshot({path:join(root,'task393-expanded.png')});
+
+    await draft.fill('One\nTwo\nThree\nFour\nFive\nSix');
+    const grown = await layout();
+    await draft.fill('Short');
+    const shortened = await layout();
+    assert.ok(shortened.draft.height<grown.draft.height,'Shortening the draft must shrink its textarea');
+    assert.ok(shortened.composer.height<grown.composer.height,'Shortening the draft must shrink the composer');
+    assert.ok(shortened.ordinary.height>grown.ordinary.height,'The list must reclaim the released composer space');
+    await draft.fill('');
+    await resize(280,620);
+    const narrow = await layout();
+    assertAllocation(narrow);
+    assert.ok(narrow.toolbar.left>=0 && narrow.toolbar.right<=narrow.width,'Compact toolbar must fit horizontally');
+    assert.ok(await page.locator('#toolbar button').evaluateAll(nodes=>nodes.every(node=>{const r=node.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth;})),'Every compact toolbar control must fit');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),280);
+    await page.screenshot({path:join(root,'task393-compact.png')});
+
+    // Tab to a real Markdown link without activating it (and thus without network I/O).
+    await resize(580,620);
+    await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
+    const link = page.getByRole('dialog').getByRole('link',{name:'Safe preview link',exact:true});
+    await link.waitFor();
+    let reachedLink=false;
+    for(let tab=0;tab<12;tab++) {
+      await page.keyboard.press('Tab');
+      if(await link.evaluate(node=>node===document.activeElement)) { reachedLink=true; break; }
+    }
+    assert.ok(reachedLink,'Dialog Tab order must reach the preview Markdown link');
+    assert.equal(outgoing.length,0,'Tab must not request remote resources');
+    await page.keyboard.press('Escape');
+
+    // Restore the original Untagged view and compact geometry for the existing workflow.
+    await filter.click();
+    await page.getByRole('button',{name:'Clear selection (in-progress only)',exact:true}).click();
+    await filters.getByRole('checkbox').filter({hasText:'Untagged'}).click();
+    await page.keyboard.press('Escape');
+    await resize(geometry.width,geometry.height);
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
+    await page.locator('#ordinary').evaluate(node=>{node.scrollTop=0;});
+    await page.locator('#pinned').evaluate(node=>{node.scrollTop=0;});
+    assert.equal(await draft.inputValue(),'');
+    assert.equal(await page.locator('#ordinary .task-row').count(),2);
+    assert.equal(await page.locator('#pinned .task-row').count(),1);
+    assert.match(await filter.getAttribute('aria-label'),/^Filter by tag: Untagged /);
+  }
   await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
   await page.getByRole('dialog').waitFor();
   assert.equal(await page.evaluate(()=>window.compromised),undefined);
