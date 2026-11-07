@@ -33,7 +33,11 @@ export type UIState = {
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
+export type MenuPoint = { x: number; y: number };
+export type MenuRequest = MenuPoint & ({ kind: 'app' } | { kind: 'task'; inProgress: boolean; readOnly: boolean });
+export type MenuAction = 'kitty' | 'copy' | 'start' | 'reset' | 'done' | 'archive' | 'edit' | 'tag' | 'schedule' | 'filter' | 'scheduled' | 'manage-tags' | 'drafts' | 'close';
 export type PinoteApi = BackendApi & {
+  popupMenu(request: MenuRequest): Promise<MenuAction | null>;
   loadState(): Promise<UIState>; saveState(state: UIState): Promise<void>; acknowledgeWarning(): Promise<boolean>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;

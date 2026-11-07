@@ -4,6 +4,7 @@ import type { BackendApi, PinoteApi } from './protocol.ts';
 const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','schedule','create_tag','rename_tag','delete_tag','tag_folder','completions','kitty'].map(operation => [operation, (params: unknown) => ipcRenderer.invoke('backend', operation, params)])) as BackendApi;
 const api: PinoteApi = {
   ...backend,
+  popupMenu: request => ipcRenderer.invoke('popup-menu', request),
   loadState: () => ipcRenderer.invoke('load-state'),
   acknowledgeWarning: () => ipcRenderer.invoke('acknowledge-warning'),
   saveState: state => ipcRenderer.invoke('save-state', state),

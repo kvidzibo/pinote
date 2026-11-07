@@ -1,4 +1,4 @@
-import type { Operation, UIState } from './protocol.ts';
+import type { MenuRequest, Operation, UIState } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
 // JSON escaping can use six bytes per warning code unit; reserve it separately from drafts.
@@ -22,6 +22,11 @@ export function validParams(op: unknown, value: unknown): op is Operation {
   if (typeof op !== 'string' || !Object.hasOwn(specs, op) || !record(value)) return false;
   const spec = specs[op as Operation];
   return Object.keys(value).every(k => Object.hasOwn(spec, k)) && Object.entries(spec).every(([k, check]) => check(value[k]));
+}
+export function validMenuRequest(value: unknown): value is MenuRequest {
+  if (!record(value) || !['x', 'y'].every(k => typeof value[k] === 'number' && Number.isSafeInteger(value[k]) && value[k] >= 0 && value[k] <= 100000)) return false;
+  const keys = value.kind === 'app' ? ['kind', 'x', 'y'] : ['kind', 'x', 'y', 'inProgress', 'readOnly'];
+  return Object.keys(value).every(k => keys.includes(k)) && (value.kind === 'app' || value.kind === 'task' && typeof value.inProgress === 'boolean' && typeof value.readOnly === 'boolean');
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
 export function validState(value: unknown): value is UIState {
