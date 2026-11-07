@@ -2713,7 +2713,9 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
             "for_window [floating] border normal 0\n"
             'for_window [window_role="^pinote-"] floating enable, border none\n'
         )
-    config.write_text(f"font pango:monospace 9\nipc-socket {socket}\n{rules}")
+    config.write_text(
+        f"# i3 config file (v4)\nfont pango:monospace 9\nipc-socket {socket}\n{rules}"
+    )
     window = None
     with (tmp_path / "i3.log").open("w") as output:
         process = subprocess.Popen(
@@ -2735,11 +2737,8 @@ def test_i3_honors_popup_position_and_content_height(gtk, tmp_path, desktop_rule
                 return json.loads(result.stdout)
 
             tree()  # ensure this private WM is ready before mapping the popup
-            # IPC readiness alone does not refresh the shared GDK display's WM cache.
-            # Observe i3 from GTK before constructing a window with WM-dependent hints.
-            from pinote.gui.app import Gdk
-
-            wait_until(gtk.glib, lambda: Gdk.Screen.get_default().get_window_manager_name() == "i3")
+            # Legacy-config migration adds an unwanted bar and races popup placement.
+            assert "Automatically converted" not in (tmp_path / "i3.log").read_text()
             with Store(gtk.paths.database) as store:
                 for index in range(3):
                     store.add(
@@ -5103,7 +5102,7 @@ def test_restart_helper_preserves_hidden_workspace_and_environment(gtk, tmp_path
     env = {**gtk.env, "I3SOCK": socket}
     config = tmp_path / "i3.conf"
     config.write_text(
-        f"font pango:monospace 9\nipc-socket {socket}\n"
+        f"# i3 config file (v4)\nfont pango:monospace 9\nipc-socket {socket}\n"
         'for_window [window_role="^pinote-"] floating enable, border none\n'
     )
 
