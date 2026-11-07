@@ -26,7 +26,14 @@ from pinote.gui.placement import place_child  # noqa: E402
 
 class NoteEditor(Gtk.ApplicationWindow):
     def __init__(
-        self, owner, note: Note | None, *, tag_only: bool = False, schedule_only: bool = False
+        self,
+        owner,
+        note: Note | None,
+        *,
+        tag_only: bool = False,
+        schedule_only: bool = False,
+        tag_name: str = "",
+        select_creation_tag: bool = True,
     ):
         if note is None and (not tag_only or schedule_only):
             raise ValueError("A task is required for editing or scheduling")
@@ -41,6 +48,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         self.owner = owner
         self.note = note  # Keep the displayed revision, even if the checklist polls.
         self.tag_only = tag_only
+        self.select_creation_tag = select_creation_tag
         self.schedule_only = schedule_only
         self.closed = False
         self.saving = False
@@ -99,6 +107,7 @@ class NoteEditor(Gtk.ApplicationWindow):
             layout.pack_start(time, False, False, 0)
         elif tag_only:
             self.entry = Gtk.Entry()
+            self.entry.set_text(tag_name)
             self.entry.set_placeholder_text("Tag name (up to 64 characters)")
             self.entry.get_accessible().set_name("Tag name")
             self.entry.connect("activate", lambda _entry: self._save())
@@ -341,7 +350,7 @@ class NoteEditor(Gtk.ApplicationWindow):
         else:
             if self.tag_only:
                 self.owner._tags_changed(None, result)
-                if self.note is None:
+                if self.note is None and self.select_creation_tag:
                     self.owner._select_creation_tag(result)
             self.owner._poll()
             if self.owner.scheduled_window is not None:

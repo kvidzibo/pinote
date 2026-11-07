@@ -5,8 +5,10 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 
+from pinote.gui.tag_menu import TagMenu  # noqa: E402
 
-class FilterMenu(Gtk.Menu):
+
+class FilterMenu(TagMenu):
     def __init__(self, on_edit):
         super().__init__()
         self.on_edit = on_edit

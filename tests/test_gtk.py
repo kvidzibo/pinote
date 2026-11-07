@@ -675,8 +675,10 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
         assert next(note for note in store.notes() if note.id == 3).tag == "Work <🐦>"
     click_button(gtk, window, window.tag_button)
     wait_until(gtk.glib, lambda: window.composer_tag_menu.get_mapped())
-    new_tag = window.composer_tag_menu.get_children()[-1]
-    assert new_tag.get_accessible().get_name() == "New tag…"
+    window.composer_tag_menu.search_entry.set_text("New personal")
+    new_tag = window.composer_tag_menu.create_item
+    assert new_tag.get_visible()
+    assert new_tag.get_accessible().get_name() == "Create tag “New personal”…"
     ready = time.monotonic() + 0.6
     wait_until(gtk.glib, lambda: time.monotonic() >= ready)
     # Let GTK dismiss the composer tooltip before clicking the menu beneath it.
@@ -686,6 +688,7 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     click_button(gtk, new_tag.get_toplevel(), new_tag)
     wait_until(gtk.glib, lambda: window.editor is not None)
     editor = window.editor
+    assert editor.entry.get_text() == "New personal"
     editor.entry.set_text("x" * 65)
     editor.entry.emit("activate")
     wait_until(gtk.glib, lambda: not editor.saving)
@@ -721,6 +724,156 @@ def test_composer_tag_dropdown_assigns_successive_tasks_and_badges(gtk):
     window.entry.emit("activate")
     wait_until(gtk.glib, lambda: not window.pending and 5 in window.rows)
     assert window.rows[5].note.tag is None
+
+
+@pytest.mark.parametrize("source", ["composer", "filter", "task"])
+def test_tag_search_keyboard_and_prefilled_creation(gtk, source):
+    with Store(gtk.paths.database) as store:
+        store.add("Visible task", tag="Work")
+        store.create_tag("Saved empty")
+    window = gtk.open()
+    window._set_filter(frozenset({"Work"}))
+    window._select_creation_tag("Work")
+    window.entry.set_text("Keep this draft")
+
+    def keys(*values):
+        subprocess.run(["xdotool", "key", *values], env=gtk.env, check=True, timeout=5)
+
+    def type_text(text):
+        subprocess.run(
+            ["xdotool", "type", "--clearmodifiers", text],
+            env=gtk.env,
+            check=True,
+            timeout=5,
+        )
+
+    def open_menu():
+        wait_until(
+            gtk.glib,
+            lambda: (
+                not window.pending
+                and not window.geometry_source
+                and all(
+                    not scroll.get_visible()
+                    or scroll.get_allocated_height() == scroll.get_preferred_height()[1]
+                    for scroll in (window.scroll, window.progress_scroll)
+                )
+            ),
+        )
+        if source == "composer":
+            click_button(gtk, window, window.tag_button)
+            menu = window.composer_tag_menu
+        elif source == "filter":
+            click_button(gtk, window, window.filter_button)
+            menu = window.visible_filter_menu
+        else:
+            pointer_at(gtk, window, window.rows[1].body, 12, 8, "click", "3")
+            wait_until(
+                gtk.glib,
+                lambda: window.context_menu is not None and window.context_menu.get_mapped(),
+            )
+            tag = next(
+                item
+                for item in window.context_menu.get_children()
+                if item.get_accessible().get_name() == "Tag"
+            )
+            keys("End", "Right")
+            menu = tag.get_submenu()
+        wait_until(gtk.glib, lambda: menu.get_mapped())
+        assert menu.get_children()[-2:] == [menu.search_item, menu.create_item]
+        assert menu.query == "" and not menu.search_item.get_visible()
+        assert not menu.create_item.get_visible()
+        return menu
+
+    menu = open_menu()
+    saved = next(
+        item for item in menu.get_children() if getattr(item, "tag_name", None) == "Saved empty"
+    )
+    if source == "filter":
+        assert not saved.get_visible()  # Idle filtering hides unselected zero-count tags.
+    type_text("SaX")
+    wait_until(gtk.glib, lambda: menu.query == "SaX")
+    keys("BackSpace")
+    wait_until(gtk.glib, lambda: menu.query == "Sa" and saved.get_visible())
+    assert menu.search_item.get_visible() and not menu.create_item.get_visible()
+    pointer_at(
+        gtk,
+        menu.get_toplevel(),
+        menu.search_entry,
+        menu.search_entry.get_allocated_width() - 12,
+        menu.search_entry.get_allocated_height() // 2,
+        "click",
+        "1",
+    )
+    wait_until(gtk.glib, lambda: menu.query == "" and menu.get_mapped())
+    type_text("sA")
+    wait_until(gtk.glib, lambda: menu.query == "sA" and saved.get_visible())
+    assert [
+        item.tag_name
+        for item in menu.get_children()
+        if hasattr(item, "tag_name") and item.get_visible()
+    ] == ["Saved empty"]
+    if source == "filter":
+        window._poll()
+        wait_until(gtk.glib, lambda: not window.pending)
+        assert menu.query == "sA" and menu.get_mapped() and saved.get_visible()
+    keys("Down", "Up")
+    wait_until(gtk.glib, lambda: menu.get_selected_item() is saved)
+    keys("Return")
+    if source == "filter":
+        wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"Work", "Saved empty"}))
+        assert menu.get_mapped() and menu.query == "sA"
+    else:
+        wait_until(gtk.glib, lambda: not menu.get_mapped() and not window.pending)
+        if source == "composer":
+            assert window.creation_tag == "Saved empty"
+        else:
+            with Store(gtk.paths.database) as store:
+                assert store.get(1).tag == "Saved empty"
+            window._set_filter(frozenset({"Work", "Saved empty"}))
+    if source != "filter":
+        menu = open_menu()
+        type_text("Sa")
+        wait_until(gtk.glib, lambda: menu.query == "Sa")
+    keys("Escape")
+    wait_until(gtk.glib, lambda: not menu.get_mapped())
+    assert menu.query == "" and not window.closed
+    if source == "task":
+        keys("Escape")
+        wait_until(
+            gtk.glib, lambda: window.context_menu is None or not window.context_menu.get_mapped()
+        )
+    window._set_filter(frozenset({"Work", "Saved empty"}))
+    previous_creation = window.creation_tag
+    menu = open_menu()
+    menu.search_entry.set_text("Brand new")
+    assert menu.create_item.get_visible()
+
+    def fully_visible(item):
+        popup = menu.get_toplevel()
+        _x, y = item.translate_coordinates(popup, 0, 0)
+        return 0 <= y and y + item.get_allocated_height() <= popup.get_allocated_height()
+
+    wait_until(
+        gtk.glib, lambda: fully_visible(menu.search_item) and fully_visible(menu.create_item)
+    )
+    assert menu.create_item.get_tooltip_text() == "Create tag “Brand new”…"
+    assert menu.create_item.get_accessible().get_name() == "Create tag “Brand new”…"
+    assert not any(item.get_visible() for item in menu.get_children() if hasattr(item, "tag_name"))
+    menu.create_item.activate()
+    wait_until(gtk.glib, lambda: window.editor is not None)
+    editor = window.editor
+    assert editor.entry.get_text() == "Brand new"
+    with Store(gtk.paths.database) as store:
+        assert "Brand new" not in store.tags()  # Opening the dialog is not a commit.
+    editor.save_button.clicked()
+    wait_until(gtk.glib, lambda: window.editor is None and not window.pending)
+    assert window.tag_filter == frozenset({"Work", "Saved empty", "Brand new"})
+    assert window.entry.get_text() == "Keep this draft"
+    assert window.creation_tag == ("Brand new" if source == "composer" else previous_creation)
+    with Store(gtk.paths.database) as store:
+        assert "Brand new" in store.tags()
+        assert store.get(1).tag == ("Brand new" if source == "task" else "Work")
 
 
 @pytest.mark.parametrize("source", ["composer", "task", "manager"])
@@ -1054,7 +1207,7 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     tags = {
         item.filter_tag: item for item in menu.get_children() if isinstance(item, Gtk.CheckMenuItem)
     }
-    select_all, clear = menu.get_children()[-2:]
+    select_all, clear = menu.get_children()[-4:-2]
     wait_until(gtk.glib, lambda: clear.get_allocated_width() > 1)
     assert select_all.get_allocation().y == clear.get_allocation().y
     assert select_all.get_allocation().x < clear.get_allocation().x
@@ -1142,7 +1295,7 @@ def test_filter_stays_open_inline_actions_progress_and_right_click_edit(gtk):
     click(last_tag)
     wait_until(gtk.glib, lambda: window.tag_filter == frozenset({"", "Tag 79"}))
     assert menu.get_mapped()
-    select_all, clear = menu.get_children()[-2:]
+    select_all, clear = menu.get_children()[-4:-2]
     click(clear)
     wait_until(gtk.glib, lambda: window.tag_filter == frozenset())
     assert menu.get_mapped()
@@ -1359,7 +1512,7 @@ def test_tag_filters_keep_selected_zero_counts_and_refresh_without_changing_sele
         )
     assert window.tag_filter == frozenset({"MCP"})
     menu = window.visible_filter_menu
-    clear = menu.get_children()[-1]
+    clear = menu.get_children()[-3]
 
     # The worker snapshot settles before GTK reallocates the hidden rows.
     # Keyboard selection now would scroll using the old action-row position.
@@ -1493,10 +1646,13 @@ def test_text_context_edit_tag_and_bottom_filter_with_real_menus(gtk):
         assert window.rows[1].body.get_text() == ("<b>Edited 🐦</b>" if save else "Original")
         assert not window.rows[1].body.get_use_markup()
         assert window.entry.get_text() == "Unfinished new task"
-    select(tag_menu(1), "New tag…")
+    tags = tag_menu(1)
+    tags.search_entry.set_text("Personal 🐦")
+    assert tags.create_item.get_visible()
+    select(tags, "Create tag “Personal 🐦”…")
     wait_until(gtk.glib, lambda: window.editor is not None)
     editor = window.editor
-    editor.entry.set_text("Personal 🐦")
+    assert editor.entry.get_text() == "Personal 🐦"
     click_button(gtk, editor, editor.save_button)
     wait_until(
         gtk.glib,
