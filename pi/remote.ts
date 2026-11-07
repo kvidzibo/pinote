@@ -103,7 +103,7 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
       if (transfers.size >= 32) transfers.delete(transfers.keys().next().value!);
       transfers.set(file, saved);
     }
-    ui?.detach(); await session?.stop();
+    ui?.detach(); await session?.stop(event.reason);
   });
   pi.on('before_agent_start', async (event, ctx) => {
     let text: string;

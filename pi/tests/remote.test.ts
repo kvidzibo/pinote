@@ -452,13 +452,14 @@ test('acknowledged Done awaits bounded local hooks outside the queue without wea
     let returned = false;
     const action = h.session.action(current, current.controls[0]).then(() => { returned = true; });
     await began;
-    if (scenario === 'cancel') await h.session.stop();
+    if (scenario === 'cancel') await h.session.stop('quit');
     if (scenario === 'timeout') {
       t.mock.timers.tick(24_999); await Promise.resolve(); assert.equal(returned, false);
       t.mock.timers.tick(1);
     }
     await action; // Must resolve, not become an uncertain RemoteFailure.
     assert.equal(emitted, 1); assert.equal(event.signal.aborted, true);
+    if (scenario === 'cancel') assert.equal(event.signal.reason, 'quit', 'Shutdown reason reaches completion listeners');
     assert.equal(warnings, scenario === 'cancel' ? 0 : 1);
     assert.equal(h.session.snapshot()?.state.selectedId, null);
     if (scenario !== 'cancel') assert.ok(h.session.view, 'Hook failure must not invalidate a valid view');

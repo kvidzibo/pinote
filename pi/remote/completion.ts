@@ -25,7 +25,7 @@ export async function taskCompleted(
   };
   let finish!: () => void;
   const cancelled = new Promise<void>((resolve) => { finish = resolve; });
-  const cancel = () => { controller.abort(); finish(); };
+  const cancel = () => { controller.abort(lifetime.reason); finish(); };
   lifetime.addEventListener('abort', cancel, { once: true });
   // One deadline covers dispatch and all listeners, not 25 seconds per listener.
   const timer = setTimeout(() => { warning(); cancel(); }, 25_000);

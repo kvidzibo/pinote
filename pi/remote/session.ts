@@ -50,8 +50,8 @@ export class RemoteSession {
     this.persist(this.saved);
     await this.refresh(true);
   }
-  async stop(): Promise<void> {
-    this.active = false; this.epoch++; this.lifetime.abort(); this.connection?.abort();
+  async stop(reason?: string): Promise<void> {
+    this.active = false; this.epoch++; this.lifetime.abort(reason); this.connection?.abort();
     clearTimeout(this.refreshTimer); this.refreshTimer = undefined; this.dirty = false; this.refreshing = false;
     const peer = this.peer; this.peer = undefined; this.view = undefined;
     this.queue = Promise.resolve(); this.onChange();

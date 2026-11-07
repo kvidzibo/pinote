@@ -132,7 +132,10 @@ keeps the conversation open.
 There is one fixed **25-second total deadline**, shared by all listeners. The signal
 aborts on session lifetime cancellation, deadline, or hook settlement; listeners
 must honor it and avoid blocking synchronous work. Timers cannot preempt JavaScript
-that blocks the event loop. Hook rejection, timeout or cancellation never undo an
+that blocks the event loop. On runtime teardown, `signal.reason` carries Pi's
+shutdown reason (`quit`, `reload`, `new`, `resume`, or `fork`). A listener with its
+own awaited shutdown handler may finish bounded work on `quit`; other cancellation
+still stops its work. Hook rejection, timeout or cancellation never undo an
 acknowledged completion, invalidate its state, or retry remote writes. Registered
 promise rejections and timeouts produce only a generic warning when UI is available;
 Pinote does not display their error or response text. This is a trusted local extension API, not remote task
