@@ -84,7 +84,7 @@ test('seven explicit direct schemas; tool state is applied before next serialize
     return { content: [{ type: 'text', text: 'ok' }], _meta: { [UI_STATE]: { selectedId: 19 } } };
   } });
   await h.session.start([], 'conversation');
-  await Promise.all([h.session.tool('propose', { text: 'task' }), h.session.tool('get_current', {})]);
+  await Promise.all([h.session.tool('propose', { title: 'task' }), h.session.tool('get_current', {})]);
   assert.deepEqual(seen, [{}, { selectedId: 19 }]);
   assert.equal(h.session.snapshot()?.state.selectedId, 19);
   assert.equal(await h.session.context(), 'fresh task data');
@@ -157,8 +157,8 @@ test('session epoch cancels queued and in-flight work without state contaminatio
   let calls = 0;
   const h = harness({ tool: async () => { calls++; started(); await waiting; return { content: [], _meta: { [UI_STATE]: { selectedId: 99 } } }; } });
   await h.session.start([], 'old');
-  const first = h.session.tool('propose', { text: 'old' });
-  const second = h.session.tool('propose', { text: 'queued' });
+  const first = h.session.tool('propose', { title: 'old' });
+  const second = h.session.tool('propose', { title: 'queued' });
   const rejected = Promise.all([assert.rejects(first, RemoteFailure), assert.rejects(second, RemoteFailure)]);
   await began;
   await h.session.start([], 'new');

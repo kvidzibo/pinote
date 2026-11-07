@@ -155,6 +155,12 @@ The extension registers `pinote_search`, `pinote_get_task`, `pinote_get_current`
 `pinote_update_current`, `pinote_fields`, `pinote_tags`, and `pinote_propose`.
 Default guidance suggests tasks only for substantial work requiring changes, not
 questions, explanations, research, read-only inspection, or trivial edits.
+For new tasks, `pinote_propose` requires a nonblank, single-line `title` of
+1–60 Unicode characters, with optional multiline `description` and `tag`.
+The service joins title and description with a blank line; the combined text must
+fit 4,000 characters. Invalid input is rejected, never truncated. To suggest an
+existing task, pass only `task_id`.
+
 Suggestions do not create/start/select tasks until accepted in the UI. Reads by ID
 do not change selection. Updates require the task's `expected_updated_at` revision;
 concurrent edits are rejected rather than overwritten.
@@ -181,6 +187,11 @@ it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task da
 separate from global display settings.
 
 ## Migration
+
+Since pi-note 0.36.0, new-task proposals use `title` and optional `description`
+instead of `text`, in both remote and local modes. Update clients and service
+together, then `/reload` Pi. Stored tasks and pending suggestions are unchanged;
+`task_id` proposals and the local-only `pinote_add` tool are unchanged.
 
 Since pi-note 0.33.0, `/pinote` is the only slash command in both modes.
 The `/pi-note` alias is removed; update saved shortcuts to `/pinote`.
