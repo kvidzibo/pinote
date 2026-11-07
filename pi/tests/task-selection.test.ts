@@ -15,6 +15,7 @@ import type { startPinoteHttpServer } from '../mcp/http.ts';
 test('selecting a task starts it with one menu activation and returns to the unchanged prompt', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'pinote-selection-'));
   const original = { ...process.env };
+  delete process.env.KITTY_LISTEN_ON; // No live terminal controls in the mocked UI test.
   let service: Awaited<ReturnType<typeof startPinoteHttpServer>> | undefined;
   let session: RemoteSession | undefined;
   Object.assign(process.env, {

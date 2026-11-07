@@ -12,6 +12,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 test('GUI launch consent selects exactly one revision, persists, and never replaces or replays', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'pinote-kitty-'));
   const original = { ...process.env };
+  delete process.env.KITTY_LISTEN_ON; // No live terminal controls in the mocked UI test.
   const clients: { handlers: Map<string, Function>; ctx: any; entries: any[]; notices: string[] }[] = [];
   let service: Awaited<ReturnType<typeof startPinoteHttpServer>> | undefined;
   Object.assign(process.env, {
