@@ -11,6 +11,9 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { visibleWidth } from '@earendil-works/pi-tui';
+import { Compile } from 'typebox/compile';
+import { toolDefinitions } from '../remote/tools.ts';
+import { proposalText } from '../proposal.ts';
 
 // Assert the wire limits independently of the service implementation.
 const text = z.string().max(20_000);
@@ -22,7 +25,7 @@ const View = z.object({
 }).strict();
 
 // One end-to-end case exercises the UI contract against the real CLI and database.
-test('native UI owns tasks/settings, rejects stale writes, and restores host selection', async () => {
+test('native UI owns tasks/settings, rejects stale writes, and restores host selection', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
   const config = join(dir, 'pi-note.json');
@@ -184,7 +187,43 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     view = (await act(view, 'search', 'Task 199')).view;
     assert.equal(view.controls.filter((c) => c.id.startsWith('select:')).length, 1);
     view = (await act(view, 'search', '')).view;
-    const proposal = await client.callTool({ name: 'propose', arguments: { text: 'Suggested task\n\nDetails', tag: 'MCP' }, _meta: meta() });
+    await t.test('structured proposal limits agree across schemas and service without truncation or selection', async () => {
+      const remoteSchema = Compile(toolDefinitions.find((tool) => tool.name === 'propose')!.parameters);
+      const serviceSchema = Compile((await client.listTools()).tools.find((tool) => tool.name === 'propose')!.inputSchema);
+      const valid = [
+        { title: 'T' }, { title: 'x'.repeat(60), description: '' },
+        { title: '😀'.repeat(60), description: 'd'.repeat(3938) },
+        { title: 'Details', description: 'Context\n\n- Keep Markdown\n\tIndented command' },
+      ];
+      for (const args of valid) {
+        assert.equal(remoteSchema.Check(args), true);
+        assert.equal(serviceSchema.Check(args), true);
+        const result = await client.callTool({ name: 'propose', arguments: args, _meta: meta() });
+        assert.equal(result.isError, undefined);
+        state = result._meta!['native-ui/state'] as Record<string, unknown>;
+        assert.equal((state.proposal as any).text, proposalText(args.title, args.description));
+      }
+      const pending = state;
+      for (const title of ['', '   ', '\t', 'x'.repeat(61), '😀'.repeat(61), 'line\nline', 'line\n', 'line\r', 'line\u0085', 'line\u2028', 'line\u2029', 'bad\u0000title']) {
+        const args = { title };
+        assert.equal(remoteSchema.Check(args), false, JSON.stringify(args));
+        assert.equal(serviceSchema.Check(args), false, JSON.stringify(args));
+        assert.throws(() => proposalText(title), /title/);
+        assert.equal((await client.callTool({ name: 'propose', arguments: args, _meta: meta() })).isError, true);
+      }
+      for (const args of [{ text: 'Old API' }, { description: 'Missing title' }, { title: 'T', description: 42 },
+        { title: 'T', description: 'd'.repeat(3998) }, { title: 'x'.repeat(60), description: 'd'.repeat(3939) },
+        { title: 'T', description: 'bad\u0000description' }]) {
+        const result = await client.callTool({ name: 'propose', arguments: args, _meta: meta() });
+        assert.equal(result.isError, true);
+        assert.equal(result._meta?.['native-ui/state'], undefined, 'Invalid input cannot replace pending consent');
+      }
+      assert.deepEqual((await read()).state.proposal, pending.proposal);
+      const current = await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() });
+      assert.equal(JSON.parse((current.content as any[])[0].text), null, 'Proposals never select tasks');
+      view = (await act(await read(), 'proposal:dismiss')).view;
+    });
+    const proposal = await client.callTool({ name: 'propose', arguments: { title: 'Suggested task', description: 'Details', tag: 'MCP' }, _meta: meta() });
     assert.equal(proposal.isError, undefined);
     state = proposal._meta!['native-ui/state'] as Record<string, unknown>;
     const first = await read();
@@ -213,7 +252,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     const clickable = (await act(await read(), 'screen:tasks')).view;
     assert.equal(clickable.footer?.find((item) => item.action === 'proposal:accept')?.secondaryAction, 'proposal:dismiss');
     assert.ok(clickable.footer?.every((item) => item.action !== 'proposal:dismiss'));
-    const replaced = await client.callTool({ name: 'propose', arguments: { text: 'Replacement task', tag: 'MCP' }, _meta: meta() });
+    const replaced = await client.callTool({ name: 'propose', arguments: { title: 'Replacement task', description: 'Replacement details\n\n- Keep Markdown', tag: 'MCP' }, _meta: meta() });
     const oldState = state;
     state = replaced._meta!['native-ui/state'] as Record<string, unknown>;
     view = await read();
@@ -229,13 +268,13 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(typeof acceptedId, 'number');
     const accepted = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
     assert.equal(accepted.tag, 'MCP');
-    assert.equal(accepted.text, 'Replacement task');
+    assert.equal(accepted.text, 'Replacement task\n\nReplacement details\n\n- Keep Markdown');
     assert.ok(view.footer?.some((item) => item.action === 'preview'));
     assert.ok(view.footer?.some((item) => item.action === 'done'));
     assert.equal(view.footer?.find((item) => item.action === 'preview')?.doubleAction, 'done');
     assert.ok(view.footer?.every((item) => item.style === undefined), 'Accepted titles return to normal text');
     await assert.rejects(act(clickable, 'proposal:accept'), /changed/, 'Accepting double-click cannot be reused to complete');
-    assert.equal((await client.callTool({ name: 'propose', arguments: { text: 'Forbidden' }, _meta: meta() })).isError, true);
+    assert.equal((await client.callTool({ name: 'propose', arguments: { title: 'Forbidden' }, _meta: meta() })).isError, true);
     native = true; scoped = true;
     view = await read();
     view = (await act(view, view.footer![1].doubleAction!)).view;
@@ -250,7 +289,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     state = replaced._meta!['native-ui/state'] as Record<string, unknown>;
     assert.equal((await read()).state.proposal, null, 'Accepted consent cannot be replayed');
     state = emptyState;
-    const dismissible = await client.callTool({ name: 'propose', arguments: { text: 'Dismiss me' }, _meta: meta() });
+    const dismissible = await client.callTool({ name: 'propose', arguments: { title: 'Dismiss me' }, _meta: meta() });
     state = dismissible._meta!['native-ui/state'] as Record<string, unknown>;
     view = (await act(await read(), 'proposal:dismiss')).view;
     assert.equal(view.state.proposal, null);
@@ -315,7 +354,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
       assert.ok(JSON.parse(legacy.contents[0].text).controls.every((control: any) => control.revision === undefined));
       view = await read(); state = view.state;
       view = (await act(view, 'done')).view;
-      const receipt = await client.callTool({ name: 'propose', arguments: { text: 'Cross-process receipt' }, _meta: meta() });
+      const receipt = await client.callTool({ name: 'propose', arguments: { title: 'Cross-process receipt' }, _meta: meta() });
       state = receipt._meta!['native-ui/state'] as Record<string, unknown>;
       view = await read(); state = view.state;
       const pendingState = { ...state };
@@ -398,7 +437,7 @@ test('agent context is complete, read-only, consent-validated and fails closed',
       assert.equal(result.isError, undefined);
       state = result._meta!['native-ui/state'] as Record<string, unknown>;
     };
-    await suggest({ text: 'Pending new work', tag: 'Saved' });
+    await suggest({ title: 'Pending new work', tag: 'Saved' });
     assert.match(await read(), /Pending new work/);
     const oldState = state;
     await suggest({ task_id: task.id });

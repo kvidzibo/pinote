@@ -209,9 +209,11 @@ configuration only; project-local files are not read.
   populating relevant values with `pinote_update_current`. Empty/missing values
   stay hidden; this tool does not edit configuration.
 - `pinote_tags`: list saved tag names.
-- `pinote_propose`: show a suggested task beside the pin icon in the footer without
-  creating a note. Optional `tag`; full text is retained, but the footer shows only
-  its title. Requires a TUI with no selected task. A new proposal replaces the
+- `pinote_propose`: requires a nonblank, single-line `title` (1–60 Unicode
+  characters), optional multiline `description`, and optional `tag`. The combined
+  title, blank line, and description must fit 4,000 characters; invalid input is
+  rejected, never truncated. Shows a suggested task beside the pin icon without
+  creating a note. Full text is retained, but the footer shows only its title. Requires a TUI with no selected task. A new proposal replaces the
   unaccepted suggestion without waiting for dismissal. The agent continues your
   work while the suggestion awaits your choice.
 - `pinote_add`: create an active task. Optional `tag`. `select: true` starts and

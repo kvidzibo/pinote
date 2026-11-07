@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
 import { defaultAgentGuidance, defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
+import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
 
 const URI = 'pinote://ui';
 const MIME = 'application/vnd.mcp-native-ui+json';
@@ -24,9 +25,13 @@ const dataHome = process.env.XDG_DATA_HOME;
 const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
 const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', 'external-link'].map((name) => [name, readFileSync(new URL(`../icons/${name}.txt`, import.meta.url), 'utf8').trim()]));
 const TaskId = z.number().int().positive().safe();
-const NewProposal = z.object({ text: z.string().min(1).max(4000), tag: z.string().trim().min(1).max(64).optional() }).strict();
+const NewProposal = z.object({ text: z.string().min(1).refine((value) => [...value].length <= 4000, 'Task text exceeds 4000 characters'), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const ExistingProposal = z.object({ task_id: TaskId }).strict();
-const ProposalInput = z.union([NewProposal, ExistingProposal]);
+const ProposalInput = z.union([
+  z.object({ title: z.string(), description: z.string().optional(), tag: NewProposal.shape.tag }).strict()
+    .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) })),
+  ExistingProposal,
+]);
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
 const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
@@ -376,12 +381,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'propose',
-      description: 'Suggest an existing task with task_id or a new task with text and optional tag. Requires no selected task; replaces an unaccepted suggestion. Only user acceptance starts/selects an existing task or creates/starts/selects a new one; dismissal leaves tasks unchanged. Follow the injected agent guidance for when to suggest tasks.',
+      description: 'Suggest an existing task with task_id or a new task with title, optional description and tag. Titles must be nonblank single lines of 1–60 characters; combined task text must fit 4000 characters. Requires no selected task; replaces an unaccepted suggestion. Only user acceptance starts/selects an existing task or creates/starts/selects a new one; dismissal leaves tasks unchanged. Follow the injected agent guidance for when to suggest tasks.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           task_id: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-          text: { type: 'string', minLength: 1, maxLength: 4000 },
+          title: { type: 'string', ...proposalTitleOptions },
+          description: { type: 'string', ...proposalDescriptionOptions },
           tag: { type: 'string', minLength: 1, maxLength: 64 },
         },
         oneOf: [
@@ -389,13 +395,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             required: ['task_id'],
             not: {
               anyOf: [
-                { required: ['text'] },
+                { required: ['title'] },
+                { required: ['description'] },
                 { required: ['tag'] },
               ],
             },
           },
           {
-            required: ['text'],
+            required: ['title'],
             not: { required: ['task_id'] },
           },
         ],
@@ -477,7 +484,6 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
     if (request.params.name === 'propose') {
       if (await selected(state, extra.signal)) throw new Error('A task is already selected');
       const args = ProposalInput.parse(request.params.arguments);
-      if ('text' in args && !args.text.trim()) throw new Error('Task text must not be blank');
       if ('task_id' in args) {
         const task: Task | null = JSON.parse(await note(['agent', 'get', String(args.task_id)], extra.signal));
         if (!task || !['active', 'in_progress'].includes(task.state)) throw new Error('Only an existing active or in-progress task can be suggested');

@@ -88,8 +88,8 @@ test("native suggestion and completion controls require consent and reject stale
   try {
     await load();
     await event("session_start");
-    const propose = (text = "Add 日本語 suggested-task confirmation bar") => extension.tools.get("pinote_propose").definition.execute(
-      "suggest", { text: `${text}\n\nPreserve details`, tag: "pinote" }, undefined, undefined, ctx);
+    const propose = (title = "Add 日本語 suggested-task confirmation bar") => extension.tools.get("pinote_propose").definition.execute(
+      "suggest", { title, description: "Preserve details", tag: "pinote" }, undefined, undefined, ctx);
     const get = () => extension.tools.get("pinote_get_current").definition.execute("get", {}, undefined, undefined, ctx);
     await propose();
     const proposedStatus = status;
@@ -132,7 +132,7 @@ test("native suggestion and completion controls require consent and reject stale
     await assert.rejects(click(staleSuggestion[1]), "reload invalidates the old capability, not the proposal");
     const previous = links();
     await extension.tools.get("pinote_propose").definition.execute("replace", {
-      text: "A better pending task\n\nReplacement details", tag: "pi",
+      title: "A better pending task", description: "Replacement details", tag: "pi",
     }, undefined, undefined, ctx);
     const replacement = links();
     assert.notDeepEqual(replacement, previous, "replacement rotates consent links");

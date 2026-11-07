@@ -11,6 +11,8 @@ Search tasks only when the user explicitly asks to search or find tasks. Request
 
 If no task is selected, suggest a task only for genuinely new multi-step work requiring changes, using propose and a saved tag where appropriate. For continuing work, read a known task ID with get_task, then propose task_id; if no task ID is known, let the user select or provide the task instead of searching or suggesting a duplicate. Continue requested work from available context without waiting where possible. Do not suggest tasks for questions, explanations, research, read-only inspection, or trivial edits. Only user acceptance creates, starts, or selects a suggested task.
 
+For a new proposal, pass a short, action-oriented title (a nonblank single line of at most 60 characters) and optional multiline description. Put context, URLs, commands, and acceptance criteria in description, not title. Combined task text, including the blank line separator, must fit 4000 characters.
+
 Before setting handoff values, use injected field definitions or read fields if absent. Keep handoff notes concise; PR is one GitHub PR URL.`;
 export function parseAgentGuidance(value: unknown): string {
   if (typeof value !== "string" || value.length > 64_000 || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value)) {
