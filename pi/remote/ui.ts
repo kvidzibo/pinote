@@ -111,6 +111,11 @@ export class RemoteUI {
       if (!current()) return false;
       const result = await this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle());
       if (!current()) return false;
+      const selected = this.session.view;
+      if (selected && typeof selected.state.selectedId === 'number' && selected.state.selectedId !== view.state.selectedId) {
+        await this.renameKittyTab(ctx, selected, signal);
+        if (!current()) return false;
+      }
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
           this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
         this.closing = true;
@@ -129,6 +134,20 @@ export class RemoteUI {
         await this.session.refresh(true).catch(() => {});
       }
       return false;
+    }
+  }
+  private async renameKittyTab(ctx: ExtensionContext, view: NativeView, signal: AbortSignal): Promise<void> {
+    const window = process.env.KITTY_WINDOW_ID, socket = process.env.KITTY_LISTEN_ON;
+    const title = line(view.footer?.find((item) => item.action === 'preview')?.text ?? '').trim();
+    // Never fall back to the focused tab or discover an unrelated Kitty instance.
+    if (!window || !/^[1-9]\d*$/.test(window) || !socket || !title || process.env.SSH_CONNECTION || process.env.SSH_TTY) return;
+    try {
+      const result = await this.pi.exec('kitty', ['@', '--to', socket, 'set-tab-title', `--match=window_id:${window}`, '--', title], {
+        signal, timeout: 1500,
+      });
+      if (result.code !== 0) throw new Error('Kitty title update failed');
+    } catch {
+      if (!signal.aborted) ctx.ui.notify('Pinote task selected, but the Kitty tab could not be renamed.', 'warning');
     }
   }
   async open(ctx: ExtensionContext): Promise<void> {

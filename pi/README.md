@@ -62,6 +62,14 @@ title previews it and double-clicking completes it. A suggested title requires a
 double-click to accept. Regular mode shows status; `/pinote` provides all actions.
 No Kitty action handler is needed for this extension.
 
+Accepting a suggestion, selecting a different task, or creating and selecting one
+renames the current Kitty tab to `[tag] task title` (tag omitted when unset),
+using the footer's first-line title rather than the GUI launcher's shortened name.
+Requires local Kitty with remote control enabled, `kitty` on PATH, and
+`KITTY_LISTEN_ON` / `KITTY_WINDOW_ID`; SSH and other terminals are unchanged.
+Rename failures warn without undoing selection. Completion and deselection leave
+the tab name unchanged; reload/resume and external task edits do not rename it.
+
 Completion keeps the conversation and editor, except for dedicated **Start in Kitty…**
 sessions (see below). With an empty editor, **Ctrl+D**
 (or your configured exit key) offers Cancel, Exit without completing, or Complete
