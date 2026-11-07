@@ -24,6 +24,7 @@ function call(operation, params) {
   const response = JSON.parse(run.stdout); assert.ok(response.ok,JSON.stringify(response)); return response.result;
 }
 call('create_tag',{name:'Work',folder:null});
+call('create_tag',{name:'Empty filter',folder:null});
 const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
 const progress = call('add',{text:'Check GTK, CLI and Pi coexistence',tag:'Work'}).id;
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
@@ -100,6 +101,14 @@ try {
     await page.keyboard.press('Space');
     assert.equal(await work.getAttribute('aria-checked'),'true');
     assert.ok(await work.evaluate(node=>node===document.activeElement));
+    const emptyFilter = filters.getByRole('checkbox').filter({hasText:'Empty filter'});
+    await emptyFilter.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await emptyFilter.count(),1,'A focused empty tag must not disappear on deselection');
+    assert.equal(await emptyFilter.getAttribute('aria-checked'),'false');
+    assert.ok(await emptyFilter.evaluate(node=>node===document.activeElement),'An empty saved tag must remain focused after deselection');
+    await page.keyboard.press('Space');
+    assert.equal(await emptyFilter.getAttribute('aria-checked'),'true');
     await page.keyboard.press('Escape');
     assert.ok(await filter.evaluate(node=>node===document.activeElement),'Escape must return focus to the toolbar opener');
     assert.equal(await page.locator('.task-row').count(),103);

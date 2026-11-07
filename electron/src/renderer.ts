@@ -544,7 +544,7 @@ function tagsMenu(mode: TagMode, task?: Task): void {
       if (lower && !(name || 'Untagged').toLocaleLowerCase().includes(lower)) continue;
       const selected = mode === 'filter' ? state.filters === null || state.filters.includes(name) : mode === 'creation' ? (creationTag ?? '') === name : (task?.tag ?? '') === name;
       const count = active?.notes.filter(t => (t.tag ?? '') === name).length ?? 0;
-      if (mode === 'filter' && !query && !count && !selected) continue;
+      if (mode === 'filter' && !query && !count && !selected && name !== focusedTag) continue;
       const b = button('tag', `${name || 'Untagged'} ${counts(name)}`, () => choose(name), mode === 'task' && readonly);
       b.className = `tag-choice${selected ? ' chosen' : ''}`; b.dataset.tag = name;
       b.append(el('span', `${name || 'Untagged'} ${counts(name)}`));
