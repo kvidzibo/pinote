@@ -1,6 +1,6 @@
 [project]
 name = "pinote"
-version = "0.22.0"
+version = "0.23.0"
 description = "Persistent desktop reminders with a small CLI and durable history"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ Issues = "https://github.com/kvidzibo/pinote/issues"
 [project.scripts]
 note = "pinote.cli:main"
 pinote-gui = "pinote.gui:main"
+pinote-electron-backend = "pinote.electron_bridge:main"
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12"]
