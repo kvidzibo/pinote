@@ -61,14 +61,14 @@ function report(message: string): void {
   if (readonly && state.warning) {
     if (message !== state.warning) notice.append(el('span', state.warning));
     notice.append(button('done', 'I checked saved tasks; enable writes', async () => {
-      if (await api.acknowledgeWarning()) { readonly = false; state.warning = ''; composer.readOnly = false; notice.hidden = true; renderTasks(); renderToolbar(); }
+      if (await api.acknowledgeWarning()) { readonly = false; state.warning = ''; composer.readOnly = false; notice.hidden = true; updateEditors(); renderTasks(); renderToolbar(); }
     }));
   } else notice.append(button('close', 'Dismiss notice', () => { notice.hidden = true; fitWindow(); }));
   fitWindow();
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function recoveryWarning(text: string, preserveDrafts = false): void {
-  readonly = true; state.warning = text; composer.readOnly = true; report(text); renderTasks(); renderToolbar();
+  readonly = true; state.warning = text; composer.readOnly = true; updateEditors(); report(text); renderTasks(); renderToolbar();
   if (preserveDrafts) void track(persist(true)).catch(() => undefined);
 }
 function button(icon: Icon, label: string, action: () => unknown, disabled = false): HTMLButtonElement {
@@ -694,9 +694,11 @@ checklist.addEventListener('mouseup', e => {
   const target = e.target as HTMLElement;
   if (target === checklist || target === ordinary || target === pinned || target.classList.contains('empty')) composer.focus();
 });
-function setClosing(value: boolean): void {
-  closing = value; document.body.inert = value; composer.readOnly = readonly || value;
+function updateEditors(): void {
   for (const modal of layers) if (modal.kind === 'edit') modal.update?.();
+}
+function setClosing(value: boolean): void {
+  closing = value; document.body.inert = value; composer.readOnly = readonly || value; updateEditors();
 }
 api.onCloseRequested(() => {
   if (closing) return;

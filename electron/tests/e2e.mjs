@@ -16,7 +16,7 @@ for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','X
 const faultFile=join(root,'backend-fault');
 const slowAddMarker=join(root,'slow-add-dispatched');
 const frontendBackend=join(root,'backend.mjs');
-await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),300);return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;});`,{mode:0o700});
+await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;});`,{mode:0o700});
 env.PINOTE_ELECTRON_BACKEND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
@@ -302,7 +302,15 @@ try {
   assert.ok(addDispatched,'Tiny valid draft must flush and dispatch before newer input');
   assert.equal(await capacityComposer.evaluate(input=>input.readOnly),false,'Delayed add must still be pending when newer input arrives');
   await capacityComposer.fill(newerDraft);
+  // An unrelated editor opened during the pending add must freeze immediately on recovery.
+  await reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
+  await reopened.getByRole('button',{name:'Edit text…',exact:true}).click();
+  const recoveryEditor=reopened.locator('textarea[aria-label="Task text"]');
+  const recoveryText=await recoveryEditor.inputValue();
   await reopened.waitForFunction(()=>document.querySelector('#draft').readOnly);
+  assert.equal(await recoveryEditor.evaluate(input=>input.readOnly),true,'Unknown outcome must freeze already-open editors');
+  await reopened.keyboard.type(' MUST NOT BE ACCEPTED');
+  assert.equal(await recoveryEditor.inputValue(),recoveryText);
   await reopened.getByText(/Draft cache could not be saved:/).waitFor();
   assert.equal(await capacityComposer.inputValue(),newerDraft,'Unknown outcome must retain the newer draft');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
@@ -314,6 +322,8 @@ try {
   assert.equal(await capacityComposer.evaluate(input=>input.readOnly),true,'Unknown outcome must still require explicit acknowledgement');
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
   await reopened.waitForFunction(()=>!document.querySelector('#draft').readOnly);
+  assert.equal(await recoveryEditor.evaluate(input=>input.readOnly),false,'Acknowledgement must immediately restore eligible editors');
+  await reopened.keyboard.press('Escape');
   await capacityComposer.fill('');
   await writeFile(faultFile,'');
   await close();
