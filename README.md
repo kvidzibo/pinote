@@ -80,7 +80,8 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 - **Window size:** drag any edge or corner; width and height survive restarts.
 - **Menus:** the bottom menu opens reminders, the archive, and tag management.
 - **Tags:** the dropdown below the input tags new tasks. Type in tag-selection
-  or filter menus to search; if nothing matches, choose **Create tag…**.
+  or filter menus to search; without an exact name match, choose **Create tag…**
+  alongside any partial matches.
   Tags stay saved without tasks and are enabled in the filter when created.
   Creating or managing
   a tag can set an optional default folder for **Start in Kitty…**; otherwise,

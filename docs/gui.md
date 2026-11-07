@@ -200,8 +200,9 @@ Edits and tag changes retain the task ID and record old/new values in history;
   In the new-task dropdown, task Tag submenu, or either filter menu, start typing
   to reveal search and immediately narrow tags (case-insensitive). **Backspace**
   edits the search; arrow keys and **Enter** choose a result. Searching filters also
-  finds unused saved tags. If nothing matches, choose **Create tag…** to open the
-  form with that name and an optional default-folder picker; there is no separate
+  finds unused saved tags. Unless that exact name already exists (ignoring case),
+  **Create tag “name”…** appears alongside any partial matches. Choose it to open
+  the form with that name and an optional default-folder picker; there is no separate
   new-tag button. Saving registers the tag, even without a task. Creating from
   the new-task dropdown selects it; creating from a filter keeps the new-task tag
   unchanged. **Esc** dismisses the menu; reopening clears its search.

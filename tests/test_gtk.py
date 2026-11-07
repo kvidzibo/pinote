@@ -793,9 +793,10 @@ def test_tag_search_keyboard_and_prefilled_creation(gtk, source):
         assert not saved.get_visible()  # Idle filtering hides unselected zero-count tags.
     type_text("SaX")
     wait_until(gtk.glib, lambda: menu.query == "SaX")
+    assert menu.create_item.get_visible()  # No matching tags still offers creation.
     keys("BackSpace")
     wait_until(gtk.glib, lambda: menu.query == "Sa" and saved.get_visible())
-    assert menu.search_item.get_visible() and not menu.create_item.get_visible()
+    assert menu.search_item.get_visible() and menu.create_item.get_visible()
     pointer_at(
         gtk,
         menu.get_toplevel(),
@@ -857,7 +858,9 @@ def test_tag_search_keyboard_and_prefilled_creation(gtk, source):
     window._set_filter(frozenset({"Work", "Saved empty"}))
     previous_creation = window.creation_tag
     menu = open_menu()
-    menu.search_entry.set_text("Brand new")
+    menu.search_entry.set_text(" SAVED EMPTY ")
+    assert not menu.create_item.get_visible()  # Trimmed, case-insensitive exact match.
+    menu.search_entry.set_text("Saved")
     assert menu.create_item.get_visible()
 
     def fully_visible(item):
@@ -868,23 +871,28 @@ def test_tag_search_keyboard_and_prefilled_creation(gtk, source):
     wait_until(
         gtk.glib, lambda: fully_visible(menu.search_item) and fully_visible(menu.create_item)
     )
-    assert menu.create_item.get_tooltip_text() == "Create tag “Brand new”…"
-    assert menu.create_item.get_accessible().get_name() == "Create tag “Brand new”…"
-    assert not any(item.get_visible() for item in menu.get_children() if hasattr(item, "tag_name"))
+    assert menu.create_label.get_text() == "Create tag “Saved”…"
+    assert menu.create_item.get_tooltip_text() == "Create tag “Saved”…"
+    assert menu.create_item.get_accessible().get_name() == "Create tag “Saved”…"
+    assert [
+        item.tag_name
+        for item in menu.get_children()
+        if hasattr(item, "tag_name") and item.get_visible()
+    ] == ["Saved empty"]
     menu.create_item.activate()
     wait_until(gtk.glib, lambda: window.editor is not None)
     editor = window.editor
-    assert editor.entry.get_text() == "Brand new"
+    assert editor.entry.get_text() == "Saved"
     with Store(gtk.paths.database) as store:
-        assert "Brand new" not in store.tags()  # Opening the dialog is not a commit.
+        assert "Saved" not in store.tags()  # Opening the dialog is not a commit.
     editor.save_button.clicked()
     wait_until(gtk.glib, lambda: window.editor is None and not window.pending)
-    assert window.tag_filter == frozenset({"Work", "Saved empty", "Brand new"})
+    assert window.tag_filter == frozenset({"Work", "Saved empty", "Saved"})
     assert window.entry.get_text() == "Keep this draft"
-    assert window.creation_tag == ("Brand new" if source == "composer" else previous_creation)
+    assert window.creation_tag == ("Saved" if source == "composer" else previous_creation)
     with Store(gtk.paths.database) as store:
-        assert "Brand new" in store.tags()
-        assert store.get(1).tag == ("Brand new" if source == "task" else "Work")
+        assert {"Saved", "Saved empty"} <= set(store.tags())
+        assert store.get(1).tag == ("Saved" if source == "task" else "Work")
 
 
 @pytest.mark.parametrize("source", ["composer", "task", "manager"])

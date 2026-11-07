@@ -4,7 +4,7 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from pinote.gui.icons import icon_image  # noqa: E402
 
@@ -29,7 +29,9 @@ class TagMenu(Gtk.Menu):
         self.create_item = Gtk.MenuItem()
         content = Gtk.Box(spacing=4)
         content.pack_start(icon_image("list-add-symbolic"), False, False, 0)
-        content.pack_start(Gtk.Label(label="Create tag…", xalign=0), False, False, 0)
+        self.create_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.create_label.set_max_width_chars(40)
+        content.pack_start(self.create_label, True, True, 0)
         self.create_item.add(content)
         self.create_item.set_no_show_all(True)
         self.create_name = ""
@@ -46,17 +48,18 @@ class TagMenu(Gtk.Menu):
 
     def apply_search(self, *, select_result=False):
         query = self.query.casefold()
-        matches = 0
+        exact_match = False
         layout_changed = False
         for item in self.get_children():
             if not hasattr(item, "tag_name"):
                 continue
-            matches_query = query in item.tag_name.casefold()
+            name = item.tag_name.casefold()
+            matches_query = query in name
+            exact_match |= query == name
             visible = matches_query and (bool(query) or getattr(item, "tag_visible", True))
             layout_changed |= item.get_visible() != visible
             item.set_no_show_all(not visible)
             item.set_visible(visible)
-            matches += matches_query
         if self.search_entry is None:
             return
         searching = bool(self.search_entry.get_text())
@@ -68,9 +71,10 @@ class TagMenu(Gtk.Menu):
             # Mouse activation hides (and resets) a native menu before emitting activate.
             self.create_name = self.query
         label = f"Create tag “{self.query}”…"
+        self.create_label.set_text(label)
         self.create_item.set_tooltip_text(label)
         self.create_item.get_accessible().set_name(label)
-        creating = bool(query) and not matches
+        creating = bool(query) and not exact_match
         layout_changed |= self.create_item.get_visible() != creating
         self.create_item.set_visible(creating)
         if self.create_item.get_visible():
