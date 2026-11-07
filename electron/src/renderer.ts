@@ -343,15 +343,8 @@ async function startKitty(task: Task): Promise<void> {
   const available = active?.tags.find(t => t.name === task.tag)?.available;
   const directory = folder && available !== false ? folder : await chooseFolder();
   if (!directory) return;
-  const result = await call('kitty', { ...target(task), directory });
-  if (!result) {
-    // A failed launch may have opened a tab already. Never retry automatically.
-    const reason = notice.textContent ?? '';
-    report(`${reason}\nKitty launch did not confirm success. Check any opened tab before retrying. If the tag folder is unavailable, choose another folder explicitly.`);
-    notice.append(button('folder', 'Choose another folder and explicitly retry Kitty', async () => {
-      const chosen = await chooseFolder(); if (chosen) await call('kitty', { ...target(task), directory: chosen });
-    }));
-  }
+  // call() owns uncertain-outcome recovery; do not replace its acknowledgement action.
+  await call('kitty', { ...target(task), directory });
 }
 
 // Markdown tokens become only known DOM elements. No HTML, style, or event attributes are copied.
@@ -700,7 +693,7 @@ api.onCloseRequested(() => {
     while (pending.size) await Promise.allSettled([...pending]);
     await persist(); await persistChain;
     await api.finishClose();
-  })().catch(e => { closing = false; composer.readOnly = readonly; report(`Could not finish closing: ${message(e)}`); });
+  })().catch(async e => { closing = false; composer.readOnly = readonly; await api.cancelClose(); report(`Could not finish closing: ${message(e)}`); });
 });
 async function init(): Promise<void> {
   composer.disabled = true;

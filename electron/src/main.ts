@@ -118,7 +118,15 @@ async function boot() {
   window.webContents.setWindowOpenHandler(() => ({ action:'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
-  window.webContents.on('render-process-gone', () => { log('Renderer exited unexpectedly; drafts and any uncertain operation were preserved.'); if (!exiting) app.quit(); });
+  window.webContents.on('render-process-gone', () => {
+    if (exiting) return;
+    log('Renderer exited unexpectedly; drafts and any uncertain operation were preserved.');
+    state.warning = warning; uncertain = true; closing = true;
+    const saved = readonly ? Promise.resolve() : persist().catch(() => {});
+    void Promise.allSettled([tasks, saved]).then(async () => {
+      await stateWrites.catch(() => {}); exiting = true; window?.destroy(); app.quit();
+    });
+  });
   window.on('ready-to-show', () => { resize(fullSize.width, fullSize.height, false); window?.show(); window?.focus(); });
   window.once('show', () => setTimeout(() => {
     if (!window) return;
@@ -158,7 +166,7 @@ async function boot() {
           if (uncertain) state.warning = warning;
           await persist().catch(() => { state.warning = 'Task operation finished, but local draft state could not be saved. Check tasks before retrying.'; log('Cannot persist Electron state after task operation.'); });
         }
-        return response.ok && state.warning ? { ...response, warning: state.warning } : response;
+        return mutating(op) && response.ok && state.warning ? { ...response, warning: state.warning } : response;
       });
       tasks = work.then(() => {}, () => {});
       return work;
@@ -168,6 +176,7 @@ async function boot() {
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height); },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
+    'cancel-close': () => { if (!exiting) closing = false; },
     'finish-close': async () => { await tasks; await stateWrites; exiting = true; window?.destroy(); app.quit(); },
   };
   for (const [name, handler] of Object.entries(handlers)) ipcMain.handle(name, (event,...args) => { trusted(event); return handler(event,...args); });

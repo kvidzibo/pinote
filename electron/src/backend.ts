@@ -33,7 +33,7 @@ export class Backend {
         if (done) return;
         try {
           const response: unknown = JSON.parse(stdout);
-          if (!validEnvelope(response)) throw new Error('Invalid envelope');
+          if (!validEnvelope(operation, response)) throw new Error('Invalid envelope');
           finish(response as Result<unknown>);
         } catch { failed('Backend returned an incomplete or invalid response.'); }
       });

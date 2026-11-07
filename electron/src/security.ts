@@ -31,7 +31,23 @@ export function safeLink(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x20\x7f]/.test(value)) return false;
   try { return ['https:', 'http:', 'mailto:'].includes(new URL(value).protocol); } catch { return false; }
 }
-export function validEnvelope(value: unknown): boolean {
+function validTask(value: unknown): boolean {
+  if (!record(value) || !id(value.id) || !str(value.text) || !['active','in_progress','scheduled','done','removed'].includes(String(value.state))) return false;
+  if (!str(value.created_at,128) || !str(value.updated_at,128) || !value.updated_at || !nullable(value.tag)) return false;
+  if (!['remind_at','reminder_due_at','archived_at'].every(k => nullable(value[k]))) return false;
+  return typeof value.agent_event_id === 'number' && Number.isSafeInteger(value.agent_event_id) && value.agent_event_id >= 0 && record(value.agent_notes) && Object.entries(value.agent_notes).every(([k,v]) => str(k,256) && str(v));
+}
+export function validEnvelope(operation: Operation, value: unknown): boolean {
   if (!record(value) || value.protocol !== 1 || typeof value.ok !== 'boolean') return false;
-  return value.ok ? Object.hasOwn(value, 'result') : record(value.error) && ['invalid','conflict','busy','internal','unknown'].includes(String(value.error.code)) && str(value.error.message,16384);
+  if (!value.ok) return record(value.error) && ['invalid','conflict','busy','internal','unknown'].includes(String(value.error.code)) && str(value.error.message,16384);
+  const result = value.result;
+  if (operation === 'completions') return Array.isArray(result) && result.every(id);
+  if (!record(result)) return false;
+  if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && typeof result.database === 'string' && result.database.startsWith('/') && str(result.database);
+  if (operation === 'snapshot') {
+    return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean' && str(result.config.kittyStartPrompt);
+  }
+  if (typeof result.changed !== 'boolean' || (result.id !== undefined && !id(result.id)) || (result.tag !== undefined && !str(result.tag,256))) return false;
+  if (operation === 'add') return result.changed && id(result.id);
+  return operation !== 'create_tag' || (typeof result.tag === 'string' && result.tag.length > 0);
 }

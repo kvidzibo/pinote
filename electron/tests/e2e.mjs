@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -134,8 +134,20 @@ try {
   const cli=spawnSync(resolve('../.venv/bin/note'),['--no-notify','done',String(first)],{env,encoding:'utf8'}); assert.equal(cli.status,0,cli.stderr);
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
   assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
+  // Failed Kitty launch must keep the acknowledgement action, not offer a blocked retry.
+  await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
+  await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
+  await page.getByRole('button',{name:'Start in Kitty…',exact:true}).click();
+  await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('#toolbar button[aria-label="Add task (Enter)"]').disabled);
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
+  // A failed close must preserve the window/draft and allow a later successful close.
+  const stateDir=join(env.XDG_DATA_HOME,'pinote/electron');
+  await chmod(stateDir,0o500);
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
+  await page.getByText(/Could not finish closing:/).waitFor();
+  await chmod(stateDir,0o700);
   const closed = app.waitForEvent('close');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
   await closed; app=undefined;
@@ -143,6 +155,14 @@ try {
   assert.equal(saved.draft,'Unfinished draft preserved');
   assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
   assert.deepEqual(pageErrors,[]);
+  // A renderer crash cannot wait forever for a reply from the dead renderer or replay its draft.
+  app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});
+  const reopened=await app.firstWindow(); await reopened.locator('.task-row').first().waitFor();
+  const crashed=app.waitForEvent('close');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+  await crashed; app=undefined;
+  const recovered=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
+  assert.equal(recovered.draft,'Unfinished draft preserved'); assert.match(recovered.warning,/previous operation may have succeeded/);
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally { if(app) await app.close().catch(()=>{}); await client?.close().catch(()=>{}); await service?.close().catch(()=>{}); gtk?.kill('SIGTERM'); wm?.kill('SIGTERM'); }

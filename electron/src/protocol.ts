@@ -37,6 +37,6 @@ export type PinoteApi = BackendApi & {
   loadState(): Promise<UIState>; saveState(state: UIState): Promise<void>; acknowledgeWarning(): Promise<boolean>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
-  onCloseRequested(callback: () => void): void; finishClose(): Promise<void>;
+  onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
 };
 declare global { interface Window { pinote: PinoteApi } }

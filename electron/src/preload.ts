@@ -14,5 +14,6 @@ const api: PinoteApi = {
   fit: height => ipcRenderer.invoke('fit', height),
   onCloseRequested: callback => { ipcRenderer.removeAllListeners('close-requested'); ipcRenderer.on('close-requested', () => callback()); },
   finishClose: () => ipcRenderer.invoke('finish-close'),
+  cancelClose: () => ipcRenderer.invoke('cancel-close'),
 };
 contextBridge.exposeInMainWorld('pinote', Object.freeze(api));
