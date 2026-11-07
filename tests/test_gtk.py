@@ -817,6 +817,17 @@ def test_tag_search_keyboard_and_prefilled_creation(gtk, source):
         window._poll()
         wait_until(gtk.glib, lambda: not window.pending)
         assert menu.query == "sA" and menu.get_mapped() and saved.get_visible()
+        select_all = next(
+            item
+            for item in menu.get_children()
+            if item.get_accessible().get_name() == "Select all tags"
+        )
+        keys("Down")
+        wait_until(gtk.glib, lambda: menu.get_selected_item() is select_all)
+        window._poll()
+        wait_until(gtk.glib, lambda: not window.pending)
+        assert menu.get_selected_item() is select_all
+        keys("Up")
     keys("Down", "Up")
     wait_until(gtk.glib, lambda: menu.get_selected_item() is saved)
     keys("Return")

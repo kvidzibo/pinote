@@ -37,14 +37,14 @@ class TagMenu(Gtk.Menu):
         self.append(self.create_item)
         rows = [self.child_get_property(item, "bottom-attach") for item in self.get_children()]
         self.attach(self.create_item, 0, columns, max(rows), max(rows) + 1)
-        self.search_entry.connect("changed", lambda _entry: self.apply_search())
+        self.search_entry.connect("changed", lambda _entry: self.apply_search(select_result=True))
         self.apply_search()
 
     @property
     def query(self):
         return self.search_entry.get_text().strip() if self.search_entry is not None else ""
 
-    def apply_search(self):
+    def apply_search(self, *, select_result=False):
         query = self.query.casefold()
         matches = 0
         layout_changed = False
@@ -80,7 +80,10 @@ class TagMenu(Gtk.Menu):
             query
             and self.get_mapped()
             and (
-                selected is None or not selected.get_visible() or not hasattr(selected, "tag_name")
+                select_result
+                or selected is None
+                or not selected.get_visible()
+                or selected is self.search_item
             )
         ):
             for item in self.get_children():
