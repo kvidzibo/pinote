@@ -125,10 +125,22 @@ async function boot() {
     if (exiting) return;
     log('Renderer exited unexpectedly; drafts and any uncertain operation were preserved.');
     state.warning = warning; uncertain = true; closing = true;
-    const saved = readonly ? Promise.resolve() : persist().catch(() => {});
-    void Promise.allSettled([tasks, saved]).then(async () => {
-      await stateWrites.catch(() => {}); exiting = true; window?.destroy(); app.quit();
-    });
+    void (async () => {
+      await tasks;
+      if (!readonly) for (;;) {
+        try { await persist(); break; }
+        catch {
+          const result = await dialog.showMessageBox(window!, {
+            type: 'warning', message: 'Recovered drafts could not be saved.',
+            detail: 'Pinote will stay open to preserve recovered text. Restore access to draft storage and retry, or copy the recovered state before quitting. No task operation will be replayed.',
+            buttons: ['Retry saving', 'Copy recovered state', 'Quit without saving'], defaultId: 0, cancelId: 0,
+          });
+          if (result.response === 1) clipboard.writeText(JSON.stringify(state));
+          if (result.response === 2) break; // Explicit user consent to discard unsaved recovery state.
+        }
+      }
+      exiting = true; window?.destroy(); app.quit();
+    })().catch(() => log('Cannot show recovery controls; recovered drafts remain in memory. Do not force quit before recovering them.'));
   });
   window.on('ready-to-show', () => { resize(fullSize.width, fullSize.height, false); window?.show(); window?.focus(); });
   window.once('show', () => setTimeout(() => {

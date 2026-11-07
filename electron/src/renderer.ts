@@ -116,7 +116,11 @@ async function call<K extends Exclude<Operation, 'handshake'>>(name: K, params: 
   const write = name !== 'snapshot' && name !== 'completions';
   if (write && (readonly || closing || !active)) { report('Read-only: writes are disabled until tasks and configuration load safely. Copy drafts to recover them.'); return null; }
   // Flush the submitted text before dispatch; debounce alone cannot protect fast failures.
-  if (write) { try { await persist(); } catch { report('Drafts could not be saved; the operation was not submitted. Keep this window open or copy your text.'); return null; } }
+  if (write) {
+    try { await persist(); } catch { report('Drafts could not be saved; the operation was not submitted. Keep this window open or copy your text.'); return null; }
+    // Closing drains accepted callbacks, but recovery must stop writes not yet dispatched.
+    if (readonly) return null;
+  }
   try {
     const fn = api[name] as (p: Operations[K]['params']) => Promise<Result<Operations[K]['result']>>;
     const result = await track(fn(params));

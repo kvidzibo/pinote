@@ -328,6 +328,74 @@ try {
   await writeFile(faultFile,'');
   await close();
   assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).draft,'','Reducing the draft to fit must allow a successful close');
+  // A renderer failure must retain state adopted by main even when its disk save failed.
+  reopened=await reopen();
+  const failedSaveDraft='New draft retained after renderer failure';
+  const failedSaveState=await reopened.evaluate(()=>window.pinote.loadState());
+  failedSaveState.edits={}; failedSaveState.draft=failedSaveDraft;
+  assert.ok(Buffer.byteLength(JSON.stringify(failedSaveState))<contentLimit);
+  const beforeFailedSave=await readFile(join(stateDir,'state.json'),'utf8');
+  await app.evaluate(({dialog})=>{
+    globalThis.__e2eRecoveryPromptCount=0;
+    dialog.showMessageBox=(_window,options)=>{
+      globalThis.__e2eRecoveryPromptOptions=options;
+      globalThis.__e2eRecoveryPromptCount++;
+      return new Promise(resolve=>{globalThis.__e2eRecoveryPromptResolve=resolve;});
+    };
+  });
+  await chmod(stateDir,0o500);
+  await assert.rejects(()=>reopened.evaluate(state=>window.pinote.saveState(state),failedSaveState));
+  assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).draft,failedSaveDraft,'Main must adopt valid state before the disk save fails');
+  assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),beforeFailedSave);
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+  const waitForRecoveryPrompt=async count=>{
+    let reached=false;
+    for(let i=0;i<600;i++) {
+      reached=await app.evaluate((_electron,expected)=>globalThis.__e2eRecoveryPromptCount>=expected,count);
+      if(reached) break;
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    assert.ok(reached,`Native recovery prompt ${count} must appear`);
+  };
+  await waitForRecoveryPrompt(1);
+  assert.equal(app.process().exitCode,null,'Failed crash recovery save must keep main alive');
+  assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),beforeFailedSave,'Failed crash recovery must not change disk state');
+  const recoveryOptions=await app.evaluate(()=>globalThis.__e2eRecoveryPromptOptions);
+  assert.deepEqual(recoveryOptions.buttons,['Retry saving','Copy recovered state','Quit without saving']);
+  assert.equal(recoveryOptions.defaultId,0);
+  assert.equal(recoveryOptions.cancelId,0);
+  await app.evaluate(()=>globalThis.__e2eRecoveryPromptResolve({response:1,checkboxChecked:false}));
+  await waitForRecoveryPrompt(2);
+  const copiedRecovery=JSON.parse(await app.evaluate(({clipboard})=>clipboard.readText()));
+  assert.equal(copiedRecovery.draft,failedSaveDraft);
+  assert.match(copiedRecovery.warning,/previous operation may have succeeded/);
+  assert.equal(app.process().exitCode,null,'Copying recovered state must return to the prompt, not quit');
+  assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),beforeFailedSave);
+  await chmod(stateDir,0o700);
+  const recoveryClosed=app.waitForEvent('close');
+  const recoveryExited=new Promise(resolve=>app.process().once('exit',resolve));
+  await app.evaluate(()=>globalThis.__e2eRecoveryPromptResolve({response:0,checkboxChecked:false}));
+  await Promise.all([recoveryClosed,recoveryExited]); app=undefined;
+  const retriedRecovery=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
+  assert.equal(retriedRecovery.draft,failedSaveDraft);
+  assert.equal(retriedRecovery.warning,copiedRecovery.warning);
+  reopened=await reopen();
+  const loadedRecovery=await reopened.evaluate(()=>window.pinote.loadState());
+  assert.equal(loadedRecovery.draft,failedSaveDraft,'Reopen must recover the exact draft adopted before the failed save');
+  assert.equal(loadedRecovery.warning,retriedRecovery.warning);
+  assert.doesNotMatch(loadedRecovery.warning,/cannot be read safely/);
+  await close();
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
-finally { if(app) await app.close().catch(()=>{}); await client?.close().catch(()=>{}); await service?.close().catch(()=>{}); gtk?.kill('SIGTERM'); wm?.kill('SIGTERM'); }
+finally {
+  if(app) {
+    // A held native recovery prompt must not deadlock cleanup after an assertion fails.
+    await app.evaluate(({dialog})=>{
+      if(globalThis.__e2eRecoveryPromptCount===undefined) return;
+      dialog.showMessageBox=async()=>({response:2,checkboxChecked:false});
+      globalThis.__e2eRecoveryPromptResolve?.({response:2,checkboxChecked:false});
+    }).catch(()=>{});
+    await app.close().catch(()=>{});
+  }
+  await client?.close().catch(()=>{}); await service?.close().catch(()=>{}); gtk?.kill('SIGTERM'); wm?.kill('SIGTERM');
+}

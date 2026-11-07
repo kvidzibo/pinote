@@ -88,7 +88,9 @@ preserving recoverable drafts; do not discard it as a generic reset. GTK remains
 available. An uncertain write blocks further writes and is **never automatically
 retried**. Inspect saved tasks and any new Kitty tab first, then use the explicit
 “I checked saved tasks; enable writes” action and confirmation to acknowledge it.
-Acknowledgement does not replay the operation.
+Acknowledgement does not replay the operation. If the renderer fails and recovery
+cannot be saved, a native dialog keeps the app alive to retry or copy recovered
+state; quitting without saving requires an explicit choice.
 
 ## Unpacked Linux application
 
