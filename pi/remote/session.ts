@@ -32,6 +32,7 @@ export class RemoteSession {
   view?: NativeView;
   fullscreen = false;
   onChange = () => {};
+  onCompleted?: (taskId: number, signal: AbortSignal) => Promise<void>;
   private config: RemoteConfig;
   private persist: (saved: SavedState) => void;
   private factory: PeerFactory;
@@ -171,8 +172,10 @@ export class RemoteSession {
       } catch (error) { if (current()) this.failed(error, mutation && attempted); throw new RemoteFailure(mutation && attempted); }
     }, signal);
   }
-  action(view: NativeView, control: NativeControl, value?: NativeControl['value'], allow = () => true): Promise<{ draft?: string; preview?: string }> {
-    return this.serial(async () => {
+  async action(view: NativeView, control: NativeControl, value?: NativeControl['value'], allow = () => true): Promise<{ draft?: string; preview?: string }> {
+    const signal = this.signal;
+    let completedId: number | undefined;
+    const result = await this.serial(async () => {
       const current = this.current(); let attempted = false;
       if (!allow()) throw new RemoteFailure(false, true);
       const latest = this.view?.controls.find((c) => c.id === control.id && c.kind === control.kind);
@@ -180,10 +183,14 @@ export class RemoteSession {
       try {
         const peer = await this.connected(true);
         if (!allow()) throw new RemoteFailure(false, true);
+        const taskId = this.view?.state.selectedId;
         attempted = true;
         const result = await peer.action({ uri: 'pinote://ui', action: control.id, revision: control.revision ?? view.revision, ...(value === undefined ? {} : { value }), _meta: this.meta() }, this.signal);
         if (!current()) throw new RemoteFailure(true);
         this.apply(result.view);
+        if (control.id === 'done' && control.kind === 'action' &&
+            typeof taskId === 'number' && Number.isSafeInteger(taskId) && taskId > 0 &&
+            result.view.state.selectedId == null) completedId = taskId;
         return result;
       } catch (error) {
         if (!attempted && error instanceof RemoteFailure && error.stale) throw error;
@@ -191,5 +198,11 @@ export class RemoteSession {
         throw new RemoteFailure(attempted);
       }
     });
+    // Outside the serial queue: trusted listeners may query this session themselves.
+    // Hook failures cannot invalidate or replay the acknowledged remote mutation.
+    if (completedId !== undefined && !signal.aborted) {
+      try { await this.onCompleted?.(completedId, signal); } catch { /* Best effort only. */ }
+    }
+    return result;
   }
 }

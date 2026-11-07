@@ -6,6 +6,7 @@ import { registerTools } from './remote/tools.ts';
 import { registerPreview, RemoteUI } from './remote/ui.ts';
 import { registerRemoteExit } from './remote/exit.ts';
 import { editorText } from './remote/protocol.ts';
+import { taskCompleted } from './remote/completion.ts';
 
 // Only an accepted /new (previousSessionFile) may carry this process-local selection.
 // Reload/resume/fork restore branch entries, never this map or a folder-global store.
@@ -46,6 +47,9 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
     try {
       const config = remoteConfig();
       session = new RemoteSession(config, (saved) => pi.appendEntry(ENTRY_TYPE, saved));
+      session.onCompleted = (taskId, signal) => taskCompleted(pi.events, taskId, signal, () => {
+        if (ctx.hasUI) ctx.ui.notify('Pinote: completion hook did not finish successfully. The task completion remains confirmed.', 'warning');
+      });
       launchKey = `${config.scope}:${ctx.sessionManager.getSessionId()}`;
       ui = new RemoteUI(pi, session, ownsLaunch);
       ui.attach(ctx);
