@@ -15,22 +15,33 @@ export class Backend {
   private run(operation: Operation, params: unknown): Promise<Result<unknown>> {
     return new Promise(resolve => {
       const write = mutating(operation);
-      let stdout = ''; let bytes = 0; let done = false;
-      const finish = (result: Result<unknown>) => { if (!done) { done = true; clearTimeout(timer); resolve(result); } };
+      let stdout = ''; let bytes = 0; let done = false; let stopping = '';
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (result: Result<unknown>) => { if (!done) { done = true; clearTimeout(timer); clearTimeout(killTimer); resolve(result); } };
       const failed = (message: string) => finish({ protocol: 1, ok: false, error: { code: write ? 'unknown' : 'internal', message: write ? `${message} The operation may have succeeded; check saved state before retrying.` : message } });
       const child = spawn(this.executable, [], { env: this.env, stdio: ['pipe','pipe','pipe'], shell: false });
-      const timer = setTimeout(() => { child.kill('SIGTERM'); failed('Backend response timed out.'); }, operation === 'kitty' ? 30000 : 10000);
-      child.on('error', () => failed('Cannot start the configured Pinote backend.'));
+      const stop = (message: string) => {
+        if (done || stopping) return;
+        stopping = message; child.kill('SIGTERM');
+        killTimer = setTimeout(() => child.kill('SIGKILL'), 1000);
+      };
+      const timer = setTimeout(() => stop('Backend response timed out.'), operation === 'kitty' ? 30000 : 10000);
+      child.on('error', () => { if (child.pid) stop('Cannot stop the configured Pinote backend.'); else failed('Cannot start the configured Pinote backend.'); });
+      child.on('exit', () => {
+        if (stopping) { child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); }
+      });
       child.stdin.on('error', () => {});
       child.stderr.resume(); // Never send Python diagnostics or private paths into the renderer.
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', chunk => {
+        if (stopping || done) return;
         bytes += Buffer.byteLength(chunk);
-        if (bytes > 8 * 1024 * 1024) { child.kill('SIGTERM'); failed('Backend response exceeded the size limit.'); }
+        if (bytes > 8 * 1024 * 1024) stop('Backend response exceeded the size limit.');
         else stdout += chunk;
       });
       child.on('close', () => {
         if (done) return;
+        if (stopping) { failed(stopping); return; }
         try {
           const response: unknown = JSON.parse(stdout);
           if (!validEnvelope(operation, response)) throw new Error('Invalid envelope');

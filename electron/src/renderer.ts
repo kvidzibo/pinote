@@ -75,6 +75,7 @@ function button(icon: Icon, label: string, action: () => unknown, disabled = fal
   const image = el('img'); image.src = `icons/${icons[icon]}-symbolic.svg`; image.alt = ''; image.setAttribute('aria-hidden', 'true');
   b.append(image); b.disabled = disabled;
   b.addEventListener('click', () => {
+    if (closing) return;
     try {
       const result = action();
       if (result && typeof (result as Promise<unknown>).then === 'function') {
@@ -166,7 +167,7 @@ async function addTask(): Promise<void> {
   } finally { adding = false; renderToolbar(); if (!layers.length && !closing) composer.focus(); }
 }
 let adding = false;
-composer.addEventListener('input', () => { state.draft = composer.value; draftVersion++; resizeComposer(); saveSoon(); });
+composer.addEventListener('input', () => { if (closing) return; state.draft = composer.value; draftVersion++; resizeComposer(); saveSoon(); });
 composer.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void track(addTask()); }
 });
@@ -426,15 +427,15 @@ function edit(task: Task): void {
   const check = () => {
     const current = active?.notes.find(t => t.id === task.id);
     const conflict = !current || current.updated_at !== revision;
-    textarea.readOnly = readonly || conflict;
+    textarea.readOnly = readonly || closing || conflict;
     warning.textContent = readonly ? 'Read-only: local draft state could not be loaded safely. Copy your text; nothing will be overwritten.' : conflict ? 'This revision changed or left the active list. Your private draft is safe and read-only. Copy it, discard, then reopen the latest task to reconcile.' : 'Private draft. Enter inserts a newline; Ctrl+Enter saves text only.';
-    save.disabled = readonly || conflict || saving;
+    save.disabled = readonly || closing || conflict || saving;
   };
-  const retain = () => { if (!readonly) { state.edits[id] = { text: textarea.value, revision }; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); } };
+  const retain = () => { if (!readonly && !closing) { state.edits[id] = { text: textarea.value, revision }; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); } };
   textarea.addEventListener('input', retain);
   let saving = false;
   const saveText = async () => {
-    if (save.disabled || saving) return;
+    if (closing || save.disabled || saving) return;
     const text = textarea.value, version = editVersions.get(id) ?? 0;
     retain(); const submittedVersion = editVersions.get(id) ?? version;
     saving = true; check();
@@ -678,6 +679,7 @@ async function refresh(): Promise<void> {
   } finally { polling = false; }
 }
 document.addEventListener('keydown', e => {
+  if (closing) { e.preventDefault(); return; }
   if (e.key !== 'Escape') return;
   e.preventDefault(); e.stopPropagation();
   if (layers.length) { layers[layers.length - 1].close(); return; }
@@ -691,15 +693,20 @@ checklist.addEventListener('mouseup', e => {
   const target = e.target as HTMLElement;
   if (target === checklist || target === ordinary || target === pinned || target.classList.contains('empty')) composer.focus();
 });
+function setClosing(value: boolean): void {
+  closing = value; document.body.inert = value; composer.readOnly = readonly || value;
+  for (const modal of layers) if (modal.kind === 'edit') modal.update?.();
+}
 api.onCloseRequested(() => {
   if (closing) return;
-  closing = true; composer.readOnly = true; clearTimeout(persistTimer);
+  const focused = document.activeElement as HTMLElement | null;
+  setClosing(true); clearTimeout(persistTimer);
   void (async () => {
     // Wait for user callbacks, not just their individual IPC calls. They may update drafts after the reply.
     while (pending.size) await Promise.allSettled([...pending]);
     await persist(); await persistChain;
     await api.finishClose();
-  })().catch(async e => { closing = false; composer.readOnly = readonly; await api.cancelClose(); report(`Could not finish closing: ${message(e)}`); });
+  })().catch(async e => { setClosing(false); await api.cancelClose(); report(`Could not finish closing: ${message(e)}`); if (focused?.isConnected) focused.focus(); });
 });
 async function init(): Promise<void> {
   composer.disabled = true;

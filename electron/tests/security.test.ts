@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState } from '../src/protocol.ts';
-import { safeLink, validEnvelope, validParams, validState } from '../src/security.ts';
+import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validParams, validState } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
   assert.ok(validParams('edit', { id: 1, revision: 'rev', text: 'literal <script>☘</script>' }));
@@ -18,4 +18,16 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   for (const result of [null, {}, {changed:true}, {changed:false,id:1}]) assert.ok(!validEnvelope('add', {protocol:1,ok:true,result}));
   assert.ok(validEnvelope('add', {protocol:1,ok:true,result:{changed:true,id:1}}));
   assert.ok(!validEnvelope('snapshot', {protocol:1,ok:true,result:{notes:[],tags:[]}}));
+});
+
+test('a full draft payload reserves space for the largest escaped recovery warning', () => {
+  const state = initialState();
+  for (let id=1; id<=16; id++) state.edits[String(id)] = { text:'x'.repeat(65536), revision:'rev' };
+  const excess = Buffer.byteLength(JSON.stringify(state)) - MAX_STATE_PAYLOAD_BYTES;
+  state.edits['16'].text = state.edits['16'].text.slice(0,65536-excess);
+  state.warning = '\u0000'.repeat(4096);
+  assert.ok(validState(state));
+  assert.equal(Buffer.byteLength(JSON.stringify(state)), MAX_STATE_FILE_BYTES);
+  state.edits['16'].text += 'x';
+  assert.ok(!validState(state));
 });

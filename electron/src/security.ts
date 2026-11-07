@@ -1,5 +1,9 @@
 import type { Operation, UIState } from './protocol.ts';
 
+export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
+// JSON escaping can use six bytes per warning code unit; reserve it separately from drafts.
+export const MAX_STATE_FILE_BYTES = MAX_STATE_PAYLOAD_BYTES + 4096 * 6;
+
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v) && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 const id = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
 const str = (v: unknown, max = 16384) => typeof v === 'string' && v.length <= max;
@@ -25,7 +29,7 @@ export function validState(value: unknown): value is UIState {
   if (!str(value.draft, 65536) || !str(value.warning, 4096)) return false;
   if (value.filters !== null && (!Array.isArray(value.filters) || value.filters.length > 10000 || !value.filters.every(v => str(v, 256)))) return false;
   if (!record(value.read) || !Object.entries(value.read).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)) return false;
-  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision'].includes(x)) && str(v.text,65536) && str(v.revision,128));
+  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision'].includes(x)) && str(v.text,65536) && str(v.revision,128)) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function safeLink(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x20\x7f]/.test(value)) return false;

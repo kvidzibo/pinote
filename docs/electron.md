@@ -77,6 +77,7 @@ is no renderer-selected database path. Electron's runtime profile/single-instanc
 Session data and `app.log` live under `<state>/pinote/electron/<databasehash>/`;
 early startup errors use `<state>/pinote/electron/app.log`. `<data>` and `<state>` use
 absolute XDG overrides or the usual `~/.local/share` and `~/.local/state` defaults.
+Draft content is capped at 1 MiB, with separate bounded space for recovery warnings.
 Drafts and logs are local, **not encrypted**. Include Electron state in backups
 alongside the [existing database/GTK backup files](usage.md#data-privacy-and-backup),
 with GUIs closed and writes stopped.

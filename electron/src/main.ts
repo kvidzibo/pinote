@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { initialState } from './protocol.ts';
-import { mutating, safeLink, validParams, validState } from './security.ts';
+import { MAX_STATE_FILE_BYTES, mutating, safeLink, validParams, validState } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.enableSandbox();
@@ -38,7 +38,10 @@ async function atomic(path: string, content: unknown) {
 function persist() {
   const snapshot = structuredClone(state);
   if (uncertain) snapshot.warning = warning;
-  stateWrites = stateWrites.catch(() => {}).then(() => atomic(join(dataDir, 'state.json'), snapshot));
+  stateWrites = stateWrites.catch(() => {}).then(() => {
+    if (!validState(snapshot) || Buffer.byteLength(JSON.stringify(snapshot)) > MAX_STATE_FILE_BYTES) throw new Error('Draft state exceeds its storage limit');
+    return atomic(join(dataDir, 'state.json'), snapshot);
+  });
   return stateWrites;
 }
 function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
@@ -86,7 +89,7 @@ async function boot() {
   logFile = join(profile, 'app.log');
   try {
     const raw = await readFile(join(dataDir, 'state.json'), 'utf8');
-    if (Buffer.byteLength(raw) > 1024 * 1024) throw new Error('Oversized state');
+    if (Buffer.byteLength(raw) > MAX_STATE_FILE_BYTES) throw new Error('Oversized state');
     const value: unknown = JSON.parse(raw);
     if (!validState(value)) throw new Error('Invalid state');
     state = value;
@@ -153,7 +156,7 @@ async function boot() {
       if (result.response !== 1) return false;
       uncertain = false; state.warning = ''; await persist(); return true;
     },
-    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value) || Buffer.byteLength(JSON.stringify(value)) > 1024*1024) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
+    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value)) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };

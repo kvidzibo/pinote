@@ -147,10 +147,20 @@ try {
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
   // A failed close must preserve the window/draft and allow a later successful close.
+  await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
+  await page.getByRole('button',{name:'Edit text…',exact:true}).click();
+  const failedCloseEditor=page.locator('textarea[aria-label="Task text"]');
+  await failedCloseEditor.fill('Private draft before failed close');
   const stateDir=join(env.XDG_DATA_HOME,'pinote/electron');
   await chmod(stateDir,0o500);
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
   await page.getByText(/Could not finish closing:/).waitFor();
+  assert.equal(await page.evaluate(()=>document.body.inert),false,'Failed close must restore interaction');
+  assert.equal(await failedCloseEditor.evaluate(input=>input.readOnly),false,'Failed close must restore the editor');
+  await failedCloseEditor.focus();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' — still writable');
+  assert.equal(await failedCloseEditor.inputValue(),'Private draft before failed close — still writable');
   await chmod(stateDir,0o700);
   const closed = app.waitForEvent('close');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
@@ -193,6 +203,80 @@ try {
   await crashed; app=undefined;
   const recovered=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
   assert.equal(recovered.draft,'Rapid uncertain add draft'); assert.equal(recovered.edits[String(added.id)].text,'Rapid uncertain edit draft'); assert.match(recovered.warning,/previous operation may have succeeded/);
+  // Hold only finish-close, after the renderer's final persistence, to expose late input deterministically.
+  reopened=await reopen();
+  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
+  await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  await reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
+  await reopened.getByRole('button',{name:'Edit text…',exact:true}).click();
+  const closingText='Private editor draft frozen at final close';
+  const closingEditor=reopened.locator('textarea[aria-label="Task text"]');
+  await closingEditor.fill(closingText);
+  await app.evaluate(({ipcMain})=>{
+    const original=ipcMain._invokeHandlers.get('finish-close');
+    if(typeof original!=='function') throw new Error('Missing finish-close IPC handler');
+    ipcMain.removeHandler('finish-close');
+    ipcMain.handle('finish-close',async(...args)=>{
+      globalThis.__e2eFinishCloseWaiting=true;
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      return original(...args);
+    });
+  });
+  const frozenClose=app.waitForEvent('close');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
+  let finishCloseWaiting=false;
+  for(let i=0;i<100;i++) {
+    finishCloseWaiting=await app.evaluate(()=>globalThis.__e2eFinishCloseWaiting===true);
+    if(finishCloseWaiting) break;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.ok(finishCloseWaiting,'Final persistence must reach the delayed finish-close handler');
+  assert.equal(await reopened.evaluate(()=>document.body.inert),true,'Closing must freeze all UI interaction');
+  assert.equal(await closingEditor.evaluate(input=>input.readOnly),true,'Closing must freeze the open editor');
+  await reopened.keyboard.press('End');
+  await reopened.keyboard.type(' LATE INPUT MUST NOT ENTER');
+  assert.equal(await closingEditor.inputValue(),closingText,'Actual keyboard input must not change the closing draft');
+  await frozenClose; app=undefined;
+  assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).edits[String(added.id)].text,closingText);
+  reopened=await reopen();
+  assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].text,closingText,'Reopen must retain the exact frozen draft');
+
+  // Warning metadata has its own budget: a valid near-capacity cache must survive crash recovery.
+  const contentLimit=1024*1024, warningExpansionLimit=6*4096;
+  const capacityState=await reopened.evaluate(()=>window.pinote.loadState());
+  capacityState.draft=''; capacityState.read={}; capacityState.edits={}; capacityState.warning='';
+  for(let id=1;id<=16;id++) capacityState.edits[String(id)]={text:'a'.repeat(65536),revision:'capacity-revision'};
+  const targetBytes=contentLimit-16;
+  const excess=Buffer.byteLength(JSON.stringify(capacityState))-targetBytes;
+  assert.ok(excess>0 && excess<65536);
+  capacityState.edits['16'].text=capacityState.edits['16'].text.slice(0,65536-excess);
+  assert.equal(Buffer.byteLength(JSON.stringify(capacityState)),targetBytes);
+  await reopened.evaluate(state=>window.pinote.saveState(state),capacityState);
+  const acceptedCache=await readFile(join(stateDir,'state.json'),'utf8');
+  assert.equal(Buffer.byteLength(acceptedCache),targetBytes,'Near-capacity content must be accepted');
+  const overCapacity=structuredClone(capacityState);
+  overCapacity.edits['16'].text+='b'.repeat(32);
+  assert.ok(overCapacity.edits['16'].text.length<=65536,'Oversized case must still satisfy the per-entry bound');
+  assert.ok(Buffer.byteLength(JSON.stringify(overCapacity))>contentLimit);
+  await assert.rejects(()=>reopened.evaluate(state=>window.pinote.saveState(state),overCapacity));
+  assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),acceptedCache,'Rejected oversized content must not alter the cache');
+  const capacityCrash=app.waitForEvent('close');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+  await capacityCrash; app=undefined;
+  const crashCache=await readFile(join(stateDir,'state.json'),'utf8');
+  assert.ok(Buffer.byteLength(crashCache)>contentLimit,'Recovery warning must push this fixture past the old loader cap');
+  assert.ok(Buffer.byteLength(crashCache)<=contentLimit+warningExpansionLimit,'Stored cache must respect the combined budget');
+  const crashState=JSON.parse(crashCache);
+  assert.deepEqual(crashState.edits,capacityState.edits);
+  assert.ok(crashState.warning.length<=4096);
+  assert.match(crashState.warning,/previous operation may have succeeded/);
+  reopened=await reopen();
+  const loadedCapacity=await reopened.evaluate(()=>window.pinote.loadState());
+  assert.deepEqual(loadedCapacity.edits,capacityState.edits,'Crash recovery must preserve every near-capacity draft');
+  assert.equal(loadedCapacity.warning,crashState.warning,'Load must return the actual persisted recovery warning');
+  assert.doesNotMatch(loadedCapacity.warning,/cannot be read safely/);
+  await reopened.screenshot({path:join(root,'capacity-recovery.png')});
+  await close();
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally { if(app) await app.close().catch(()=>{}); await client?.close().catch(()=>{}); await service?.close().catch(()=>{}); gtk?.kill('SIGTERM'); wm?.kill('SIGTERM'); }
