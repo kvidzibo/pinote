@@ -153,7 +153,7 @@ async function boot() {
       if (result.response !== 1) return false;
       uncertain = false; state.warning = ''; await persist(); return true;
     },
-    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value) || Buffer.byteLength(JSON.stringify(value)) > 1024*1024) throw new Error('Cannot save invalid or unreadable state'); state = structuredClone(value); await persist(); },
+    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value) || Buffer.byteLength(JSON.stringify(value)) > 1024*1024) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };

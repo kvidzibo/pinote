@@ -13,6 +13,10 @@ const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../.venv/bin/pin
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
+const faultFile=join(root,'backend-fault');
+const frontendBackend=join(root,'backend.mjs');
+await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;});`,{mode:0o700});
+env.PINOTE_ELECTRON_BACKEND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
   assert.equal(run.status,0,run.stderr);
@@ -155,14 +159,40 @@ try {
   assert.equal(saved.draft,'Unfinished draft preserved');
   assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
   assert.deepEqual(pageErrors,[]);
+  // Submit in the same event-loop turn as paste: no debounce may be required for safety.
+  const reopen=async()=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator('.task-row').first().waitFor();return p;};
+  const close=async()=>{const done=app.waitForEvent('close');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await done;app=undefined;};
+  let reopened=await reopen();
+  await writeFile(faultFile,'add');
+  await reopened.evaluate(()=>{const input=document.querySelector('#draft');input.value='Rapid uncertain add draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));});
+  await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
+  await writeFile(faultFile,'snapshot');
+  await reopened.getByText('busy: Injected rapid failure',{exact:true}).waitFor();
+  assert.equal(await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).count(),1);
+  assert.equal(await reopened.getByRole('button',{name:'Dismiss notice',exact:true}).count(),0);
+  await reopened.screenshot({path:join(root,'recovery.png')});
+  await writeFile(faultFile,''); await close();
+  assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).draft,'Rapid uncertain add draft');
+  reopened=await reopen();
+  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
+  await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  await reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
+  await reopened.getByRole('button',{name:'Edit text…',exact:true}).click();
+  await writeFile(faultFile,'edit');
+  await reopened.evaluate(()=>{const input=document.querySelector('textarea[aria-label="Task text"]');input.value='Rapid uncertain edit draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true}));});
+  await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
+  await close();
+  const submitted=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
+  assert.equal(submitted.edits[String(added.id)].text,'Rapid uncertain edit draft');
+  assert.ok(!call('snapshot',{view:'active'}).notes.some(n=>n.text==='Rapid uncertain add draft'));
+  assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
+  await writeFile(faultFile,''); reopened=await reopen();
   // A renderer crash cannot wait forever for a reply from the dead renderer or replay its draft.
-  app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});
-  const reopened=await app.firstWindow(); await reopened.locator('.task-row').first().waitFor();
   const crashed=app.waitForEvent('close');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
   await crashed; app=undefined;
   const recovered=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
-  assert.equal(recovered.draft,'Unfinished draft preserved'); assert.match(recovered.warning,/previous operation may have succeeded/);
+  assert.equal(recovered.draft,'Rapid uncertain add draft'); assert.equal(recovered.edits[String(added.id)].text,'Rapid uncertain edit draft'); assert.match(recovered.warning,/previous operation may have succeeded/);
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally { if(app) await app.close().catch(()=>{}); await client?.close().catch(()=>{}); await service?.close().catch(()=>{}); gtk?.kill('SIGTERM'); wm?.kill('SIGTERM'); }

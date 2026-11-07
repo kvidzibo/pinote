@@ -57,15 +57,18 @@ function fitWindow(): void {
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
   notice.hidden = false;
-  notice.append(button('close', 'Dismiss notice', () => { notice.hidden = true; fitWindow(); }));
+  if (readonly && state.warning) {
+    if (message !== state.warning) notice.append(el('span', state.warning));
+    notice.append(button('done', 'I checked saved tasks; enable writes', async () => {
+      if (await api.acknowledgeWarning()) { readonly = false; state.warning = ''; composer.readOnly = false; notice.hidden = true; renderTasks(); renderToolbar(); }
+    }));
+  } else notice.append(button('close', 'Dismiss notice', () => { notice.hidden = true; fitWindow(); }));
   fitWindow();
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function recoveryWarning(text: string): void {
+function recoveryWarning(text: string, preserveDrafts = false): void {
   readonly = true; state.warning = text; composer.readOnly = true; report(text); renderTasks(); renderToolbar();
-  notice.append(button('done', 'I checked saved tasks; enable writes', async () => {
-    if (await api.acknowledgeWarning()) { readonly = false; state.warning = ''; composer.readOnly = false; notice.hidden = true; renderTasks(); renderToolbar(); }
-  }));
+  if (preserveDrafts) void track(persist(true)).catch(() => undefined);
 }
 function button(icon: Icon, label: string, action: () => unknown, disabled = false): HTMLButtonElement {
   const b = el('button'); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label);
@@ -99,9 +102,9 @@ function saveSoon(): void {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => { void persist().catch(() => undefined); }, 180);
 }
-function persist(): Promise<void> {
+function persist(recovery = false): Promise<void> {
   clearTimeout(persistTimer);
-  if (readonly || !stateLoaded) return Promise.resolve();
+  if ((readonly && !recovery) || !stateLoaded) return Promise.resolve();
   const copy: UIState = JSON.parse(JSON.stringify(state));
   const work = persistChain.then(() => api.saveState(copy));
   persistChain = work.catch(e => { report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
@@ -110,18 +113,21 @@ function persist(): Promise<void> {
 async function call<K extends Exclude<Operation, 'handshake'>>(name: K, params: Operations[K]['params']): Promise<Operations[K]['result'] | null> {
   const write = name !== 'snapshot' && name !== 'completions';
   if (write && (readonly || closing || !active)) { report('Read-only: writes are disabled until tasks and configuration load safely. Copy drafts to recover them.'); return null; }
+  // Flush the submitted text before dispatch; debounce alone cannot protect fast failures.
+  if (write) { try { await persist(); } catch { report('Drafts could not be saved; the operation was not submitted. Keep this window open or copy your text.'); return null; } }
   try {
     const fn = api[name] as (p: Operations[K]['params']) => Promise<Result<Operations[K]['result']>>;
     const result = await track(fn(params));
     if (!result.ok) {
       report(`${result.error.code}: ${result.error.message}${result.error.code === 'unknown' ? ' Outcome unknown; inspect current tasks before explicitly retrying. Nothing will be replayed automatically.' : ''}`);
-      if (result.error.code === 'unknown') recoveryWarning(result.error.message);
+      if (result.error.code === 'unknown') recoveryWarning(result.error.message, true);
       return null;
     }
-    if (result.warning) recoveryWarning(result.warning);
+    if (result.warning) recoveryWarning(result.warning, true);
     return result.result;
   } catch (e) {
-    report(`${write ? 'Outcome unknown; inspect tasks before retrying. ' : 'Refresh failed: '}${message(e)}`);
+    if (write) recoveryWarning(`Outcome unknown; inspect tasks before retrying. ${message(e)}`, true);
+    else report(`Refresh failed: ${message(e)}`);
     return null;
   }
 }
@@ -136,7 +142,7 @@ function showSaved(id?: number): void {
   const task = active?.notes.find(t => t.id === id);
   if (task && !visible(task)) {
     report('Saved task is hidden by the tag filter.');
-    notice.append(button('preview', 'Show task (select all tags)', () => { selectAll(); renderTasks(); notice.hidden = true; }));
+    notice.append(button('preview', 'Show task (select all tags)', () => { selectAll(); renderTasks(); if (!readonly || !state.warning) notice.hidden = true; }));
   }
 }
 function resizeComposer(): void {
