@@ -39,3 +39,23 @@ test('an oversized backend that ignores SIGTERM is terminated before the queue i
     assert.throws(()=>process.kill(pid!,0),{code:'ESRCH'});
   } finally { if (pid) { try { process.kill(pid,'SIGKILL'); } catch {} } await rm(root,{recursive:true,force:true}); }
 });
+
+test('oversized inherited output cannot strand the queue after the backend has exited', async () => {
+  const root = await mkdtemp(join(tmpdir(),'pinote-backend-pipes-'));
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const pidFile = join(root,'descendant');
+  try {
+    const module=join(root,'backend.mjs'), executable=join(root,'backend');
+    await build({entryPoints:[fileURLToPath(new URL('../src/backend.ts',import.meta.url))],outfile:module,bundle:true,platform:'node',format:'esm'});
+    const { Backend } = await import(pathToFileURL(module).href);
+    const descendant=`require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdout.on('error',()=>{});setTimeout(()=>process.stdout.write('x'.repeat(8*1024*1024+1)),100);setTimeout(()=>process.exit(0),2000);`;
+    await writeFile(executable,`#!${process.execPath}\nrequire('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore',1,2]}).unref();process.exit(0);`,{mode:0o700});
+    const response=await Promise.race([new Backend(executable).call('add',{text:'Close inherited output safely',tag:null}),new Promise<never>((_,reject)=>{deadline=setTimeout(()=>reject(new Error('Backend queue remained blocked by inherited pipes')),1000);})]);
+    assert.ok(!response.ok);
+    if (!response.ok) assert.equal(response.error.code,'unknown');
+  } finally {
+    clearTimeout(deadline);
+    try { process.kill(Number(await readFile(pidFile,'utf8')),'SIGKILL'); } catch {}
+    await rm(root,{recursive:true,force:true});
+  }
+});

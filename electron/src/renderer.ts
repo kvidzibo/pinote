@@ -17,6 +17,7 @@ let creationTag: string | null = null;
 let readonly = false, closing = false, collapsed = false, polling = false, baseline = false, stateLoaded = false;
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 let persistChain: Promise<void> = Promise.resolve();
+let draftSaveFailed = false;
 const pending = new Set<Promise<unknown>>();
 const marked = new Map<number, string>();
 const rowNodes = new Map<number, HTMLElement>();
@@ -108,7 +109,7 @@ function persist(recovery = false): Promise<void> {
   if ((readonly && !recovery) || !stateLoaded) return Promise.resolve();
   const copy: UIState = JSON.parse(JSON.stringify(state));
   const work = persistChain.then(() => api.saveState(copy));
-  persistChain = work.catch(e => { report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
+  persistChain = work.then(() => { draftSaveFailed = false; }, e => { draftSaveFailed = true; report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
   return work;
 }
 async function call<K extends Exclude<Operation, 'handshake'>>(name: K, params: Operations[K]['params']): Promise<Operations[K]['result'] | null> {
@@ -704,7 +705,8 @@ api.onCloseRequested(() => {
   void (async () => {
     // Wait for user callbacks, not just their individual IPC calls. They may update drafts after the reply.
     while (pending.size) await Promise.allSettled([...pending]);
-    await persist(); await persistChain;
+    // Read-only recovery may still contain newer, unsaved text. A failed save must block close.
+    await persist(draftSaveFailed); await persistChain;
     await api.finishClose();
   })().catch(async e => { setClosing(false); await api.cancelClose(); report(`Could not finish closing: ${message(e)}`); if (focused?.isConnected) focused.focus(); });
 });

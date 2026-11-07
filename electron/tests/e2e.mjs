@@ -14,8 +14,9 @@ const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
 const faultFile=join(root,'backend-fault');
+const slowAddMarker=join(root,'slow-add-dispatched');
 const frontendBackend=join(root,'backend.mjs');
-await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;});`,{mode:0o700});
+await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),300);return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;});`,{mode:0o700});
 env.PINOTE_ELECTRON_BACKEND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
@@ -277,6 +278,46 @@ try {
   assert.doesNotMatch(loadedCapacity.warning,/cannot be read safely/);
   await reopened.screenshot({path:join(root,'capacity-recovery.png')});
   await close();
+
+  // A rejected recovery save must not let close discard newer text in read-only mode.
+  reopened=await reopen();
+  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
+  await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  await reopened.waitForFunction(()=>!document.querySelector('#draft').readOnly);
+  const tinyDraft='x', newerDraft='Newer unsaved draft: '+'z'.repeat(4096);
+  const newerCapacity=structuredClone(capacityState);
+  newerCapacity.draft=newerDraft;
+  assert.ok(newerDraft.length<=65536,'Newer text must satisfy the per-draft bound');
+  assert.ok(Buffer.byteLength(JSON.stringify(newerCapacity))>contentLimit,'Newer text must exceed the aggregate content budget');
+  await writeFile(faultFile,'slow-add');
+  const capacityComposer=reopened.getByRole('textbox',{name:'Add a task…',exact:true});
+  await capacityComposer.fill(tinyDraft);
+  await capacityComposer.press('Enter');
+  let addDispatched=false;
+  for(let i=0;i<200;i++) {
+    try { addDispatched=await readFile(slowAddMarker,'utf8')==='dispatched'; } catch(error) { if(error.code!=='ENOENT') throw error; }
+    if(addDispatched) break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  assert.ok(addDispatched,'Tiny valid draft must flush and dispatch before newer input');
+  assert.equal(await capacityComposer.evaluate(input=>input.readOnly),false,'Delayed add must still be pending when newer input arrives');
+  await capacityComposer.fill(newerDraft);
+  await reopened.waitForFunction(()=>document.querySelector('#draft').readOnly);
+  await reopened.getByText(/Draft cache could not be saved:/).waitFor();
+  assert.equal(await capacityComposer.inputValue(),newerDraft,'Unknown outcome must retain the newer draft');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
+  await reopened.getByText(/Could not finish closing:/).waitFor();
+  assert.equal(app.process().exitCode,null,'Rejected read-only recovery save must keep the app alive');
+  assert.equal(reopened.isClosed(),false,'Rejected read-only recovery save must keep the window open');
+  assert.equal(await reopened.evaluate(()=>document.body.inert),false,'Failed recovery close must restore interaction');
+  assert.equal(await capacityComposer.inputValue(),newerDraft,'Failed recovery close must preserve newer text');
+  assert.equal(await capacityComposer.evaluate(input=>input.readOnly),true,'Unknown outcome must still require explicit acknowledgement');
+  await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  await reopened.waitForFunction(()=>!document.querySelector('#draft').readOnly);
+  await capacityComposer.fill('');
+  await writeFile(faultFile,'');
+  await close();
+  assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).draft,'','Reducing the draft to fit must allow a successful close');
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally { if(app) await app.close().catch(()=>{}); await client?.close().catch(()=>{}); await service?.close().catch(()=>{}); gtk?.kill('SIGTERM'); wm?.kill('SIGTERM'); }
