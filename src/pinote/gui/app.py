@@ -30,6 +30,7 @@ from pinote.gui.kitty import start_in_kitty  # noqa: E402
 from pinote.gui.model import ReminderModel, TransitionResult, application_id  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.state import AgentReadCache, FilterCache, WindowSizeCache  # noqa: E402
+from pinote.gui.tag_menu import TagMenu  # noqa: E402
 from pinote.gui.tags import TagsWindow  # noqa: E402
 from pinote.gui.text import NotePreview, TaskEntry  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
@@ -451,7 +452,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.tag_label.set_max_width_chars(14)
         tag_content.pack_start(self.tag_label, False, False, 0)
         self.tag_button.add(tag_content)
-        self.composer_tag_menu = Gtk.Menu()
+        self.composer_tag_menu = TagMenu()
         self.composer_tag_menu.get_style_context().add_class("pinote-window")
         self.composer_tag_menu.get_style_context().add_class("reminder-menu")
         self.composer_tag_menu.connect("show", self._prepare_composer_tags)
@@ -1049,6 +1050,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         menu.set_reserve_toggle_size(False)
         for value, label in choices:
             item = tag_menu_item(label, selected=value == selected)
+            item.tag_name = value or "Untagged"
             item.connect("activate", lambda _item, value=value: on_select(value))
             menu.append(item)
 
@@ -1066,6 +1068,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
             selected = self.tag_filter is None or value in self.tag_filter
             item = tag_menu_item(label, selected=selected, checkable=True)
             item.filter_tag = value
+            item.tag_name = value or "Untagged"
             item.filter_handler = item.connect(
                 "activate", lambda _item, value=value: self._toggle_filter(value)
             )
@@ -1077,11 +1080,11 @@ class ReminderWindow(Gtk.ApplicationWindow):
             badge.show_all()
             # append assigns GTK's scrolling-bin parent window when rebuilding a realized menu.
             menu.append(item)
-            menu.attach(item, 0, 2, index, index + 1)
+            menu.attach(item, 0, 2, index + 1, index + 2)
         separator = Gtk.SeparatorMenuItem()
         separator.show()
         menu.append(separator)
-        menu.attach(separator, 0, 2, len(choices), len(choices) + 1)
+        menu.attach(separator, 0, 2, len(choices) + 1, len(choices) + 2)
         for column, (icon, label, selected) in enumerate(
             (
                 ("edit-select-all-symbolic", "Select all tags", None),
@@ -1094,7 +1097,10 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 lambda _item, selected=selected: self._set_filter(selected, close_menu=False),
             )
             menu.append(item)
-            menu.attach(item, column, column + 1, len(choices) + 1, len(choices) + 2)
+            menu.attach(item, column, column + 1, len(choices) + 2, len(choices) + 3)
+        menu.add_search(
+            lambda name: self._open_creation_tag(name, select_creation=False), columns=2
+        )
         self._sync_filter_menu(menu)
 
     def _sync_filter_menu(self, menu) -> None:
@@ -1109,15 +1115,14 @@ class ReminderWindow(Gtk.ApplicationWindow):
         if tags != ordered:
             for index, item in enumerate(ordered):
                 menu.reorder_child(item, index)
-                menu.child_set_property(item, "top-attach", index)
-                menu.child_set_property(item, "bottom-attach", index + 1)
+                menu.child_set_property(item, "top-attach", index + 1)
+                menu.child_set_property(item, "bottom-attach", index + 2)
         for item in tags:
             selected = self.tag_filter is None or item.filter_tag in self.tag_filter
             visible = active[item.filter_tag] > 0 or (
                 bool(item.filter_tag) and self.tag_filter is not None and selected
             )
-            item.set_no_show_all(not visible)
-            item.set_visible(visible)
+            item.tag_visible = visible
             # set_active emits activate; syncing checks must not toggle the filter.
             item.handler_block(item.filter_handler)
             try:
@@ -1139,6 +1144,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
                 context.add_class("selected-tag")
             else:
                 context.remove_class("selected-tag")
+        menu.apply_search()
 
     def _update_filter_label(self) -> None:
         if self.tag_filter is None:
@@ -1215,20 +1221,28 @@ class ReminderWindow(Gtk.ApplicationWindow):
         menu.set_reserve_toggle_size(False)
         for tag in [None, *self.tags]:
             item = tag_menu_item(tag or "Untagged", selected=tag == self.creation_tag)
+            item.tag_name = tag or "Untagged"
             item.connect("activate", lambda _item, tag=tag: self._select_creation_tag(tag))
             menu.append(item)
-        menu.append(Gtk.SeparatorMenuItem())
-        new_tag = icon_menu_item("list-add-symbolic", "New tag…")
-        new_tag.connect("activate", lambda _item: self._open_creation_tag())
-        menu.append(new_tag)
+        for index, item in enumerate(menu.get_children(), start=1):
+            menu.attach(item, 0, 1, index, index + 1)
+        menu.add_search(self._open_creation_tag)
         menu.show_all()
 
-    def _open_creation_tag(self) -> None:
+    def _open_creation_tag(
+        self, name: str = "", *, note: Note | None = None, select_creation: bool = True
+    ) -> None:
         if self.closed or self.action_pending:
             return
         self.composer_tag_menu.popdown()
+        self.visible_filter_menu.deactivate()
+        if getattr(self, "filter_menu", None) is not None:
+            self.filter_menu.deactivate()
+        self.menu.deactivate()
         if self.editor is None:
-            self.editor = NoteEditor(self, None, tag_only=True)
+            self.editor = NoteEditor(
+                self, note, tag_only=True, tag_name=name, select_creation_tag=select_creation
+            )
             self._watch_child_focus(self.editor)
         self._present_child(self.editor)
 
@@ -1369,16 +1383,17 @@ class ReminderWindow(Gtk.ApplicationWindow):
         schedule = icon_menu_item("preferences-system-notifications-symbolic", "Set reminder…")
         schedule.connect("activate", lambda _item: self._open_schedule(note))
         tag_item = icon_menu_item("tag-symbolic", "Tag")
-        tag_menu = Gtk.Menu()
+        tag_menu = TagMenu()
         tag_menu.get_style_context().add_class("pinote-window")
         tag_menu.get_style_context().add_class("reminder-menu")
         self._tag_menu_choices(
             tag_menu, self._tag_choices(note.tag), note.tag, lambda tag: self._set_tag(note, tag)
         )
-        tag_menu.append(Gtk.SeparatorMenuItem())
-        new_tag = icon_menu_item("list-add-symbolic", "New tag…")
-        new_tag.connect("activate", lambda _item: self._open_editor(note, tag_only=True))
-        tag_menu.append(new_tag)
+        for index, item in enumerate(tag_menu.get_children(), start=1):
+            tag_menu.attach(item, 0, 1, index, index + 1)
+        tag_menu.add_search(
+            lambda name: self._open_creation_tag(name, note=note, select_creation=False)
+        )
         tag_menu.show_all()
         tag_item.set_submenu(tag_menu)
         state_items = []

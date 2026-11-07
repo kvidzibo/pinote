@@ -197,8 +197,15 @@ Edits and tag changes retain the task ID and record old/new values in history;
   Right-click the tag below the input, or press **Esc** with no menu or preview open,
   to reset it to **Untagged**, keeping the draft, existing tasks, and list filter unchanged.
   Once the tag is **Untagged**, **Esc** closes the checklist.
-  **+** opens the new-tag form with a name and an optional default-folder picker.
-  Saving registers the tag and selects it, even without a task.
+  In the new-task dropdown, task Tag submenu, or either filter menu, start typing
+  to reveal search and immediately narrow tags (case-insensitive). **Backspace**
+  edits the search; arrow keys and **Enter** choose a result. Searching filters also
+  finds unused saved tags. Unless that exact name already exists (ignoring case),
+  **Create tag “name”…** appears alongside any partial matches. Choose it to open
+  the form with that name and an optional default-folder picker; there is no separate
+  new-tag button. Saving registers the tag, even without a task. Creating from
+  the new-task dropdown selects it; creating from a filter keeps the new-task tag
+  unchanged. **Esc** dismisses the menu; reopening clears its search.
   Saved tags survive reopening; the new-task tag selection resets to **Untagged**.
 - **Bottom menu → Manage tags…** (tag icon) opens the saved tag list. Use **+** and
   **Save** to add a tag, or select one and change its name to rename it. Renaming
