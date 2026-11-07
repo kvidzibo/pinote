@@ -63,7 +63,8 @@ double-click to accept. Regular mode shows status; `/pinote` provides all action
 No Kitty action handler is needed for this extension.
 
 Accepting a suggestion, selecting a different task, or creating and selecting one
-renames the current Kitty tab to `[tag] task title` (tag omitted when unset).
+renames the current Kitty tab to `[tag] task title` (tag omitted when unset),
+using the footer's first-line title rather than the GUI launcher's shortened name.
 Requires local Kitty with remote control enabled, `kitty` on PATH, and
 `KITTY_LISTEN_ON` / `KITTY_WINDOW_ID`; SSH and other terminals are unchanged.
 Rename failures warn without undoing selection. Completion and deselection leave
