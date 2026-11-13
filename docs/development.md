@@ -48,7 +48,8 @@ above. Keep the Python package and Pi package versions independent of Electron.
 Use Node.js 22.12+ (CI uses Node 24), the locked local `.venv` backend, and Linux
 Electron runtime libraries: GTK 3, NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11
 libraries. End-to-end tests additionally need `xvfb-run`, `dbus-run-session`,
-`xauth`, `i3-wm`, and `xdotool`. System Python with `python3-gi` and
+`xauth`, `i3-wm`, `xdotool`, and ImageMagick's `import` command (`imagemagick`
+on Debian/Ubuntu) for native-menu screenshots. System Python with `python3-gi` and
 `gir1.2-gtk-3.0` is needed for GTK coexistence coverage. The Electron scenario
 also uses the real Pi HTTP service/client without making model requests.
 

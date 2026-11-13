@@ -1,4 +1,4 @@
-import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result } from './protocol';
+import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { initialState } from './protocol';
 // The optional frontend bundles markdown-it; raw HTML and resource loading are disabled.
 import MarkdownIt from 'markdown-it';
@@ -71,14 +71,14 @@ function recoveryWarning(text: string, preserveDrafts = false): void {
   readonly = true; state.warning = text; composer.readOnly = true; updateEditors(); report(text); renderTasks(); renderToolbar();
   if (preserveDrafts) void track(persist(true)).catch(() => undefined);
 }
-function button(icon: Icon, label: string, action: () => unknown, disabled = false): HTMLButtonElement {
+function button(icon: Icon, label: string, action: (event: MouseEvent) => unknown, disabled = false): HTMLButtonElement {
   const b = el('button'); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label);
   const image = el('img'); image.src = `icons/${icons[icon]}-symbolic.svg`; image.alt = ''; image.setAttribute('aria-hidden', 'true');
   b.append(image); b.disabled = disabled;
-  b.addEventListener('click', () => {
+  b.addEventListener('click', event => {
     if (closing) return;
     try {
-      const result = action();
+      const result = action(event);
       if (result && typeof (result as Promise<unknown>).then === 'function') {
         void track(Promise.resolve(result)).catch(e => report(message(e)));
       }
@@ -153,9 +153,8 @@ function showSaved(id?: number): void {
 }
 function resizeComposer(): void {
   if (!composer.value) { composer.style.height = ''; fitWindow(); return; }
-  const previous = parseFloat(composer.style.height) || 0;
   composer.style.height = 'auto';
-  composer.style.height = `${Math.min(144, Math.max(previous, composer.scrollHeight))}px`;
+  composer.style.height = `${Math.min(144, composer.scrollHeight + composer.offsetHeight - composer.clientHeight)}px`;
   fitWindow();
 }
 async function addTask(): Promise<void> {
@@ -172,6 +171,7 @@ async function addTask(): Promise<void> {
   } finally { adding = false; renderToolbar(); if (!layers.length && !closing) composer.focus(); }
 }
 let adding = false;
+let nativeMenuOpen = false, menuTaskId: number | undefined;
 composer.addEventListener('input', () => { if (closing) return; state.draft = composer.value; draftVersion++; resizeComposer(); saveSoon(); });
 composer.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void track(addTask()); }
@@ -197,7 +197,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
   panel.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;
-    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select, [tabindex="0"]'));
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]'));
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) { e.preventDefault(); last?.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -205,7 +205,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   panel.focus(); renderSelected(); return item;
 }
 function renderSelected(): void {
-  for (const [id, row] of rowNodes) row.classList.toggle('selected', layers.some(l => l.taskId === id));
+  for (const [id, row] of rowNodes) row.classList.toggle('selected', menuTaskId === id || layers.some(l => l.taskId === id));
 }
 function field(label: string, value = ''): { wrapper: HTMLLabelElement; input: HTMLInputElement } {
   const wrapper = el('label', label), input = el('input'); input.value = value; wrapper.append(input); return { wrapper, input };
@@ -215,28 +215,56 @@ function confirmAction(title: string, description: string, action: () => Promise
   const modal = layer(title); modal.panel.append(el('p', description));
   const bar = controls(modal.panel); bar.append(textButton('Cancel', modal.close), textButton('Confirm', async () => { await action(); modal.close(); }));
 }
+// Keep controls mounted: polling must not steal keyboard focus or break dialog focus return.
+const tagControl = button('tag', 'New-task tag', () => tagsMenu('creation'));
+tagControl.className = 'creation-tag';
+const tagLabel = el('span'); tagControl.append(tagLabel);
+tagControl.addEventListener('contextmenu', e => { e.preventDefault(); creationTag = null; renderToolbar(); });
+const filterControl = button('filter', 'Filter by tag', () => tagsMenu('filter'));
+const filterCount = el('span'); filterControl.append(filterCount);
+const collapseControl = button('collapse', 'Collapse checklist', async () => {
+  const next = !collapsed; await api.collapse(next); collapsed = next; baseline = false; checklist.hidden = next; renderToolbar();
+});
+const moveControl = button('move', 'Drag to move window', () => undefined); moveControl.className = 'move-handle';
+const menuControl = button('menu', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
+toolbar.append(tagControl, filterControl, collapseControl, moveControl, menuControl);
 function renderToolbar(): void {
-  toolbar.replaceChildren();
-  const tag = button('tag', `New-task tag: ${creationTag ?? 'Untagged'}`, () => tagsMenu('creation'));
-  tag.className = 'creation-tag'; tag.append(el('span', creationTag ?? 'Untagged'));
-  tag.addEventListener('contextmenu', e => { e.preventDefault(); creationTag = null; renderToolbar(); });
+  tagLabel.textContent = creationTag ?? 'Untagged';
+  tagControl.title = `New-task tag: ${creationTag ?? 'Untagged'}`; tagControl.setAttribute('aria-label', tagControl.title);
   const count = active?.notes.filter(visible).length ?? 0;
-  const filter = button('filter', `Filter by tag: ${state.filters === null ? 'All' : state.filters.length ? state.filters.map(t => t || 'Untagged').join(', ') : 'None'} (${count})`, () => tagsMenu('filter'));
-  filter.append(el('span', String(count)));
-  const move = button('move', 'Drag to move window', () => undefined); move.className = 'move-handle';
-  toolbar.append(tag, filter, button('add', 'Add task (Enter)', addTask, readonly || adding || !active), button(collapsed ? 'expand' : 'collapse', collapsed ? 'Expand checklist' : 'Collapse checklist', async () => {
-    const next = !collapsed; await api.collapse(next); collapsed = next; baseline = false; checklist.hidden = next; renderToolbar();
-  }), move, button('menu', 'Menu', openMenu));
+  filterCount.textContent = String(count);
+  filterControl.title = `Filter by tag: ${state.filters === null ? 'All' : state.filters.length ? state.filters.map(t => t || 'Untagged').join(', ') : 'None'} (${count} visible tasks, including in-progress)`;
+  filterControl.setAttribute('aria-label', filterControl.title);
+  filterControl.classList.toggle('filter-active', state.filters !== null);
+  collapseControl.title = collapsed ? 'Expand checklist' : 'Collapse checklist'; collapseControl.setAttribute('aria-label', collapseControl.title);
+  collapseControl.querySelector('img')!.src = `icons/${icons[collapsed ? 'expand' : 'collapse']}-symbolic.svg`;
   fitWindow();
 }
-function openMenu(): void {
-  const menu = layer('Menu'); const bar = controls(menu.panel);
-  bar.append(button('filter', 'Filter by tag', () => { menu.close(); tagsMenu('filter'); }),
-    button('schedule', 'Scheduled reminders', () => { menu.close(); auxiliary('scheduled'); }),
-    button('remove', 'Archive', () => { menu.close(); auxiliary('archive'); }),
-    button('tag', 'Manage tags', () => { menu.close(); manageTags(); }),
-    button('edit', 'Recover private edit drafts', () => { menu.close(); recoverDrafts(); }),
-    button('close', 'Close Pinote', () => window.close()));
+function menuPoint(element: HTMLElement): MenuPoint {
+  const rect = element.getBoundingClientRect();
+  return { x: Math.max(0, Math.round(rect.left)), y: Math.max(0, Math.round(rect.bottom)) };
+}
+async function chooseMenu(request: MenuRequest, returnTo: HTMLElement, taskId?: number): Promise<MenuAction | null> {
+  if (nativeMenuOpen || closing) return null;
+  nativeMenuOpen = true; menuTaskId = taskId; returnTo.setAttribute('aria-expanded', 'true'); renderSelected();
+  try { return await api.popupMenu(request); }
+  finally {
+    nativeMenuOpen = false; menuTaskId = undefined; returnTo.setAttribute('aria-expanded', 'false'); renderSelected();
+    if (!closing) (returnTo.isConnected ? returnTo : taskId ? rowNodes.get(taskId)?.querySelector<HTMLElement>('.task-title') ?? composer : composer).focus({ preventScroll: true });
+  }
+}
+async function openMenu(event: MouseEvent): Promise<void> {
+  const source = event.currentTarget as HTMLElement;
+  const action = await chooseMenu({ kind: 'app', ...menuPoint(source) }, source);
+  if (closing) return;
+  switch (action) {
+    case 'filter': tagsMenu('filter'); break;
+    case 'scheduled': auxiliary('scheduled'); break;
+    case 'archive': auxiliary('archive'); break;
+    case 'manage-tags': manageTags(); break;
+    case 'drafts': recoverDrafts(); break;
+    case 'close': window.close(); break;
+  }
 }
 function dueLabel(task: Task): string {
   const date = task.reminder_due_at ?? task.remind_at;
@@ -249,7 +277,7 @@ function makeRow(task: Task): HTMLElement {
   const row = el('article', undefined, `task-row${isProgress(task) ? ' progress' : ''}${marked.has(task.id) ? ' marked' : ''}`);
   row.dataset.id = String(task.id);
   const mark = marked.has(task.id);
-  const checkbox = button(mark ? 'trash' : isProgress(task) ? 'reset' : 'start', `Task ${task.id}: ${mark ? 'Cancel deletion mark' : isProgress(task) ? 'Complete' : 'Start'}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
+  const checkbox = button(mark ? 'trash' : isProgress(task) ? 'done' : 'start', `Task ${task.id}: ${mark ? 'Cancel deletion mark' : isProgress(task) ? 'Complete' : 'Start'}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
     if (mark) { marked.delete(task.id); renderTasks(); } else void track(transition(task, isProgress(task) ? 'done' : 'start'));
   }, readonly || busyTasks.has(task.id));
   checkbox.classList.add('checkbox');
@@ -262,10 +290,11 @@ function makeRow(task: Task): HTMLElement {
     else if (isProgress(task)) void track(transition(task, 'reset'));
     else { marked.set(task.id, task.updated_at); renderTasks(); }
   });
-  const title = el('span', task.text.split('\n')[0], 'task-title'); title.title = task.text; title.tabIndex = 0;
-  title.addEventListener('contextmenu', e => { e.preventDefault(); contextMenu(task); });
-  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); contextMenu(task); } });
-  title.addEventListener('mouseup', () => {
+  const title = el('span', task.text.split('\n')[0], 'task-title'); title.title = task.text; title.tabIndex = 0; title.setAttribute('aria-haspopup', 'menu');
+  title.addEventListener('contextmenu', e => { e.preventDefault(); void track(contextMenu(task, { x: Math.round(e.clientX), y: Math.round(e.clientY) }, title)).catch(e => report(message(e))); });
+  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); void track(contextMenu(task, menuPoint(title), title)).catch(e => report(message(e))); } });
+  title.addEventListener('mouseup', event => {
+    if (event.button !== 0 || nativeMenuOpen) return;
     const selection = window.getSelection()?.toString();
     if (selection) void api.copy(selection).catch(e => report(message(e)));
     composer.focus();
@@ -274,7 +303,9 @@ function makeRow(task: Task): HTMLElement {
   if (task.tag) row.append(tagBadge(task.tag));
   if (task.reminder_due_at || task.remind_at) row.append(button('schedule', dueLabel(task), () => schedule(task), readonly));
   // Always offer the eye, including titles whose ellipsis depends on window width.
-  row.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), button('menu', `Actions for task ${task.id}`, () => contextMenu(task)));
+  const actions = button('menu', `Actions for task ${task.id}`, event => { const source = event.currentTarget as HTMLElement; return contextMenu(task, menuPoint(source), source); });
+  actions.setAttribute('aria-haspopup', 'menu');
+  row.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), actions);
   return row;
 }
 function renderTasks(): void {
@@ -286,7 +317,8 @@ function renderTasks(): void {
     wanted.add(task.id);
     const key = JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly]);
     let row = rowNodes.get(task.id);
-    if (!row || rowKeys.get(task.id) !== key) { const next = makeRow(task); row?.replaceWith(next); row = next; rowNodes.set(task.id, row); rowKeys.set(task.id, key); }
+    // Keep the exit node until its timer finishes, even if busy clears before refresh.
+    if (!row || (!exiting.has(task.id) && rowKeys.get(task.id) !== key)) { const next = makeRow(task); row?.replaceWith(next); row = next; rowNodes.set(task.id, row); rowKeys.set(task.id, key); }
     (isProgress(task) && !stayOrdinary.has(task.id) ? progressRows : ordinaryRows).push(row);
   }
   for (const [id, row] of rowNodes) {
@@ -306,9 +338,7 @@ function renderTasks(): void {
     const empty = el('div', active.notes.length ? 'No tasks match this filter' : 'Add your first task below', 'empty');
     if (active.notes.length) empty.append(button('filter', 'Show all tasks', selectAll)); ordinary.append(empty);
   }
-  const max = active.config.maxVisibleNotes;
-  ordinary.style.maxHeight = `${Math.max(1, progressRows.length ? Math.ceil(max / 2) : max) * 34}px`;
-  pinned.style.maxHeight = `${Math.max(1, ordinaryRows.length ? Math.floor(max / 2) : max) * 34}px`;
+  checklist.classList.toggle('mixed', ordinaryRows.length > 0);
   pinned.hidden = !progressRows.length && !Array.from(pinned.children).some(n => exiting.has(Number((n as HTMLElement).dataset.id)));
   renderSelected(); fitWindow();
   if (scrollToId !== undefined) {
@@ -322,7 +352,7 @@ function animateDone(id: number): void {
   exiting.add(id); row.classList.add('completed'); row.setAttribute('aria-label', 'Completed');
   for (const b of row.querySelectorAll('button')) b.disabled = true;
   const check = row.querySelector('button'); if (check) { check.setAttribute('aria-checked', 'true'); const image = check.querySelector('img'); if (image) image.src = `icons/${icons.done}-symbolic.svg`; }
-  setTimeout(() => { if (!exiting.has(id)) return; exiting.delete(id); row.remove(); rowNodes.delete(id); rowKeys.delete(id); renderTasks(); }, 410);
+  setTimeout(() => { if (!exiting.has(id) || rowNodes.get(id) !== row) return; exiting.delete(id); row.remove(); rowNodes.delete(id); rowKeys.delete(id); renderTasks(); }, 410);
 }
 async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' | 'restore'): Promise<void> {
   if (busyTasks.has(task.id)) return;
@@ -338,17 +368,19 @@ async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' 
     if (action === 'restore') showSaved(task.id);
   } finally { busyTasks.delete(task.id); renderTasks(); }
 }
-function contextMenu(task: Task): void {
-  const menu = layer(`Task ${task.id} actions`, 'context', task.id); const bar = controls(menu.panel);
-  const closeThen = (fn: () => unknown) => () => { menu.close(); return fn(); };
-  bar.append(button('kitty', 'Start in Kitty…', closeThen(() => startKitty(task)), readonly),
-    button('copy', 'Copy note', () => api.copy(task.text)),
-    button(isProgress(task) ? 'reset' : 'start', isProgress(task) ? 'Reset progress' : 'Start', closeThen(() => transition(task, isProgress(task) ? 'reset' : 'start')), readonly),
-    button('done', 'Complete', closeThen(() => transition(task, 'done')), readonly),
-    button('remove', 'Remove to archive', closeThen(() => transition(task, 'rm')), readonly),
-    button('edit', 'Edit text…', closeThen(() => edit(task))),
-    button('tag', 'Change tag…', () => tagsMenu('task', task), readonly),
-    button('schedule', 'Set reminder…', closeThen(() => schedule(task)), readonly));
+async function contextMenu(task: Task, point: MenuPoint, source: HTMLElement): Promise<void> {
+  const action = await chooseMenu({ kind: 'task', ...point, inProgress: isProgress(task), readOnly: readonly || busyTasks.has(task.id) }, source, task.id);
+  if (!action || closing) return;
+  if (!active?.notes.some(t => t.id === task.id && t.updated_at === task.updated_at)) { report('Task changed while the menu was open. Reopen its actions to use the latest version.'); return; }
+  switch (action) {
+    case 'kitty': await startKitty(task); break;
+    case 'copy': await api.copy(task.text); break;
+    case 'start': case 'reset': case 'done': await transition(task, action); break;
+    case 'archive': await transition(task, 'rm'); break;
+    case 'edit': edit(task); break;
+    case 'tag': tagsMenu('task', task); break;
+    case 'schedule': schedule(task); break;
+  }
 }
 async function startKitty(task: Task): Promise<void> {
   const folder = active?.tags.find(t => t.name === task.tag)?.folder;
@@ -510,7 +542,9 @@ function counts(name: string): string {
 function tagsMenu(mode: TagMode, task?: Task): void {
   const menu = layer(mode === 'filter' ? 'Filter by tag' : mode === 'creation' ? 'New-task tag' : 'Task tag', 'tags', task?.id);
   const search = el('input'); search.type = 'search'; search.placeholder = 'Search or create tag…'; search.setAttribute('aria-label', 'Search tags');
-  const list = el('div', undefined, 'tag-list scroll'); menu.panel.append(search, list);
+  const list = el('div', undefined, 'tag-list scroll');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', mode === 'filter' ? 'Tag filters' : 'Tags');
+  menu.panel.append(search, list);
   const choose = async (name: string) => {
     if (mode === 'filter') {
       if (state.filters === null) state.filters = ['', ...(active?.tags.map(t => t.name) ?? [])];
@@ -524,19 +558,22 @@ function tagsMenu(mode: TagMode, task?: Task): void {
     const key = JSON.stringify([query, active?.tags, active?.notes.map(t => [t.tag, t.state]), state.filters, creationTag]);
     if (lastDraw === key) return; lastDraw = key;
     const top = list.scrollTop;
+    const focusedTag = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.tag : undefined;
     list.replaceChildren();
-    const names = ['', ...(active?.tags.map(t => t.name) ?? [])];
+    // The backend orders tags by newest associated task, oldest first.
+    const names = [...(active?.tags.map(t => t.name) ?? [])].reverse();
+    names.push('');
     // Preserve unknown saved selections until the registry catches up or the user clears them.
     for (const selected of state.filters ?? []) if (!names.includes(selected)) names.push(selected);
     for (const name of names) {
       if (lower && !(name || 'Untagged').toLocaleLowerCase().includes(lower)) continue;
       const selected = mode === 'filter' ? state.filters === null || state.filters.includes(name) : mode === 'creation' ? (creationTag ?? '') === name : (task?.tag ?? '') === name;
       const count = active?.notes.filter(t => (t.tag ?? '') === name).length ?? 0;
-      if (mode === 'filter' && !query && !count && !selected) continue;
+      if (mode === 'filter' && !query && !count && !selected && name !== focusedTag) continue;
       const b = button('tag', `${name || 'Untagged'} ${counts(name)}`, () => choose(name), mode === 'task' && readonly);
-      b.className = `tag-choice${selected ? ' chosen' : ''}`;
+      b.className = `tag-choice${selected ? ' chosen' : ''}`; b.dataset.tag = name;
       b.append(el('span', `${name || 'Untagged'} ${counts(name)}`));
-      if (mode === 'filter') { b.setAttribute('role', 'menuitemcheckbox'); b.setAttribute('aria-checked', String(selected)); b.prepend(el('span', selected ? '☑' : '☐')); }
+      if (mode === 'filter') { b.setAttribute('role', 'checkbox'); b.setAttribute('aria-checked', String(selected)); b.prepend(el('span', selected ? '☑' : '☐')); }
       b.addEventListener('contextmenu', e => { e.preventDefault(); manageTags(name || undefined); });
       list.append(b);
     }
@@ -547,6 +584,7 @@ function tagsMenu(mode: TagMode, task?: Task): void {
         else draw();
       }, mode === 'task' ? task : undefined)));
     }
+    if (focusedTag !== undefined) Array.from(list.querySelectorAll<HTMLButtonElement>('button')).find(b => b.dataset.tag === focusedTag)?.focus({ preventScroll: true });
     list.scrollTop = top;
   }
   menu.update = draw;
@@ -561,7 +599,7 @@ function tagsMenu(mode: TagMode, task?: Task): void {
     const items = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
     const index = items.indexOf(document.activeElement as HTMLButtonElement);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(index + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus(); }
-    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) { e.preventDefault(); search.focus(); search.value += e.key; draw(); }
+    else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); search.focus(); search.value += e.key; draw(); }
     else if (e.key === 'Backspace') { e.preventDefault(); search.focus(); search.value = search.value.slice(0, -1); draw(); }
   });
   draw(); search.focus();
@@ -685,7 +723,7 @@ async function refresh(): Promise<void> {
 }
 document.addEventListener('keydown', e => {
   if (closing) { e.preventDefault(); return; }
-  if (e.key !== 'Escape') return;
+  if (nativeMenuOpen || e.key !== 'Escape') return;
   e.preventDefault(); e.stopPropagation();
   if (layers.length) { layers[layers.length - 1].close(); return; }
   if (creationTag !== null) { creationTag = null; renderToolbar(); return; }

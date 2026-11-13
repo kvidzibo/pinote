@@ -15,8 +15,9 @@ for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KIT
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
 const faultFile=join(root,'backend-fault');
 const slowAddMarker=join(root,'slow-add-dispatched');
+const completeMarker=join(root,'completion-committed');
 const frontendBackend=join(root,'backend.mjs');
-await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;});`,{mode:0o700});
+await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
 env.PINOTE_ELECTRON_BACKEND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
@@ -24,7 +25,8 @@ function call(operation, params) {
   const response = JSON.parse(run.stdout); assert.ok(response.ok,JSON.stringify(response)); return response.result;
 }
 call('create_tag',{name:'Work',folder:null});
-const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available.\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
+call('create_tag',{name:'Empty filter',folder:null});
+const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
 const progress = call('add',{text:'Check GTK, CLI and Pi coexistence',tag:'Work'}).id;
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
 call('transition',{id:t.id,revision:t.updated_at,state:t.state,action:'start'});
@@ -33,6 +35,64 @@ for(let index=0;index<100;index++) call('add',{text:`Benchmark task ${index}`,ta
 let wm, app, gtk;
 let service, client;
 const logs=[]; const pageErrors=[];
+// Observe the real main-process menu without replacing native popup behavior.
+const installNativeMenuProbe = async () => app.evaluate(({Menu, ipcMain}) => {
+  const original = Menu.prototype.popup;
+  globalThis.__e2eMenu = {serial:0, pending:false};
+  Menu.prototype.popup = function(options) {
+    const probe = globalThis.__e2eMenu;
+    probe.menu = this; probe.options = {x:options.x,y:options.y};
+    probe.serial++; probe.pending = true; probe.selected = null;
+    for(const item of this.items) {
+      const click=item.click;
+      item.click=(...args)=>{probe.selected=item.id;return click?.apply(item,args);};
+    }
+    return original.call(this, {...options, callback:() => {
+      probe.pending = false; options.callback?.();
+    }});
+  };
+  const handler = ipcMain._invokeHandlers.get('popup-menu');
+  if (typeof handler !== 'function') throw new Error('Missing popup-menu handler');
+  ipcMain.removeHandler('popup-menu');
+  ipcMain.handle('popup-menu', (event, request) => {
+    globalThis.__e2eMenu.request = request;
+    return handler(event, request);
+  });
+});
+const menuState = () => app.evaluate(() => {
+  const p = globalThis.__e2eMenu;
+  return {serial:p.serial,pending:p.pending,request:p.request,options:p.options,
+    selected:p.selected, items:p.menu?.items.map(i=>({id:i.id,enabled:i.enabled,type:i.type}))};
+});
+const waitMenu = async (predicate, message) => {
+  for(let i=0;i<200;i++) { const state=await menuState(); if(predicate(state)) return state; await new Promise(r=>setTimeout(r,10)); }
+  assert.fail(message);
+};
+const openNativeMenu = async opener => {
+  const serial=(await menuState()).serial;
+  await opener();
+  return waitMenu(s=>s.serial>serial && s.pending,'Native Menu.popup must open');
+};
+const nativeKey = (...keys) => {
+  const result=spawnSync('xdotool',['key','--clearmodifiers',...keys],{env,encoding:'utf8'});
+  assert.equal(result.status,0,result.stderr);
+};
+const dismissNativeMenu = async () => {
+  nativeKey('Escape');
+  await waitMenu(s=>!s.pending,'Escape must dismiss the native menu');
+};
+// Existing workflow tests select the captured native item, not a DOM imitation.
+const selectNativeMenu = async (opener, id) => {
+  await openNativeMenu(opener);
+  await app.evaluate(({BrowserWindow}, id) => {
+    const menu=globalThis.__e2eMenu.menu, item=menu.getMenuItemById(id);
+    if(!item || !item.enabled) throw new Error(`Unavailable native menu item: ${id}`);
+    item.click(item,BrowserWindow.getAllWindows()[0],{});
+    menu.closePopup();
+  }, id);
+  await waitMenu(s=>!s.pending,'Selected native menu must close');
+};
+
 try {
   const socket = join(root,'i3.sock');
   const config = join(root,'i3.conf');
@@ -41,7 +101,21 @@ try {
   for(let i=0;i<100;i++) { if(spawnSync('i3-msg',['-s',socket,'-t','get_tree'],{env,stdio:'ignore'}).status===0) break; await new Promise(r=>setTimeout(r,30)); }
   env.I3SOCK = socket;
   const gtkPath=resolve('../.venv-gui/bin/pinote-gui');
-  gtk=spawn(gtkPath,[],{env:{...env,GDK_BACKEND:'x11'},stdio:'ignore'});
+  gtk=spawn(gtkPath,[],{env:{...env,GDK_BACKEND:'x11'},stdio:['ignore','pipe','pipe']});
+  gtk.stdout.on('data',b=>logs.push(`GTK: ${b}`));
+  gtk.stderr.on('data',b=>logs.push(`GTK: ${b}`));
+  gtk.on('exit',(code,signal)=>logs.push(`GTK exited: code=${code}, signal=${signal}`));
+  // A late GTK window steals the real X11 Escape used by native-menu checks.
+  // Wait for it to map before Electron opens and takes focus.
+  let gtkReady=false;
+  for(let i=0;i<200;i++) {
+    assert.equal(gtk.exitCode,null,`GTK exited before showing its window: ${logs.join('\n')}`);
+    const windows=spawnSync('xdotool',['search','--all','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
+    assert.ifError(windows.error);
+    if(windows.status===0 && windows.stdout.trim()) { gtkReady=true; break; }
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  assert.ok(gtkReady,`GTK must show its window before Electron starts: ${logs.join('\n')}`);
   const started = performance.now();
   app = await _electron.launch({ executablePath:createRequire(import.meta.url)('electron'), args:['--class=pinote-electron',resolve('dist/main.cjs')], env, chromiumSandbox:true, timeout:20000 });
   app.process().stderr.on('data',b=>logs.push(b.toString()));
@@ -50,6 +124,7 @@ try {
   page.on('console',m=>{if(m.type()==='error') logs.push(m.text());});
   const outgoing=[]; page.on('request',req=>{if(/^https?:/.test(req.url()))outgoing.push(req.url());});
   await page.locator('.task-row').first().waitFor();
+  await installNativeMenuProbe();
   const taskReadyMs=performance.now()-started;
   await page.waitForTimeout(350);
   console.log(`Cold start to tasks: ${Math.round(taskReadyMs)} ms`);
@@ -75,6 +150,201 @@ try {
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
   assert.ok(await page.locator('img').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
   await page.screenshot({path:join(root,'checklist.png')});
+  assert.equal(await page.getByRole('button',{name:'Add task (Enter)',exact:true}).count(),0);
+  await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
+  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Work (101) ▶ 1','Empty filter (0)','Untagged (2)']);
+  await page.keyboard.press('Escape');
+  // task393: allocation and keyboard focus with the complete benchmark dataset.
+  {
+    const filter = page.locator('#toolbar button').filter({has:page.locator('img[src*="view-filter-symbolic"]')});
+    const draft = page.locator('#draft');
+    const resize = async (width, height) => {
+      await app.evaluate(({BrowserWindow, screen}, {width,height}) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        const area = screen.getDisplayMatching(win.getBounds()).workArea;
+        win.setBounds({x:area.x,y:area.y,width,height:Math.min(height,area.height)});
+      }, {width,height});
+      await page.waitForFunction(width => window.innerWidth === width, width);
+    };
+    await resize(580,620);
+    await filter.click();
+    await page.getByRole('button',{name:'Select all tags',exact:true}).click();
+    const filters = page.getByRole('group',{name:'Tag filters',exact:true});
+    const work = filters.getByRole('checkbox').filter({hasText:'Work'});
+    assert.equal(await work.getAttribute('aria-checked'),'true');
+    await work.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await work.getAttribute('aria-checked'),'false');
+    assert.ok(await work.evaluate(node=>node===document.activeElement),'Space redraw must retain the filter checkbox focus');
+    await page.keyboard.press('Space');
+    assert.equal(await work.getAttribute('aria-checked'),'true');
+    assert.ok(await work.evaluate(node=>node===document.activeElement));
+    const emptyFilter = filters.getByRole('checkbox').filter({hasText:'Empty filter'});
+    await emptyFilter.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await emptyFilter.count(),1,'A focused empty tag must not disappear on deselection');
+    assert.equal(await emptyFilter.getAttribute('aria-checked'),'false');
+    assert.ok(await emptyFilter.evaluate(node=>node===document.activeElement),'An empty saved tag must remain focused after deselection');
+    await page.keyboard.press('Space');
+    assert.equal(await emptyFilter.getAttribute('aria-checked'),'true');
+    await page.keyboard.press('Escape');
+    assert.ok(await filter.evaluate(node=>node===document.activeElement),'Escape must return focus to the toolbar opener');
+    assert.equal(await page.locator('.task-row').count(),103);
+    assert.equal(await page.locator('#ordinary .task-row').count(),102);
+    assert.equal(await page.locator('#pinned .task-row').count(),1);
+    assert.match(await page.locator(`#pinned [data-id="${progress}"] [role="checkbox"] img`).getAttribute('src'),/task-complete-symbolic\.svg$/);
+
+    // Each idle refresh writes the toolbar count, even when its value is unchanged.
+    // Observe actual redraws instead of assuming two refreshes from a sleep duration.
+    await filter.evaluate(node=>{
+      window.__task393Refreshes=0;
+      window.__task393FocusKept=true;
+      window.__task393Observer=new MutationObserver(()=>{
+        window.__task393Refreshes++;
+        window.__task393FocusKept &&= document.activeElement===node;
+      });
+      window.__task393Observer.observe(node.querySelector('span'),{childList:true});
+    });
+    await page.waitForFunction(()=>window.__task393Refreshes>=2);
+    assert.ok(await page.evaluate(()=>window.__task393FocusKept),'Toolbar focus must survive at least two observed refreshes');
+    await page.evaluate(()=>{window.__task393Observer.disconnect();delete window.__task393Observer;delete window.__task393Refreshes;delete window.__task393FocusKept;});
+
+    const layout = () => page.evaluate(()=>{
+      const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,left:r.left,right:r.right};};
+      const ordinary=document.getElementById('ordinary');
+      return {ordinary:box('ordinary'),pinned:box('pinned'),composer:box('composer'),checklist:box('checklist'),toolbar:box('toolbar'),draft:box('draft'),scrollHeight:ordinary.scrollHeight,scrollTop:ordinary.scrollTop,width:innerWidth,height:innerHeight};
+    });
+    const assertAllocation = box => {
+      assert.ok(box.ordinary.height>170,'Ordinary list must use available height, not the old 170px cap');
+      assert.ok(Math.abs(box.ordinary.top-box.checklist.top)<=1);
+      assert.ok(Math.abs(box.pinned.top-box.ordinary.bottom-4)<=1,'Pinned list must follow ordinary list without wasted space');
+      assert.ok(Math.abs(box.composer.top-box.pinned.bottom-5)<=1,'Pinned row must sit immediately above composer');
+      assert.ok(Math.abs(box.composer.bottom-(box.height-6))<=1,'Composer must stay at the bottom');
+      assert.ok(box.scrollHeight>box.ordinary.height,'All seeded ordinary tasks must overflow');
+    };
+    const tall = await layout();
+    assertAllocation(tall);
+    assert.equal(Math.round(tall.pinned.height),34,'One progress row must retain its content height with 100 ordinary tasks');
+    let resizedTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+    call('transition',{id:first,revision:resizedTask.updated_at,state:resizedTask.state,action:'start'});
+    await page.waitForFunction(()=>document.querySelectorAll('#pinned .task-row').length===2);
+    assert.equal(Math.round((await layout()).pinned.height),67,'Progress must grow when another task starts');
+    resizedTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+    call('transition',{id:first,revision:resizedTask.updated_at,state:resizedTask.state,action:'reset'});
+    await page.waitForFunction(()=>document.querySelectorAll('#pinned .task-row').length===1);
+    assert.deepEqual((await layout()).pinned,tall.pinned,'Progress must shrink again after reset');
+    await page.locator('#ordinary').hover();
+    await page.mouse.wheel(0,700);
+    await page.waitForFunction(()=>document.getElementById('ordinary').scrollTop>0);
+    const scrolled = await layout();
+    assert.deepEqual(scrolled.pinned,tall.pinned,'Ordinary scrolling must not move the pinned row');
+    assert.deepEqual(scrolled.composer,tall.composer,'Ordinary scrolling must not move the composer');
+    await page.screenshot({path:join(root,'task393-expanded.png')});
+
+    await draft.fill('One\nTwo\nThree\nFour\nFive\nSix');
+    const grown = await layout();
+    await draft.fill('Short');
+    const shortened = await layout();
+    assert.ok(shortened.draft.height<grown.draft.height,'Shortening the draft must shrink its textarea');
+    assert.ok(shortened.composer.height<grown.composer.height,'Shortening the draft must shrink the composer');
+    assert.ok(shortened.ordinary.height>grown.ordinary.height,'The list must reclaim the released composer space');
+    await draft.fill('');
+    await resize(280,620);
+    const narrow = await layout();
+    assertAllocation(narrow);
+    assert.ok(narrow.toolbar.left>=0 && narrow.toolbar.right<=narrow.width,'Compact toolbar must fit horizontally');
+    assert.ok(await page.locator('#toolbar button').evaluateAll(nodes=>nodes.every(node=>{const r=node.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth;})),'Every compact toolbar control must fit');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),280);
+    await page.screenshot({path:join(root,'task393-compact.png')});
+
+    // Tab to a real Markdown link without activating it (and thus without network I/O).
+    await resize(580,620);
+    await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
+    const link = page.getByRole('dialog').getByRole('link',{name:'Safe preview link',exact:true});
+    await link.waitFor();
+    let reachedLink=false;
+    for(let tab=0;tab<12;tab++) {
+      await page.keyboard.press('Tab');
+      if(await link.evaluate(node=>node===document.activeElement)) { reachedLink=true; break; }
+    }
+    assert.ok(reachedLink,'Dialog Tab order must reach the preview Markdown link');
+    assert.equal(outgoing.length,0,'Tab must not request remote resources');
+    await page.keyboard.press('Escape');
+
+    // Restore the original Untagged view and compact geometry for the existing workflow.
+    await filter.click();
+    await page.getByRole('button',{name:'Clear selection (in-progress only)',exact:true}).click();
+    await filters.getByRole('checkbox').filter({hasText:'Untagged'}).click();
+    await page.keyboard.press('Escape');
+    await resize(geometry.width,geometry.height);
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
+    await page.locator('#ordinary').evaluate(node=>{node.scrollTop=0;});
+    await page.locator('#pinned').evaluate(node=>{node.scrollTop=0;});
+    assert.equal(await draft.inputValue(),'');
+    assert.equal(await page.locator('#ordinary .task-row').count(),2);
+    assert.equal(await page.locator('#pinned .task-row').count(),1);
+    assert.match(await filter.getAttribute('aria-label'),/^Filter by tag: Untagged /);
+  }
+  // Focused native interaction scenario: placement, dismissal and real X11 keys.
+  {
+    const title=page.locator(`[data-id="${first}"] .task-title`);
+    const actions=page.getByRole('button',{name:`Actions for task ${first}`,exact:true});
+    const bottom=page.getByRole('button',{name:'Menu',exact:true});
+    const anchor=locator=>locator.evaluate(node=>{const r=node.getBoundingClientRect();return {x:Math.max(0,Math.round(r.left)),y:Math.max(0,Math.round(r.bottom))};});
+    const assertPlacement=async (state, point, kind) => {
+      assert.equal(state.request.kind,kind);
+      assert.deepEqual({x:state.request.x,y:state.request.y},point);
+      assert.ok(Number.isInteger(state.request.x) && Number.isInteger(state.request.y));
+      const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
+      assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
+      if(kind==='task') {
+        assert.equal(state.request.inProgress,false);
+        assert.equal(state.request.readOnly,false);
+      }
+    };
+    const focusReturns=async locator => {
+      await locator.page().waitForFunction(selector=>document.querySelector(selector)===document.activeElement,
+        await locator.evaluate(node=>{node.dataset.nativeFocus='expected';return '[data-native-focus="expected"]';}));
+      await locator.evaluate(node=>delete node.dataset.nativeFocus);
+      assert.equal(page.isClosed(),false);
+      assert.equal(app.process().exitCode,null,'Dismissing a menu must not close Pinote');
+    };
+    const box=await title.boundingBox();
+    const point={x:Math.round(box.x+8),y:Math.round(box.y+8)};
+    let state=await openNativeMenu(()=>page.mouse.click(point.x,point.y,{button:'right'}));
+    await assertPlacement(state,point,'task');
+    assert.equal(await page.getByRole('button',{name:'Copy note',exact:true}).count(),0,'Native items must not be DOM buttons');
+    // Only the already-asserted private Xvfb/private D-Bus display is captured.
+    const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
+    assert.ifError(capture.error);
+    assert.equal(capture.status,0,capture.stderr);
+    assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
+    await dismissNativeMenu(); await focusReturns(title);
+    await title.focus();
+    state=await openNativeMenu(()=>page.keyboard.press('Shift+F10'));
+    await assertPlacement(state,await anchor(title),'task');
+    // Two Down keys select Copy note from the initially unselected native menu.
+    await app.evaluate(({clipboard})=>clipboard.writeText('native selection sentinel'));
+    await page.waitForTimeout(200);
+    nativeKey('Down','Down','Return');
+    await waitMenu(s=>!s.pending,'Native keyboard selection must close the menu');
+    const expectedCopy=call('snapshot',{view:'active'}).notes.find(n=>n.id===first).text;
+    let copied=false;
+    for(let i=0;i<100;i++) {
+      copied=(await app.evaluate(({clipboard})=>clipboard.readText()))===expectedCopy;
+      if(copied) break;
+      await page.waitForTimeout(10);
+    }
+    assert.ok(copied,`Real native keyboard selection must run Copy note: ${JSON.stringify(await menuState())}; clipboard: ${JSON.stringify(await app.evaluate(({clipboard})=>clipboard.readText()))}; expected: ${JSON.stringify(expectedCopy)}`);
+    await focusReturns(title);
+    state=await openNativeMenu(()=>actions.click());
+    await assertPlacement(state,await anchor(actions),'task');
+    await dismissNativeMenu(); await focusReturns(actions);
+    state=await openNativeMenu(()=>bottom.click());
+    await assertPlacement(state,await anchor(bottom),'app');
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','drafts','close']);
+    await dismissNativeMenu(); await focusReturns(bottom);
+  }
   await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
   await page.getByRole('dialog').waitFor();
   assert.equal(await page.evaluate(()=>window.compromised),undefined);
@@ -86,30 +356,39 @@ try {
   await page.getByText('Electron lifecycle ☘',{exact:true}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.filter(n=>n.text==='Electron lifecycle ☘\nsecond line').length,1);
   const added = call('snapshot',{view:'active'}).notes.find(n=>n.text.startsWith('Electron lifecycle'));
-  await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await page.getByRole('button',{name:'Edit text…',exact:true}).click();
+  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
   await page.getByRole('textbox',{name:'Task text',exact:true}).fill('Edited from Electron ☘\nkeeps ID and history');
   await page.keyboard.press('Control+Enter');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
   await page.locator(`[data-id="${added.id}"] [role="checkbox"]`).click();
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'), added.id);
+  // Queue a refresh behind completion so clearing busy renders the old snapshot.
+  await writeFile(faultFile,'slow-complete');
   await page.locator(`[data-id="${added.id}"] [role="checkbox"]`).click();
+  let completionCommitted=false;
+  for(let i=0;i<200;i++) {
+    try { completionCommitted=await readFile(completeMarker,'utf8')==='committed'; } catch(error) { if(error.code!=='ENOENT') throw error; }
+    if(completionCommitted) break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  assert.ok(completionCommitted,'Completion must commit before the overlapping refresh');
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await page.waitForFunction(id=>document.querySelector(`[data-id="${id}"]`)?.classList.contains('completed'),added.id);
+  await page.screenshot({path:join(root,'completion-refresh.png')});
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
+  await writeFile(faultFile,'');
   assert.ok(call('snapshot',{view:'archive'}).notes.some(n=>n.id===added.id));
-  await page.getByRole('button',{name:'Menu',exact:true}).click();
-  await page.getByRole('button',{name:'Archive',exact:true}).click();
+  await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'archive');
   await page.getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
-  await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await page.getByRole('button',{name:'Set reminder…',exact:true}).click();
+  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'schedule');
   await page.getByRole('textbox',{name:'When (local time)',exact:true}).fill('2099-01-01 12:00');
   await page.getByRole('button',{name:'Set reminder',exact:true}).click();
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
   assert.ok(call('snapshot',{view:'scheduled'}).notes.some(n=>n.id===added.id));
-  await page.getByRole('button',{name:'Menu',exact:true}).click();
-  await page.getByRole('button',{name:'Scheduled reminders',exact:true}).click();
+  await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'scheduled');
   await page.getByRole('button',{name:'Release reminder now',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
@@ -121,6 +400,10 @@ try {
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Tagged Electron task'); await page.keyboard.press('Enter');
   await page.getByText('Tagged Electron task',{exact:true}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.text==='Tagged Electron task').tag,'Side project');
+  await page.getByRole('button',{name:'New-task tag: Side project',exact:true}).click();
+  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Side project (1)','Work (101) ▶ 1','Empty filter (0)','Untagged (3)']);
+  await page.screenshot({path:join(root,'recent-tags.png')});
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Escape'); // reset creation tag, not the filter or existing tasks
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
   Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../.venv/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
@@ -141,15 +424,13 @@ try {
   assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
   // Failed Kitty launch must keep the acknowledgement action, not offer a blocked retry.
   await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
-  await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await page.getByRole('button',{name:'Start in Kitty…',exact:true}).click();
+  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'kitty');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('#toolbar button[aria-label="Add task (Enter)"]').disabled);
+  await page.waitForFunction(()=>!document.querySelector('#draft').readOnly);
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
   // A failed close must preserve the window/draft and allow a later successful close.
-  await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await page.getByRole('button',{name:'Edit text…',exact:true}).click();
+  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
   const failedCloseEditor=page.locator('textarea[aria-label="Task text"]');
   await failedCloseEditor.fill('Private draft before failed close');
   const stateDir=join(env.XDG_DATA_HOME,'pinote/electron');
@@ -171,7 +452,7 @@ try {
   assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
   assert.deepEqual(pageErrors,[]);
   // Submit in the same event-loop turn as paste: no debounce may be required for safety.
-  const reopen=async()=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator('.task-row').first().waitFor();return p;};
+  const reopen=async()=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator('.task-row').first().waitFor();await installNativeMenuProbe();return p;};
   const close=async()=>{const done=app.waitForEvent('close');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await done;app=undefined;};
   let reopened=await reopen();
   await writeFile(faultFile,'add');
@@ -182,13 +463,22 @@ try {
   assert.equal(await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).count(),1);
   assert.equal(await reopened.getByRole('button',{name:'Dismiss notice',exact:true}).count(),0);
   await reopened.screenshot({path:join(root,'recovery.png')});
+  // Continue the native scenario in real recovery mode, then close while pending.
+  const readonlyActions=reopened.getByRole('button',{name:`Actions for task ${added.id}`,exact:true});
+  const readonlyMenu=await openNativeMenu(()=>readonlyActions.click());
+  assert.equal(readonlyMenu.request.readOnly,true);
+  for(const id of ['kitty','start','done','archive','tag','schedule']) {
+    assert.equal(readonlyMenu.items.find(i=>i.id===id)?.enabled,false,`${id} must be disabled during recovery`);
+  }
+  for(const id of ['copy','edit']) assert.equal(readonlyMenu.items.find(i=>i.id===id)?.enabled,true);
+  await dismissNativeMenu();
+  await openNativeMenu(()=>readonlyActions.click());
   await writeFile(faultFile,''); await close();
   assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).draft,'Rapid uncertain add draft');
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await reopened.getByRole('button',{name:'Edit text…',exact:true}).click();
+  await selectNativeMenu(() => reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
   await writeFile(faultFile,'edit');
   await reopened.evaluate(()=>{const input=document.querySelector('textarea[aria-label="Task text"]');input.value='Rapid uncertain edit draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true}));});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
@@ -208,8 +498,7 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await reopened.getByRole('button',{name:'Edit text…',exact:true}).click();
+  await selectNativeMenu(() => reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
   const closingText='Private editor draft frozen at final close';
   const closingEditor=reopened.locator('textarea[aria-label="Task text"]');
   await closingEditor.fill(closingText);
@@ -303,8 +592,7 @@ try {
   assert.equal(await capacityComposer.evaluate(input=>input.readOnly),false,'Delayed add must still be pending when newer input arrives');
   await capacityComposer.fill(newerDraft);
   // An unrelated editor opened during the pending add must freeze immediately on recovery.
-  await reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
-  await reopened.getByRole('button',{name:'Edit text…',exact:true}).click();
+  await selectNativeMenu(() => reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
   const recoveryEditor=reopened.locator('textarea[aria-label="Task text"]');
   const recoveryText=await recoveryEditor.inputValue();
   await reopened.waitForFunction(()=>document.querySelector('#draft').readOnly);

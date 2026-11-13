@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
 import { appendFileSync, constants, mkdirSync, readdirSync } from 'node:fs';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,7 +6,8 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { initialState } from './protocol.ts';
-import { MAX_STATE_FILE_BYTES, mutating, safeLink, validParams, validState } from './security.ts';
+import type { MenuAction, MenuRequest } from './protocol.ts';
+import { MAX_STATE_FILE_BYTES, mutating, safeLink, validMenuRequest, validParams, validState } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.enableSandbox();
@@ -15,6 +16,7 @@ app.commandLine.appendSwitch('class', 'pinote-electron');
 const origin = 'pinote-app://ui';
 const xdg = (name: string, fallback: string) => process.env[name] && isAbsolute(process.env[name]!) ? process.env[name]! : join(homedir(), fallback);
 let window: BrowserWindow | undefined;
+let activeMenu: Menu | undefined;
 let state = initialState();
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
@@ -70,6 +72,34 @@ function resize(width: number, height: number, anchored = true) {
   setTimeout(() => { changingSize = false; }, 150);
 }
 
+function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
+  if (!window || closing || activeMenu) return Promise.resolve(null);
+  const owner = window;
+  const writable = !readonly && !state.warning && (request.kind !== 'task' || !request.readOnly);
+  return new Promise(resolve => {
+    let selected: MenuAction | null = null;
+    const item = (id: MenuAction, label: string, enabled = true): Electron.MenuItemConstructorOptions => ({ id, label, enabled, click: () => { selected = id; } });
+    const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
+    const menu = Menu.buildFromTemplate(request.kind === 'task' ? [
+      item('kitty', 'Start in Kitty…', writable), item('copy', 'Copy note'), separator,
+      item(request.inProgress ? 'reset' : 'start', request.inProgress ? 'Reset progress' : 'Start', writable),
+      item('done', 'Complete', writable), item('archive', 'Remove to archive', writable), separator,
+      item('edit', 'Edit text…'), item('tag', 'Change tag…', writable), item('schedule', 'Set reminder…', writable),
+    ] : [
+      item('filter', 'Filter by tag'), item('scheduled', 'Scheduled reminders'), item('archive', 'Archive'),
+      item('manage-tags', 'Manage tags'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
+    ]);
+    const content = owner.getContentBounds();
+    activeMenu = menu;
+    menu.popup({ window: owner,
+      // With an owning window, Electron interprets these as content-relative DIPs.
+      x: Math.min(request.x, content.width - 1),
+      y: Math.min(request.y, content.height - 1),
+      callback: () => { if (activeMenu === menu) activeMenu = undefined; resolve(selected); },
+    });
+  });
+}
+
 async function boot() {
   const backend = new Backend(await executable());
   const hello = await backend.call('handshake', {});
@@ -123,6 +153,7 @@ async function boot() {
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   window.webContents.on('render-process-gone', () => {
     if (exiting) return;
+    activeMenu?.closePopup(window);
     log('Renderer exited unexpectedly; drafts and any uncertain operation were preserved.');
     state.warning = warning; uncertain = true; closing = true;
     void (async () => {
@@ -158,9 +189,10 @@ async function boot() {
   window.on('close', event => {
     if (exiting) return;
     event.preventDefault();
-    if (!closing) { closing = true; window?.webContents.send('close-requested'); }
+    if (!closing) { closing = true; activeMenu?.closePopup(window); window?.webContents.send('close-requested'); }
   });
   const handlers: Record<string, (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown> = {
+    'popup-menu': (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request); },
     'load-state': () => structuredClone(state),
     'acknowledge-warning': async () => {
       if (readonly) return false;
