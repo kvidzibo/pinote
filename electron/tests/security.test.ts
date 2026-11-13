@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState } from '../src/protocol.ts';
-import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validParams, validState } from '../src/security.ts';
+import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validState } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
   assert.ok(validParams('edit', { id: 1, revision: 'rev', text: 'literal <script>☘</script>' }));
@@ -9,6 +9,9 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validParams('edit', { id: 1, revision: 'rev', text: 'x', executable: '/bin/sh' }));
   assert.ok(!validParams('edit', { id: true, revision: 'rev', text: 'x' }));
   assert.ok(!validParams('transition', { id: 1, revision: 'rev', state: 'active', action: 'erase' }));
+  assert.ok(validMenuRequest({ kind: 'app', x: 0, y: 100 }));
+  assert.ok(validMenuRequest({ kind: 'task', x: 10, y: 20, inProgress: false, readOnly: true }));
+  for (const request of [null, {}, { kind: 'app', x: NaN, y: 0 }, { kind: 'app', x: -1, y: 0 }, { kind: 'app', x: 0.5, y: 0 }, { kind: 'app', x: 0, y: Infinity }, { kind: 'task', x: 0, y: 0 }, { kind: 'app', x: 0, y: 0, items: ['execute'] }, { kind: 'task', x: 0, y: 0, inProgress: 'yes', readOnly: false }]) assert.ok(!validMenuRequest(request));
   assert.ok(validState(initialState()));
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));

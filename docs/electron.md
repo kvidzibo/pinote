@@ -42,26 +42,38 @@ Icons are bundled rather than taken from the host icon theme.
 
 ## Controls and deliberate differences
 
-- Add with **Enter**; **Shift+Enter** inserts a newline. The in-progress section
-  sizes to its contents (up to half the list when ordinary tasks are present);
-  ordinary tasks use the remaining space. Both lists scroll independently.
-- Click a task checkbox to start, then complete it. Right-click task text or use
-  its actions button for editing, tags, reminders, archive, and **Start in Kitty…**.
-  A checkmark completes an in-progress task; right-click it to reset progress.
-  Task actions open beside the click (or focused control when using the keyboard).
+- Add with **Enter**; **Shift+Enter** inserts a newline. The composer grows
+  and shrinks with its text. Ordinary tasks use the available window height;
+  in-progress tasks size to their contents above the composer (up to half the
+  list when ordinary tasks are present) and scroll separately when needed.
+  Manual window sizing is preserved.
+- Click a task's play icon to start it, then its checkmark to complete it.
+  Right-click task text for a native menu at the pointer; its actions button
+  opens the same menu beside the button. Focus task text and press **Shift+F10**
+  or the **Menu** key to open it beside the task. Use arrow keys and **Enter**
+  to choose an action, or **Escape** to dismiss without closing Pinote.
+  Actions include editing, tags, reminders, archive, and **Start in Kitty…**.
+  Right-click an in-progress task's checkmark to reset progress.
 - Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
   menu includes draft recovery; stale drafts must be copied/reconciled rather
   than silently overwriting a changed task.
 - Search tag selectors and filters; create/manage saved tags and optional default
   Kitty folders. Tags with the newest associated tasks appear first, followed by
-  unused tags and Untagged. In-progress tasks remain visible regardless of filters.
-- The menu opens scheduled reminders and Archive, where tasks can be restored.
+  unused tags and Untagged. Use arrow keys to move through tags and **Space** to
+  toggle a focused filter. The highlighted funnel indicates a tag filter is active; its
+  count includes all visible tasks, including in-progress tasks that remain
+  visible regardless of tag filters.
+- The bottom menu opens beside its button and provides scheduled reminders,
+  Archive (including restore), tag management, and draft recovery. Native menus
+  adjust their placement at screen edges and can extend beyond the small window.
 - The always-visible eye opens a safe Markdown preview, including agent fields
   and unread updates. Raw HTML and remote images are not loaded. Supported links
   open externally only on explicit activation.
-- Dialogs are scrollable in-window panels (folder selection and recovery
-  confirmation can use native dialogs). The eye is always shown. These are
-  deliberate differences, not a promise of pixel-for-pixel GTK parity.
+- Editors, previews, and searchable tag pickers are scrollable in-window dialogs;
+  task actions and the bottom menu use native popup menus, not centered panels.
+  Folder selection and recovery confirmation can also use native dialogs.
+  The eye is always shown. These are deliberate differences, not a promise of
+  pixel-for-pixel GTK parity.
 
 Kitty launching uses the existing backend integration and its prerequisites;
 see [GTK controls](gui.md). The frontend does not send Dunst notifications.
