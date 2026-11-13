@@ -100,7 +100,21 @@ try {
   for(let i=0;i<100;i++) { if(spawnSync('i3-msg',['-s',socket,'-t','get_tree'],{env,stdio:'ignore'}).status===0) break; await new Promise(r=>setTimeout(r,30)); }
   env.I3SOCK = socket;
   const gtkPath=resolve('../.venv-gui/bin/pinote-gui');
-  gtk=spawn(gtkPath,[],{env:{...env,GDK_BACKEND:'x11'},stdio:'ignore'});
+  gtk=spawn(gtkPath,[],{env:{...env,GDK_BACKEND:'x11'},stdio:['ignore','pipe','pipe']});
+  gtk.stdout.on('data',b=>logs.push(`GTK: ${b}`));
+  gtk.stderr.on('data',b=>logs.push(`GTK: ${b}`));
+  gtk.on('exit',(code,signal)=>logs.push(`GTK exited: code=${code}, signal=${signal}`));
+  // A late GTK window steals the real X11 Escape used by native-menu checks.
+  // Wait for it to map before Electron opens and takes focus.
+  let gtkReady=false;
+  for(let i=0;i<200;i++) {
+    assert.equal(gtk.exitCode,null,`GTK exited before showing its window: ${logs.join('\n')}`);
+    const windows=spawnSync('xdotool',['search','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
+    assert.ifError(windows.error);
+    if(windows.status===0 && windows.stdout.trim()) { gtkReady=true; break; }
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  assert.ok(gtkReady,`GTK must show its window before Electron starts: ${logs.join('\n')}`);
   const started = performance.now();
   app = await _electron.launch({ executablePath:createRequire(import.meta.url)('electron'), args:['--class=pinote-electron',resolve('dist/main.cjs')], env, chromiumSandbox:true, timeout:20000 });
   app.process().stderr.on('data',b=>logs.push(b.toString()));
