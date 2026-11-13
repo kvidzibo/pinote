@@ -25,8 +25,7 @@ export function validParams(op: unknown, value: unknown): op is Operation {
 }
 export function validMenuRequest(value: unknown): value is MenuRequest {
   if (!record(value) || !['x', 'y'].every(k => typeof value[k] === 'number' && Number.isSafeInteger(value[k]) && value[k] >= 0 && value[k] <= 100000)) return false;
-  const keys = value.kind === 'app' ? ['kind', 'x', 'y'] : ['kind', 'x', 'y', 'inProgress', 'readOnly'];
-  return Object.keys(value).every(k => keys.includes(k)) && (value.kind === 'app' || value.kind === 'task' && typeof value.inProgress === 'boolean' && typeof value.readOnly === 'boolean');
+  return value.kind === 'app' && Object.keys(value).every(k => ['kind', 'x', 'y'].includes(k));
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
 export function validState(value: unknown): value is UIState {

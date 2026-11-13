@@ -93,6 +93,11 @@ const selectNativeMenu = async (opener, id) => {
   await waitMenu(s=>!s.pending,'Selected native menu must close');
 };
 
+const selectTaskAction = async (page, id, label) => {
+  await page.getByRole('button',{name:`Actions for task ${id}`,exact:true}).click();
+  await page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${id}:`)}).getByRole('button',{name:label,exact:true}).click();
+};
+
 try {
   const socket = join(root,'i3.sock');
   const config = join(root,'i3.conf');
@@ -285,49 +290,37 @@ try {
     assert.equal(await page.locator('#pinned .task-row').count(),1);
     assert.match(await filter.getAttribute('aria-label'),/^Filter by tag: Untagged /);
   }
-  // Focused native interaction scenario: placement, dismissal and real X11 keys.
+  // Inline row actions: real pointer/keyboard input, stable layout and polling.
   {
-    const title=page.locator(`[data-id="${first}"] .task-title`);
+    const row=page.locator(`[data-id="${first}"]`), title=row.locator('.task-title');
     const actions=page.getByRole('button',{name:`Actions for task ${first}`,exact:true});
+    const bar=page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${first}:`)});
     const bottom=page.getByRole('button',{name:'Menu',exact:true});
-    const anchor=locator=>locator.evaluate(node=>{const r=node.getBoundingClientRect();return {x:Math.max(0,Math.round(r.left)),y:Math.max(0,Math.round(r.bottom))};});
-    const assertPlacement=async (state, point, kind) => {
-      assert.equal(state.request.kind,kind);
-      assert.deepEqual({x:state.request.x,y:state.request.y},point);
-      assert.ok(Number.isInteger(state.request.x) && Number.isInteger(state.request.y));
-      const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
-      assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-      if(kind==='task') {
-        assert.equal(state.request.inProgress,false);
-        assert.equal(state.request.readOnly,false);
-      }
-    };
     const focusReturns=async locator => {
-      await locator.page().waitForFunction(selector=>document.querySelector(selector)===document.activeElement,
-        await locator.evaluate(node=>{node.dataset.nativeFocus='expected';return '[data-native-focus="expected"]';}));
-      await locator.evaluate(node=>delete node.dataset.nativeFocus);
+      assert.ok(await locator.evaluate(node=>node===document.activeElement),'Dismissal must return focus to the opener');
       assert.equal(page.isClosed(),false);
-      assert.equal(app.process().exitCode,null,'Dismissing a menu must not close Pinote');
+      assert.equal(app.process().exitCode,null,'Dismissing actions must not close Pinote');
     };
-    const box=await title.boundingBox();
-    const point={x:Math.round(box.x+8),y:Math.round(box.y+8)};
-    let state=await openNativeMenu(()=>page.mouse.click(point.x,point.y,{button:'right'}));
-    await assertPlacement(state,point,'task');
-    assert.equal(await page.getByRole('button',{name:'Copy note',exact:true}).count(),0,'Native items must not be DOM buttons');
-    // Only the already-asserted private Xvfb/private D-Bus display is captured.
-    const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
-    assert.ifError(capture.error);
-    assert.equal(capture.status,0,capture.stderr);
-    assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
-    await dismissNativeMenu(); await focusReturns(title);
-    await title.focus();
-    state=await openNativeMenu(()=>page.keyboard.press('Shift+F10'));
-    await assertPlacement(state,await anchor(title),'task');
-    // Two Down keys select Copy note from the initially unselected native menu.
-    await app.evaluate(({clipboard})=>clipboard.writeText('native selection sentinel'));
-    await page.waitForTimeout(200);
-    nativeKey('Down','Down','Return');
-    await waitMenu(s=>!s.pending,'Native keyboard selection must close the menu');
+    const rowBox=await row.boundingBox();
+    const serial=(await menuState()).serial;
+    await title.click({button:'right'});
+    assert.equal((await menuState()).serial,serial,'Task actions must not open a native menu');
+    assert.deepEqual(await bar.getByRole('button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Start in Kitty…','Copy note','Start','Complete','Remove to archive','Edit text…','Set reminder…','Change tag…','Close task actions']);
+    assert.ok(await bar.getByRole('button').evaluateAll(nodes=>nodes.every(n=>n.title===n.getAttribute('aria-label') && n.querySelector('img'))),'Every action needs an icon, tooltip and accessible name');
+    assert.equal(await title.isVisible(),false);
+    assert.deepEqual(await row.boundingBox(),rowBox,'Opening actions must not move or resize the row');
+    await page.screenshot({path:join(root,'inline-actions.png')});
+    // Unchanged polling must retain the toolbar and its focused button.
+    await bar.getByRole('button',{name:'Copy note',exact:true}).focus();
+    await page.waitForTimeout(2200);
+    await focusReturns(bar.getByRole('button',{name:'Copy note',exact:true}));
+    await page.keyboard.press('Escape'); await focusReturns(title);
+    assert.deepEqual(await row.boundingBox(),rowBox);
+    await page.keyboard.press('Shift+F10');
+    await page.keyboard.press('End'); await focusReturns(bar.getByRole('button',{name:'Close task actions',exact:true}));
+    await page.keyboard.press('ArrowRight'); await focusReturns(bar.getByRole('button',{name:'Start in Kitty…',exact:true}));
+    await page.keyboard.press('ArrowLeft'); await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('Enter');
     const expectedCopy=call('snapshot',{view:'active'}).notes.find(n=>n.id===first).text;
     let copied=false;
     for(let i=0;i<100;i++) {
@@ -335,14 +328,69 @@ try {
       if(copied) break;
       await page.waitForTimeout(10);
     }
-    assert.ok(copied,`Real native keyboard selection must run Copy note: ${JSON.stringify(await menuState())}; clipboard: ${JSON.stringify(await app.evaluate(({clipboard})=>clipboard.readText()))}; expected: ${JSON.stringify(expectedCopy)}`);
+    assert.ok(copied,'Keyboard activation must copy the full note');
     await focusReturns(title);
-    state=await openNativeMenu(()=>actions.click());
-    await assertPlacement(state,await anchor(actions),'task');
-    await dismissNativeMenu(); await focusReturns(actions);
-    state=await openNativeMenu(()=>bottom.click());
-    await assertPlacement(state,await anchor(bottom),'app');
+    await page.keyboard.press('ContextMenu');
+    await bar.getByRole('button',{name:'Close task actions',exact:true}).click(); await focusReturns(title);
+    await actions.click();
+    await page.keyboard.press('Tab');
+    assert.equal(await bar.count(),0,'Tab out must restore the row');
+    await actions.click();
+    await page.locator('#draft').click();
+    assert.equal(await bar.count(),0,'Outside click must restore the row');
+    assert.ok(await page.locator('#draft').evaluate(n=>n===document.activeElement));
+    await actions.click();
+    // Playwright emulates perpetual page focus; disable it for actual X11 blur.
+    const focusSession=await page.context().newCDPSession(page);
+    await focusSession.send('Emulation.setFocusEmulationEnabled',{enabled:false});
+    const gtkWindow=spawnSync('xdotool',['search','--all','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
+    assert.equal(gtkWindow.status,0,gtkWindow.stderr);
+    const activate=spawnSync('xdotool',['windowactivate','--sync',gtkWindow.stdout.trim().split('\n')[0]],{env,encoding:'utf8'});
+    assert.equal(activate.status,0,activate.stderr);
+    await bar.waitFor({state:'detached'});
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].focus());
+    await page.waitForFunction(()=>document.hasFocus());
+    await focusSession.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+    await focusSession.detach();
+    await actions.click();
+    await page.locator(`[data-id="${progress}"] .task-title`).click({button:'right'});
+    assert.equal(await page.getByRole('toolbar').count(),1,'Only one row may show actions');
+    assert.equal(await title.isVisible(),true);
+    await page.getByRole('button',{name:'Reset progress',exact:true}).click();
+    await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'),progress);
+    // The reset Work task is filtered out; restore its state through the shared backend.
+    const reset=call('snapshot',{view:'active'}).notes.find(n=>n.id===progress);
+    assert.equal(reset.state,'active');
+    call('transition',{id:progress,revision:reset.updated_at,state:reset.state,action:'start'});
+    await page.waitForFunction(id=>document.querySelector(`#pinned [data-id="${id}"]`),progress);
+    await actions.click();
+    const current=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+    call('edit',{id:first,revision:current.updated_at,text:current.text+'\nExternal update'});
+    await bar.waitFor({state:'detached'});
+    await focusReturns(title);
+    // Resizing an open toolbar must keep all nine controls inside the unchanged row.
+    await actions.click();
+    for(const width of [280,580,420]) {
+      await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,360),width);
+      await page.waitForFunction(w=>innerWidth===w,width);
+      const box=await row.boundingBox();
+      assert.equal(box.height,rowBox.height);
+      assert.ok(await bar.getByRole('button').evaluateAll(nodes=>nodes.every(n=>{const r=n.getBoundingClientRect(),p=n.closest('.task-row').getBoundingClientRect();return r.left>=p.left && r.right<=p.right && r.top>=p.top && r.bottom<=p.bottom;})),'Every inline action must fit without clipping');
+      if(width===280) await page.screenshot({path:join(root,'inline-actions-narrow.png')});
+    }
+    await page.keyboard.press('Escape'); await focusReturns(actions);
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
+    // The bottom menu still uses the native popup at its opener.
+    const point=await bottom.evaluate(n=>{const r=n.getBoundingClientRect();return {x:Math.round(r.left),y:Math.round(r.bottom)};});
+    const state=await openNativeMenu(()=>bottom.click());
+    assert.equal(state.request.kind,'app');
+    assert.deepEqual({x:state.request.x,y:state.request.y},point);
+    const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
+    assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
     assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','drafts','close']);
+    const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
+    assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
+    assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
     await dismissNativeMenu(); await focusReturns(bottom);
   }
   await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
@@ -356,16 +404,16 @@ try {
   await page.getByText('Electron lifecycle ☘',{exact:true}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.filter(n=>n.text==='Electron lifecycle ☘\nsecond line').length,1);
   const added = call('snapshot',{view:'active'}).notes.find(n=>n.text.startsWith('Electron lifecycle'));
-  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
+  await selectTaskAction(page, added.id, 'Edit text…');
   await page.getByRole('textbox',{name:'Task text',exact:true}).fill('Edited from Electron ☘\nkeeps ID and history');
   await page.keyboard.press('Control+Enter');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
-  await page.locator(`[data-id="${added.id}"] [role="checkbox"]`).click();
+  await selectTaskAction(page, added.id, 'Start');
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'), added.id);
   // Queue a refresh behind completion so clearing busy renders the old snapshot.
   await writeFile(faultFile,'slow-complete');
-  await page.locator(`[data-id="${added.id}"] [role="checkbox"]`).click();
+  await selectTaskAction(page, added.id, 'Complete');
   let completionCommitted=false;
   for(let i=0;i<200;i++) {
     try { completionCommitted=await readFile(completeMarker,'utf8')==='committed'; } catch(error) { if(error.code!=='ENOENT') throw error; }
@@ -383,7 +431,14 @@ try {
   await page.getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
-  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'schedule');
+  await selectTaskAction(page, added.id, 'Remove to archive');
+  await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
+  assert.equal(call('snapshot',{view:'archive'}).notes.find(n=>n.id===added.id).state,'removed');
+  await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'archive');
+  await page.getByRole('button',{name:'Restore task',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
+  await selectTaskAction(page, added.id, 'Set reminder…');
   await page.getByRole('textbox',{name:'When (local time)',exact:true}).fill('2099-01-01 12:00');
   await page.getByRole('button',{name:'Set reminder',exact:true}).click();
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
@@ -405,6 +460,11 @@ try {
   await page.screenshot({path:join(root,'recent-tags.png')});
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape'); // reset creation tag, not the filter or existing tasks
+  const tagged=call('snapshot',{view:'active'}).notes.find(n=>n.text==='Tagged Electron task');
+  await selectTaskAction(page, tagged.id, 'Change tag…');
+  await page.getByRole('dialog').getByRole('button',{name:/^Untagged \(/}).click();
+  await page.getByRole('dialog').waitFor({state:'detached'});
+  assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===tagged.id).tag,null);
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
   Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../.venv/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
   const piRequire=createRequire(resolve('../pi/package.json'));
@@ -424,13 +484,13 @@ try {
   assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
   // Failed Kitty launch must keep the acknowledgement action, not offer a blocked retry.
   await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
-  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'kitty');
+  await selectTaskAction(page, added.id, 'Start in Kitty…');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('#draft').readOnly);
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
   // A failed close must preserve the window/draft and allow a later successful close.
-  await selectNativeMenu(() => page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
+  await selectTaskAction(page, added.id, 'Edit text…');
   const failedCloseEditor=page.locator('textarea[aria-label="Task text"]');
   await failedCloseEditor.fill('Private draft before failed close');
   const stateDir=join(env.XDG_DATA_HOME,'pinote/electron');
@@ -463,22 +523,25 @@ try {
   assert.equal(await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).count(),1);
   assert.equal(await reopened.getByRole('button',{name:'Dismiss notice',exact:true}).count(),0);
   await reopened.screenshot({path:join(root,'recovery.png')});
-  // Continue the native scenario in real recovery mode, then close while pending.
+  // Recovery keeps copy/private editing available, but disables all write actions.
   const readonlyActions=reopened.getByRole('button',{name:`Actions for task ${added.id}`,exact:true});
-  const readonlyMenu=await openNativeMenu(()=>readonlyActions.click());
-  assert.equal(readonlyMenu.request.readOnly,true);
-  for(const id of ['kitty','start','done','archive','tag','schedule']) {
-    assert.equal(readonlyMenu.items.find(i=>i.id===id)?.enabled,false,`${id} must be disabled during recovery`);
+  await readonlyActions.click();
+  const readonlyBar=reopened.getByRole('toolbar');
+  for(const name of ['Start in Kitty…','Start','Complete','Remove to archive','Change tag…','Set reminder…']) {
+    assert.equal(await readonlyBar.getByRole('button',{name,exact:true}).isDisabled(),true,`${name} must be disabled during recovery`);
   }
-  for(const id of ['copy','edit']) assert.equal(readonlyMenu.items.find(i=>i.id===id)?.enabled,true);
-  await dismissNativeMenu();
-  await openNativeMenu(()=>readonlyActions.click());
+  for(const name of ['Copy note','Edit text…']) assert.equal(await readonlyBar.getByRole('button',{name,exact:true}).isEnabled(),true);
+  assert.ok(await readonlyBar.getByRole('button',{name:'Copy note',exact:true}).evaluate(n=>n===document.activeElement));
+  await reopened.keyboard.press('ArrowRight');
+  assert.ok(await readonlyBar.getByRole('button',{name:'Edit text…',exact:true}).evaluate(n=>n===document.activeElement),'Arrow navigation must skip disabled actions');
+  await reopened.keyboard.press('Escape');
+  await readonlyActions.click();
   await writeFile(faultFile,''); await close();
   assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).draft,'Rapid uncertain add draft');
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await selectNativeMenu(() => reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
+  await selectTaskAction(reopened, added.id, 'Edit text…');
   await writeFile(faultFile,'edit');
   await reopened.evaluate(()=>{const input=document.querySelector('textarea[aria-label="Task text"]');input.value='Rapid uncertain edit draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true}));});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
@@ -498,7 +561,7 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await selectNativeMenu(() => reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
+  await selectTaskAction(reopened, added.id, 'Edit text…');
   const closingText='Private editor draft frozen at final close';
   const closingEditor=reopened.locator('textarea[aria-label="Task text"]');
   await closingEditor.fill(closingText);
@@ -592,7 +655,7 @@ try {
   assert.equal(await capacityComposer.evaluate(input=>input.readOnly),false,'Delayed add must still be pending when newer input arrives');
   await capacityComposer.fill(newerDraft);
   // An unrelated editor opened during the pending add must freeze immediately on recovery.
-  await selectNativeMenu(() => reopened.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click(), 'edit');
+  await selectTaskAction(reopened, added.id, 'Edit text…');
   const recoveryEditor=reopened.locator('textarea[aria-label="Task text"]');
   const recoveryText=await recoveryEditor.inputValue();
   await reopened.waitForFunction(()=>document.querySelector('#draft').readOnly);

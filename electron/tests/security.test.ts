@@ -10,8 +10,10 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validParams('edit', { id: true, revision: 'rev', text: 'x' }));
   assert.ok(!validParams('transition', { id: 1, revision: 'rev', state: 'active', action: 'erase' }));
   assert.ok(validMenuRequest({ kind: 'app', x: 0, y: 100 }));
-  assert.ok(validMenuRequest({ kind: 'task', x: 10, y: 20, inProgress: false, readOnly: true }));
-  for (const request of [null, {}, { kind: 'app', x: NaN, y: 0 }, { kind: 'app', x: -1, y: 0 }, { kind: 'app', x: 0.5, y: 0 }, { kind: 'app', x: 0, y: Infinity }, { kind: 'task', x: 0, y: 0 }, { kind: 'app', x: 0, y: 0, items: ['execute'] }, { kind: 'task', x: 0, y: 0, inProgress: 'yes', readOnly: false }]) assert.ok(!validMenuRequest(request));
+  for (const inProgress of [false, true]) for (const readOnly of [false, true]) {
+    assert.ok(!validMenuRequest({ kind: 'task', x: 10, y: 20, inProgress, readOnly }));
+  }
+  for (const request of [null, {}, { kind: 'app', x: NaN, y: 0 }, { kind: 'app', x: -1, y: 0 }, { kind: 'app', x: 0.5, y: 0 }, { kind: 'app', x: 0, y: Infinity }, { kind: 'task', x: 0, y: 0 }, { kind: 'app', x: 0, y: 0, items: ['execute'] }, { kind: 'app', x: 0, y: 0, inProgress: false, readOnly: false }, { kind: 'task', x: 0, y: 0, inProgress: 'yes', readOnly: false }]) assert.ok(!validMenuRequest(request));
   assert.ok(validState(initialState()));
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));

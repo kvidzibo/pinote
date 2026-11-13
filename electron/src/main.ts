@@ -75,17 +75,11 @@ function resize(width: number, height: number, anchored = true) {
 function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
   if (!window || closing || activeMenu) return Promise.resolve(null);
   const owner = window;
-  const writable = !readonly && !state.warning && (request.kind !== 'task' || !request.readOnly);
   return new Promise(resolve => {
     let selected: MenuAction | null = null;
-    const item = (id: MenuAction, label: string, enabled = true): Electron.MenuItemConstructorOptions => ({ id, label, enabled, click: () => { selected = id; } });
+    const item = (id: MenuAction, label: string): Electron.MenuItemConstructorOptions => ({ id, label, click: () => { selected = id; } });
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
-    const menu = Menu.buildFromTemplate(request.kind === 'task' ? [
-      item('kitty', 'Start in Kitty…', writable), item('copy', 'Copy note'), separator,
-      item(request.inProgress ? 'reset' : 'start', request.inProgress ? 'Reset progress' : 'Start', writable),
-      item('done', 'Complete', writable), item('archive', 'Remove to archive', writable), separator,
-      item('edit', 'Edit text…'), item('tag', 'Change tag…', writable), item('schedule', 'Set reminder…', writable),
-    ] : [
+    const menu = Menu.buildFromTemplate([
       item('filter', 'Filter by tag'), item('scheduled', 'Scheduled reminders'), item('archive', 'Archive'),
       item('manage-tags', 'Manage tags'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
     ]);

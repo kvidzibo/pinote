@@ -21,6 +21,10 @@ textarea { resize: none; line-height: 1.5; }
 #checklist.mixed .pinned { max-height: 50%; }
 .task-row { display: flex; align-items: center; min-height: 33px; gap: 2px; border: 1px solid transparent; border-radius: 4px; overflow: hidden; }
 .task-row.selected { border-color: #94a3b8; }
+.task-content, .task-actions { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
+.task-actions { background: #343c49; }
+.task-actions button { flex: 1; }
+.action-separator { flex: 0 0 1px; height: 18px; background: #596475; }
 .task-row.progress { background: #30333a; }
 .task-row.progress .checkbox { background: #594624; }
 .task-row.marked { background: #4a2e35; }

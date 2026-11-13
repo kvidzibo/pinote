@@ -171,7 +171,8 @@ async function addTask(): Promise<void> {
   } finally { adding = false; renderToolbar(); if (!layers.length && !closing) composer.focus(); }
 }
 let adding = false;
-let nativeMenuOpen = false, menuTaskId: number | undefined;
+let nativeMenuOpen = false;
+let taskActions: { task: Task; source: HTMLElement } | undefined;
 composer.addEventListener('input', () => { if (closing) return; state.draft = composer.value; draftVersion++; resizeComposer(); saveSoon(); });
 composer.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void track(addTask()); }
@@ -182,6 +183,7 @@ $('composer').addEventListener('submit', e => { e.preventDefault(); void track(a
 type Layer = { overlay: HTMLElement; panel: HTMLElement; close: () => void; update?: () => void; taskId?: number; kind?: string };
 const layers: Layer[] = [];
 function layer(title: string, kind = '', taskId?: number): Layer {
+  closeTaskActions();
   const prior = document.activeElement as HTMLElement | null;
   const overlay = el('div', undefined, 'overlay');
   const panel = el('section', undefined, 'panel'); panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', title); panel.tabIndex = -1;
@@ -205,7 +207,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   panel.focus(); renderSelected(); return item;
 }
 function renderSelected(): void {
-  for (const [id, row] of rowNodes) row.classList.toggle('selected', menuTaskId === id || layers.some(l => l.taskId === id));
+  for (const [id, row] of rowNodes) row.classList.toggle('selected', taskActions?.task.id === id || layers.some(l => l.taskId === id));
 }
 function field(label: string, value = ''): { wrapper: HTMLLabelElement; input: HTMLInputElement } {
   const wrapper = el('label', label), input = el('input'); input.value = value; wrapper.append(input); return { wrapper, input };
@@ -244,13 +246,14 @@ function menuPoint(element: HTMLElement): MenuPoint {
   const rect = element.getBoundingClientRect();
   return { x: Math.max(0, Math.round(rect.left)), y: Math.max(0, Math.round(rect.bottom)) };
 }
-async function chooseMenu(request: MenuRequest, returnTo: HTMLElement, taskId?: number): Promise<MenuAction | null> {
+async function chooseMenu(request: MenuRequest, returnTo: HTMLElement): Promise<MenuAction | null> {
   if (nativeMenuOpen || closing) return null;
-  nativeMenuOpen = true; menuTaskId = taskId; returnTo.setAttribute('aria-expanded', 'true'); renderSelected();
+  closeTaskActions(false);
+  nativeMenuOpen = true; returnTo.setAttribute('aria-expanded', 'true');
   try { return await api.popupMenu(request); }
   finally {
-    nativeMenuOpen = false; menuTaskId = undefined; returnTo.setAttribute('aria-expanded', 'false'); renderSelected();
-    if (!closing) (returnTo.isConnected ? returnTo : taskId ? rowNodes.get(taskId)?.querySelector<HTMLElement>('.task-title') ?? composer : composer).focus({ preventScroll: true });
+    nativeMenuOpen = false; returnTo.setAttribute('aria-expanded', 'false');
+    if (!closing) (returnTo.isConnected ? returnTo : composer).focus({ preventScroll: true });
   }
 }
 async function openMenu(event: MouseEvent): Promise<void> {
@@ -290,26 +293,37 @@ function makeRow(task: Task): HTMLElement {
     else if (isProgress(task)) void track(transition(task, 'reset'));
     else { marked.set(task.id, task.updated_at); renderTasks(); }
   });
-  const title = el('span', task.text.split('\n')[0], 'task-title'); title.title = task.text; title.tabIndex = 0; title.setAttribute('aria-haspopup', 'menu');
-  title.addEventListener('contextmenu', e => { e.preventDefault(); void track(contextMenu(task, { x: Math.round(e.clientX), y: Math.round(e.clientY) }, title)).catch(e => report(message(e))); });
-  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); void track(contextMenu(task, menuPoint(title), title)).catch(e => report(message(e))); } });
+  const title = el('span', task.text.split('\n')[0], 'task-title'); title.title = task.text; title.tabIndex = 0;
+  title.addEventListener('contextmenu', e => { e.preventDefault(); openTaskActions(task, title); });
+  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); openTaskActions(task, title); } });
   title.addEventListener('mouseup', event => {
     if (event.button !== 0 || nativeMenuOpen) return;
     const selection = window.getSelection()?.toString();
     if (selection) void api.copy(selection).catch(e => report(message(e)));
     composer.focus();
   });
-  row.append(checkbox, title);
-  if (task.tag) row.append(tagBadge(task.tag));
-  if (task.reminder_due_at || task.remind_at) row.append(button('schedule', dueLabel(task), () => schedule(task), readonly));
+  const content = el('div', undefined, 'task-content');
+  content.append(checkbox, title);
+  if (task.tag) content.append(tagBadge(task.tag));
+  if (task.reminder_due_at || task.remind_at) content.append(button('schedule', dueLabel(task), () => schedule(task), readonly));
   // Always offer the eye, including titles whose ellipsis depends on window width.
-  const actions = button('menu', `Actions for task ${task.id}`, event => { const source = event.currentTarget as HTMLElement; return contextMenu(task, menuPoint(source), source); });
-  actions.setAttribute('aria-haspopup', 'menu');
-  row.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), actions);
+  const actions = button('menu', `Actions for task ${task.id}`, event => openTaskActions(task, event.currentTarget as HTMLElement));
+  content.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), actions);
+  row.append(content);
   return row;
 }
 function renderTasks(): void {
   if (!active) return;
+  const opened = taskActions;
+  let restoreActionFocus: number | undefined;
+  if (opened) {
+    const task = active.notes.find(t => t.id === opened.task.id && visible(t));
+    const key = task && JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly]);
+    if (!task || rowKeys.get(task.id) !== key || exiting.has(task.id)) {
+      if (rowNodes.get(opened.task.id)?.contains(document.activeElement)) restoreActionFocus = opened.task.id;
+      closeTaskActions(false);
+    }
+  }
   const wanted = new Set<number>();
   const ordinaryRows: HTMLElement[] = [], progressRows: HTMLElement[] = [];
   for (const task of active.notes) {
@@ -341,6 +355,7 @@ function renderTasks(): void {
   checklist.classList.toggle('mixed', ordinaryRows.length > 0);
   pinned.hidden = !progressRows.length && !Array.from(pinned.children).some(n => exiting.has(Number((n as HTMLElement).dataset.id)));
   renderSelected(); fitWindow();
+  if (restoreActionFocus !== undefined) (rowNodes.get(restoreActionFocus)?.querySelector<HTMLElement>('.task-title') ?? composer).focus({ preventScroll: true });
   if (scrollToId !== undefined) {
     const row = rowNodes.get(scrollToId);
     if (row && wanted.has(scrollToId)) { row.scrollIntoView({ block: 'nearest' }); scrollToId = undefined; }
@@ -349,6 +364,7 @@ function renderTasks(): void {
 function animateDone(id: number): void {
   const row = rowNodes.get(id);
   if (!row || exiting.has(id) || collapsed || document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (taskActions?.task.id === id) closeTaskActions();
   exiting.add(id); row.classList.add('completed'); row.setAttribute('aria-label', 'Completed');
   for (const b of row.querySelectorAll('button')) b.disabled = true;
   const check = row.querySelector('button'); if (check) { check.setAttribute('aria-checked', 'true'); const image = check.querySelector('img'); if (image) image.src = `icons/${icons.done}-symbolic.svg`; }
@@ -368,10 +384,52 @@ async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' 
     if (action === 'restore') showSaved(task.id);
   } finally { busyTasks.delete(task.id); renderTasks(); }
 }
-async function contextMenu(task: Task, point: MenuPoint, source: HTMLElement): Promise<void> {
-  const action = await chooseMenu({ kind: 'task', ...point, inProgress: isProgress(task), readOnly: readonly || busyTasks.has(task.id) }, source, task.id);
-  if (!action || closing) return;
-  if (!active?.notes.some(t => t.id === task.id && t.updated_at === task.updated_at)) { report('Task changed while the menu was open. Reopen its actions to use the latest version.'); return; }
+function closeTaskActions(restoreFocus = true): void {
+  const opened = taskActions;
+  if (!opened) return;
+  taskActions = undefined;
+  const row = rowNodes.get(opened.task.id);
+  row?.querySelector('.task-actions')?.remove();
+  const content = row?.querySelector<HTMLElement>('.task-content');
+  if (content) content.hidden = false;
+  renderSelected();
+  if (restoreFocus && !closing) (opened.source.isConnected ? opened.source : composer).focus({ preventScroll: true });
+}
+function openTaskActions(task: Task, source: HTMLElement): void {
+  const row = rowNodes.get(task.id);
+  if (!row || closing || nativeMenuOpen || exiting.has(task.id)) return;
+  closeTaskActions(false);
+  taskActions = { task, source };
+  const bar = el('div', undefined, 'task-actions');
+  bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for task ${task.id}: ${task.text.split('\n')[0]}`);
+  const disabled = readonly || busyTasks.has(task.id);
+  const action = (icon: Icon, label: string, id: TaskAction, blocked = disabled) => button(icon, label, () => runTaskAction(task, id), blocked);
+  const separator = () => { const node = el('span', undefined, 'action-separator'); node.setAttribute('aria-hidden', 'true'); return node; };
+  bar.append(
+    action('kitty', 'Start in Kitty…', 'kitty'), action('copy', 'Copy note', 'copy', false), separator(),
+    action(isProgress(task) ? 'reset' : 'start', isProgress(task) ? 'Reset progress' : 'Start', isProgress(task) ? 'reset' : 'start'),
+    action('done', 'Complete', 'done'), action('remove', 'Remove to archive', 'archive'), separator(),
+    action('edit', 'Edit text…', 'edit', false), action('schedule', 'Set reminder…', 'schedule'), action('tag', 'Change tag…', 'tag'),
+  );
+  bar.append(button('close', 'Close task actions', () => closeTaskActions()));
+  const enabled = Array.from(bar.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+  for (const b of bar.querySelectorAll('button')) b.tabIndex = -1;
+  enabled[0].tabIndex = 0;
+  bar.addEventListener('focusin', e => { for (const b of enabled) b.tabIndex = b === e.target ? 0 : -1; });
+  bar.addEventListener('keydown', e => {
+    const index = enabled.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : e.key === 'ArrowRight' ? (index + 1) % enabled.length : e.key === 'ArrowLeft' ? (index + enabled.length - 1) % enabled.length : undefined;
+    if (next !== undefined) { e.preventDefault(); enabled[next].focus(); }
+  });
+  bar.addEventListener('contextmenu', e => e.preventDefault());
+  row.querySelector<HTMLElement>('.task-content')!.hidden = true;
+  row.append(bar); renderSelected(); enabled[0].focus({ preventScroll: true });
+}
+type TaskAction = 'kitty' | 'copy' | 'start' | 'reset' | 'done' | 'archive' | 'edit' | 'tag' | 'schedule';
+async function runTaskAction(task: Task, action: TaskAction): Promise<void> {
+  closeTaskActions();
+  if (closing) return;
+  if (!active?.notes.some(t => t.id === task.id && t.updated_at === task.updated_at)) { report('Task changed while its actions were open. Reopen them to use the latest version.'); return; }
   switch (action) {
     case 'kitty': await startKitty(task); break;
     case 'copy': await api.copy(task.text); break;
@@ -726,12 +784,18 @@ document.addEventListener('keydown', e => {
   if (nativeMenuOpen || e.key !== 'Escape') return;
   e.preventDefault(); e.stopPropagation();
   if (layers.length) { layers[layers.length - 1].close(); return; }
+  if (taskActions) { closeTaskActions(); return; }
   if (creationTag !== null) { creationTag = null; renderToolbar(); return; }
   window.close();
 });
+function dismissOutsideActions(event: Event): void {
+  if (taskActions && !rowNodes.get(taskActions.task.id)?.contains(event.target as Node)) closeTaskActions(false);
+}
+document.addEventListener('pointerdown', dismissOutsideActions, true);
+document.addEventListener('focusin', dismissOutsideActions);
 document.addEventListener('visibilitychange', () => { baseline = false; if (!document.hidden) void track(refresh()); });
 window.addEventListener('focus', () => { if (!document.hidden) void track(refresh()); });
-window.addEventListener('blur', () => { if (!choosingFolder) { stayOrdinary.clear(); renderTasks(); } });
+window.addEventListener('blur', () => { closeTaskActions(false); if (!choosingFolder) { stayOrdinary.clear(); renderTasks(); } });
 checklist.addEventListener('mouseup', e => {
   const target = e.target as HTMLElement;
   if (target === checklist || target === ordinary || target === pinned || target.classList.contains('empty')) composer.focus();
