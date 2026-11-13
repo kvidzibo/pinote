@@ -301,6 +301,7 @@ try {
     assert.equal(await page.getByRole('button',{name:'Copy note',exact:true}).count(),0,'Native items must not be DOM buttons');
     // Only the already-asserted private Xvfb/private D-Bus display is captured.
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
+    assert.ifError(capture.error);
     assert.equal(capture.status,0,capture.stderr);
     assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
     await dismissNativeMenu(); await focusReturns(title);
