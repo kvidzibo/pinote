@@ -109,7 +109,7 @@ try {
   let gtkReady=false;
   for(let i=0;i<200;i++) {
     assert.equal(gtk.exitCode,null,`GTK exited before showing its window: ${logs.join('\n')}`);
-    const windows=spawnSync('xdotool',['search','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
+    const windows=spawnSync('xdotool',['search','--all','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
     assert.ifError(windows.error);
     if(windows.status===0 && windows.stdout.trim()) { gtkReady=true; break; }
     await new Promise(resolve=>setTimeout(resolve,100));
