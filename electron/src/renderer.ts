@@ -317,7 +317,8 @@ function renderTasks(): void {
     wanted.add(task.id);
     const key = JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly]);
     let row = rowNodes.get(task.id);
-    if (!row || rowKeys.get(task.id) !== key) { const next = makeRow(task); row?.replaceWith(next); row = next; rowNodes.set(task.id, row); rowKeys.set(task.id, key); }
+    // Keep the exit node until its timer finishes, even if busy clears before refresh.
+    if (!row || (!exiting.has(task.id) && rowKeys.get(task.id) !== key)) { const next = makeRow(task); row?.replaceWith(next); row = next; rowNodes.set(task.id, row); rowKeys.set(task.id, key); }
     (isProgress(task) && !stayOrdinary.has(task.id) ? progressRows : ordinaryRows).push(row);
   }
   for (const [id, row] of rowNodes) {
@@ -351,7 +352,7 @@ function animateDone(id: number): void {
   exiting.add(id); row.classList.add('completed'); row.setAttribute('aria-label', 'Completed');
   for (const b of row.querySelectorAll('button')) b.disabled = true;
   const check = row.querySelector('button'); if (check) { check.setAttribute('aria-checked', 'true'); const image = check.querySelector('img'); if (image) image.src = `icons/${icons.done}-symbolic.svg`; }
-  setTimeout(() => { if (!exiting.has(id)) return; exiting.delete(id); row.remove(); rowNodes.delete(id); rowKeys.delete(id); renderTasks(); }, 410);
+  setTimeout(() => { if (!exiting.has(id) || rowNodes.get(id) !== row) return; exiting.delete(id); row.remove(); rowNodes.delete(id); rowKeys.delete(id); renderTasks(); }, 410);
 }
 async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' | 'restore'): Promise<void> {
   if (busyTasks.has(task.id)) return;
