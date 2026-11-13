@@ -71,14 +71,14 @@ function recoveryWarning(text: string, preserveDrafts = false): void {
   readonly = true; state.warning = text; composer.readOnly = true; updateEditors(); report(text); renderTasks(); renderToolbar();
   if (preserveDrafts) void track(persist(true)).catch(() => undefined);
 }
-function button(icon: Icon, label: string, action: () => unknown, disabled = false): HTMLButtonElement {
+function button(icon: Icon, label: string, action: (event: MouseEvent) => unknown, disabled = false): HTMLButtonElement {
   const b = el('button'); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label);
   const image = el('img'); image.src = `icons/${icons[icon]}-symbolic.svg`; image.alt = ''; image.setAttribute('aria-hidden', 'true');
   b.append(image); b.disabled = disabled;
-  b.addEventListener('click', () => {
+  b.addEventListener('click', event => {
     if (closing) return;
     try {
-      const result = action();
+      const result = action(event);
       if (result && typeof (result as Promise<unknown>).then === 'function') {
         void track(Promise.resolve(result)).catch(e => report(message(e)));
       }
@@ -179,7 +179,7 @@ composer.addEventListener('keydown', e => {
 $('composer').addEventListener('submit', e => { e.preventDefault(); void track(addTask()); });
 
 // Each layer owns its callbacks. Escape removes only the topmost layer.
-type Layer = { overlay: HTMLElement; panel: HTMLElement; close: () => void; update?: () => void; taskId?: number; kind?: string };
+type Layer = { overlay: HTMLElement; panel: HTMLElement; close: () => void; dispose?: () => void; update?: () => void; taskId?: number; kind?: string };
 const layers: Layer[] = [];
 function layer(title: string, kind = '', taskId?: number): Layer {
   const prior = document.activeElement as HTMLElement | null;
@@ -189,7 +189,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   const item: Layer = { overlay, panel, kind, taskId, close: () => {
     const index = layers.indexOf(item); if (index < 0) return;
     for (const child of layers.slice(index + 1).reverse()) child.close();
-    layers.splice(index, 1); overlay.remove();
+    layers.splice(index, 1); item.dispose?.(); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
   } };
@@ -224,7 +224,7 @@ function renderToolbar(): void {
   const filter = button('filter', `Filter by tag: ${state.filters === null ? 'All' : state.filters.length ? state.filters.map(t => t || 'Untagged').join(', ') : 'None'} (${count})`, () => tagsMenu('filter'));
   filter.append(el('span', String(count)));
   const move = button('move', 'Drag to move window', () => undefined); move.className = 'move-handle';
-  toolbar.append(tag, filter, button('add', 'Add task (Enter)', addTask, readonly || adding || !active), button(collapsed ? 'expand' : 'collapse', collapsed ? 'Expand checklist' : 'Collapse checklist', async () => {
+  toolbar.append(tag, filter, button(collapsed ? 'expand' : 'collapse', collapsed ? 'Expand checklist' : 'Collapse checklist', async () => {
     const next = !collapsed; await api.collapse(next); collapsed = next; baseline = false; checklist.hidden = next; renderToolbar();
   }), move, button('menu', 'Menu', openMenu));
   fitWindow();
@@ -249,7 +249,7 @@ function makeRow(task: Task): HTMLElement {
   const row = el('article', undefined, `task-row${isProgress(task) ? ' progress' : ''}${marked.has(task.id) ? ' marked' : ''}`);
   row.dataset.id = String(task.id);
   const mark = marked.has(task.id);
-  const checkbox = button(mark ? 'trash' : isProgress(task) ? 'reset' : 'start', `Task ${task.id}: ${mark ? 'Cancel deletion mark' : isProgress(task) ? 'Complete' : 'Start'}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
+  const checkbox = button(mark ? 'trash' : isProgress(task) ? 'done' : 'start', `Task ${task.id}: ${mark ? 'Cancel deletion mark' : isProgress(task) ? 'Complete' : 'Start'}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
     if (mark) { marked.delete(task.id); renderTasks(); } else void track(transition(task, isProgress(task) ? 'done' : 'start'));
   }, readonly || busyTasks.has(task.id));
   checkbox.classList.add('checkbox');
@@ -263,8 +263,8 @@ function makeRow(task: Task): HTMLElement {
     else { marked.set(task.id, task.updated_at); renderTasks(); }
   });
   const title = el('span', task.text.split('\n')[0], 'task-title'); title.title = task.text; title.tabIndex = 0;
-  title.addEventListener('contextmenu', e => { e.preventDefault(); contextMenu(task); });
-  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); contextMenu(task); } });
+  title.addEventListener('contextmenu', e => { e.preventDefault(); contextMenu(task, e); });
+  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); contextMenu(task, title); } });
   title.addEventListener('mouseup', () => {
     const selection = window.getSelection()?.toString();
     if (selection) void api.copy(selection).catch(e => report(message(e)));
@@ -274,7 +274,7 @@ function makeRow(task: Task): HTMLElement {
   if (task.tag) row.append(tagBadge(task.tag));
   if (task.reminder_due_at || task.remind_at) row.append(button('schedule', dueLabel(task), () => schedule(task), readonly));
   // Always offer the eye, including titles whose ellipsis depends on window width.
-  row.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), button('menu', `Actions for task ${task.id}`, () => contextMenu(task)));
+  row.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), button('menu', `Actions for task ${task.id}`, event => contextMenu(task, event)));
   return row;
 }
 function renderTasks(): void {
@@ -306,9 +306,8 @@ function renderTasks(): void {
     const empty = el('div', active.notes.length ? 'No tasks match this filter' : 'Add your first task below', 'empty');
     if (active.notes.length) empty.append(button('filter', 'Show all tasks', selectAll)); ordinary.append(empty);
   }
-  const max = active.config.maxVisibleNotes;
-  ordinary.style.maxHeight = `${Math.max(1, progressRows.length ? Math.ceil(max / 2) : max) * 34}px`;
-  pinned.style.maxHeight = `${Math.max(1, ordinaryRows.length ? Math.floor(max / 2) : max) * 34}px`;
+  // Progress takes only the space it needs; ordinary tasks use all remaining room.
+  pinned.style.maxHeight = ordinaryRows.length ? '50%' : '100%';
   pinned.hidden = !progressRows.length && !Array.from(pinned.children).some(n => exiting.has(Number((n as HTMLElement).dataset.id)));
   renderSelected(); fitWindow();
   if (scrollToId !== undefined) {
@@ -338,8 +337,23 @@ async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' 
     if (action === 'restore') showSaved(task.id);
   } finally { busyTasks.delete(task.id); renderTasks(); }
 }
-function contextMenu(task: Task): void {
+function contextMenu(task: Task, anchor: MouseEvent | HTMLElement): void {
+  const source = anchor instanceof HTMLElement ? anchor : anchor.currentTarget as HTMLElement;
+  const rect = source.getBoundingClientRect();
+  const point = anchor instanceof MouseEvent && (anchor.detail !== 0 || anchor.clientX !== 0 || anchor.clientY !== 0) ? { x: anchor.clientX, y: anchor.clientY } : { x: rect.left, y: rect.bottom };
   const menu = layer(`Task ${task.id} actions`, 'context', task.id); const bar = controls(menu.panel);
+  menu.overlay.classList.add('context-overlay');
+  const position = () => {
+    const margin = 7, top = notice.hidden ? margin : notice.getBoundingClientRect().bottom + margin;
+    const { width, height } = menu.panel.getBoundingClientRect();
+    menu.panel.style.left = `${Math.max(margin, Math.min(point.x, innerWidth - width - margin))}px`;
+    const y = point.y + height + margin > innerHeight ? point.y - height : point.y;
+    menu.panel.style.top = `${Math.max(top, Math.min(y, innerHeight - height - margin))}px`;
+  };
+  const observer = new ResizeObserver(position);
+  observer.observe(menu.panel); observer.observe(notice);
+  window.addEventListener('resize', position);
+  menu.dispose = () => { observer.disconnect(); window.removeEventListener('resize', position); };
   const closeThen = (fn: () => unknown) => () => { menu.close(); return fn(); };
   bar.append(button('kitty', 'Start in Kitty…', closeThen(() => startKitty(task)), readonly),
     button('copy', 'Copy note', () => api.copy(task.text)),
@@ -349,6 +363,7 @@ function contextMenu(task: Task): void {
     button('edit', 'Edit text…', closeThen(() => edit(task))),
     button('tag', 'Change tag…', () => tagsMenu('task', task), readonly),
     button('schedule', 'Set reminder…', closeThen(() => schedule(task)), readonly));
+  position();
 }
 async function startKitty(task: Task): Promise<void> {
   const folder = active?.tags.find(t => t.name === task.tag)?.folder;
@@ -525,7 +540,9 @@ function tagsMenu(mode: TagMode, task?: Task): void {
     if (lastDraw === key) return; lastDraw = key;
     const top = list.scrollTop;
     list.replaceChildren();
-    const names = ['', ...(active?.tags.map(t => t.name) ?? [])];
+    // The backend orders tags by newest associated task, oldest first.
+    const names = [...(active?.tags.map(t => t.name) ?? [])].reverse();
+    names.push('');
     // Preserve unknown saved selections until the registry catches up or the user clears them.
     for (const selected of state.filters ?? []) if (!names.includes(selected)) names.push(selected);
     for (const name of names) {

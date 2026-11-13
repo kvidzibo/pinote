@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The Python package is 0.23.0; the independently
-versioned `electron/` npm package is private, version 0.1.0.
+versioned `electron/` npm package is private, version 0.1.1.
 Run from the repository root:
 
 ```sh
@@ -42,15 +42,19 @@ Icons are bundled rather than taken from the host icon theme.
 
 ## Controls and deliberate differences
 
-- Add with **Enter** or **+**; **Shift+Enter** inserts a newline. The composer and
-  in-progress tasks stay accessible while the ordinary list scrolls.
+- Add with **Enter**; **Shift+Enter** inserts a newline. The in-progress section
+  sizes to its contents (up to half the list when ordinary tasks are present);
+  ordinary tasks use the remaining space. Both lists scroll independently.
 - Click a task checkbox to start, then complete it. Right-click task text or use
   its actions button for editing, tags, reminders, archive, and **Start in Kitty…**.
+  A checkmark completes an in-progress task; right-click it to reset progress.
+  Task actions open beside the click (or focused control when using the keyboard).
 - Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
   menu includes draft recovery; stale drafts must be copied/reconciled rather
   than silently overwriting a changed task.
 - Search tag selectors and filters; create/manage saved tags and optional default
-  Kitty folders. In-progress tasks remain visible regardless of tag filters.
+  Kitty folders. Tags with the newest associated tasks appear first, followed by
+  unused tags and Untagged. In-progress tasks remain visible regardless of filters.
 - The menu opens scheduled reminders and Archive, where tasks can be restored.
 - The always-visible eye opens a safe Markdown preview, including agent fields
   and unread updates. Raw HTML and remote images are not loaded. Supported links

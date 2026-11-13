@@ -16,7 +16,7 @@ textarea { resize: none; line-height: 1.5; }
 #notice span { flex: 1; min-width: 0; }
 #notice button { position: sticky; top: 0; }
 #checklist { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; gap: 4px; }
-.task-list { min-height: 0; overflow: auto; scrollbar-gutter: stable; flex: 1 1 auto; padding-right: 3px; }
+.task-list { min-height: 0; overflow: auto; scrollbar-gutter: stable; flex: 1 1 0; padding-right: 3px; }
 .pinned { border-top: 1px solid #4b5563; flex: 0 1 auto; }
 .task-row { display: flex; align-items: center; min-height: 33px; gap: 2px; border: 1px solid transparent; border-radius: 4px; overflow: hidden; }
 .task-row.selected { border-color: #94a3b8; }
@@ -37,6 +37,8 @@ textarea { resize: none; line-height: 1.5; }
 .empty { padding: 13px 6px; color: #b7c0ce; text-align: center; }
 .overlay { position: fixed; inset: 0; padding: calc(var(--notice-height, 0px) + 7px) 7px 7px; display: flex; align-items: center; justify-content: center; background: #10151c99; z-index: 10; }
 .panel { display: flex; flex-direction: column; gap: 8px; padding: 9px; border: 1px solid #718096; border-radius: 6px; background: #232832; box-shadow: 0 5px 18px #0008; width: 100%; max-height: 100%; min-height: 0; overflow: auto; }
+.context-overlay { background: transparent; }
+.context-overlay .panel { position: absolute; width: max-content; max-width: calc(100% - 14px); max-height: calc(100% - var(--notice-height, 0px) - 14px); }
 .panel header { display: flex; align-items: center; justify-content: space-between; gap: 5px; flex-shrink: 0; }
 .panel h2 { font-size: 12px; margin: 0; font-weight: bold; }
 .panel p { margin: 3px 0; line-height: 1.5; overflow-wrap: anywhere; }

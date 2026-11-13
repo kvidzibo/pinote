@@ -24,6 +24,7 @@ function call(operation, params) {
   const response = JSON.parse(run.stdout); assert.ok(response.ok,JSON.stringify(response)); return response.result;
 }
 call('create_tag',{name:'Work',folder:null});
+call('create_tag',{name:'Unused',folder:null});
 const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available.\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
 const progress = call('add',{text:'Check GTK, CLI and Pi coexistence',tag:'Work'}).id;
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
@@ -75,6 +76,66 @@ try {
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
   assert.ok(await page.locator('img').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
   await page.screenshot({path:join(root,'checklist.png')});
+  // Compact controls: content-sized progress, recent tags, and actions at the click.
+  assert.equal(await page.getByRole('button',{name:'Add task (Enter)',exact:true}).count(),0);
+  assert.match(await page.locator('#pinned .checkbox img').getAttribute('src'),/task-complete-symbolic/);
+  await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
+  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Work (101) ▶ 1','Unused (0)','Untagged (2)']);
+  await page.screenshot({path:join(root,'recent-tags.png')});
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:/^Filter by tag:/}).click();
+  await page.getByRole('button',{name:'Select all tags',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250); // Let automatic fitting settle before a manual resize.
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(600,440));
+  await page.waitForFunction(()=>innerWidth===600 && innerHeight===440);
+  const assertLists=async()=>{
+    const boxes=await page.evaluate(()=>Object.fromEntries(['ordinary','pinned','checklist'].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [id,{height:r.height,bottom:r.bottom}];})));
+    assert.ok(Math.abs(boxes.pinned.height-34)<=1,'One progress row must retain its content height even with 100 ordinary tasks');
+    assert.ok(Math.abs(boxes.pinned.bottom-boxes.checklist.bottom)<=1,'No unused gap below the progress list');
+    assert.ok(Math.abs(boxes.ordinary.height+boxes.pinned.height+4-boxes.checklist.height)<=1,'Ordinary tasks must fill the remaining height');
+  };
+  await assertLists();
+  let resizedTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+  call('transition',{id:first,revision:resizedTask.updated_at,state:resizedTask.state,action:'start'});
+  await page.waitForFunction(()=>document.querySelectorAll('#pinned .task-row').length===2);
+  assert.equal(Math.round((await page.locator('#pinned').boundingBox()).height),67,'Progress must grow when another task starts');
+  resizedTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+  call('transition',{id:first,revision:resizedTask.updated_at,state:resizedTask.state,action:'reset'});
+  await page.waitForFunction(()=>document.querySelectorAll('#pinned .task-row').length===1);
+  await assertLists();
+  await page.screenshot({path:join(root,'dynamic-checklist.png')});
+  const title=page.locator(`[data-id="${first}"] .task-title`);
+  await title.click({button:'right',position:{x:12,y:10}});
+  const titleBox=await title.boundingBox();
+  let menuBox=await page.getByRole('dialog',{name:`Task ${first} actions`,exact:true}).boundingBox();
+  assert.ok(Math.abs(menuBox.x-titleBox.x-12)<=1 && Math.abs(menuBox.y-titleBox.y-10)<=1,'Right-click actions must open at the pointer');
+  await page.screenshot({path:join(root,'task-actions.png')});
+  await page.keyboard.press('Escape');
+  await title.focus(); await page.keyboard.press('Shift+F10');
+  menuBox=await page.getByRole('dialog',{name:`Task ${first} actions`,exact:true}).boundingBox();
+  assert.ok(Math.abs(menuBox.x-titleBox.x)<=1 && Math.abs(menuBox.y-titleBox.y-titleBox.height)<=1,'Keyboard actions must open beside the focused title');
+  await page.keyboard.press('Escape');
+  assert.equal(await title.evaluate(node=>node===document.activeElement),true);
+  const actions=page.locator(`[data-id="${progress}"]`).getByRole('button',{name:`Actions for task ${progress}`,exact:true});
+  await actions.click({position:{x:14,y:26}});
+  menuBox=await page.getByRole('dialog',{name:`Task ${progress} actions`,exact:true}).boundingBox();
+  const actionBox=await actions.boundingBox();
+  assert.ok(menuBox.y+menuBox.height<=actionBox.y+actionBox.height,'Bottom-edge actions must open above the click');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(280,180));
+  await page.waitForFunction(()=>innerWidth===280 && innerHeight===180);
+  await page.waitForTimeout(100);
+  menuBox=await page.getByRole('dialog',{name:`Task ${progress} actions`,exact:true}).boundingBox();
+  assert.ok(menuBox.x>=7 && menuBox.y>=7 && menuBox.x+menuBox.width<=273 && menuBox.y+menuBox.height<=173,'An open menu must stay inside a resized narrow window');
+  await page.screenshot({path:join(root,'narrow-actions.png')});
+  await page.keyboard.press('Escape');
+  await assertLists();
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(600,440));
+  await page.waitForFunction(()=>innerWidth===600 && innerHeight===440);
+  await page.getByRole('button',{name:/^Filter by tag:/}).click();
+  await page.getByRole('button',{name:'Clear selection (in-progress only)',exact:true}).click();
+  await page.getByRole('menuitemcheckbox',{name:'Untagged (2)',exact:true}).click();
+  await page.keyboard.press('Escape');
   await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
   await page.getByRole('dialog').waitFor();
   assert.equal(await page.evaluate(()=>window.compromised),undefined);
@@ -121,6 +182,10 @@ try {
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Tagged Electron task'); await page.keyboard.press('Enter');
   await page.getByText('Tagged Electron task',{exact:true}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.text==='Tagged Electron task').tag,'Side project');
+  await page.getByRole('button',{name:'New-task tag: Side project',exact:true}).click();
+  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Side project (1)','Work (101) ▶ 1','Unused (0)','Untagged (3)']);
+  await page.screenshot({path:join(root,'recent-tags.png')});
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Escape'); // reset creation tag, not the filter or existing tasks
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
   Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../.venv/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
@@ -144,7 +209,7 @@ try {
   await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:`Actions for task ${added.id}`,exact:true}).click();
   await page.getByRole('button',{name:'Start in Kitty…',exact:true}).click();
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('#toolbar button[aria-label="Add task (Enter)"]').disabled);
+  await page.waitForFunction(()=>!document.querySelector('#draft').readOnly);
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
   // A failed close must preserve the window/draft and allow a later successful close.
