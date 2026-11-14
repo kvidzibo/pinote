@@ -15,7 +15,7 @@ type Run = (executable: string, args: string[], env: NodeJS.ProcessEnv, input?: 
 type Service = { present: boolean; active: boolean; pid: number };
 type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string; mode: number; replacement: string; replacementMode: number; stash?: string; publishIntent?: boolean };
 type Journal = { version: 1; complete: boolean; backup: string; service: Service; files: SavedFile[] };
-export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; processArguments?: (pid: number) => Promise<string[]>; updateLock?: string; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
+export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; processArguments?: (pid: number) => Promise<string[]>; processExecutable?: (pid: number) => Promise<string>; processDirectory?: (pid: number) => Promise<string>; updateLock?: string; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
 const limit = 1024 * 1024;
 const xdg = (env: NodeJS.ProcessEnv, name: string, fallback: string) => env[name] && isAbsolute(env[name]!) ? env[name]! : join(env.HOME || homedir(), fallback);
 function locations(env: NodeJS.ProcessEnv) {
@@ -273,6 +273,14 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       await access('/usr/bin/env', constants.X_OK);
       serviceArguments = await (dependencies.processArguments || (async pid => (await readFile(`/proc/${pid}/cmdline`)).toString().split('\0').filter(Boolean)))(before.pid);
       if (serviceArguments.length !== 2 || !isAbsolute(serviceArguments[0]) || !isAbsolute(serviceArguments[1]) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
+      let documented = false;
+      try {
+        const runtime = await realpath(options.node);
+        const running = await realpath(await (dependencies.processExecutable || (pid => readlink(`/proc/${pid}/exe`)))(before.pid));
+        const cwd = await (dependencies.processDirectory || (pid => readlink(`/proc/${pid}/cwd`)))(before.pid);
+        documented = running === runtime && await realpath(serviceArguments[0]) === runtime && await realpath(serviceArguments[1]) === await realpath(join(cwd, 'pi/dist-mcp/mcp/http.js'));
+      } catch { /* An unverifiable process must not be stopped or reconfigured. */ }
+      if (!documented) throw new Error('Automatic switching requires the documented direct Node HTTP service in its project working directory, using the same trusted Node runtime as Electron.');
       const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(before.pid);
       await verifyExistingCLI(options, run, serviceEnv);
       await (dependencies.listening || listening)(serviceEnv);

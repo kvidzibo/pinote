@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script'] as const) {
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
@@ -25,13 +25,17 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const source = await readFile(database);
       await mkdir(join(dirname(database), 'electron'));
       await writeFile(join(dirname(database), 'electron/state.json'), '{"draft":"private draft"}', { mode: 0o600 });
+      const script = mode === 'service-script' ? join(root, 'foreign/dist-mcp/mcp/http.js') : resolve('../pi/dist-mcp/mcp/http.js');
+      if (mode === 'service-script') { await mkdir(dirname(script), { recursive: true }); await writeFile(script, '// custom service\n'); }
       const dropin = join(root, 'config/systemd/user/pinote.service.d/90-node-backend.conf');
       let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted' || mode === 'deletion' || mode === 'deletion-new';
       const existingCLI = mode === 'wrapper' ? old : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
       const commands: string[] = [];
       const dependencies = {
         updateLock: join(root, 'update-lock/update.lock'),
-        processArguments: async () => [process.execPath, resolve('../pi/dist-mcp/mcp/http.js')],
+        processArguments: async () => [process.execPath, script],
+        processExecutable: async () => mode === 'service-wrapper' ? '/bin/sh' : process.execPath,
+        processDirectory: async () => resolve('..'),
         run: async (executable: string, args: string[], childEnv: NodeJS.ProcessEnv, input?: string) => {
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
@@ -61,8 +65,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
-      if (mode === 'wrapper' || mode === 'absent-variable') {
-        await assert.rejects(operation, /custom CLI wrapper/);
+      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script'].includes(mode)) {
+        await assert.rejects(operation, mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }

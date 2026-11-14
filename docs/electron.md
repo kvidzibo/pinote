@@ -55,7 +55,9 @@ the bundled CLI/bridge against the same database, then:
 - Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
 - Adds a user override for the **existing** `pinote.service`; no service is created
   or enabled. A present service must be running with the documented direct Node
-  HTTP command. Its original CLI's database is verified before changing anything;
+  HTTP command from its project working directory and the same trusted Node
+  executable used by Electron; the actual process executable is checked, not
+  just its command line. Custom service launchers/scripts are unsupported. Its original CLI's database is verified before changing anything;
   custom CLI wrappers or runtime injection require manual verification. The
   drop-in preserves service arguments/environment files and overrides the CLI
   at execution, including an old command supplied by `EnvironmentFile`.
