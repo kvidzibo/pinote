@@ -773,15 +773,19 @@ class ReminderWindow(Gtk.ApplicationWindow):
         hints.max_width = max(hints.min_width, area.width - 24)
         self.set_geometry_hints(None, hints, Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE)
         self._requested_height = desired_height
-        if height != desired_height:
-            self.resize(width, desired_height)
         self._remember_size(width, desired_height)
-        position = (self.anchor_x, max(area.y, self.anchor_bottom - height))
+        # Move before growing so i3 cannot clamp an overflowing resize and
+        # have that unsolicited move mistaken for a new manual anchor. When
+        # shrinking, wait for the actual allocation before moving down: GTK
+        # can refuse a size smaller than newly shown content (e.g. an error).
+        position = (self.anchor_x, max(area.y, self.anchor_bottom - max(height, desired_height)))
         # Compare with the same snapshot used to update the anchor. A fresh
         # query can see a later manual move and undo it before its event arrives.
         if current != position:
             self._placement_requests.add(position)
             self.move(*position)
+        if height != desired_height:
+            self.resize(width, desired_height)
         # The first mapped pass has applied the WM correction. Its configure
         # acknowledgement can be coalesced with a drag; accept manual moves now.
         self._initial_placement = False

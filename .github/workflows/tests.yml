@@ -8,6 +8,38 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      gtk: ${{ steps.paths.outputs.gtk }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        name: Detect GTK and shared Python changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Release/reusable runs keep full coverage. PRs use their complete diff,
+          # including deleted paths and both sides of renames.
+          gtk=true
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            git diff --name-only --no-renames -z "$PR_BASE...$PR_HEAD" > "$RUNNER_TEMP/gtk-paths"
+            gtk=false
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                src/*|tests/*|scripts/*|pyproject.toml|uv.lock|.github/*)
+                  gtk=true
+                  break
+                  ;;
+              esac
+            done < "$RUNNER_TEMP/gtk-paths"
+          fi
+          echo "gtk=$gtk" >> "$GITHUB_OUTPUT"
+
   pi:
     runs-on: ubuntu-latest
     strategy:
@@ -69,6 +101,8 @@ jobs:
       - run: xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
 
   gtk:
+    needs: changes
+    if: needs.changes.outputs.gtk == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
