@@ -14,12 +14,13 @@ const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i;
 const states = new Set(['pending', 'success', 'error', 'failure', 'warning', 'skipped']);
 
 function httpsURL(value) {
-  if (typeof value !== 'string' || value.length > 2048 || unsafe.test(value)) throw new Error('Invalid URL');
+  if (typeof value !== 'string' || value.length > 2048 || unsafe.test(value) || /[?#]/u.test(value)) throw new Error('Invalid URL');
+  const raw = /^https:\/\/([^/]+)(\/.*)?$/.exec(value);
+  if (!raw || raw[1].includes('@')) throw new Error('Invalid URL');
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
-    || !value.startsWith(`https://${url.host}/`) && value !== `https://${url.host}`) throw new Error('Invalid URL');
+  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid URL');
   // Check the raw path before URL normalization can hide traversal.
-  const path = value.slice(`https://${url.host}`.length).replace(/\/$/, '');
+  const path = (raw[2] ?? '').replace(/\/$/, '');
   if (path && path.slice(1).split('/').some((part) => !segment.test(part) || ['.', '..'].includes(part))) throw new Error('Invalid path');
   return url;
 }

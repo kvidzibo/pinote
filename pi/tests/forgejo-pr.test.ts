@@ -61,6 +61,13 @@ globalThis.fetch = async (url, options) => {
     `${base}/api/v1/repos/owner/repo/pulls/42`,
   ]);
   assert.ok(passing.requests.every((r) => r.headers.Authorization === 'token SECRET' && r.redirect === 'error' && r.timed));
+  for (const origin of ['https://forgejo.example:443/git', 'https://forgejo.example:8443/git', 'https://FORGEJO.example:443']) {
+    const { output, requests } = run({}, { value: `${origin}/owner/repo/pulls/42` }, [{ url: origin, tokenEnv: 'TEST_FORGEJO_TOKEN' }]);
+    assert.equal(output.state, 'passing');
+    assert.ok(requests.every((r) => r.url.startsWith(`${new URL(origin).href.replace(/\/$/, '')}/api/v1/`) && r.headers.Authorization === 'token SECRET'));
+  }
+  assert.equal(run({}, { value: value.replace('forgejo.example', 'forgejo.example:443') }).output.state, 'passing');
+  assert.equal(run({}, {}, [{ url: base.replace('forgejo.example', 'forgejo.example:443') }]).output.state, 'passing');
   const anonymous = run({}, {}, [{ url: base }]);
   assert.ok(anonymous.requests.every((r) => !r.headers.Authorization));
   const failureScenario = { pages: [page([check]), page([{ ...check, context: 'other', status: 'failure' }])] };
