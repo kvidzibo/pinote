@@ -739,7 +739,7 @@ async function edit(task: Task): Promise<void> {
   const draft = state.edits[id] ?? { text: task.text, revision: task.updated_at };
   let revision = draft.revision, savedText = task.text, tag = task.tag;
   let paused = !!state.edits[id], conflict = false, saving = false, detached = false, draining = false;
-  let queuedTag = state.edits[id]?.pendingTag;
+  let queuedTag = state.edits[id]?.pendingTag, queuedFolder = state.edits[id]?.pendingTagFolder;
   let work: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const editorHost = el('div', undefined, 'edit-text');
@@ -747,14 +747,14 @@ async function edit(task: Task): Promise<void> {
     if (readonly || closing || conflict) return;
     retain(); check(); clearTimeout(timer);
     if (!paused) timer = setTimeout(() => { void track(save()); }, 650);
-  }, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && editor.value === savedText) modal.close(); })); });
+  }, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && editor.value === savedText && queuedTag === undefined) modal.close(); })); });
   const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
   const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
-  const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async name => {
+  const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async (name, folder) => {
     if (readonly || closing || conflict || paused) return false;
-    queuedTag = name;
+    queuedTag = name; queuedFolder = folder;
     await save();
-    return !paused && !conflict && tag === name;
+    return !paused && !conflict && queuedTag === undefined;
   }));
   tagControl.className = 'edit-tag'; tagControl.setAttribute('aria-haspopup', 'dialog');
   const tagName = el('span'); tagControl.append(tagName, el('span', '▾', 'tag-chevron'));
@@ -770,7 +770,10 @@ async function edit(task: Task): Promise<void> {
   actions.append(retryButton, undoButton, button('copy', 'Copy edit draft', () => api.copy(editor.value)));
   footer.append(feedback, actions);
   function retain(): void {
-    state.edits[id] = { text: editor.value, revision, ...(queuedTag !== undefined ? { pendingTag: queuedTag } : {}) };
+    state.edits[id] = { text: editor.value, revision,
+      ...(queuedTag !== undefined ? { pendingTag: queuedTag } : {}),
+      ...(queuedFolder !== undefined ? { pendingTagFolder: queuedFolder } : {}),
+    };
     saveSoon();
   }
   function check(): void {
@@ -787,8 +790,8 @@ async function edit(task: Task): Promise<void> {
     warning.textContent = readonly ? 'Saving paused. Copy your text and resolve the recovery notice before retrying.'
       : conflict ? 'Task changed elsewhere. Local changes kept; copy your text, then close and use draft recovery to reconcile with the latest task.'
       : paused ? 'Local changes kept. Review them, then retry saving. Nothing is retried automatically.' : '';
-    status.textContent = readonly || conflict ? 'Saving paused' : saving ? 'Saving…' : paused ? 'Not saved — retry' : editor.value !== savedText ? 'Unsaved changes' : 'All changes saved';
-    status.classList.toggle('saved', !readonly && !conflict && !saving && !paused && editor.value === savedText);
+    status.textContent = readonly || conflict ? 'Saving paused' : saving ? 'Saving…' : paused ? 'Not saved — retry' : editor.value !== savedText || queuedTag !== undefined ? 'Unsaved changes' : 'All changes saved';
+    status.classList.toggle('saved', !readonly && !conflict && !saving && !paused && editor.value === savedText && queuedTag === undefined);
     if (readonly || conflict) clearTimeout(timer);
   }
   async function retry(): Promise<void> {
@@ -802,11 +805,13 @@ async function edit(task: Task): Promise<void> {
     if (editor.value === savedText && queuedTag === undefined && state.edits[id]) { delete state.edits[id]; saveSoon(); }
     work = (async () => {
       while (!readonly && (!closing || draining) && !conflict && !paused && (editor.value !== savedText || queuedTag !== undefined)) {
-        const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, base = revision;
+        const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, folder = queuedFolder, base = revision;
         retain(); saving = true; check();
         const result = textChanged
           ? await call('edit', { id: task.id, revision: base, text }, draining)
-          : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
+          : folder !== undefined
+            ? await call('create_tag', { id: task.id, revision: base, name: nextTag!, folder }, draining)
+            : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
         if (!result) { paused = true; break; }
         // Never infer a committed revision from a later snapshot: another client
         // may have changed the task between our commit and that read.
@@ -817,7 +822,10 @@ async function edit(task: Task): Promise<void> {
         }
         revision = result.revision; editEpoch++;
         if (textChanged) savedText = text;
-        else { tag = nextTag!; if (queuedTag === nextTag) queuedTag = undefined; }
+        else {
+          tag = result.tag ?? nextTag!;
+          if (queuedTag === nextTag && queuedFolder === folder) { queuedTag = undefined; queuedFolder = undefined; }
+        }
         const current = active?.notes.find(t => t.id === task.id);
         if (current && (current.updated_at === base || current.updated_at === revision)) {
           current.updated_at = revision; current.text = savedText.replace(/\r\n/g, '\n').trim(); current.tag = tag;
@@ -853,6 +861,7 @@ function recoverDrafts(): void {
       const row = el('article', undefined, 'aux-row');
       row.append(el('h3', `Task ${id}`), el('p', `Revision: ${draft.revision}`, 'metadata'));
       if (draft.pendingTag !== undefined) row.append(el('p', `Pending tag: ${draft.pendingTag ?? 'Untagged'}`, 'metadata'));
+      if (draft.pendingTagFolder !== undefined) row.append(el('p', `New tag folder: ${draft.pendingTagFolder ?? 'None'}`, 'metadata'));
       const text = el('textarea', undefined, 'recovery-text'); text.value = draft.text; text.readOnly = true; text.setAttribute('aria-label', `Private draft for task ${id}`); row.append(text);
       const bar = controls(row);
       bar.append(button('copy', 'Copy private draft', () => api.copy(draft.text)), button('edit', 'Open revision-bound editor', () => {
@@ -891,7 +900,7 @@ function counts(name: string): string {
   const tasks = active?.notes.filter(t => (t.tag ?? '') === name) ?? [];
   return `(${tasks.length})${tasks.some(isProgress) ? ` ▶ ${tasks.filter(isProgress).length}` : ''}`;
 }
-function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null) => Promise<boolean>): void {
+function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, folder?: string | null) => Promise<boolean>): void {
   const menu = layer(mode === 'filter' ? 'Filter by tag' : mode === 'creation' ? 'New-task tag' : 'Task tag', 'tags', task?.id);
   const search = el('input'); search.type = 'search'; search.placeholder = 'Search or create tag…'; search.setAttribute('aria-label', 'Search tags');
   const list = el('div', undefined, 'tag-list scroll');
@@ -933,10 +942,9 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null) =
     if (query && !active?.tags.some(t => t.name.toLocaleLowerCase() === lower)) {
       list.append(textButton(`Create tag “${query}”…`, () => newTag(query, async name => {
         if (mode === 'creation') { creationTag = name; saveSoon(); renderToolbar(); menu.close(); }
-        else if (selectTag) await choose(name);
         else if (mode === 'task') menu.close();
         else draw();
-      }, mode === 'task' && !selectTag ? task : undefined)));
+      }, mode === 'task' && !selectTag ? task : undefined, selectTag ? (name, folder) => selectTag(name, folder) : undefined)));
     }
     if (focusedTag !== undefined) Array.from(list.querySelectorAll<HTMLButtonElement>('button')).find(b => b.dataset.tag === focusedTag)?.focus({ preventScroll: true });
     list.scrollTop = top;
@@ -958,7 +966,7 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null) =
   });
   draw(); search.focus();
 }
-function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task): void {
+function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task, create?: (name: string, folder: string | null) => Promise<boolean>): void {
   const modal = layer('New tag'); const name = field('Name', prefill); modal.panel.append(name.wrapper);
   let folder: string | null = null;
   const folderLabel = el('p', 'No default folder', 'folder-path'); modal.panel.append(folderLabel);
@@ -968,6 +976,12 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
     button('save', 'Create tag', async () => {
       if (saving) return; saving = true;
       try {
+        if (create) {
+          // The editor journals and serializes creation plus assignment as one
+          // revision-bound operation, including when the app starts closing.
+          if (await create(name.input.value, folder)) { await refresh(); modal.close(); await after?.(name.input.value.trim()); }
+          return;
+        }
         const result = await call('create_tag', { name: name.input.value, folder, ...(attachTask ? target(attachTask) : {}) });
         if (result) { await refresh(); const savedName = result.tag ?? name.input.value.trim(); modal.close(); await after?.(savedName); }
       } finally { saving = false; }

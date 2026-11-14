@@ -100,11 +100,13 @@ Icons are bundled rather than taken from the host icon theme.
   finishes; closing the app also drains pending edits before exiting.
 - The editor's header **tag button** opens the searchable tag picker. Choose,
   create, or clear a tag without leaving the editor; selection saves immediately,
-  serialized with pending text edits. **Undo** (or **Ctrl+Z**) reverts text edits
-  within the open editor and autosaves the result; it does not undo tag changes.
+  serialized with pending text edits. Creating a tag commits its folder and task
+  assignment together, even when closing during the save. **Undo** (or **Ctrl+Z**)
+  reverts text edits within the open editor and autosaves the result; it does not
+  undo tag changes.
   Copy remains available when saving is paused.
-- Local text and pending tag selections are cached before each write, including
-  failed tag clears. Failed saves pause autosave and offer
+- Local text and pending tag selections (including new-tag folders and tag
+  clears) are cached before each write. Failed saves pause autosave and offer
   an explicit retry; unknown outcomes require the recovery acknowledgement first.
   External revision changes make the editor read-only rather than overwriting
   another client's work. Close and use **Menu → Recover private edit drafts**
