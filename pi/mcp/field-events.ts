@@ -199,10 +199,17 @@ export class FieldAutomation {
         const legacyStatus = statuses.find((status) => status.watcherId === watcher.id && status.field === 'PR');
         const pluralIsNewer = !legacyStatus || (plural?.checkedAt ?? '') >= (legacyStatus.checkedAt ?? '');
         const batch = rows.find((row) => row.watcher_id === watcher.id && row.field === 'PRs');
-        if (batch && !pluralIsNewer && legacyStatus && !legacyStatus.stale
-          && plural?.result.items?.filter((item) => item.notification).every((item) => item.url === legacyUrl)) batch.suppressed = true;
+        const sameFailure = Boolean(item?.notification && item.notification.key === legacyStatus?.result.notification?.key);
+        if (batch && !pluralIsNewer && legacyStatus && !legacyStatus.stale && plural?.result.items) {
+          const current = plural.result.items.flatMap((entry) => entry.url === legacyUrl
+            ? sameFailure ? [{ url: entry.url, ...legacyStatus.result }] : [] : [entry])
+            .filter((entry) => entry.state !== 'error' && entry.notification);
+          batch.suppressed = !current.length;
+          if (current.length) batch.message = current.map((entry) => `PR #${entry.url.split('/').at(-1)} ${entry.url}: ${entry.notification!.message}`).join('\n').slice(0, 1000);
+        }
         if (!legacy) continue;
-        legacy.suppressed = Boolean(item && !plural?.stale && item.state !== 'error' && pluralIsNewer);
+        legacy.suppressed = Boolean(item && !plural?.stale && (item.state !== 'error' && pluralIsNewer
+          || sameFailure && batch && fields.has(`${watcher.id}:PRs`)));
         if (!batch || !item?.notification || item.notification.key !== legacyStatus?.result.notification?.key) continue;
         const knownFailures = plural!.result.items!.filter((item) => item.notification);
         if (knownFailures.length === 1) {
@@ -319,11 +326,26 @@ export class FieldAutomation {
         if (event.value === null) this.clear(job.watcherId, event.taskId, event.field);
         else {
           const notification = result.notification;
+          const additions = result.items?.filter((item) => item.notification && !job.result?.items?.some((previous) =>
+            previous.url === item.url && previous.notification?.key === item.notification!.key));
+          const repeatBatch = Boolean(result.items && job.result?.items && job.result.notification && !additions?.length);
+          let inheritedId: string | undefined;
+          if (event.field === 'PRs' && additions?.length === 1) {
+            const row = this.db.prepare("SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=? AND field='PR'").get(job.watcherId, event.taskId) as Row | undefined;
+            const legacy = row ? JSON.parse(row.job) as Job : undefined;
+            const urls = parsePullRequests(legacy?.event.value ?? undefined);
+            if (legacy?.checkedAt && !legacy.stale && legacy.event.value === latest.agent_notes.PR
+              && urls.length === 1 && urls[0].url === additions[0].url
+              && legacy.result?.notification?.key === additions[0].notification!.key) {
+              const receipt = this.db.prepare("SELECT id FROM fw_notices WHERE watcher_id=? AND task_id=? AND field='PR'").get(job.watcherId, event.taskId) as { id: string } | undefined;
+              inheritedId = receipt?.id;
+            }
+          }
           if (!notification) this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(job.watcherId, event.taskId, event.field);
-          else if (notification.key !== job.result?.notification?.key
-            || (!result.items && notification.message !== job.result?.notification?.message)) {
+          else if (result.items ? !repeatBatch : notification.key !== job.result?.notification?.key
+            || notification.message !== job.result?.notification?.message) {
             this.db.prepare('INSERT INTO fw_notices(watcher_id,task_id,field,id,message) VALUES (?,?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET id=excluded.id,message=excluded.message')
-              .run(job.watcherId, event.taskId, event.field, randomUUID(), notification.message);
+              .run(job.watcherId, event.taskId, event.field, inheritedId ?? randomUUID(), notification.message);
           } else {
             // A batch can lose an unavailable item without a new failure. Keep
             // its receipt while updating the remaining actionable message.
@@ -332,6 +354,29 @@ export class FieldAutomation {
           }
           this.save({ watcherId: job.watcherId, event, result, due: result.recheckAfterSeconds ? Date.now() + result.recheckAfterSeconds * 1000 : null,
             attempts: 0, checkedAt: new Date().toISOString(), stale: false });
+          // An observed recovery also clears the alias's retained failure identity,
+          // so a later same-head failure is new even if plural checks were unavailable.
+          const urls = event.field === 'PR' && !notification && !result.items
+            && ['passing', 'pending', 'merged', 'closed'].includes(result.state ?? '') ? parsePullRequests(event.value ?? undefined) : [];
+          if (urls.length === 1) {
+            const row = this.db.prepare("SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=? AND field='PRs'").get(job.watcherId, event.taskId) as Row | undefined;
+            const plural = row ? JSON.parse(row.job) as Job : undefined;
+            const item = plural?.result?.items?.find((entry) => entry.url === urls[0].url);
+            if (plural?.result && plural.event.value === latest.agent_notes.PRs && item?.notification) {
+              plural.result.items = plural.result.items!.map((entry) => entry === item ? { url: entry.url, ...result } : entry);
+              const remaining = plural.result.items!.filter((entry) => entry.notification);
+              if (!remaining.length) {
+                delete plural.result.notification;
+                this.db.prepare("DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field='PRs'").run(job.watcherId, event.taskId);
+              } else if (plural.result.notification) {
+                const active = remaining.filter((entry) => entry.state !== 'error');
+                const message = active.map((entry) => `PR #${entry.url.split('/').at(-1)} ${entry.url}: ${entry.notification!.message}`).join('\n').slice(0, 1000) || 'PR checks unavailable';
+                plural.result.notification.message = message;
+                this.db.prepare("UPDATE fw_notices SET message=? WHERE watcher_id=? AND task_id=? AND field='PRs'").run(message, job.watcherId, event.taskId);
+              }
+              this.save(plural);
+            }
+          }
         }
       });
       if (result.items?.some((item) => item.state === 'error')) {

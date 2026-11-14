@@ -250,6 +250,37 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
     assert.ok(!automation.notices(task, 'session-a').some((notice) => ['PR', 'PRs'].includes(notice.field)), 'An older plural failure never alerts after a newer legacy recovery');
     assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
+    const twoFailures = { ...batchResult, items: batchResult.items.map((item, index) => index === 0
+      ? { ...item, state: 'failed', notification: { key: 'other-pr', message: 'Other PR CI failed' } } : item),
+      notification: { key: 'two-failures', message: `${urls[0]} failed\n${urls[1]} failed` } };
+    await setMode(twoFailures); forceDue('PRs'); await automation.tick();
+    await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
+    const remaining = automation.notices(task, 'session-a').filter((notice) => notice.field === 'PRs');
+    assert.equal(remaining.length, 1);
+    const recoveredAlias = automation.statuses(task).find((status) => status.field === 'PRs')!.result.items!.find((item) => item.url === urls[1])!;
+    assert.equal(recoveredAlias.state, 'passing');
+    assert.equal(recoveredAlias.notification, undefined, 'Legacy recovery clears the retained plural identity before any later same-head failure');
+    assert.ok(remaining[0].message.includes(urls[0]) && !remaining[0].message.includes(urls[1]), 'A remaining plural alert excludes the newer legacy recovery');
+    const partialOutage = { ...twoFailures, items: twoFailures.items.map((item, index) => index === 0 ? { ...item, state: 'error' }
+      : index === 1 ? { ...item, state: 'passing', notification: undefined } : item),
+      notification: { key: 'remaining-failure', message: `${urls[0]} failed` } };
+    await setMode(partialOutage); forceDue('PRs'); await automation.tick();
+    assert.ok(!automation.notices(task, 'session-a').some((notice) => notice.field === 'PRs'));
+    await setMode({ ...partialOutage, items: partialOutage.items.map((item, index) => index === 0 ? { ...item, state: 'failed' } : item) });
+    forceDue('PRs'); await automation.tick();
+    assert.deepEqual(automation.notices(task, 'session-a', [remaining[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), [], 'A shrinking known failure set preserves its acknowledged receipt through partial outage and recovery');
+    const latestFailure = { key: 'multi', message: 'Latest legacy CI failed' };
+    await setMode({ state: 'failed', notification: latestFailure, recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
+    const latestLegacy = automation.notices(task, 'session-a').find((notice) => notice.field === 'PR')!;
+    assert.ok(latestLegacy);
+    const caughtUp = { ...twoFailures, items: twoFailures.items.map((item, index) => index === 1 ? { ...item, notification: latestFailure } : item),
+      notification: { key: 'caught-up', message: 'Both PRs failed' } };
+    await setMode(caughtUp); forceDue('PRs'); await automation.tick();
+    const receipts = [remaining[0].id, latestLegacy.id];
+    assert.deepEqual(automation.notices(task, 'session-a', receipts).filter((notice) => ['PR', 'PRs'].includes(notice.field)), [], 'Plural catch-up inherits the receipt of a failure already reported by the legacy alias');
+    await setMode({ ...caughtUp, items: caughtUp.items.map((item, index) => index === 0 ? { ...item, notification: { key: 'new-other-head', message: 'New other PR failure' } } : item), notification: { key: 'new-other', message: 'New other PR failure' } });
+    forceDue('PRs'); await automation.tick();
+    assert.ok(automation.notices(task, 'session-a', receipts).some((notice) => notice.field === 'PRs'), 'A genuinely new failure still gets a new receipt');
     await setMode({ state: 'failed', notification: { key: 'custom-legacy', message: 'Custom PR alert' }, recheckAfterSeconds: 10 });
     forceDue();
     for (let index = 0; index < 3; index++) await automation.tick();

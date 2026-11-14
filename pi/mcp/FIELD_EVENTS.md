@@ -49,10 +49,11 @@ ignored. Legacy `PR` accepts one URL/link and retains its single-result contract
 
 Batch checks run at most four `gh` calls at once, within a 25-second deadline.
 Unavailable entries do not erase successful results or retrigger workers on
-outage/recovery; they appear in grouped watcher diagnostics and retry. Overlapping
-legacy/new PR links prefer the plural alert without duplicating its receipt;
-a fresh legacy result remains available during a plural-check outage. Legacy-only
-custom watchers keep their independent alerts. Failure/conflict alerts include
+outage/recovery; they appear in grouped watcher diagnostics and retry. Receipts
+persist when the known failure set only shrinks; new failure identities alert again.
+Overlapping legacy/new links use the latest available observations and share
+receipts when plural checks catch up with an already-reported legacy failure.
+Legacy-only custom watchers keep their independent alerts. Batch alerts include
 PR numbers and URLs, within the notification budget. Checks repeat every 60
 seconds until all entries are closed/merged; merging never completes the task.
 Passing means reported checks passed, not that all review/protection rules passed.
