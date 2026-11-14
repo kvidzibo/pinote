@@ -8,7 +8,7 @@ export type Task = {
 export type Tag = { name: string; folder: string | null; available?: boolean };
 export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean; kittyStartPrompt: string } };
 export type Target = { id: number; revision: string };
-export type Mutation = { changed: boolean; id?: number; tag?: string };
+export type Mutation = { changed: boolean; id?: number; tag?: string; revision?: string };
 export type Operations = {
   handshake: { params: Record<string, never>; result: { version: string; protocol: number; database: string } };
   snapshot: { params: { view: View }; result: Snapshot };

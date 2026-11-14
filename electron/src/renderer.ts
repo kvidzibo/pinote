@@ -1,4 +1,5 @@
 import { MarkdownEditor, compactTitle } from './markdown-editor';
+import { undo, undoDepth } from '@codemirror/commands';
 import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
@@ -28,7 +29,9 @@ const rowKeys = new Map<number, string>();
 const exiting = new Set<number>();
 let scrollToId: number | undefined;
 let draftVersion = 0;
-const editVersions = new Map<string, number>();
+const editFlushers = new Set<() => Promise<void>>();
+const closedEdits = new Map<number, Promise<void>>();
+let editEpoch = 0;
 const busyTasks = new Set<number>();
 const stayOrdinary = new Set<number>();
 const icons = {
@@ -38,7 +41,7 @@ const icons = {
   filter: 'view-filter', clear: 'view-filter-clear', all: 'edit-select-all',
   preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu',
   close: 'window-close', kitty: 'utilities-terminal', schedule: 'preferences-system-notifications',
-  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle',
+  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo',
 } as const;
 type Icon = keyof typeof icons;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
@@ -56,7 +59,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'edit') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -115,9 +118,9 @@ function persist(recovery = false): Promise<void> {
   persistChain = work.then(() => { draftSaveFailed = false; }, e => { draftSaveFailed = true; report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
   return work;
 }
-async function call<K extends Exclude<Operation, 'handshake'>>(name: K, params: Operations[K]['params']): Promise<Operations[K]['result'] | null> {
+async function call<K extends Exclude<Operation, 'handshake'>>(name: K, params: Operations[K]['params'], drainEdit = false): Promise<Operations[K]['result'] | null> {
   const write = name !== 'snapshot' && name !== 'completions';
-  if (write && (readonly || closing || !active)) { report('Read-only: writes are disabled until tasks and configuration load safely. Copy drafts to recover them.'); return null; }
+  if (write && (readonly || (closing && !drainEdit) || !active)) { report('Read-only: writes are disabled until tasks and configuration load safely. Copy drafts to recover them.'); return null; }
   // Flush the submitted text before dispatch; debounce alone cannot protect fast failures.
   if (write) {
     try { await persist(); } catch { report('Drafts could not be saved; the operation was not submitted. Keep this window open or copy your text.'); return null; }
@@ -190,7 +193,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
-    if (kind === 'task-actions' || kind === 'manage-tags') fitWindow();
+    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'edit') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
@@ -704,52 +707,128 @@ api.onPreviewClosed((token, editRequested) => {
   openedPreview = undefined; renderSelected();
   if (closing) return;
   const task = active?.notes.find(t => t.id === entry.data.task.id);
-  if (editRequested && task && visible(task)) edit(task);
+  if (editRequested && task && visible(task)) void track(edit(task));
   else if (document.hasFocus()) {
     const source = entry.source.isConnected ? entry.source : rowNodes.get(entry.data.task.id)?.querySelector<HTMLElement>('[data-row-element="preview"]');
     (source ?? composer).focus({ preventScroll: true });
   }
 });
-function edit(task: Task): void {
+async function edit(task: Task): Promise<void> {
+  // A detached editor still owns its pending save; never open a second writer.
+  if (closedEdits.has(task.id)) {
+    await closedEdits.get(task.id);
+    task = active?.notes.find(t => t.id === task.id) ?? task;
+  }
+  if (closing) return;
   const existing = layers.find(l => l.kind === 'edit' && l.taskId === task.id); if (existing) { existing.panel.focus(); return; }
   const id = String(task.id), modal = layer(`Edit task ${task.id}`, 'edit', task.id);
+  modal.panel.classList.add('task-editor');
   const draft = state.edits[id] ?? { text: task.text, revision: task.updated_at };
-  const revision = draft.revision;
+  let revision = draft.revision, savedText = task.text, tag = task.tag;
+  let paused = !!state.edits[id], conflict = false, saving = false, detached = false, draining = false;
+  let queuedTag: string | null | undefined, work: Promise<void> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const editorHost = el('div', undefined, 'edit-text');
-  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, () => retain(), () => { void track(saveText()); });
-  const close = modal.close; modal.close = () => { editor.destroy(); close(); };
-  const warning = el('p', undefined, 'warning');
-  const check = () => {
+  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, () => {
+    if (readonly || closing || conflict) return;
+    retain(); check(); clearTimeout(timer);
+    if (!paused) timer = setTimeout(() => { void track(save()); }, 650);
+  }, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && editor.value === savedText) modal.close(); })); });
+  const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
+  const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
+  const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async name => {
+    if (readonly || closing || conflict || paused) return false;
+    queuedTag = name;
+    await save();
+    return !paused && !conflict && tag === name;
+  }));
+  tagControl.className = 'edit-tag'; tagControl.setAttribute('aria-haspopup', 'dialog');
+  const tagName = el('span'); tagControl.append(tagName, el('span', '▾', 'tag-chevron'));
+  const header = modal.panel.querySelector('header')!;
+  header.querySelector('h2')!.textContent = `Edit task #${task.id}`;
+  header.insertBefore(tagControl, header.lastChild);
+  const footer = el('div', undefined, 'edit-footer');
+  const feedback = el('div', undefined, 'edit-feedback');
+  feedback.append(status, el('span', 'Autosave · Enter: newline', 'edit-hint'));
+  const actions = el('div', undefined, 'controls');
+  const undoButton = button('undo', 'Undo text edit (Ctrl+Z)', () => { undo(editor.view); editor.view.focus(); check(); });
+  const retryButton = button('save', 'Retry saving text (Ctrl+Enter)', () => retry());
+  actions.append(retryButton, undoButton, button('copy', 'Copy edit draft', () => api.copy(editor.value)));
+  footer.append(feedback, actions);
+  function retain(): void {
+    state.edits[id] = { text: editor.value, revision };
+    saveSoon();
+  }
+  function check(): void {
     const current = active?.notes.find(t => t.id === task.id);
-    const conflict = !current || current.updated_at !== revision;
+    if (!saving && (!current || current.updated_at !== revision)) conflict = true;
     editor.readOnly = readonly || closing || conflict;
-    warning.textContent = readonly ? 'Read-only: local draft state could not be loaded safely. Copy your text; nothing will be overwritten.' : conflict ? 'This revision changed or left the active list. Your private draft is safe and read-only. Copy it, discard, then reopen the latest task to reconcile.' : 'Private draft. Enter inserts a newline; Ctrl+Enter saves text only.';
-    save.disabled = readonly || closing || conflict || saving;
+    tagName.textContent = tag ?? 'Untagged';
+    tagControl.title = `Change tag: ${tag ?? 'Untagged'}`; tagControl.setAttribute('aria-label', tagControl.title);
+    tagControl.disabled = readonly || closing || conflict || paused || saving;
+    undoButton.disabled = readonly || closing || conflict || !undoDepth(editor.view.state);
+    retryButton.hidden = !paused || conflict || readonly;
+    retryButton.disabled = saving || closing;
+    warning.hidden = !readonly && !conflict && !paused;
+    warning.textContent = readonly ? 'Saving paused. Copy your text and resolve the recovery notice before retrying.'
+      : conflict ? 'Task changed elsewhere. Local text kept; copy it, then close and use draft recovery to reconcile with the latest task.'
+      : paused ? 'Local text kept. Review it, then retry saving. Nothing is retried automatically.' : '';
+    status.textContent = readonly || conflict ? 'Saving paused' : saving ? 'Saving…' : paused ? 'Not saved — retry' : editor.value !== savedText ? 'Unsaved changes' : 'All changes saved';
+    status.classList.toggle('saved', !readonly && !conflict && !saving && !paused && editor.value === savedText);
+    if (readonly || conflict) clearTimeout(timer);
+  }
+  async function retry(): Promise<void> {
+    if (readonly || closing || conflict) return;
+    paused = false; await save();
+  }
+  function save(): Promise<void> {
+    clearTimeout(timer);
+    if (work) return work;
+    if (readonly || (closing && !draining) || conflict || paused) return Promise.resolve();
+    if (editor.value === savedText && queuedTag === undefined && state.edits[id]) { delete state.edits[id]; saveSoon(); }
+    work = (async () => {
+      while (!readonly && (!closing || draining) && !conflict && !paused && (editor.value !== savedText || queuedTag !== undefined)) {
+        const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, base = revision;
+        if (!textChanged) queuedTag = undefined;
+        retain(); saving = true; check();
+        const result = textChanged
+          ? await call('edit', { id: task.id, revision: base, text }, draining)
+          : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
+        if (!result) { paused = true; queuedTag = undefined; break; }
+        // Never infer a committed revision from a later snapshot: another client
+        // may have changed the task between our commit and that read.
+        if (!result.revision) {
+          paused = true; queuedTag = undefined;
+          report('Backend did not acknowledge the saved revision. Local text kept; update the backend and reconcile before retrying.');
+          conflict = true; break;
+        }
+        revision = result.revision; editEpoch++;
+        if (textChanged) savedText = text; else tag = nextTag!;
+        const current = active?.notes.find(t => t.id === task.id);
+        if (current && (current.updated_at === base || current.updated_at === revision)) {
+          current.updated_at = revision; current.text = savedText.replace(/\r\n/g, '\n').trim(); current.tag = tag;
+          task = current;
+        }
+        if (editor.value === savedText) delete state.edits[id]; else retain();
+        saveSoon(); saving = false; check();
+        renderTasks();
+      }
+    })().catch(e => { paused = true; queuedTag = undefined; report(message(e)); }).finally(() => {
+      saving = false; work = undefined; check();
+      if (detached && (paused || conflict)) report('Editor closed with unsaved local text. Use Menu → Recover private edit drafts.');
+    });
+    return work;
+  }
+  const flush = async () => { draining = true; await save(); };
+  editFlushers.add(flush);
+  const close = modal.close;
+  modal.close = () => {
+    if (detached) return;
+    detached = true; close(); clearTimeout(timer);
+    const done = track(flush().finally(() => { editor.destroy(); editFlushers.delete(flush); closedEdits.delete(task.id); }));
+    closedEdits.set(task.id, done);
   };
-  const retain = () => { if (!readonly && !closing) { state.edits[id] = { text: editor.value, revision }; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); } };
-  let saving = false;
-  const saveText = async () => {
-    if (closing || save.disabled || saving) return;
-    const text = editor.value, version = editVersions.get(id) ?? 0;
-    retain(); const submittedVersion = editVersions.get(id) ?? version;
-    saving = true; check();
-    try {
-      const result = await call('edit', { id: task.id, revision, text });
-      if (!result) return;
-      // A committed response has no revision token. Resolve only by a fresh read;
-      // never bind newer private text to someone else's revision.
-      if ((editVersions.get(id) ?? 0) === submittedVersion) { delete state.edits[id]; saveSoon(); modal.close(); }
-      else report('Text saved, but newer edits remain in a revision-bound private draft. Copy/reconcile them before saving again.');
-      await refresh();
-    } finally { saving = false; check(); }
-  };
-  const bar = controls(modal.panel);
-  const save = button('save', 'Save text (Ctrl+Enter)', saveText);
-  bar.append(button('copy', 'Copy edit draft', () => api.copy(editor.value)), button('trash', 'Discard private draft', () => confirmAction('Discard draft?', 'Discard this private text without changing the task?', async () => {
-    if (readonly) { report('Read-only draft store cannot be changed. Repair the local state before discarding.'); return; }
-    delete state.edits[id]; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); modal.close();
-  }), readonly), save);
-  modal.panel.append(warning, editorHost); modal.update = check; check(); editor.view.focus();
+  modal.panel.append(warning, editorHost, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
 }
 function recoverDrafts(): void {
   const modal = layer('Private edit drafts');
@@ -763,9 +842,11 @@ function recoverDrafts(): void {
       const bar = controls(row);
       bar.append(button('copy', 'Copy private draft', () => api.copy(draft.text)), button('edit', 'Open revision-bound editor', () => {
         const task = active?.notes.find(t => String(t.id) === id);
-        if (task) edit(task); else report('This task is not active. Copy its private draft here, or restore the task from Archive first.');
+        if (task) return edit(task);
+        report('This task is not active. Copy its private draft here, or restore the task from Archive first.');
       }), button('trash', 'Discard private draft', () => confirmAction('Discard draft?', `Discard the private text for task ${id}? No task will be changed.`, async () => {
-        delete state.edits[id]; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); draw();
+        if (closedEdits.has(Number(id))) { report('This editor is still saving. Wait for it to finish before discarding local text.'); return; }
+        delete state.edits[id]; saveSoon(); draw();
       }), readonly));
       list.append(row);
     }
@@ -795,7 +876,7 @@ function counts(name: string): string {
   const tasks = active?.notes.filter(t => (t.tag ?? '') === name) ?? [];
   return `(${tasks.length})${tasks.some(isProgress) ? ` ▶ ${tasks.filter(isProgress).length}` : ''}`;
 }
-function tagsMenu(mode: TagMode, task?: Task): void {
+function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null) => Promise<boolean>): void {
   const menu = layer(mode === 'filter' ? 'Filter by tag' : mode === 'creation' ? 'New-task tag' : 'Task tag', 'tags', task?.id);
   const search = el('input'); search.type = 'search'; search.placeholder = 'Search or create tag…'; search.setAttribute('aria-label', 'Search tags');
   const list = el('div', undefined, 'tag-list scroll');
@@ -806,6 +887,7 @@ function tagsMenu(mode: TagMode, task?: Task): void {
       if (state.filters === null) state.filters = ['', ...(active?.tags.map(t => t.name) ?? [])];
       state.filters = state.filters.includes(name) ? state.filters.filter(t => t !== name) : [...state.filters, name]; saveSoon(); renderTasks(); renderToolbar(); draw();
     } else if (mode === 'creation') { creationTag = name || null; renderToolbar(); menu.close(); composer.focus(); }
+    else if (selectTag) { if (await selectTag(name || null)) { menu.close(); await refresh(); } }
     else if (task) { const result = await call('tag', { ...target(task), tag: name || null }); if (result) { menu.close(); await refresh(); } }
   };
   let lastDraw = '';
@@ -836,9 +918,10 @@ function tagsMenu(mode: TagMode, task?: Task): void {
     if (query && !active?.tags.some(t => t.name.toLocaleLowerCase() === lower)) {
       list.append(textButton(`Create tag “${query}”…`, () => newTag(query, async name => {
         if (mode === 'creation') { creationTag = name; renderToolbar(); menu.close(); }
+        else if (selectTag) await choose(name);
         else if (mode === 'task') menu.close();
         else draw();
-      }, mode === 'task' ? task : undefined)));
+      }, mode === 'task' && !selectTag ? task : undefined)));
     }
     if (focusedTag !== undefined) Array.from(list.querySelectorAll<HTMLButtonElement>('button')).find(b => b.dataset.tag === focusedTag)?.focus({ preventScroll: true });
     list.scrollTop = top;
@@ -1022,8 +1105,9 @@ function auxiliary(view: 'archive' | 'scheduled'): void {
 async function refresh(): Promise<void> {
   if (polling || closing) return;
   polling = true;
+  const epoch = editEpoch;
   try {
-    const next = await call('snapshot', { view: 'active' }); if (!next) return;
+    const next = await call('snapshot', { view: 'active' }); if (!next || epoch !== editEpoch) return;
     const old = active;
     if (old) {
       const oldTags = new Set(old.tags.map(t => t.name)), nextTags = new Set(next.tags.map(t => t.name));
@@ -1077,6 +1161,7 @@ function setClosing(value: boolean): void {
 api.onCloseRequested(() => {
   if (closing) return;
   const focused = document.activeElement as HTMLElement | null;
+  for (const flush of editFlushers) void track(flush());
   setClosing(true); clearTimeout(persistTimer);
   void (async () => {
     // Wait for user callbacks, not just their individual IPC calls. They may update drafts after the reply.

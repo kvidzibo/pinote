@@ -42,6 +42,21 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validEnvelope('snapshot', {protocol:1,ok:true,result:{notes:[],tags:[]}}));
 });
 
+test('mutation acknowledgements accept optional bounded printable revisions', () => {
+  for (const operation of ['edit', 'tag', 'create_tag', 'transition'] as const) {
+    const result = { changed: true, id: 1, tag: 'Work' };
+    const accepts = (value: unknown) => validEnvelope(operation, { protocol: 1, ok: true, result: value });
+    assert.ok(accepts(result)); // Older backends and unrelated operations remain compatible.
+    for (const revision of ['rev', 'x'.repeat(128), 'printable space', 'é']) {
+      assert.ok(accepts({ ...result, revision }));
+      assert.ok(accepts({ ...result, changed: false, revision }));
+    }
+    for (const revision of [undefined, null, 1, true, '', 'x'.repeat(129), 'a\n', '\x00', '\x7f', '\u0085', '\u00a0', '\u200b', '\ud800']) {
+      assert.ok(!accepts({ ...result, revision }));
+    }
+  }
+});
+
 const legacyIds = TASK_ACTION_IDS.filter(id => id !== 'preview');
 const legacyShared = (): LegacyTaskActionSettings => ({ order: [...legacyIds].reverse(), hidden: ['kitty', 'done'], primary: 'start' });
 const legacyStates = (): LegacyPerStateTaskActionSettings => ({

@@ -193,9 +193,15 @@ def dispatch(op: str, p: dict, paths: Paths) -> object:
             if not changed:
                 conflict()
         elif op == "edit":
-            changed = store.edit(p["id"], p["text"], expected_updated_at=p["revision"])
+            changed, revision = store.edit_with_revision(
+                p["id"], p["text"], expected_updated_at=p["revision"]
+            )
+            return {"changed": changed, **target, "revision": revision}
         elif op == "tag":
-            changed = store.set_tag(p["id"], p["tag"], expected_updated_at=p["revision"])
+            changed, revision = store.set_tag_with_revision(
+                p["id"], p["tag"], expected_updated_at=p["revision"]
+            )
+            return {"changed": changed, **target, "revision": revision}
         elif op == "schedule":
             changed = store.schedule(
                 p["id"], parse_reminder_time(p["when"]), expected_updated_at=p["revision"]
@@ -213,8 +219,10 @@ def dispatch(op: str, p: dict, paths: Paths) -> object:
                 if name in tags
                 else next((t for t in tags if t.casefold() == name.casefold()), name)
             )
-            store.set_tag(p["id"], name, expected_updated_at=p["revision"], folder=p["folder"])
-            return {"changed": True, "id": p["id"], "tag": saved}
+            _, revision = store.set_tag_with_revision(
+                p["id"], name, expected_updated_at=p["revision"], folder=p["folder"]
+            )
+            return {"changed": True, "id": p["id"], "tag": saved, "revision": revision}
         elif op == "rename_tag":
             changed = store.rename_tag(p["name"], p["newName"])
         elif op == "delete_tag":

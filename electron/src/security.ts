@@ -85,6 +85,7 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
     return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean' && str(result.config.kittyStartPrompt);
   }
   if (typeof result.changed !== 'boolean' || (result.id !== undefined && !id(result.id)) || (result.tag !== undefined && !str(result.tag,256))) return false;
+  if (Object.hasOwn(result, 'revision') && (typeof result.revision !== 'string' || !str(result.revision,128) || !result.revision || /[\p{C}\p{Z}]/u.test(result.revision.replaceAll(' ', '')))) return false;
   if (operation === 'add') return result.changed && id(result.id);
   return operation !== 'create_tag' || (typeof result.tag === 'string' && result.tag.length > 0);
 }
