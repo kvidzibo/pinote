@@ -1,6 +1,6 @@
 import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
-import type { TaskActionId, TaskActionState } from './protocol';
+import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 // The optional frontend bundles markdown-it; raw HTML and resource loading are disabled.
 import MarkdownIt from 'markdown-it';
 
@@ -54,7 +54,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions') ? Math.max(480, height) : height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -279,42 +279,82 @@ function dueLabel(task: Task): string {
   const hours = Math.floor(Math.abs(ms) / 3600000);
   return `${ms >= 0 ? 'Due' : 'Reminder in'} ${hours ? `${hours} hour${hours === 1 ? '' : 's'}` : 'less than an hour'}${ms >= 0 ? ' ago' : ''} — ${new Date(date).toLocaleString()}`;
 }
-function makeRow(task: Task): HTMLElement {
-  const row = el('article', undefined, `task-row${isProgress(task) ? ' progress' : ''}${marked.has(task.id) ? ' marked' : ''}`);
-  row.dataset.id = String(task.id);
+function taskContent(task: Task, preferences: TaskActionPreferences, sample = false): HTMLElement {
   const mark = marked.has(task.id);
-  const primary = normalizeTaskActions(state.taskActions)[taskActionState(task)].primary;
-  const action = taskAction(task, primary);
-  const checkbox = button(action.icon, `Task ${task.id}: ${action.label}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => runTaskAction(task, action.id), actionBlocked(task, action.id));
-  checkbox.classList.add('checkbox');
-  if (!mark) checkbox.classList.add(isProgress(task) ? 'in-progress-check' : 'empty-check');
-  if (primary === (isProgress(task) ? 'done' : 'start') && !mark) {
-    checkbox.setAttribute('role', 'checkbox'); checkbox.setAttribute('aria-checked', isProgress(task) ? 'mixed' : 'false');
-  }
-  checkbox.addEventListener('contextmenu', e => {
-    e.preventDefault();
-    if (readonly || busyTasks.has(task.id)) return;
-    if (mark) void track(transition(task, 'rm'));
-    else if (isProgress(task)) void track(transition(task, 'reset'));
-    else { marked.set(task.id, task.updated_at); renderTasks(); }
-  });
-  const title = el('span', task.text.split('\n')[0], 'task-title'); title.title = task.text; title.tabIndex = 0;
-  title.addEventListener('contextmenu', e => { e.preventDefault(); openTaskActions(task, title); });
-  title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); openTaskActions(task, title); } });
-  title.addEventListener('mouseup', event => {
+  const title = el('span', task.text.split('\n')[0], 'task-title');
+  title.title = [task.text, dueLabel(task)].filter(Boolean).join('\n'); title.tabIndex = sample ? -1 : 0;
+  if (!sample) title.addEventListener('contextmenu', e => { e.preventDefault(); openTaskActions(task, title); });
+  if (!sample) title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); openTaskActions(task, title); } });
+  if (!sample) title.addEventListener('mouseup', event => {
     if (event.button !== 0 || nativeMenuOpen) return;
     const selection = window.getSelection()?.toString();
     if (selection) void api.copy(selection).catch(e => report(message(e)));
     composer.focus();
   });
   const content = el('div', undefined, 'task-content');
-  content.append(checkbox, title);
-  if (task.tag) content.append(tagBadge(task.tag));
-  if (task.reminder_due_at || task.remind_at) content.append(button('schedule', dueLabel(task), () => schedule(task), readonly));
-  // Always offer the eye, including titles whose ellipsis depends on window width.
-  const actions = button('menu', `Actions for task ${task.id}`, event => openTaskActions(task, event.currentTarget as HTMLElement));
-  content.append(button(unread(task) ? 'unread' : 'preview', unread(task) ? 'Unread agent update — click to view.' : 'Preview full task', () => preview(task)), actions);
-  row.append(content);
+  const menuButton = () => button('menu', `Actions for task ${task.id}`, event => { if (!sample) openTaskActions(task, event.currentTarget as HTMLElement); });
+  for (const id of preferences.row) {
+    let node: HTMLElement;
+    if (id === 'task-text') node = title;
+    else if (id === 'task-tag') node = tagBadge(task.tag ?? 'Untagged');
+    else if (id === 'actions') node = menuButton();
+    else {
+      const action = taskAction(task, id);
+      const label = id === 'preview' ? (unread(task) ? 'Unread agent update — click to view.' : 'Preview full task')
+        : `Task ${task.id}: ${action.label}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`;
+      const b = button(id === 'preview' && unread(task) ? 'unread' : action.icon, label, () => { if (!sample) return runTaskAction(task, action.id); }, !sample && actionBlocked(task, action.id));
+      b.classList.add('row-action');
+      if (id !== 'preview') {
+        b.classList.add('checkbox');
+        if (!mark) b.classList.add(isProgress(task) ? 'in-progress-check' : 'empty-check');
+        if (id === (isProgress(task) ? 'done' : 'start') && !mark) {
+          b.setAttribute('role', 'checkbox'); b.setAttribute('aria-checked', isProgress(task) ? 'mixed' : 'false');
+        }
+        if (!sample) b.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          if (readonly || busyTasks.has(task.id)) return;
+          if (mark) void track(transition(task, 'rm'));
+          else if (isProgress(task)) void track(transition(task, 'reset'));
+          else { marked.set(task.id, task.updated_at); renderTasks(); }
+        });
+      }
+      if (id === 'schedule' && dueLabel(task)) b.title += `\n${dueLabel(task)}`;
+      node = b;
+    }
+    node.dataset.rowElement = id;
+    if (sample) node.tabIndex = -1;
+    content.append(node);
+  }
+  if (!preferences.row.includes('actions')) {
+    const overflow = menuButton(); overflow.dataset.overflowMenu = ''; overflow.hidden = true;
+    if (sample) overflow.tabIndex = -1;
+    content.append(overflow);
+  }
+  return content;
+}
+// Keep required fields visible; overflowing actions remain available even when hidden in the menu.
+function fitTaskRows(): void {
+  for (const content of document.querySelectorAll<HTMLElement>('.task-content')) {
+    if (!content.getClientRects().length) continue;
+    const actions = Array.from(content.querySelectorAll<HTMLElement>('.row-action'));
+    const overflow = content.querySelector<HTMLElement>('[data-overflow-menu]');
+    for (const action of actions) action.hidden = false;
+    if (overflow) overflow.hidden = true;
+    for (const action of actions.reverse()) {
+      if (content.scrollWidth <= content.clientWidth) break;
+      action.hidden = true;
+      if (overflow) overflow.hidden = false;
+    }
+    if (content.contains(document.activeElement) && (document.activeElement as HTMLElement).hidden) {
+      content.querySelector<HTMLElement>('[data-row-element="actions"], [data-overflow-menu]')?.focus();
+    }
+  }
+}
+window.addEventListener('resize', fitTaskRows);
+function makeRow(task: Task): HTMLElement {
+  const row = el('article', undefined, `task-row${isProgress(task) ? ' progress' : ''}${marked.has(task.id) ? ' marked' : ''}`);
+  row.dataset.id = String(task.id);
+  row.append(taskContent(task, normalizeTaskActions(state.taskActions)[taskActionState(task)]));
   return row;
 }
 function renderTasks(): void {
@@ -359,7 +399,7 @@ function renderTasks(): void {
   }
   checklist.classList.toggle('mixed', ordinaryRows.length > 0);
   pinned.hidden = !progressRows.length && !Array.from(pinned.children).some(n => exiting.has(Number((n as HTMLElement).dataset.id)));
-  renderSelected(); fitWindow();
+  renderSelected(); fitWindow(); fitTaskRows();
   if (restoreActionFocus !== undefined) (rowNodes.get(restoreActionFocus)?.querySelector<HTMLElement>('.task-title') ?? composer).focus({ preventScroll: true });
   if (scrollToId !== undefined) {
     const row = rowNodes.get(scrollToId);
@@ -372,7 +412,7 @@ function animateDone(id: number): void {
   if (taskActions?.task.id === id) closeTaskActions();
   exiting.add(id); row.classList.add('completed'); row.setAttribute('aria-label', 'Completed');
   for (const b of row.querySelectorAll('button')) b.disabled = true;
-  const check = row.querySelector('button'); if (check) { check.setAttribute('aria-checked', 'true'); const image = check.querySelector('img'); if (image) image.src = `icons/${icons.done}-symbolic.svg`; }
+  const check = row.querySelector('[data-row-element="done"], [data-row-element="start"]'); if (check) { check.setAttribute('aria-checked', 'true'); const image = check.querySelector('img'); if (image) image.src = `icons/${icons.done}-symbolic.svg`; }
   setTimeout(() => { if (!exiting.has(id) || rowNodes.get(id) !== row) return; exiting.delete(id); row.remove(); rowNodes.delete(id); rowKeys.delete(id); renderTasks(); }, 410);
 }
 async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' | 'restore'): Promise<void> {
@@ -397,8 +437,11 @@ function closeTaskActions(restoreFocus = true): void {
   row?.querySelector('.task-actions')?.remove();
   const content = row?.querySelector<HTMLElement>('.task-content');
   if (content) content.hidden = false;
-  renderSelected();
-  if (restoreFocus && !closing) (opened.source.isConnected ? opened.source : composer).focus({ preventScroll: true });
+  fitTaskRows(); renderSelected();
+  if (restoreFocus && !closing) {
+    const source = opened.source.isConnected && !opened.source.hidden ? opened.source : row?.querySelector<HTMLElement>('.task-title') ?? composer;
+    source.focus({ preventScroll: true });
+  }
 }
 function openTaskActions(task: Task, source: HTMLElement): void {
   const row = rowNodes.get(task.id);
@@ -409,7 +452,7 @@ function openTaskActions(task: Task, source: HTMLElement): void {
   bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for task ${task.id}: ${task.text.split('\n')[0]}`);
   const settings = normalizeTaskActions(state.taskActions)[taskActionState(task)];
   for (const id of settings.order) {
-    if (settings.hidden.includes(id)) continue;
+    if (settings.hidden.includes(id) && !row.querySelector<HTMLElement>(`.row-action[data-row-element="${id}"]`)?.hidden) continue;
     const action = taskAction(task, id);
     bar.append(button(action.icon, action.label, () => runTaskAction(task, action.id), actionBlocked(task, action.id)));
   }
@@ -433,7 +476,7 @@ const actionChoices: Record<TaskActionId, { icon: Icon; label: string }> = {
   start: { icon: 'start', label: 'Start' }, done: { icon: 'done', label: 'Complete' },
   archive: { icon: 'remove', label: 'Remove to archive' }, edit: { icon: 'edit', label: 'Edit text…' },
   schedule: { icon: 'schedule', label: 'Set reminder…' }, tag: { icon: 'tag', label: 'Change tag…' },
-  unmark: { icon: 'reset', label: 'Cancel deletion mark' },
+  unmark: { icon: 'reset', label: 'Cancel deletion mark' }, preview: { icon: 'preview', label: 'Preview' },
 };
 function taskActionState(task: Task): TaskActionState {
   return marked.has(task.id) ? 'marked' : isProgress(task) ? 'in_progress' : 'active';
@@ -447,7 +490,7 @@ function taskAction(task: Task, id: TaskActionId): { id: TaskAction; icon: Icon;
   return { id: id === 'start' && isProgress(task) ? 'reset' : id, ...actionChoice(id, isProgress(task) ? 'in_progress' : 'active') };
 }
 function actionBlocked(task: Task, id: TaskAction): boolean {
-  return id !== 'copy' && id !== 'edit' && (readonly || busyTasks.has(task.id));
+  return id !== 'copy' && id !== 'edit' && id !== 'preview' && (readonly || busyTasks.has(task.id));
 }
 function configureTaskActions(): void {
   const existing = layers.find(l => l.kind === 'task-actions');
@@ -455,8 +498,7 @@ function configureTaskActions(): void {
   const modal = layer('Task actions', 'task-actions');
   modal.panel.classList.add('action-settings');
   const draft = normalizeTaskActions(state.taskActions);
-  let selected: TaskActionState = 'active';
-  let dragging: TaskActionId | undefined, saving = false;
+  let selected: TaskActionState = 'active', saving = false;
   const tabs = el('div', undefined, 'action-state-tabs');
   tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Task state');
   const panel = el('div'); panel.id = 'task-action-state-panel'; panel.setAttribute('role', 'tabpanel');
@@ -472,44 +514,43 @@ function configureTaskActions(): void {
   });
   function selectState(state: TaskActionState): void {
     if (saving) return;
-    selected = state; dragging = undefined; draw();
+    selected = state; draw();
   }
-  modal.panel.append(tabs, el('p', 'Drag to reorder (↑ / ↓ on a handle). Choose visible actions and one row button per tab.', 'settings-hint'), panel);
-  const list = el('div', undefined, 'action-settings-list');
-  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Task action preferences');
-  const heading = el('div', undefined, 'action-setting headings');
-  heading.append(el('span'), el('span', 'Action'), el('span', 'In menu'), el('span', 'Button'));
-  panel.append(heading, list);
+  const previewRow = el('div', undefined, 'task-row layout-preview');
+  previewRow.setAttribute('aria-label', 'Task row preview'); previewRow.inert = true;
+  const list = el('div', undefined, 'row-settings-list');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Row order');
+  panel.append(el('p', 'Live preview', 'settings-heading'), previewRow,
+    el('p', 'Row order · top to bottom = left to right', 'settings-heading'), list);
+  modal.panel.append(tabs, panel);
   const status = el('span', undefined, 'sr-only'); status.setAttribute('aria-live', 'polite'); modal.panel.append(status);
-  const clearDrop = () => { for (const row of list.children) row.classList.remove('drop-before', 'drop-after'); };
-  const move = (id: TaskActionId, to: number) => {
-    const preferences = draft[selected];
-    const from = preferences.order.indexOf(id);
-    if (readonly || saving || from === to || to < 0 || to >= preferences.order.length) return;
-    preferences.order.splice(from, 1); preferences.order.splice(to, 0, id);
-    draw(id);
-    status.textContent = `${actionChoice(id, selected).label}, position ${to + 1} of ${preferences.order.length}`;
+  const choice = (id: TaskRowElementId): { icon: Icon; label: string } => id === 'task-text' ? { icon: 'edit', label: 'Task text' }
+    : id === 'task-tag' ? { icon: 'tag', label: 'Tag' } : id === 'actions' ? { icon: 'menu', label: 'Actions' } : actionChoice(id, selected);
+  const name = (id: TaskRowElementId) => {
+    const label = el('span', undefined, 'action-name'), image = el('img');
+    image.src = `icons/${icons[choice(id).icon]}-symbolic.svg`; image.alt = '';
+    label.append(image, el('span', choice(id).label)); return label;
   };
-  const draw = (focus?: TaskActionId) => {
-    const top = modal.panel.scrollTop;
-    const preferences = draft[selected];
-    tabButtons.forEach((tab, index) => {
-      const chosen = TASK_ACTION_STATES[index] === selected;
-      tab.setAttribute('aria-selected', String(chosen)); tab.tabIndex = chosen ? 0 : -1; tab.disabled = saving;
-    });
-    panel.setAttribute('aria-labelledby', `task-action-tab-${selected}`);
-    reset.title = `Restore default actions for ${actionStateLabels[selected]}`; reset.setAttribute('aria-label', reset.title);
-    list.replaceChildren();
-    for (const id of preferences.order) {
-      const choice = actionChoice(id, selected);
-      const row = el('div', undefined, 'action-setting'); row.dataset.action = id;
-      const handle = button('grip', `Reorder ${choice.label}`, () => undefined, readonly || saving);
+  // Row order and menu order use the same keyboard and pointer interaction.
+  function orderedList<T extends TaskRowElementId>(container: HTMLElement, order: T[], redraw: (focus?: T) => void, populate: (row: HTMLElement, id: T) => void): void {
+    let dragging: T | undefined;
+    const clearDrop = () => { for (const row of container.children) row.classList.remove('drop-before', 'drop-after'); };
+    const move = (id: T, to: number) => {
+      const from = order.indexOf(id);
+      if (readonly || saving || from === to || to < 0 || to >= order.length) return;
+      order.splice(from, 1); order.splice(to, 0, id); redraw(id);
+      status.textContent = `${choice(id).label}, position ${to + 1} of ${order.length}`;
+    };
+    container.replaceChildren();
+    for (const id of order) {
+      const row = el('div', undefined, 'action-setting'); row.dataset.element = id;
+      const handle = button('grip', `Reorder ${choice(id).label}`, () => undefined, readonly || saving);
       handle.className = 'action-drag'; handle.draggable = !readonly && !saving;
-      handle.title = `Drag to reorder ${choice.label}; ↑ / ↓ to move`;
+      handle.title = `Drag to reorder ${choice(id).label}; ↑ / ↓ to move`;
       handle.setAttribute('aria-description', 'Drag, or press Arrow Up or Arrow Down to reorder.');
       handle.addEventListener('keydown', event => {
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-        event.preventDefault(); move(id, preferences.order.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1));
+        event.preventDefault(); move(id, order.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1));
       });
       handle.addEventListener('dragstart', event => {
         if (readonly || saving || !event.dataTransfer) { event.preventDefault(); return; }
@@ -527,30 +568,69 @@ function configureTaskActions(): void {
       row.addEventListener('drop', event => {
         if (!dragging || readonly || saving) return;
         event.preventDefault();
-        const from = preferences.order.indexOf(dragging), rect = row.getBoundingClientRect();
-        const at = preferences.order.indexOf(id) + (event.clientY < rect.top + rect.height / 2 ? 0 : 1);
+        const from = order.indexOf(dragging), rect = row.getBoundingClientRect();
+        const at = order.indexOf(id) + (event.clientY < rect.top + rect.height / 2 ? 0 : 1);
         const moved = dragging; dragging = undefined; clearDrop(); move(moved, at > from ? at - 1 : at);
       });
-      const label = el('span', undefined, 'action-name'), icon = el('img');
-      icon.src = `icons/${icons[choice.icon]}-symbolic.svg`; icon.alt = '';
-      label.append(icon, el('span', choice.label));
-      const shown = el('input'); shown.type = 'checkbox'; shown.checked = !preferences.hidden.includes(id);
-      shown.setAttribute('aria-label', `Show ${choice.label} in menu`); shown.title = `Show ${choice.label} in menu`;
-      shown.disabled = readonly || saving;
-      shown.addEventListener('change', () => { preferences.hidden = shown.checked ? preferences.hidden.filter(value => value !== id) : [...preferences.hidden, id]; });
-      const primary = el('input'); primary.type = 'radio'; primary.name = 'task-row-action'; primary.checked = preferences.primary === id;
-      primary.setAttribute('aria-label', `Use ${choice.label} as row button`); primary.title = `Use ${choice.label} as row button`;
-      primary.disabled = readonly || saving;
-      primary.addEventListener('change', () => { if (primary.checked) preferences.primary = id; });
-      row.append(handle, label, shown, primary); list.append(row);
+      row.append(handle, name(id)); populate(row, id); container.append(row);
     }
-    modal.panel.scrollTop = top;
-    if (focus) {
-      const handle = list.querySelector<HTMLButtonElement>(`[data-action="${focus}"] .action-drag`);
-      handle?.focus({ preventScroll: true }); handle?.scrollIntoView({ block: 'nearest' });
-    }
-  };
-  modal.panel.append(el('p', 'Includes existing tasks. Other tabs are unchanged. Hidden menu actions can still be row buttons.', 'settings-hint'));
+  }
+  function focusHandle(container: HTMLElement, id?: TaskRowElementId): void {
+    if (!id) return;
+    const handle = container.querySelector<HTMLButtonElement>(`[data-element="${id}"] .action-drag`);
+    handle?.focus({ preventScroll: true }); handle?.scrollIntoView({ block: 'nearest' });
+  }
+  function availableActions(): void {
+    const picker = layer('Available actions'); picker.panel.classList.add('action-settings');
+    picker.panel.append(el('p', 'Add existing actions to the row. Drag to reorder the menu; menu visibility is independent.', 'settings-hint'));
+    const heading = el('div', undefined, 'action-setting headings');
+    heading.append(el('span'), el('span', 'Action'), el('span', 'In menu'), el('span', 'Row'));
+    const items = el('div', undefined, 'action-settings-list'); picker.panel.append(heading, items);
+    const preferences = draft[selected];
+    const add = (id: TaskRowElementId) => {
+      if (readonly || saving || preferences.row.includes(id)) return;
+      preferences.row.push(id); draw(); redraw();
+      items.querySelector<HTMLElement>(`[data-element="${id}"] .action-drag`)?.focus({ preventScroll: true });
+    };
+    const menu = button('add', 'Add Actions to row', () => { add('actions'); menu.disabled = true; }, readonly || preferences.row.includes('actions'));
+    const menuLine = el('div', undefined, 'action-menu-choice'); menuLine.append(name('actions'), menu); picker.panel.append(menuLine);
+    const redraw = (focus?: TaskActionId) => {
+      orderedList(items, preferences.order, redraw, (row, id) => {
+        const shown = el('input'); shown.type = 'checkbox'; shown.checked = !preferences.hidden.includes(id);
+        shown.setAttribute('aria-label', `Show ${choice(id).label} in menu`); shown.title = `Show ${choice(id).label} in menu`;
+        shown.disabled = readonly || saving;
+        shown.addEventListener('change', () => { preferences.hidden = shown.checked ? preferences.hidden.filter(value => value !== id) : [...preferences.hidden, id]; });
+        const added = preferences.row.includes(id);
+        row.append(shown, button(added ? 'done' : 'add', added ? `${choice(id).label} already in row` : `Add ${choice(id).label} to row`, () => add(id), readonly || saving || added));
+      });
+      focusHandle(items, focus);
+    };
+    redraw();
+  }
+  function draw(focus?: TaskRowElementId): void {
+    const top = modal.panel.scrollTop, preferences = draft[selected];
+    tabButtons.forEach((tab, index) => {
+      const chosen = TASK_ACTION_STATES[index] === selected;
+      tab.setAttribute('aria-selected', String(chosen)); tab.tabIndex = chosen ? 0 : -1; tab.disabled = saving;
+    });
+    panel.setAttribute('aria-labelledby', `task-action-tab-${selected}`);
+    reset.title = `Restore default actions for ${actionStateLabels[selected]}`; reset.setAttribute('aria-label', reset.title);
+    const sample: Task = { id: 0, text: 'Configure the task row', tag: 'pinote', state: selected === 'in_progress' ? 'in_progress' : 'active', created_at: '', updated_at: '', remind_at: null, reminder_due_at: null, archived_at: null, agent_notes: {}, agent_event_id: 0 };
+    previewRow.className = `task-row layout-preview${selected === 'in_progress' ? ' progress' : selected === 'marked' ? ' marked' : ''}`;
+    previewRow.replaceChildren(taskContent(sample, preferences, true));
+    orderedList(list, preferences.row, draw, (row, id) => {
+      const required = id === 'task-tag' || id === 'task-text';
+      if (required) row.append(el('span', 'Required', 'required-element'));
+      else row.append(button('close', `Remove ${choice(id).label} from row`, () => {
+        const index = preferences.row.indexOf(id); preferences.row.splice(index, 1); draw(preferences.row[Math.min(index, preferences.row.length - 1)]);
+      }, readonly || saving));
+    });
+    add.disabled = readonly || saving;
+    modal.panel.scrollTop = top; fitTaskRows(); focusHandle(list, focus);
+  }
+  const add = button('add', 'Add actions / configure menu', availableActions, readonly);
+  const addLine = el('div', undefined, 'controls'); addLine.append(add, el('span', 'Add actions / configure menu', 'settings-hint')); modal.panel.append(addLine);
+  modal.panel.append(el('p', 'Drag or use ↑ / ↓. Tag and task text are required; both can move. Overflow buttons go under Actions.', 'settings-hint'));
   const bar = controls(modal.panel);
   const reset = button('reset', 'Restore default task actions', () => { if (readonly || saving) return; draft[selected] = defaultTaskActions()[selected]; draw(); }, readonly);
   const save = button('save', 'Save task actions', async () => {
@@ -574,6 +654,7 @@ async function runTaskAction(task: Task, action: TaskAction): Promise<void> {
   switch (action) {
     case 'kitty': await startKitty(task); break;
     case 'copy': await api.copy(task.text); break;
+    case 'preview': preview(task); break;
     case 'unmark': if (!actionBlocked(task, action)) { marked.delete(task.id); renderTasks(); } break;
     case 'start': case 'reset': case 'done': await transition(task, action); break;
     case 'archive': await transition(task, 'rm'); break;

@@ -36,7 +36,17 @@ textarea { resize: none; line-height: 1.5; }
 .action-drag:active { cursor: grabbing; }
 .action-setting.drop-before { border-top-color: #89b4fa; }
 .action-setting.drop-after { border-bottom-color: #89b4fa; }
-.action-settings-list, .action-settings [role="tabpanel"] { flex-shrink: 0; }
+.action-settings-list, .action-settings [role="tabpanel"] { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.action-settings > header, .action-settings > .settings-hint, .action-settings > .controls { flex-shrink: 0; }
+.row-settings-list .action-setting { grid-template-columns: 28px minmax(0, 1fr) 60px; }
+.row-settings-list .action-setting > button:last-child { justify-self: end; }
+.required-element { color: #b6bfce; font-size: 10px; text-align: right; }
+.settings-heading { color: #b6bfce; font-size: 11px; padding: 5px 0; }
+.layout-preview { background: #1c212a; border-color: #4b5563; padding: 2px; margin-bottom: 8px; }
+.action-menu-choice { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; border-top: 1px solid #4b5563; padding-top: 5px; }
+.action-settings .controls { align-items: center; }
+.task-content > .badge { min-width: 58px; margin: 0 3px; }
+.task-content > .task-title { min-width: 64px; }
 .action-state-tabs { display: grid; grid-template-columns: 1fr 1fr 1.5fr; flex-shrink: 0; border: 1px solid #4b5563; border-radius: 4px; background: #1c212a; }
 .action-state-tabs button { min-width: 0; padding: 7px 4px; font-size: 11px; line-height: 1.4; }
 .action-state-tabs [aria-selected="true"] { background: #35445b; box-shadow: inset 0 -2px #89b4fa; font-weight: bold; }
@@ -96,5 +106,6 @@ textarea { resize: none; line-height: 1.5; }
 .completed { pointer-events: none; animation: completion .4s ease forwards; background: #31513b !important; }
 @keyframes completion { 0%, 49% { opacity: 1; max-height: 34px; min-height: 33px; color: #a7f3b4; } 100% { opacity: 0; max-height: 0; min-height: 0; border-width: 0; } }
 @media (prefers-reduced-motion: reduce) { .completed { animation: none; } }
-@media (max-width: 310px) { #toolbar { gap: 0; } button { min-width: 25px; padding: 3px; } .badge { max-width: 17%; } .creation-tag { max-width: 32%; } }
+@media (max-width: 310px) { #toolbar, .task-actions { gap: 0; } button { min-width: 25px; padding: 3px; } .task-actions button { min-width: 22px; padding: 2px; } .badge { max-width: 17%; } .creation-tag { max-width: 32%; } }
+@media (max-height: 400px) { .action-settings-list, .action-settings [role="tabpanel"] { flex-shrink: 0; overflow: visible; } }
 @media (max-height: 260px) { .panel { gap: 4px; padding: 5px; } .edit-text { min-height: 40px; } #notice { max-height: 27vh; } #draft { max-height: 25vh; } }
