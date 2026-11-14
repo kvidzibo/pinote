@@ -166,6 +166,60 @@ test('menu/footer completion refuses busy agents and rechecks immediately before
   await h.session.stop();
 });
 
+test('footer double-click approves completion once without changing menu approval or completion guards', async () => {
+  const { RemoteUI } = await import('../remote/ui.ts');
+  for (const scenario of ['ordinary', 'dedicated', 'busy', 'stale', 'failed']) {
+    const current = view({ selectedId: 7 });
+    current.controls = [
+      { id: 'done', kind: 'action', label: 'Complete task', revision: 'task-1' },
+      { id: 'preview', kind: 'action', label: 'Preview', revision: 'task-1' },
+    ];
+    current.footer = [{ text: 'Task', action: 'preview', doubleAction: 'done' }];
+    const actions: string[] = [];
+    const h = harness({ read: async () => resource(current), action: async (params) => {
+      assert.equal(typeof params.action, 'string');
+      actions.push(params.action as string);
+      if (scenario === 'failed' && params.action === 'done') throw new Error('Unavailable');
+      return { view: params.action === 'done' ? view({ selectedId: null }) : structuredClone(current) };
+    } });
+    await h.session.start([], 'conversation');
+    let footer: any, prompts = 0, shutdowns = 0, idle = true;
+    const theme = { fg: (_color: string, text: string) => text, italic: (text: string) => text } as any;
+    const ctx = { mode: 'tui', isIdle: () => idle, shutdown: () => { shutdowns++; }, ui: {
+      theme, setStatus() {}, notify() {}, custom: loader,
+      setWidget: (_key: string, factory: any) => {
+        footer = factory({ mode: 'fullscreen', requestRender() {} }, theme);
+      },
+      select: async (_title: string, choices: string[]) => {
+        prompts++; assert.equal(choices[0], 'Cancel'); return 'Cancel';
+      },
+      setEditorText: () => assert.fail('Completion must preserve the editor'),
+    } } as any;
+    const ui = new RemoteUI({} as any, h.session, () => scenario === 'dedicated');
+    ui.attach(ctx);
+    try {
+      assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), false);
+      assert.equal(prompts, 1, 'Menu completion still asks');
+      assert.deepEqual(actions, []);
+      footer.render(80);
+      const click = (clickCount: number) => footer.handleMouse({ type: 'click', button: 'left', x: 1, y: 0, clickCount });
+      click(1); await sleep(520);
+      assert.deepEqual(actions, ['preview'], 'Single-click remains preview-only');
+      footer.render(80);
+      if (scenario === 'busy') idle = false;
+      if (scenario === 'stale') {
+        current.controls[0].revision = 'task-2';
+        await h.session.refresh(); // Keep the old rendered hit region until the next paint.
+      }
+      click(1); click(2); click(3); await sleep(30);
+      assert.equal(prompts, 1, 'Double-click must not ask again');
+      assert.deepEqual(actions, ['busy', 'stale'].includes(scenario) ? ['preview'] : ['preview', 'done'], scenario);
+      assert.equal(shutdowns, scenario === 'dedicated' ? 1 : 0, scenario);
+      if (scenario === 'ordinary' || scenario === 'dedicated') assert.equal(h.session.view?.state.selectedId, null);
+    } finally { footer.dispose(); await h.session.stop(); }
+  }
+});
+
 test('server isError throws, failed fresh context is unavailable rather than cached/no-task', async () => {
   let fail = false;
   const h = harness({
