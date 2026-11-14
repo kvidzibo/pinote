@@ -82,10 +82,12 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     ] } }));
     const regularFields = (await read()).footer;
     native = true; scoped = true;
+    assert.equal((await read()).footer?.[1].doubleAction, undefined, 'Double-click completion requires host support');
+    double = true;
     const compact = await read();
     assert.deepEqual(compact.footer?.[0], { text: '▤ ', openApp: true, width: 3 });
     assert.equal(compact.footer?.[1].action, 'preview');
-    assert.equal(compact.footer?.[1].doubleAction, undefined, 'Title only previews; completion is an explicit control');
+    assert.equal(compact.footer?.[1].doubleAction, 'done', 'Double-click opens the existing completion action');
     assert.ok(compact.footer?.every((item) => item.action !== 'done' && item.action !== 'proposal:accept'));
     assert.equal(compact.footer?.length, 5, 'Split links do not consume another field slot');
     assert.equal(compact.footer?.[3].text, ' ↗');
@@ -309,8 +311,8 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal((await client.callTool({ name: 'propose', arguments: { title: 'Forbidden' }, _meta: meta() })).isError, true);
     native = true; scoped = true;
     view = await read();
-    view = (await act(view, 'done')).view;
-    assert.equal(view.state.selectedId, null, 'Explicit completion clears selection');
+    view = (await act(view, view.footer!.find((item) => item.action === 'preview')!.doubleAction!)).view;
+    assert.equal(view.state.selectedId, null, 'Footer double-click completion clears selection');
     assert.equal(view.footer?.[0].openApp, true);
     assert.equal(view.footer?.[1].text, 'Pinote · No task');
     native = false; scoped = false;
