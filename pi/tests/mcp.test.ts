@@ -74,14 +74,14 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(task.id, id);
     assert.equal(task.text, '# MCP task\n\nDetails');
     assert.deepEqual(task['pi-sessions'], ['12345678-1234-4234-8234-123456789012'], 'Create-and-select records the Pi session, not conversation/context IDs');
-    const update = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: task.updated_at, set: { PR: 'https://github.com/example/repo/pull/42', '--Flag': 'remove me', Large: 'https://example.com/' + 'x'.repeat(3000) } }, _meta: meta() });
+    const update = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: task.updated_at, set: { PR: 'https://github.com/example/repo/pull/42', Review: 'https://github.com/example/repo/pull/42', '--Flag': 'remove me', Large: 'https://example.com/' + 'x'.repeat(3000) } }, _meta: meta() });
     assert.equal(update.isError, undefined);
     await assert.rejects(act(view, 'done'), /changed/);
     view = await read(); state = view.state;
     assert.ok(view.footer?.some((item) => item.url?.endsWith('/42')));
     const savedConfig = await readFile(config, 'utf8');
     await writeFile(config, JSON.stringify({ unrelated: true, footer: { maxFields: 2, fields: [
-      { name: 'PR', label: 'PR', format: '<number>', link: true, width: 3 },
+      { name: 'Review', label: 'PR', format: '<number>', link: true, width: 3 },
       { name: '--Flag', label: '界界', format: '<value>', link: false, width: 8 },
     ] } }));
     const regularFields = (await read()).footer;

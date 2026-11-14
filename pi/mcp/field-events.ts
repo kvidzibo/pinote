@@ -16,11 +16,14 @@ const value = z.string().max(8192).nullable();
 const Event = z.object({ id: integer, taskId: integer.positive(), field,
   event: z.enum(['added', 'changed', 'removed']), value, previousValue: value }).strict();
 const Batch = z.object({ cursor: integer, events: z.array(Event).max(3200) }).strict();
-export const FieldResult = z.object({
+const SingleFieldResult = z.object({
   state: z.string().min(1).max(64).optional(), summary: z.string().max(1000).optional(),
   display: z.object({ strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(),
   notification: z.object({ key: z.string().min(1).max(256), message: z.string().min(1).max(1000) }).strict().optional(),
   recheckAfterSeconds: z.number().int().min(10).max(86400).nullable().optional(),
+}).strict();
+export const FieldResult = SingleFieldResult.extend({
+  items: z.array(SingleFieldResult.extend({ url: z.string().url().max(2048) }).strict()).max(64).optional(),
 }).strict();
 export type FieldResult = z.infer<typeof FieldResult>;
 type FieldEvent = z.infer<typeof Event>;
@@ -168,7 +171,7 @@ export class FieldAutomation {
     this.reconcile();
     return this.enabled.flatMap((watcher) => {
       const fields = [...new Set((this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=?').all(watcher.id) as Row[])
-        .map(({ job }) => JSON.parse(job) as Job).filter((job) => job.stale && job.event.value !== null).map((job) => job.event.field))].sort();
+        .map(({ job }) => JSON.parse(job) as Job).filter((job) => (job.stale || job.result?.items?.some((item) => item.state === 'error')) && job.event.value !== null).map((job) => job.event.field))].sort();
       return fields.length ? [{ watcherId: watcher.id, name: watcher.name.slice(0, 256), fields: fields.slice(0, 8), moreFields: Math.max(0, fields.length - 8) }] : [];
     });
   }
@@ -290,6 +293,11 @@ export class FieldAutomation {
             attempts: 0, checkedAt: new Date().toISOString(), stale: false });
         }
       });
+      if (result.items?.some((item) => item.state === 'error')) {
+        this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
+          reason: 'Watcher reported unavailable data for some items', lastSuccess: job.checkedAt ?? null,
+          retryAt: new Date(Date.now() + (result.recheckAfterSeconds ?? 60) * 1000).toISOString() });
+      }
       this.changed();
     } finally {
       this.db.prepare('UPDATE fw_scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);

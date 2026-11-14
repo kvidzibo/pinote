@@ -34,18 +34,25 @@ footer style; alerts remain independent.
 disabled until explicitly enabled because the previous setting authorized only
 notifications, not automatic worker actions. Saving watchers removes the old key.
 
-The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PR`
-and ignores other fields. Copy it to a user-owned location before customization,
-make it executable (`chmod u+x`), and ensure authenticated `gh` and Node are on the
+The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PRs`
+and legacy `PR`, ignoring other fields. Keep it in its package directory so its
+shared parser remains available; add a separate executable for custom behavior.
+If customizing a copy of the package, make the watcher executable
+(`chmod u+x`), and ensure authenticated `gh` and Node 22.19+ are on the
 **service's** PATH. For systemd, follow the [service PATH setup](README.md#run-continuously);
 using an absolute Node path in `ExecStart` alone is insufficient for the watcher's
-`#!/usr/bin/env node` interpreter. It accepts a GitHub PR URL or Markdown link, checks once, and
-requests another check in 60 seconds. It warns on failing checks/conflicts and
-colours merged PRs with the theme accent (purple in Pi's default theme), without
-strikethrough, while keeping their links. Previously cached merged results receive
-the same footer styling without another GitHub check. Closed/merged PRs stop
-polling; merging never completes the Pinote task. Passing means reported checks
-passed, not that every review/branch-protection requirement is satisfied.
+`#!/usr/bin/env node` interpreter. `PRs` accepts one GitHub PR URL or Markdown link
+per line (optional `- ` bullets), deduplicating up to 64 valid links. Each number
+keeps its own link and status: green passing, red failed/conflicting, amber pending,
+accent merged (default purple), or neutral closed/unavailable. Invalid lines are
+ignored. Legacy `PR` accepts one URL/link and retains its single-result contract.
+
+Batch checks run at most four `gh` calls at once, within a 25-second deadline.
+Unavailable entries do not erase successful results or trigger workers; they
+appear in grouped watcher diagnostics and retry. Failure/conflict alerts include
+PR numbers and URLs, within the notification budget. Checks repeat every 60
+seconds until all entries are closed/merged; merging never completes the task.
+Passing means reported checks passed, not that all review/protection rules passed.
 
 To support another field, add another executable using the contract below. Each
 watcher receives all field events and returns `{}` for fields it does not handle.
@@ -84,7 +91,7 @@ Return `{}` for an ignored field, or:
 {
   "state": "failed",
   "summary": "PR #123 checks failed",
-  "display": { "color": "warning", "strikethrough": false },
+  "display": { "color": "error", "strikethrough": false },
   "notification": { "key": "head-sha:failed-check-fingerprint", "message": "PR checks failed" },
   "recheckAfterSeconds": 60
 }
@@ -99,6 +106,13 @@ All result properties are optional. Unknown properties are rejected.
 | `display` | `strikethrough` boolean; `color`: `accent`, `muted`, `text`, `warning`, `error`, `success` |
 | `notification` | Stable `key` (1–256 characters) and `message` (1–1,000); changes create a fresh alert |
 | `recheckAfterSeconds` | Integer 10–86,400; omitted/null stops successful checks |
+| `items` | Up to 64 URL-keyed results; each has `url` (max 2,048) plus the properties above except nested `items` |
+
+Since pi-note 0.42.0, the bundled `PRs` result has `state: "multiple"` and
+`items: [{"url": "https://github.com/owner/repo/pull/123", "state": "passing",
+"display": {"color": "success"}}]`. Top-level notification/recheck settings
+control the whole field; each item's result styles only its matching PR URL.
+Update the service before using handlers that return `items`.
 
 Results replace previous results, not the original field value. Omitting a
 notification clears the current alert. Identical notification key/message pairs

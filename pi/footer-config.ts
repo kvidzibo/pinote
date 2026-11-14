@@ -14,7 +14,7 @@ If no task is selected, suggest a task only for genuinely new multi-step work re
 
 For a new proposal, pass a short, action-oriented title (a nonblank single line of at most 60 characters) and optional multiline description. Put context, URLs, commands, and acceptance criteria in description, not title. Combined task text, including the blank line separator, must fit 4000 characters.
 
-Before setting handoff values, use injected field definitions or read fields if absent. Keep handoff notes concise; PR is one GitHub PR URL.`;
+Before setting handoff values, use injected field definitions or read fields if absent. Keep handoff notes concise; PRs contains GitHub PR URLs or Markdown links, one per line. Preserve existing entries when adding another PR; legacy PR values are still displayed.`;
 export function parseAgentGuidance(value: unknown): string {
   if (typeof value !== "string" || value.length > 64_000 || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value)) {
     throw new Error("agentGuidance in pi-note.json must be a string of at most 64000 characters without control characters (except tabs/newlines).");
@@ -39,7 +39,7 @@ export type FooterField = { name: string; label: string; link: boolean; format: 
 export type FooterConfig = { titleWidth: number; fieldWidth: number; maxFields: number; fields: FooterField[] | null };
 export const defaultFooterConfig: FooterConfig = { titleWidth: 60, fieldWidth: 60, maxFields: 4, fields: null };
 export const defaultFooterField = (name: string): FooterField => ({
-  name, label: name, link: true, format: name === "PR" ? "#<number>" : "<value>",
+  name, label: name, link: true, format: name === "PR" || name === "PRs" ? "#<number>" : "<value>",
 });
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);

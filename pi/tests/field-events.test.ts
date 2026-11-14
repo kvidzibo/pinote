@@ -154,8 +154,37 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick();
     assert.ok(changes > 0);
 
+    // Multiple PRs share one field slot but keep separate links and current statuses.
+    const urls = Array.from({ length: 6 }, (_, index) => `https://github.com/example/repo/pull/${42 + index}`);
+    await update({ PRs: urls.map((url) => `[Review](${url})`).join('\n'), Next: 'Review all' });
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
+    await setMode({ state: 'multiple', items: urls.map((url, index) => ({ url, state: ['passing', 'failed', 'pending', 'merged', 'closed', 'error'][index] })), recheckAfterSeconds: 10 });
+    await automation.tick(); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    for (const native of [false, true]) {
+      const resource = await client.readResource({ uri: 'pinote://ui', _meta: {
+        ...meta(), 'native-ui/features': { fieldEvents: true, footerNativeActions: native },
+      } });
+      const multiple = ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
+      const links = multiple.footer!.filter((item) => item.url);
+      assert.deepEqual(links.map((item) => item.url), urls, 'Legacy duplicate is displayed once');
+      assert.deepEqual(links.map((item) => item.style?.color), ['success', 'error', 'warning', 'accent', 'muted', 'muted']);
+      assert.ok(links.every((item, index) => item.text.includes(`#${42 + index}`) && !item.style?.strikethrough));
+      assert.ok(multiple.footer!.some((item) => item.text.includes('Next: Review all')), 'PRs consume only one field slot');
+    }
+    assert.ok((await view()).watcherDiagnostics?.failures.some((failure) => failure.fields.includes('PRs')), 'Partial errors remain visible in terminal-only diagnostics');
+    const partialContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
+    assert.doesNotMatch(JSON.parse((partialContext.contents[0] as { text: string }).text).text, /"state":"error"/, 'Unavailable entries do not enter model observations');
+    const fieldDefs = await client.callTool({ name: 'fields', arguments: {}, _meta: meta() });
+    assert.match(JSON.stringify(fieldDefs.content), /PRs/);
+    assert.equal(task.agent_notes.PR, pr, 'Legacy values are preserved without migrating task data');
+    await update({ PRs: urls[1] });
+    const edited = await view();
+    assert.deepEqual(edited.footer!.filter((item) => item.url).map((item) => item.url), [urls[1], pr]);
+    assert.equal(edited.footer!.find((item) => item.url === urls[1])?.style?.color, 'muted', 'Edited values never inherit stale statuses');
+
     // Valid large fields/results must not break otherwise-readable task context.
-    await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR']);
+    await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR', 'PRs', 'Next']);
     await setMode({ state: 'passing', summary: 's'.repeat(1000), notification: { key: 'large', message: 'n'.repeat(1000) } });
     await automation.tick();
     for (let index = 0; index < 33; index++) await automation.tick();
