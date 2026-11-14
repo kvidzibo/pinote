@@ -1,21 +1,37 @@
 # pinote
 
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
-Linux/i3 first: use a persistent Dunst notification or the optional GTK checklist
-for editing, tags, progress, scheduled reminders, and archived tasks. The CLI has
-no Python runtime dependencies; the GUI is a separate process, not a service.
+Linux/i3 first, with Dunst notifications, a GTK checklist, and an optional
+Electron frontend for editing, tags, progress, scheduled reminders, and archived
+tasks. The CLI has no Python runtime dependencies; desktop frontends run as
+separate processes, not services.
 
 ## See it in action
 
-![Pinote GTK checklist on Linux/i3: tagged tasks, an amber in-progress task, and the task input and filter controls.](docs/images/linux-checklist.png)
+![Pinote Electron checklist with single-line tasks, right-aligned tags, subtle row separators, a lightly highlighted task, and amber in-progress controls.](docs/images/electron-checklist.png)
 
-*GTK checklist on Linux/i3 with sample tasks.*
+*Electron on Linux/i3 with sample tasks, customized row actions, and a light hover
+highlight on “Add screenshots to the README”. [Install and controls](docs/electron.md).*
+
+<details>
+<summary>Compact Electron layout with default actions</summary>
+
+![420-pixel-wide Electron checklist with default Start, Preview and Actions buttons, inline tags, and single-line task titles.](docs/images/electron-compact.png)
+
+*Rows stay single-line at 33px high. Separators follow the text/tag area;
+hover does not move controls or replace task-state colors.*
+
+</details>
 
 **Desktop workflow:** capture → start → edit → complete. Completed tasks remain
 recoverable from Archive.
 
 <details>
-<summary>Watch the desktop workflow (9-second demo)</summary>
+<summary>GTK checklist and workflow (9-second demo)</summary>
+
+![Pinote GTK checklist on Linux/i3: tagged tasks, an amber in-progress task, and the task input and filter controls.](docs/images/linux-checklist.png)
+
+*GTK checklist with sample tasks. GTK remains available alongside Electron.*
 
 ![A task is typed and added with Enter, started with its checkbox, edited with extra details, saved, and completed.](docs/images/workflow.gif)
 
@@ -81,7 +97,9 @@ note history 3                          # inspect retained history
 note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 ```
 
-### GUI controls
+### GTK controls
+
+For Electron's controls and configurable task rows, see the [Electron guide](docs/electron.md#controls-and-deliberate-differences).
 
 - **Add:** press **Enter** or **+**. Unfinished input is restored when reopened.
 - **Task actions:** right-click task text to change its state, edit, tag, or schedule

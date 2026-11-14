@@ -1,10 +1,19 @@
 # README images
 
-These are real Linux/X11 captures of Pinote 0.7.0 and pi-note 0.11.0 with
-synthetic tasks. `pi-integration.png` combines separate Pi and GTK captures;
+These are real Linux/X11 captures with synthetic tasks. The Electron screenshots
+use pinote-electron 0.10.1 and Pinote 0.25.1. The original GTK/Pi captures use
+Pinote 0.7.0 and pi-note 0.11.0. `pi-integration.png` combines separate Pi and GTK captures;
 the example PR is fictitious. Pi used an offline demo model configuration,
 and no prompt was submitted to a provider.
 
+- `electron-checklist.png`: 880×560 Electron window with customized Kitty/Edit
+  buttons, right-aligned tags, single-line rows, inset separators, and a light
+  hover on “Add screenshots to the README”. In-progress rows use Complete/Edit.
+- `electron-compact.png`: 420×460 Electron window with the default row actions
+  and the same hover treatment. Both Electron images were captured from the
+  running app under isolated Xvfb, private D-Bus/i3, and temporary HOME/XDG data;
+  no personal tasks or desktop were used. These are documentation captures,
+  separate from the temporary regression-test artifacts.
 - `linux-checklist.png`: tags, the pinned in-progress section, input and filters.
 - `workflow.gif`: nine-second add → start → edit → complete demo; captions sit
   outside the captured UI. The checklist and editor are cropped separately.
