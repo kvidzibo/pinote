@@ -268,8 +268,23 @@ export class FieldAutomation {
         if (batch.cursor !== state.cursor) {
           this.transaction(() => {
             for (const event of batch.events) {
-              this.clear(watcher.id, event.taskId, event.field);
-              this.save({ watcherId: watcher.id, event, due: Date.now(), attempts: 0 });
+              const row = event.field === 'PRs' && event.value !== null
+                ? this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=? AND field=?').get(watcher.id, event.taskId, event.field) as Row | undefined : undefined;
+              const previous = row ? JSON.parse(row.job) as Job : undefined;
+              const urls = new Set(parsePullRequests(event.value ?? undefined).map((item) => item.url));
+              const items = previous?.result?.items?.filter((item) => urls.has(item.url));
+              if (items?.length) {
+                const result = { ...previous!.result!, items };
+                if (!items.some((item) => item.notification)) {
+                  delete result.notification;
+                  this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(watcher.id, event.taskId, event.field);
+                }
+                // Keep overlapping identities/receipts, never edited-value observations.
+                this.save({ watcherId: watcher.id, event, result, stale: true, due: Date.now(), attempts: 0 });
+              } else {
+                this.clear(watcher.id, event.taskId, event.field);
+                this.save({ watcherId: watcher.id, event, due: Date.now(), attempts: 0 });
+              }
             }
             this.db.prepare('UPDATE fw_watchers SET cursor=? WHERE id=?').run(batch.cursor, watcher.id);
           });

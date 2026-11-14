@@ -51,6 +51,7 @@ Batch checks run at most four `gh` calls at once, within a 25-second deadline.
 Unavailable entries do not erase successful results or retrigger workers on
 outage/recovery; they appear in grouped watcher diagnostics and retry. Receipts
 persist when the known failure set only shrinks; new failure identities alert again.
+Editing the list preserves receipts for retained URLs, but requires fresh checks.
 Overlapping legacy/new links use the latest available observations and share
 receipts when plural checks catch up with an already-reported legacy failure.
 Legacy-only custom watchers keep their independent alerts. Batch alerts include
