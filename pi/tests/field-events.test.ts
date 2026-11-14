@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { FieldAutomation, runFieldHandler } from '../mcp/field-events.ts';
+import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../mcp/field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../remote/protocol.ts';
 
@@ -36,7 +36,8 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   const callLog = async () => (await readFile(calls, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
   let automation: FieldAutomation | undefined, client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
   let changes = 0, errors = 0;
-  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] }), path, noteCommand: command, changed: () => changes++, log: () => errors++ });
+  const diagnostics: WatcherFailureLog[] = [];
+  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] }), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
   const forceDue = () => {
     const db = new DatabaseSync(path);
     try { db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)"); } finally { db.close(); }
@@ -71,11 +72,11 @@ else {delete result.wait; console.log(JSON.stringify(result));}
 
     // Actual MCP resources use the same durable status, without changing the URL/task revision.
     const { createPinoteServer } = await import('../mcp/core.ts');
-    server = createPinoteServer({ fieldAutomation: automation });
+    server = createPinoteServer({ fieldAutomation: automation, watcherLogPath: join(dir, 'app.log') });
     client = new Client({ name: 'field-test', version: '1' });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(b); await client.connect(a);
-    const meta = (feature = true, selectedId: number | null = task.id) => ({ 'native-ui/context': { conversationId: 'session-a', state: { selectedId } }, 'native-ui/features': { fieldEvents: feature, footerNativeActions: true } });
+    const meta = (feature = true, selectedId: number | null = task.id) => ({ 'native-ui/context': { conversationId: 'session-a', state: { selectedId } }, 'native-ui/features': { fieldEvents: feature, watcherDiagnostics: feature, footerNativeActions: true } });
     const view = async (feature = true, selectedId: number | null = task.id) => {
       const resource = await client!.readResource({ uri: 'pinote://ui', _meta: meta(feature, selectedId) });
       return ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
@@ -88,6 +89,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.deepEqual((await view(true, null)).fieldNotifications, []);
     const legacy = await view(false);
     assert.equal(legacy.fieldNotifications, undefined);
+    assert.equal(legacy.watcherDiagnostics, undefined);
     assert.ok(legacy.footer!.every((item) => !item.style));
 
     // Invalid output and reported errors retain the last known result, marked stale.
@@ -95,6 +97,17 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.equal(errors, 1);
     assert.equal(automation.statuses(task)[0].stale, true);
     assert.equal(automation.statuses(task)[0].result.state, 'failed');
+    assert.equal(diagnostics[0].reason, 'Invalid watcher JSON or result schema');
+    assert.equal(diagnostics[0].taskId, task.id);
+    assert.equal(diagnostics[0].field, 'PR');
+    assert.ok(diagnostics[0].lastSuccess);
+    assert.ok(Date.parse(diagnostics[0].retryAt) > Date.now());
+    assert.ok(!JSON.stringify(diagnostics).includes(pr), 'No field values or script output in diagnostics');
+    const failureView = await view();
+    assert.equal(failureView.watcherDiagnostics?.logPath, join(dir, 'app.log'));
+    assert.deepEqual(failureView.watcherDiagnostics?.failures[0].fields, ['PR']);
+    const staleContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
+    assert.doesNotMatch((staleContext.contents[0] as { text: string }).text, /Field automation results|Invalid watcher|app\.log/);
     assert.deepEqual(automation.notices(task, 'session-a'), []);
     await setMode({ state: 'error' }); forceDue(); await automation.tick();
     assert.equal(automation.statuses(task)[0].stale, true);
@@ -102,6 +115,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await setMode({ state: 'merged', display: { strikethrough: true, color: 'muted' }, recheckAfterSeconds: null });
     forceDue(); await automation.tick();
     const merged = await view();
+    assert.deepEqual(merged.watcherDiagnostics?.failures, []);
     assert.ok(merged.footer!.some((item) => item.text.includes('#42') && item.style?.strikethrough));
     assert.ok(merged.footer!.some((item) => item.url === pr), 'link stays clickable');
     assert.deepEqual(merged.fieldNotifications, []);

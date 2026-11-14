@@ -63,7 +63,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   const fieldListeners = new Set<() => void>();
   const fieldAutomation = await FieldAutomation.open({
     changed: () => { for (const listener of fieldListeners) listener(); },
-    log: () => log('field automation check failed; will retry'),
+    log: (failure) => log(failure ? `watcher check failed ${JSON.stringify(failure)}` : 'field automation check failed; will retry'),
   });
   const reject = (res: ServerResponse, status: number) => { res.writeHead(status, { 'Content-Type': 'text/plain' }); res.end(`${status}\n`); };
   const single = (req: IncomingMessage, name: string) => {
@@ -124,6 +124,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
         const entry: Session = { transport, server: undefined!, busy: 0, streams: 0, touched: Date.now() };
         entry.server = createPinoteServer({
           fieldAutomation,
+          watcherLogPath: logPath,
           onFieldChange: (listener) => { fieldListeners.add(listener); return () => { fieldListeners.delete(listener); }; },
           onError: () => log('protocol or notification failed'),
           onBusy: (delta) => { entry.busy += delta; entry.touched = Date.now(); },

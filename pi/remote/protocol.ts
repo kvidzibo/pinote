@@ -22,6 +22,9 @@ export const ViewSchema = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256),
   state: StateSchema, body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(control).max(256),
+  watcherDiagnostics: z.object({ logPath: z.string().min(1).max(4096), failures: z.array(z.object({
+    watcherId: z.string().min(1).max(256), name: z.string().max(256), fields: z.array(z.string().max(128)).max(8), moreFields: z.number().int().nonnegative(),
+  }).strict()).max(32) }).strict().optional(),
   fieldNotifications: z.array(z.object({ id: z.string().uuid(), taskId: z.number().int().positive().safe(), field: z.string().min(1).max(128), message: z.string().min(1).max(1000), triggerWorker: z.literal(true).optional() }).strict()).max(64).optional(),
   footer: z.array(z.object({ text, openApp: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().min(1).max(256).optional(), secondaryAction: z.string().min(1).max(256).optional(), doubleAction: z.string().min(1).max(256).optional(), style: z.object({ italic: z.boolean().optional(), strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict().superRefine((view, ctx) => {

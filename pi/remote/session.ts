@@ -67,7 +67,7 @@ export class RemoteSession {
     if (!this.saved) throw new RemoteFailure();
     return {
       [UI_CONTEXT]: { conversationId: this.conversationId, piSessionId: this.piSessionId, contextId: this.saved.contextId, state: this.saved.state, fieldReceipts: this.saved.fieldReceipts ?? [] },
-      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, fieldWatchers: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
+      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, fieldWatchers: true, watcherDiagnostics: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
     };
   }
   private serial<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {

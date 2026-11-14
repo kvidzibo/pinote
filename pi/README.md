@@ -241,6 +241,12 @@ Since pi-note 0.40.1, `/pinote` opens tasks directly and **Tab** opens settings.
 Update both client and service for newest-created-first search results, then
 `/reload` Pi.
 
+With pi-note 0.41.1+ on client and service, watcher execution failures appear as
+one terminal-only notice listing failing watchers and affected fields, with the
+service log path for safe diagnostics. Repeated retries stay quiet; a changed
+failure set or recovery updates the notice. These diagnostics never trigger a
+model turn or enter model context; current actionable PR alerts remain separate.
+
 Since pi-note 0.40.0, `fieldWatchers` replaces `fieldHandler`. Existing handlers
 appear disabled and need explicit re-enabling: enabling now authorizes automatic
 worker turns, not just notifications. Update/restart the service and `/reload` Pi.

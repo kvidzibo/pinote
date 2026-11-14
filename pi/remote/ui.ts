@@ -23,6 +23,7 @@ export class RemoteUI {
   private opening = false;
   private acting = false;
   private closing = false;
+  private watcherFailureKey = '';
   private failure?: RemoteFailure;
   private pi: ExtensionAPI;
   private session: RemoteSession;
@@ -59,6 +60,17 @@ export class RemoteUI {
   }
   private render(): void {
     if (this.ctx?.mode !== 'tui') return;
+    const diagnostics = this.session.view?.watcherDiagnostics;
+    if (diagnostics) {
+      const key = diagnostics.failures.length ? JSON.stringify(diagnostics) : '';
+      if (key !== this.watcherFailureKey) {
+        const failures = diagnostics.failures.map((watcher) =>
+          `${line(watcher.name)} [${watcher.fields.map(line).join(', ')}${watcher.moreFields ? `, +${watcher.moreFields} fields` : ''}]`).join(', ').slice(0, 2000);
+        this.ctx.ui.notify(failures ? `Pinote watchers failing: ${failures}.\nDetails (service machine): ${line(diagnostics.logPath)}` :
+          'Pinote watcher failures cleared.', failures ? 'warning' : 'info');
+        this.watcherFailureKey = key;
+      }
+    }
     const theme = this.ctx.ui.theme;
     this.ctx.ui.setStatus('pinote-remote', this.session.fullscreen ? undefined : this.session.view ? footerText(this.session.view, truncateToWidth, (text, style) => {
       let rendered = style.color ? theme.fg(style.color, text) : text;
