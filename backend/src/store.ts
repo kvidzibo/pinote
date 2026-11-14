@@ -1,7 +1,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { dirname, isAbsolute } from 'node:path';
 import { privateDirectory, privateFile, resolvePath, checkCancelled } from './runtime.ts';
-import { NoteError, validate_text, validate_tag, validate_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch } from './compat.ts';
+import { NoteError, validate_text, validate_tag, validate_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch, validatePiSession } from './compat.ts';
 import * as schema from './schema.ts';
 export { NoteError, markdown } from './compat.ts';
 export type Id = bigint;
@@ -149,9 +149,8 @@ export class Store {
     return this.transaction(()=>{ const rows=this.query("SELECT id FROM notes WHERE state='scheduled' AND remind_at<=? ORDER BY remind_at,id",timestamp()); for(const r of rows) this.changeState(r.id,'remind','scheduled','active'); return rows.length; });
   }
   transition(note_id:Id,action:string,options:{expected_states?:Set<string>|null;expected_updated_at?:string|null;allow_unchanged?:boolean;pi_session_id?:string|null}={}):boolean {
-    const session=options.pi_session_id??null;
+    const session=validatePiSession(options.pi_session_id);
     if(session!==null) {
-      if(typeof session!=='string'||session.length>256||! /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(session)) throw new NoteError('--pi-session-id must be a valid Pi session ID (at most 256 characters).');
       if(action!=='start') throw new NoteError('Pi sessions can only be recorded when starting a task.');
     }
     const target=({start:'in_progress',reset:'active',done:'done',rm:'removed',restore:'active'} as Record<string,string>)[action];

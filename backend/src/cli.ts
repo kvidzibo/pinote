@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
-import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, timestamp, pythonStrip } from './compat.ts';
+import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, timestamp, pythonStrip } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
@@ -139,6 +139,7 @@ function validateCommand(args: Arguments): void {
   if (args.command === 'add') validate_text(args.text!.join(' '));
   if (args.command === 'schedule' && parse_reminder_time(args.when!) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   if (args.command !== 'agent') return;
+  validatePiSession(args.pi_session_id);
   if (args.cwd !== undefined && !isAbsolute(args.cwd)) throw new NoteError('--cwd must be an absolute project directory.');
   if (args.tag !== undefined) explicitTag(args.tag);
   if (args.agent_action === 'add') validate_text(args.agent_text!);
