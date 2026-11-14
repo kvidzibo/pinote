@@ -271,7 +271,10 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       const target = field.link && url && url.length <= 2048 ? url : undefined;
       const width = field.width ?? config.config.fieldWidth;
       const status = data.fieldStatuses.find((item) => item.field === field.name);
-      const style = features.fieldEvents && status ? { ...(status.result.display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
+      // Terminal PR results stop polling: refresh older cached styles on read.
+      const display = field.name === 'PR' && status?.result.state === 'merged'
+        ? { color: 'accent' as const, strikethrough: false } : status?.result.display;
+      const style = features.fieldEvents && status ? { ...(display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
       if (features.footerNativeActions) {
         if (footer.length + (target ? 2 : 1) > 128) break;
         // Clip before splitting: each field still consumes one field slot, and

@@ -41,7 +41,9 @@ make it executable (`chmod u+x`), and ensure authenticated `gh` and Node are on 
 using an absolute Node path in `ExecStart` alone is insufficient for the watcher's
 `#!/usr/bin/env node` interpreter. It accepts a GitHub PR URL or Markdown link, checks once, and
 requests another check in 60 seconds. It warns on failing checks/conflicts and
-strikes through merged PRs while keeping their links. Closed/merged PRs stop
+colours merged PRs with the theme accent (purple in Pi's default theme), without
+strikethrough, while keeping their links. Previously cached merged results receive
+the same footer styling without another GitHub check. Closed/merged PRs stop
 polling; merging never completes the Pinote task. Passing means reported checks
 passed, not that every review/branch-protection requirement is satisfied.
 
