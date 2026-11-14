@@ -40,24 +40,32 @@ const style = HighlightStyle.define([
 export class MarkdownEditor {
   readonly view: EditorView;
   private mode = new Compartment();
+  private settingText = false;
   constructor(parent: HTMLElement, text: string, label: string, composer: boolean, changed: () => void, submit: () => void) {
     this.view = new EditorView({ parent, state: EditorState.create({ doc: text, extensions: [
       this.mode.of(EditorState.readOnly.of(false)), history(), markdown(), syntaxHighlighting(style),
       EditorView.lineWrapping,
       EditorView.cspNonce.of(document.querySelector<HTMLMetaElement>('meta[name=style-nonce]')?.content ?? ''),
-      EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'false' }),
+      EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'false', tabindex: '0' }),
       ...(composer ? [placeholder(label)] : []),
       keymap.of([
         { key: composer ? 'Enter' : 'Ctrl-Enter', run: view => { if (view.composing) return false; submit(); return true; } },
         { key: 'Enter', run: sourceNewline }, { key: 'Shift-Enter', run: sourceNewline },
         ...defaultKeymap, ...historyKeymap,
       ]),
-      EditorView.updateListener.of(update => { if (update.docChanged) changed(); }),
+      EditorView.updateListener.of(update => { if (update.docChanged && !this.settingText) changed(); }),
     ] }) });
   }
   get dom(): HTMLElement { return this.view.contentDOM; }
   get value(): string { return this.view.state.doc.toString(); }
-  setText(text: string): void { this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: text }, annotations: Transaction.addToHistory.of(false) }); }
+  setText(text: string): void {
+    // Loading or clearing a saved draft is not user input and must not queue an
+    // autosave of the restored snapshot over newer state.
+    this.settingText = true;
+    try {
+      this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: text }, annotations: Transaction.addToHistory.of(false) });
+    } finally { this.settingText = false; }
+  }
   set readOnly(value: boolean) {
     this.view.dispatch({ effects: this.mode.reconfigure(EditorState.readOnly.of(value)) });
     this.dom.setAttribute('aria-readonly', String(value));

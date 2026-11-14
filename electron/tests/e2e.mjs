@@ -661,6 +661,11 @@ try {
       await editor.locator(selector).first().waitFor();
     }
     assert.equal(await sourceValue(editor),source,'Styling must retain all Markdown markers');
+    await editor.press('Tab');
+    const closeEditor = page.getByRole('button',{name:`Close Edit task ${added.id}`,exact:true});
+    assert.equal(await closeEditor.evaluate(node=>node===document.activeElement),true,'Tab from the final textbox wraps inside the modal');
+    await closeEditor.press('Shift+Tab');
+    assert.equal(await editor.evaluate(node=>node===document.activeElement),true,'Shift+Tab returns to the source editor');
     const editorBounds = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
     await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:25,y:25,width:520,height:400}));
     await editor.press('Control+Home');
