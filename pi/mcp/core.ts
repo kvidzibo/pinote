@@ -269,8 +269,10 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     for (const field of fields(config.config, task.agent_notes)) {
       if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
       const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
+      const legacy = field.name === 'PRs' ? task.agent_notes.PR : undefined;
+      const legacyExtra = Boolean(prs.length && legacy?.trim() && !parsePullRequests(legacy).length);
+      let room = field.width ?? config.config.fieldWidth;
       if (prs.length) {
-        let room = field.width ?? config.config.fieldWidth;
         for (const [index, pr] of prs.entries()) {
           if (room <= 0 || footer.length >= 128) break;
           const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
@@ -293,10 +295,13 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
           if (text !== plain) break;
         }
         fieldCount++;
-        continue;
+        if (!legacyExtra || room < 3) continue;
       }
-      // Keep custom <value>/<url> presentations of non-GitHub legacy values.
-      const raw = field.name === 'PRs' ? task.agent_notes.PRs ?? task.agent_notes.PR : task.agent_notes[field.name];
+      if (footer.length >= 128) break;
+      // Preserve custom legacy text/links alongside valid plural URLs, using
+      // the same field slot and the group's remaining column budget.
+      let raw: string | undefined = task.agent_notes[field.name];
+      if (field.name === 'PRs') raw = legacyExtra ? legacy : raw?.trim() ? raw : legacy;
       if (!raw) continue;
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
       const url = link?.[2] ?? (/^https?:\/\/[^\s]+$/.test(raw) ? raw : undefined);
@@ -306,8 +311,8 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       const substitutions: Record<string, string> = { value, url: url ?? '', number: number ?? '' };
       const rendered = ` · ${field.label ? `${field.label}: ` : ''}${field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key])}`;
       const target = field.link && url && url.length <= 2048 ? url : undefined;
-      const width = field.width ?? config.config.fieldWidth;
-      const status = data.fieldStatuses.find((item) => item.field === field.name)
+      const width = room;
+      const status = data.fieldStatuses.find((item) => item.field === (legacyExtra ? 'PR' : field.name))
         ?? (field.name === 'PRs' ? data.fieldStatuses.find((item) => item.field === 'PR') : undefined);
       const style = features.fieldEvents && status ? { ...(status.result.display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
       if (features.footerNativeActions) {
@@ -319,7 +324,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
         footer.push({ text: truncateToWidth(plain.slice(0, 20_000), Math.max(0, width - visibleWidth(icon)), ''), width, ...(style ? { style } : {}) });
         if (target) footer.push({ text: icon, url: target });
       } else footer.push({ text: rendered.slice(0, 20_000), ...(target ? { url: target } : {}), width, ...(style ? { style } : {}) });
-      fieldCount++;
+      if (!prs.length) fieldCount++;
     }
   }
   const editable = controls.filter((control) => {

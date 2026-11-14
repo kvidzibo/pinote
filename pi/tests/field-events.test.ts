@@ -159,16 +159,24 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick();
     assert.ok(changes > 0);
 
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { fields: [{ name: 'PR', label: '', format: '<value>' }] } }));
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 1, fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
     for (const value of ['Needs review', '[Review](https://forgejo.example/repo/pulls/42)']) {
       await update({ PR: value });
       const legacyValue = await view();
       assert.ok(legacyValue.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value)), 'Legacy non-GitHub <value> content stays visible');
       if (value.startsWith('[')) assert.ok(legacyValue.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
+      await update({ PRs: pr });
+      const combined = await view();
+      assert.ok(combined.footer!.some((item) => item.url === pr), 'Plural PR links remain visible');
+      assert.ok(combined.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value)), 'Legacy custom values coexist in the same field slot');
+      if (value.startsWith('[')) assert.ok(combined.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
+      await update({}, ['PRs']);
     }
     await update({ PR: pr });
     await setMode({ state: 'failed', notification: { key: 'early-failure', message: 'Legacy CI failed' }, recheckAfterSeconds: 10 });
-    await automation.tick(); forceDue(); await automation.tick();
+    await automation.tick(); forceDue();
+    for (let index = 0; index < 4 && !automation.statuses(task).some((status) => status.field === 'PR' && status.result.state === 'failed'); index++) await automation.tick();
+    assert.ok(automation.statuses(task).some((status) => status.field === 'PR' && status.result.state === 'failed'));
 
     // Multiple PRs share one field slot but keep separate links and current statuses.
     const urls = Array.from({ length: 6 }, (_, index) => `https://github.com/example/repo/pull/${42 + index}`);

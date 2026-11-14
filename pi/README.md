@@ -231,6 +231,7 @@ PR watcher; without it, links still work but remain neutral.
 
 Existing `PR` values and footer definitions remain readable as `PRs`; task data
 is not rewritten. If both fields exist, their links are combined and deduplicated.
+Custom `<value>` formats retain legacy text and link labels alongside PR URLs.
 Preserve existing entries when adding a PR. Up to 64 distinct URLs are supported;
 invalid lines are ignored. The PRs group consumes one field slot and shares its
 configured field width, so narrow layouts can truncate later links.
