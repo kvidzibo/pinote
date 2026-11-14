@@ -176,9 +176,10 @@ def test_workflow_all_routes(isolated, tmp_path):
     assert call("edit", **target(isolated, note_id), text="task edited")["changed"]
     assert not call("edit", **target(isolated, note_id), text="task edited")["changed"]
     assert call("tag", **target(isolated, note_id), tag=None)["changed"]
-    assert call("create_tag", **target(isolated, note_id), name="WORK", folder=folder) == {
+    attached = call("create_tag", **target(isolated, note_id), name="WORK", folder=folder)
+    assert attached == {
         "changed": True,
-        "id": note_id,
+        **target(isolated, note_id),
         "tag": "Work",
     }
     assert call("rename_tag", name="Work", newName="Project")["changed"]
@@ -207,6 +208,55 @@ def test_workflow_all_routes(isolated, tmp_path):
         "changed"
     ]
     assert call("completions", ids=[note_id]) == []
+
+
+def test_atomic_revision_acknowledgement_chain(isolated, monkeypatch):
+    note_id = call("add", text="task", tag=None)["id"]
+    current = target(isolated, note_id)
+    for op, params in (
+        ("edit", {"text": "edited"}),
+        ("tag", {"tag": "Work"}),
+        ("create_tag", {"name": "New", "folder": None}),
+    ):
+        result = call(op, **current, **params)
+        assert result["changed"] is True
+        assert result["revision"] != current["revision"]
+        current = {"id": note_id, "revision": result["revision"]}
+        assert current == target(isolated, note_id)
+        repeated = call(op, **current, **params)
+        assert repeated["revision"] == current["revision"]
+        if op != "create_tag":
+            assert repeated["changed"] is False
+
+    original = Store._update
+    committed = []
+
+    def external_after_commit(self, *args, **kwargs):
+        result = original(self, *args, **kwargs)
+        assert not self.connection.in_transaction
+        committed.append(result)
+        # This writer deliberately does not acquire the frontend display lock.
+        with Store(isolated.database) as external:
+            assert original(external, note_id, "edit", "external update", result[1])[0] is True
+        return result
+
+    monkeypatch.setattr(Store, "_update", external_after_commit)
+    for op, params in (
+        ("edit", {"text": "final edit"}),
+        ("tag", {"tag": "Final"}),
+        ("create_tag", {"name": "Attached", "folder": None}),
+    ):
+        current = target(isolated, note_id)
+        result = call(op, **current, **params)
+        assert result["revision"] == committed[-1][1]
+        assert result["revision"] != target(isolated, note_id)["revision"]
+        stale = bridge.respond(
+            request("edit", id=note_id, revision=result["revision"], text="stale")
+        )
+        assert stale["error"]["code"] == "conflict"
+        # Give the next external edit different text, so it is not a no-op.
+        with Store(isolated.database) as store:
+            original(store, note_id, "edit", "reset", target(isolated, note_id)["revision"])
 
 
 def test_snapshot_full_metadata_config_order_and_due(isolated, monkeypatch):

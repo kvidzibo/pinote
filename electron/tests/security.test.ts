@@ -41,12 +41,31 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   ]) assert.ok(!validState({ ...initialState(), ...extra }));
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));
+  for (const pendingTag of [null, 'Work']) assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));
+  for (const pendingTag of [undefined, true, 1, {}, 'x'.repeat(257)]) assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));
+  for (const pendingTagFolder of [null, '/tmp']) assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag:'Work', pendingTagFolder } } }));
+  for (const extra of [{pendingTagFolder:'/tmp'}, {pendingTag:null,pendingTagFolder:null}, {pendingTag:'Work',pendingTagFolder:1}]) assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', ...extra } } }));
   for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'https://a\n.b']) assert.ok(!safeLink(url));
   for (const url of ['https://example.org/path', 'http://example.org', 'mailto:user@example.org']) assert.ok(safeLink(url));
   assert.ok(!validEnvelope('add', { protocol:1, ok:false, error: { code:'unknown', message: 1 } }));
   for (const result of [null, {}, {changed:true}, {changed:false,id:1}]) assert.ok(!validEnvelope('add', {protocol:1,ok:true,result}));
   assert.ok(validEnvelope('add', {protocol:1,ok:true,result:{changed:true,id:1}}));
   assert.ok(!validEnvelope('snapshot', {protocol:1,ok:true,result:{notes:[],tags:[]}}));
+});
+
+test('mutation acknowledgements accept optional bounded printable revisions', () => {
+  for (const operation of ['edit', 'tag', 'create_tag', 'transition'] as const) {
+    const result = { changed: true, id: 1, tag: 'Work' };
+    const accepts = (value: unknown) => validEnvelope(operation, { protocol: 1, ok: true, result: value });
+    assert.ok(accepts(result)); // Older backends and unrelated operations remain compatible.
+    for (const revision of ['rev', 'x'.repeat(128), 'printable space', 'é']) {
+      assert.ok(accepts({ ...result, revision }));
+      assert.ok(accepts({ ...result, changed: false, revision }));
+    }
+    for (const revision of [undefined, null, 1, true, '', 'x'.repeat(129), 'a\n', '\x00', '\x7f', '\u0085', '\u00a0', '\u200b', '\ud800']) {
+      assert.ok(!accepts({ ...result, revision }));
+    }
+  }
 });
 
 const legacyIds = TASK_ACTION_IDS.filter(id => id !== 'preview');
