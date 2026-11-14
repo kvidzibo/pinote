@@ -384,6 +384,28 @@ def test_kitty_revision_title_prompt_and_unknown(isolated, tmp_path, monkeypatch
     assert "secret" not in str(response)
 
 
+@pytest.mark.parametrize(
+    ("text", "tag", "title"),
+    [
+        ("# kitty tab name\n- keep source", "pinote", "[pinote] kitty tab name"),
+        ("   ######\t" + "x" * 40, None, "x" * 30),
+        ("#hashtag", "Tag", "[Tag] #hashtag"),
+        ("####### literal", None, "####### literal"),
+        ("C# issue #42", None, "C# issue #42"),
+    ],
+)
+def test_kitty_title_hides_only_markdown_heading(isolated, tmp_path, monkeypatch, text, tag, title):
+    note_id = call("add", text=text, tag=tag)["id"]
+    with Store(isolated.database) as store:
+        before = store.get(note_id)
+    launches = []
+    monkeypatch.setattr(bridge, "start_in_kitty", lambda *args: launches.append(args))
+    assert call("kitty", **target(isolated, note_id), directory=str(tmp_path))["changed"]
+    assert launches[0][2] == title
+    with Store(isolated.database) as store:
+        assert store.get(note_id) == before
+
+
 def test_dst_delegated_and_bad_config(isolated, monkeypatch):
     note_id = call("add", text="task", tag=None)["id"]
     monkeypatch.setenv("TZ", "America/New_York")
