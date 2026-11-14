@@ -141,6 +141,13 @@ Tests use temporary data and real HTTP/stdio connections, including authenticati
 shared notes, independent selections, conflicts and reconnects. Visual checks use
 Xvfb and private D-Bus; never point them at personal data.
 
+## Field automations
+
+A user-configured single executable can react to task-field changes and request
+scheduled checks inside this service. State survives restarts; no additional daemon
+is needed. Requires note 0.24.0+ and is disabled by default. See the
+[field-handler contract and PR example](FIELD_EVENTS.md) before enabling trusted code.
+
 ## Task-completion events
 
 `GET /events` on the same listener requires the same bearer token, Host allowlist

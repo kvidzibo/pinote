@@ -5,7 +5,7 @@ import { ENTRY_TYPE, RemoteSession, type SavedState } from './remote/session.ts'
 import { registerTools } from './remote/tools.ts';
 import { registerPreview, RemoteUI } from './remote/ui.ts';
 import { registerRemoteExit } from './remote/exit.ts';
-import { editorText } from './remote/protocol.ts';
+import { clean, editorText } from './remote/protocol.ts';
 import { taskCompleted } from './remote/completion.ts';
 
 // Only an accepted /new (previousSessionFile) may carry this process-local selection.
@@ -47,6 +47,11 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
     try {
       const config = remoteConfig();
       session = new RemoteSession(config, (saved) => pi.appendEntry(ENTRY_TYPE, saved));
+      session.onFieldNotification = (notice) => {
+        if (!ctx.hasUI) return false;
+        ctx.ui.notify(clean(`Pinote #${notice.taskId} · ${notice.field}: ${notice.message}`).replace(/\n/g, ' '), 'warning');
+        return true; // Observation only; fresh task-scoped context reaches the next agent run.
+      };
       session.onCompleted = (taskId, signal) => taskCompleted(pi.events, taskId, signal, () => {
         if (ctx.hasUI) ctx.ui.notify('Pinote: completion hook did not finish successfully. The task completion remains confirmed.', 'warning');
       });

@@ -22,7 +22,8 @@ export const ViewSchema = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256),
   state: StateSchema, body: text.optional(), retainOnNew: z.boolean().optional(),
   controls: z.array(control).max(256),
-  footer: z.array(z.object({ text, openApp: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().min(1).max(256).optional(), secondaryAction: z.string().min(1).max(256).optional(), doubleAction: z.string().min(1).max(256).optional(), style: z.object({ italic: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
+  fieldNotifications: z.array(z.object({ id: z.string().uuid(), taskId: z.number().int().positive().safe(), field: z.string().min(1).max(128), message: z.string().min(1).max(1000) }).strict()).max(64).optional(),
+  footer: z.array(z.object({ text, openApp: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().min(1).max(256).optional(), secondaryAction: z.string().min(1).max(256).optional(), doubleAction: z.string().min(1).max(256).optional(), style: z.object({ italic: z.boolean().optional(), strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict().superRefine((view, ctx) => {
   if (new Set(view.controls.map((c) => c.id)).size !== view.controls.length) ctx.addIssue({ code: 'custom', message: 'Duplicate control IDs' });
   for (const item of view.footer ?? []) {

@@ -186,6 +186,15 @@ A malformed configuration fails closed; fix it on the server rather than replaci
 it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task data,
 separate from global display settings.
 
+### Field automations (pi-note 0.38.0+)
+
+An optional, user-configured **single executable** handles field additions, changes,
+removals and scheduled checks on the HTTP service. The bundled PR example reports
+failing checks/conflicts and strikes through merged PRs without changing the URL or
+completing the task. Alerts are deduplicated and current results reach the next
+agent run; scripts never submit prompts. Requires **note 0.24.0+** on the service.
+See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md). Disabled by default.
+
 ## Migration
 
 Since pi-note 0.36.0, new-task proposals use `title` and optional `description`

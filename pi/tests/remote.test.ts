@@ -75,6 +75,24 @@ test('branch-only restoration, endpoint isolation and independent unrelated laun
   await h.session.stop();
 });
 
+test('field alerts are task-scoped and deduplicated across refresh and reload without model turns', async () => {
+  const notice = { id: '12345678-1234-4234-8234-123456789012', taskId: 7, field: 'PR', message: 'Checks failed' };
+  const selected = { ...view({ selectedId: 7 }), fieldNotifications: [notice, { ...notice, id: '12345678-1234-4234-8234-123456789013', taskId: 8 }] };
+  const h = harness({ read: async () => resource(selected) });
+  const delivered: string[] = [];
+  h.session.onFieldNotification = (item) => { delivered.push(item.id); return true; };
+  await h.session.start([], 'fields');
+  await h.session.refresh();
+  assert.deepEqual(delivered, [notice.id]);
+  const saved = h.session.snapshot()!;
+  await h.session.start([{ type: 'custom', customType: ENTRY_TYPE, data: saved }], 'fields');
+  assert.deepEqual(delivered, [notice.id], 'branch receipts survive /reload');
+  selected.state = { selectedId: null };
+  await h.session.refresh();
+  assert.deepEqual(delivered, [notice.id]);
+  await h.session.stop();
+});
+
 test('seven explicit direct schemas; tool state is applied before next serialized call', async () => {
   assert.deepEqual(toolDefinitions.map((t) => t.name).sort(), ['fields', 'get_current', 'get_task', 'propose', 'search', 'tags', 'update_current']);
   const seen: unknown[] = [];
