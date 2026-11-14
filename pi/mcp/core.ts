@@ -14,7 +14,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
 import { defaultAgentGuidance, defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
-import type { FieldAutomation, FieldResult } from './field-events.ts';
+import type { FieldAutomation, FieldResult, FieldStatus } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from '../field-watchers.ts';
 import { taskTitle } from '../task-title.ts';
 
@@ -274,13 +274,16 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
         let room = field.width ?? config.config.fieldWidth;
         for (const [index, pr] of prs.entries()) {
           if (room <= 0 || footer.length >= 128) break;
-          const status = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
-            .find((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url));
-          const result = status?.result.items?.find((item) => item.url === pr.url)
-            ?? (status && !status.result.items && parsePullRequests(status.value).length === 1 ? status.result : undefined);
+          const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
+            .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url));
+          const observation = (status: FieldStatus) => status.result.items
+            ? status.result.items.find((item) => item.url === pr.url)
+            : parsePullRequests(status.value).length === 1 ? status.result : undefined;
+          const status = candidates.find((item) => !item.stale && observation(item) && observation(item)!.state !== 'error') ?? candidates[0];
+          const result = status && observation(status);
           const colors = { merged: 'accent', closed: 'muted', error: 'muted', pending: 'warning', failed: 'error', conflict: 'error', passing: 'success' } as const;
           const color = status?.stale ? 'muted' : colors[result?.state as keyof typeof colors] ?? result?.display?.color ?? 'muted';
-          const substitutions: Record<string, string> = { value: pr.url, url: pr.url, number: pr.number };
+          const substitutions: Record<string, string> = { value: pr.label ?? pr.url, url: pr.url, number: pr.number };
           const prefix = index === 0 ? ` · ${field.label ? `${field.label}: ` : ''}` : ' ';
           const rendered = prefix + field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key]);
           const plain = stripVTControlCharacters(rendered).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');

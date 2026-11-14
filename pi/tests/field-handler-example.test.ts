@@ -125,7 +125,7 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
 
 test('PR parser canonicalizes safe bounded links and combines notes without mutation', () => {
   const url = 'https://github.com/owner/repo/pull/42';
-  assert.deepEqual(parsePullRequests(`- [PR](${url}/)\n${url.toUpperCase()}\n${url}`), [{ url, number: '42' }]);
+  assert.deepEqual(parsePullRequests(`- [PR](${url}/)\n${url.toUpperCase()}\n${url}`), [{ url, number: '42', label: 'PR' }]);
   for (const value of [undefined, '', `${url}?query`, `${url}#hash`, `${url}/extra`,
     'http://github.com/owner/repo/pull/1', 'https://github.com.evil/owner/repo/pull/1',
     'https://github.com/owner/../pull/1', 'https://github.com/-owner/repo/pull/1',

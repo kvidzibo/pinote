@@ -181,14 +181,41 @@ export class FieldAutomation {
     const owner = this.db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id);
     if (owner?.context_id !== contextId) return [];
     const received = new Set(receipts);
-    const fields = new Set(this.statuses(task).filter((s) => !s.stale && s.result.notification
+    const statuses = this.statuses(task);
+    const fields = new Set(statuses.filter((s) => !s.stale && s.result.notification
       && (!s.result.items || s.result.items.some((item) => item.state !== 'error' && item.notification)))
       .map((s) => `${s.watcherId}:${s.field}`));
-    const pluralUrls = new Set(parsePullRequests(task.agent_notes.PRs).map((pr) => pr.url));
-    const legacyCovered = parsePullRequests(task.agent_notes.PR).some((pr) => pluralUrls.has(pr.url));
-    return (this.db.prepare('SELECT watcher_id, id, field, message FROM fw_notices WHERE task_id=?').all(task.id) as { watcher_id: string; id: string; field: string; message: string }[])
-      .filter((n) => !received.has(n.id) && fields.has(`${n.watcher_id}:${n.field}`) && !(n.field === 'PR' && legacyCovered))
-      .slice(0, 64).map(({ id, field, message }) => ({ id, field, message, taskId: task.id }));
+    type NoticeRow = { watcher_id: string; id: string; field: string; message: string };
+    const rows = (this.db.prepare('SELECT watcher_id, id, field, message FROM fw_notices WHERE task_id=? ORDER BY rowid').all(task.id) as NoticeRow[])
+      .map((row) => ({ ...row, suppressed: false }));
+    const legacyUrl = parsePullRequests(task.agent_notes.PR)[0]?.url;
+    if (legacyUrl && parsePullRequests(task.agent_notes.PRs).some((pr) => pr.url === legacyUrl)) {
+      for (const watcher of this.enabled) {
+        const legacy = rows.find((row) => row.watcher_id === watcher.id && row.field === 'PR');
+        if (!legacy) continue;
+        const plural = statuses.find((status) => status.watcherId === watcher.id && status.field === 'PRs');
+        const item = plural?.result.items?.find((item) => item.url === legacyUrl);
+        // Prefer a checked plural result, but keep fresh legacy alerts when
+        // it is unavailable. Legacy-only custom watchers remain independent.
+        legacy.suppressed = Boolean(item && !plural?.stale && item.state !== 'error'
+          || !plural && watcher.bundled && watcher.name === 'GitHub PR');
+        const legacyStatus = statuses.find((status) => status.watcherId === watcher.id && status.field === 'PR');
+        const batch = rows.find((row) => row.watcher_id === watcher.id && row.field === 'PRs');
+        if (!batch || !item?.notification || item.notification.key !== legacyStatus?.result.notification?.key) continue;
+        const knownFailures = plural!.result.items!.filter((item) => item.notification);
+        if (knownFailures.length === 1) {
+          // Share the first receipt across aliases, including outage recovery.
+          const first = rows.find((row) => row === legacy || row === batch)!;
+          legacy.id = batch.id = first.id;
+        } else if (plural!.stale || item.state === 'error') legacy.id = batch.id;
+      }
+    }
+    const seen = new Set(received);
+    return rows.flatMap(({ id, field, message, watcher_id, suppressed }) => {
+      if (suppressed || seen.has(id) || !fields.has(`${watcher_id}:${field}`)) return [];
+      seen.add(id);
+      return [{ id, field, message, taskId: task.id }];
+    }).slice(0, 64);
   }
   start(): void {
     const schedule = () => {

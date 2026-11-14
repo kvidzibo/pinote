@@ -26,6 +26,10 @@ import {readFileSync,appendFileSync,existsSync} from 'node:fs';
 const input=JSON.parse(readFileSync(0,'utf8'));
 appendFileSync(${JSON.stringify(calls)},JSON.stringify(input)+'\\n');
 const result=JSON.parse(readFileSync(${JSON.stringify(mode)},'utf8'));
+if(input.field==='PR' && Array.isArray(result.items)) {
+ const item=result.items.find(item=>input.value?.includes(item.url));
+ if(item) {const {url,...single}=item;if(single.notification)single.state='failed';single.recheckAfterSeconds=result.recheckAfterSeconds;console.log(JSON.stringify(single));process.exit(0);}
+}
 if(result.wait) { while(!existsSync(${JSON.stringify(join(dir, 'release'))})) await new Promise(r=>setTimeout(r,10)); }
 if(result.invalid) console.log('not json');
 else if(result.large) console.log('x'.repeat(100000));
@@ -176,6 +180,11 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       assert.ok(links.every((item, index) => item.text.includes(`#${42 + index}`) && !item.style?.strikethrough));
       assert.ok(multiple.footer!.some((item) => item.text.includes('Next: Review all')), 'PRs consume only one field slot');
     }
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
+    const labeled = (await view()).footer!.filter((item) => item.url);
+    assert.deepEqual(labeled.map((item) => item.url), urls);
+    assert.ok(labeled.every((item) => item.text.includes('Review') && !item.text.includes('https://')), 'Legacy <value> formats preserve Markdown labels');
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
     assert.ok((await view()).watcherDiagnostics?.failures.some((failure) => failure.fields.includes('PRs')), 'Partial errors remain visible in terminal-only diagnostics');
     const partialContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
     assert.doesNotMatch(JSON.parse((partialContext.contents[0] as { text: string }).text).text, /"state":"error"/, 'Unavailable entries do not enter model observations');
@@ -189,6 +198,13 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     const outage = { ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'error' } : item) };
     await setMode(outage); forceDue();
     for (let index = 0; index < 3; index++) await automation.tick();
+    const fallback = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
+    assert.equal(fallback.length, 1, 'Fresh legacy failures remain visible while the plural check is unavailable');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'error', 'Fresh legacy observations also supply the fallback colour');
+    assert.equal(fallback[0].id, currentNotices[0].id, 'Fallback never retriggers an acknowledged failure');
+    assert.deepEqual(automation.notices(task, 'session-a', [currentNotices[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), []);
+    await setMode({ state: 'error' }); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
     assert.ok(!automation.notices(task, 'session-a').some((notice) => ['PR', 'PRs'].includes(notice.field)), 'Unavailable failures never trigger workers');
     await setMode({ ...batchResult, notification: { ...batchResult.notification, message: 'PR #43 checks still failing' } });
     forceDue();
@@ -197,6 +213,10 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.equal(recoveredNotices.length, 1);
     assert.equal(recoveredNotices[0].id, currentNotices[0].id, 'Recovery and message changes preserve the failure receipt');
     assert.deepEqual(automation.notices(task, 'session-a', [currentNotices[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), []);
+    await setMode({ state: 'failed', notification: { key: 'custom-legacy', message: 'Custom PR alert' }, recheckAfterSeconds: 10 });
+    forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR'), 'Custom non-batch watchers keep their independent legacy alerts');
     const fieldDefs = await client.callTool({ name: 'fields', arguments: {}, _meta: meta() });
     assert.match(JSON.stringify(fieldDefs.content), /PRs/);
     await update({ PR: pr, PRs: urls[1] });
