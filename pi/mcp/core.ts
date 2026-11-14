@@ -128,7 +128,7 @@ async function selection(state: State, signal: AbortSignal) {
   if (proposal && 'task_id' in proposal && (!proposedTask || !['active', 'in_progress'].includes(proposedTask.state))) proposal = null;
   return { task, proposal, proposedTask };
 }
-async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = []) {
+async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = [], groupReceipts = false) {
   const launchTask: Task | null = state.launch ? JSON.parse(await note(['agent', 'get', String(state.launch.task_id)], signal)) : null;
   const tasks: Task[] = state.launch
     ? launchTask && ['active', 'in_progress'].includes(launchTask.state) ? [launchTask] : []
@@ -140,7 +140,7 @@ async function snapshot(state: State, signal: AbortSignal, automation?: FieldAut
   if (state.screen === 'field' && !fields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
   state = Context.parse({ conversationId: 'canonical', state }).state;
   const fieldStatuses = task ? automation?.statuses(task) ?? [] : [];
-  const fieldNotifications = task && contextId ? automation?.notices(task, contextId, receipts) ?? [] : [];
+  const fieldNotifications = task && contextId ? automation?.notices(task, contextId, receipts, groupReceipts) ?? [] : [];
   const watcherFailures = automation?.failures() ?? [];
   const revision = createHash('sha256').update(JSON.stringify({ state, tasks, task, proposedTask, raw: config.raw, fieldStatuses, fieldNotifications, watcherFailures })).digest('hex');
   return { state, tasks, task, proposedTask, suggestion, config, revision, fieldStatuses, fieldNotifications, watcherFailures };
@@ -170,6 +170,7 @@ function footerFeatures(meta: Record<string, unknown> | undefined) {
   return {
     footerNativeActions: z.object({ footerNativeActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     footerStyles: z.object({ footerStyles: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
+    fieldReceiptGroups: z.object({ fieldReceiptGroups: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     fieldEvents: z.object({ fieldEvents: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     fieldWatchers: z.object({ fieldWatchers: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     watcherDiagnostics: z.object({ watcherDiagnostics: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
@@ -184,7 +185,7 @@ function fullPreview(task: { text: string; agent_notes?: Record<string, string> 
   const document = task.text + notes;
   return document.length <= 20_000 ? document : 'Full preview exceeds the 20000-character display limit. Nothing has been truncated here: read the complete task and handoff notes through the Pinote CLI or service (get_task).';
 }
-function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean; watcherDiagnostics?: boolean } = {}, watcherLogPath?: string) {
+function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldReceiptGroups?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean; watcherDiagnostics?: boolean } = {}, watcherLogPath?: string) {
   const { tasks, task, suggestion, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -408,7 +409,7 @@ server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(a
   }
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const caller = context(request.params._meta);
-  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts);
+  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
   return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath)) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
@@ -416,7 +417,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const state = caller.state;
   const owner = caller.contextId ?? caller.conversationId;
   const sessionArgs = caller.piSessionId ? ['--pi-session-id', caller.piSessionId] : [];
-  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts);
+  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
   const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
   const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
@@ -501,7 +502,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers);
   }
   if (next.selectedId && (action.startsWith('select:') || action === 'proposal:accept' || action === 'add')) options.fieldAutomation?.claim(next.selectedId, owner, true);
-  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await notifyChanged();
   return result;
 }));

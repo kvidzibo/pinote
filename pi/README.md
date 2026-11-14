@@ -240,6 +240,8 @@ Custom `<value>` formats retain legacy text and link labels alongside PR URLs.
 Preserve existing entries when adding a PR. Up to 64 distinct URLs are supported;
 invalid lines are ignored. The PRs group consumes one field slot and shares its
 configured field width, so narrow layouts can truncate later links.
+Alerts are acknowledged per PR, including across legacy/plural aliases and list
+edits. Updated clients group alerts without hiding another PR's pending failure.
 Update/restart the existing service and `/reload` Pi after upgrading.
 
 ### Field watchers (pi-note 0.40.0+)

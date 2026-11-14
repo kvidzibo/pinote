@@ -49,12 +49,13 @@ ignored. Legacy `PR` accepts one URL/link and retains its single-result contract
 
 Batch checks run at most four `gh` calls at once, within a 25-second deadline.
 Unavailable entries do not erase successful results or retrigger workers on
-outage/recovery; they appear in grouped watcher diagnostics and retry. Receipts
-persist when the known failure set only shrinks; new failure identities alert again.
-Editing the list preserves receipts for retained URLs, but requires fresh checks.
-Overlapping legacy/new links use the latest available observations and share
-receipts when plural checks catch up with an already-reported legacy failure.
-Legacy-only custom watchers keep their independent alerts. Batch alerts include
+outage/recovery; they appear in grouped watcher diagnostics and retry. Each PR
+has its own durable acknowledgement, shared across the built-in legacy/plural
+aliases. New failures and confirmed recovery followed by failure alert again;
+adding/removing other URLs does not repeat acknowledged failures. Edited fields
+still require fresh checks. Legacy-only custom watchers keep independent alerts.
+Updated clients group alerts only when every included PR fits the message budget;
+older clients receive individual alerts. PRs alerts include
 PR numbers and URLs, within the notification budget. Checks repeat every 60
 seconds until all entries are closed/merged; merging never completes the task.
 Passing means reported checks passed, not that all review/protection rules passed.
@@ -165,11 +166,12 @@ All result properties are optional. Unknown properties are rejected.
 
 Since pi-note 0.43.0, the bundled `PRs` result has `state: "multiple"` and
 `items: [{"url": "https://github.com/owner/repo/pull/123", "state": "passing",
-"display": {"color": "success"}}]`. Top-level notification/recheck settings
-control the whole field; each item's result styles only its matching PR URL.
-For batches, the notification key identifies the failure set: message-only changes
-keep the existing receipt. Error items may retain earlier notification identities
-for deduplication, but are never actionable or sent as current model observations.
+"display": {"color": "success"}}]`. Top-level recheck settings control polling;
+each item styles and notifies only its matching PR URL. The service tracks each
+item's notification key independently; message-only changes do not repeat alerts.
+The bundled top-level batch notification remains available to handler consumers,
+but is not used for PR acknowledgements. Error items may retain earlier keys,
+but are never actionable or sent as current model observations.
 Update the service before using handlers that return `items`.
 
 Results replace previous results, not the original field value. Omitting a
@@ -217,6 +219,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - Pi triggers a worker turn once per current alert and persists receipts across
   reload/resume (latest 4,096 IDs per branch). Receipts accompany view reads so
   bounded 64-alert pages advance past delivered failures even if they persist.
+  Clients advertising `fieldReceiptGroups` receive bounded groups with every
+  per-PR `receiptIds` UUID; delivery acknowledges all members together. Clients
+  without this capability keep individual notices with the existing wire shape.
   Busy workers defer delivery until
   idle, then refresh to verify ownership, selection and current status. An aborted
   run does not immediately drain deferred alerts. There is no launch of a closed
@@ -229,7 +234,8 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   context; stale/unavailable checks are excluded. Oversized current results are
   omitted with a count, preserving the task first. Actionable results such as PR
   CI failures still use the separately enabled worker-alert behavior above.
-- Only the latest current alert per field is retained, not an offline alert log.
+- Only current alerts are retained: one per PR, or one per other field, not an
+  offline alert log.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
   failure. Network recovery remains explicit through `/pinote` or a tool call.
 - Newly enabled watchers reconstruct current fields from history independently.

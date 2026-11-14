@@ -254,12 +254,17 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       ? { ...item, state: 'failed', notification: { key: 'other-pr', message: 'Other PR CI failed' } } : item),
       notification: { key: 'two-failures', message: `${urls[0]} failed\n${urls[1]} failed` } };
     await setMode(twoFailures); forceDue('PRs'); await automation.tick();
+    const oldClientNotices = (await view()).fieldNotifications!.filter((notice) => notice.field === 'PRs');
+    assert.equal(oldClientNotices.length, 2);
+    assert.ok(oldClientNotices.every((notice) => !notice.receiptIds), 'Older clients receive individual compatible notices');
+    const groupedResource = await client.readResource({ uri: 'pinote://ui', _meta: { ...meta(), 'native-ui/features': { ...meta()['native-ui/features'], fieldReceiptGroups: true } } });
+    const groupedNotices = ViewSchema.parse(JSON.parse((groupedResource.contents[0] as { text: string }).text)).fieldNotifications!.filter((notice) => notice.field === 'PRs');
+    assert.equal(groupedNotices.length, 1);
+    assert.deepEqual(new Set(groupedNotices[0].receiptIds), new Set(oldClientNotices.map((notice) => notice.id)), 'Opted-in clients get one group with every independent receipt');
     await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
     const remaining = automation.notices(task, 'session-a').filter((notice) => notice.field === 'PRs');
     assert.equal(remaining.length, 1);
-    const recoveredAlias = automation.statuses(task).find((status) => status.field === 'PRs')!.result.items!.find((item) => item.url === urls[1])!;
-    assert.equal(recoveredAlias.state, 'passing');
-    assert.equal(recoveredAlias.notification, undefined, 'Legacy recovery clears the retained plural identity before any later same-head failure');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success', 'The newer legacy recovery remains the displayed observation');
     assert.ok(remaining[0].message.includes(urls[0]) && !remaining[0].message.includes(urls[1]), 'A remaining plural alert excludes the newer legacy recovery');
     const partialOutage = { ...twoFailures, items: twoFailures.items.map((item, index) => index === 0 ? { ...item, state: 'error' }
       : index === 1 ? { ...item, state: 'passing', notification: undefined } : item),
@@ -285,7 +290,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     receipts.push(newNotice.id);
     const added = { url: 'https://github.com/example/repo/pull/99', state: 'passing' };
     await update({ PRs: `${urls[0]}\n${urls[1]}\n${added.url}` }); await automation.tick();
-    assert.equal(automation.statuses(task).find((status) => status.field === 'PRs')!.stale, true, 'Edited fields still require a fresh observation');
+    assert.ok(!automation.statuses(task).some((status) => status.field === 'PRs' && !status.stale), 'Edited fields still require a fresh observation');
     await setMode({ ...newOther, items: [...newOther.items.slice(0, 2), added], notification: { key: 'edited-list', message: 'Same failures after list edit' } });
     forceDue('PRs'); await automation.tick();
     assert.deepEqual(automation.notices(task, 'session-a', receipts).filter((notice) => ['PR', 'PRs'].includes(notice.field)), [], 'Adding a passing PR and removing other URLs preserves acknowledged failures for unchanged links');
