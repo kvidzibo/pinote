@@ -43,7 +43,8 @@ export class RemoteUI {
           if (this.opening || this.acting) return false;
           if (item.openApp) { await this.open(ctx); return true; }
           const control = view.controls.find((c) => c.id === action && c.kind === 'action');
-          return control ? this.dispatch(ctx, view, control) : false;
+          // The footer's deliberate double-click is already completion approval.
+          return control ? this.dispatch(ctx, view, control, undefined, action === 'done' && item.doubleAction === action) : false;
         }, this.repaint);
     }, { placement: 'belowEditor' });
     this.render();
@@ -65,7 +66,7 @@ export class RemoteUI {
     }) : 'Pinote · unavailable (/pinote to reconnect)');
     this.repaint();
   }
-  async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value']): Promise<boolean> {
+  async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value'], completionConfirmed = false): Promise<boolean> {
     if (ctx.mode !== 'tui') throw new Error('Pinote UI actions require TUI mode');
     if (this.acting) return false;
     if (control.id === 'done' && !ctx.isIdle()) {
@@ -75,7 +76,7 @@ export class RemoteUI {
     const current = this.session.current(), signal = this.session.signal;
     try {
       if (typeof value === 'string') editorText(value);
-      if (control.id === 'done') {
+      if (control.id === 'done' && !completionConfirmed) {
         const exits = typeof view.state.selectedId === 'number' && this.exitOnComplete(view.state.selectedId);
         const accept = exits ? 'Complete task and exit' : 'Complete task';
         const summary = truncateToWidth(line(view.body ?? ''), 100);
