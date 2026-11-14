@@ -103,13 +103,15 @@ Icons are bundled rather than taken from the host icon theme.
   serialized with pending text edits. **Undo** (or **Ctrl+Z**) reverts text edits
   within the open editor and autosaves the result; it does not undo tag changes.
   Copy remains available when saving is paused.
-- Local text is cached before each write. Failed saves pause autosave and offer
+- Local text and pending tag selections are cached before each write, including
+  failed tag clears. Failed saves pause autosave and offer
   an explicit retry; unknown outcomes require the recovery acknowledgement first.
   External revision changes make the editor read-only rather than overwriting
   another client's work. Close and use **Menu → Recover private edit drafts**
   to copy/discard stale text, then reopen the latest task to reconcile it.
-  Recovered drafts never autosave merely because they are opened: review and
-  explicitly retry. Opening an editor does not create a write or history entry.
+  Recovered drafts show any pending tag and never autosave merely because they
+  are opened: review and explicitly retry both text and tag changes. Opening an
+  editor does not create a write or history entry.
 - Search tag selectors and filters; create/manage saved tags and optional default
   Kitty folders. Tags with the newest associated tasks appear first, followed by
   unused tags and Untagged. Use arrow keys to move through tags and **Space** to

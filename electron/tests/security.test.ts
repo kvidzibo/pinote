@@ -34,6 +34,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(validState(initialState()));
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));
+  for (const pendingTag of [null, 'Work']) assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));
+  for (const pendingTag of [undefined, true, 1, {}, 'x'.repeat(257)]) assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));
   for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'https://a\n.b']) assert.ok(!safeLink(url));
   for (const url of ['https://example.org/path', 'http://example.org', 'mailto:user@example.org']) assert.ok(safeLink(url));
   assert.ok(!validEnvelope('add', { protocol:1, ok:false, error: { code:'unknown', message: 1 } }));

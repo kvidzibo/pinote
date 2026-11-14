@@ -20,7 +20,7 @@ const slowAddMarker=join(root,'slow-add-dispatched');
 const completeMarker=join(root,'completion-committed');
 const editMarker=join(root,'edit-committed');
 const frontendBackend=join(root,'backend.mjs');
-await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(fault==='busy-edit'&&op==='edit'){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected edit failure'}}));return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(reply,1200);return;}if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
+await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if((fault==='busy-edit'&&op==='edit')||(fault==='busy-tag'&&op==='tag')){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected edit failure'}}));return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(reply,1200);return;}if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
 env.PINOTE_ELECTRON_BACKEND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
@@ -816,12 +816,47 @@ try {
     await saved(); assert.equal(snapshot().text,'Newer typing during save','In-flight typing must chain from the exact acknowledged revision');
     await writeFile(faultFile,'busy-edit');
     await text.fill('Retry only when asked');
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Work \(/}).click();
     await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.keyboard.press('Escape');
     await writeFile(faultFile,'');
     await page.waitForTimeout(900);
     assert.equal(snapshot().text,'Newer typing during save','Failed edits must never replay on a later poll');
-    await editDialog.getByRole('button',{name:'Retry saving text (Ctrl+Enter)',exact:true}).click();
+    assert.equal(snapshot().tag,null);
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].pendingTag,'Work','The tag queued behind failed text must be retained');
+    await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
     await saved(); assert.equal(snapshot().text,'Retry only when asked');
+    assert.equal(snapshot().tag,'Work','Explicit retry must save text and its pending tag');
+    // Tag-only failure, including clearing a tag, survives closing and reopening.
+    for(const pendingTag of [null,'Work']) {
+      await writeFile(faultFile,'busy-tag');
+      await editDialog.getByRole('button',{name:`Change tag: ${snapshot().tag ?? 'Untagged'}`,exact:true}).click();
+      await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:new RegExp(`^${pendingTag ?? 'Untagged'} \\(`)}).click();
+      await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(async({id,tag})=>(await window.pinote.loadState()).edits[String(id)]?.pendingTag===tag,{id:added.id,tag:pendingTag});
+      const disk=JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8'));
+      assert.equal(disk.edits[String(added.id)].pendingTag,pendingTag,'Pending tag must reach durable recovery storage');
+      await page.keyboard.press('Escape');
+      await editDialog.waitFor({state:'detached'});
+      await writeFile(faultFile,'');
+      // The saved tag may hide this row under the current filter; recovery must still open it.
+      if (!await page.getByRole('dialog',{name:'Private edit drafts',exact:true}).count()) await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
+      await page.getByRole('button',{name:'Open revision-bound editor',exact:true}).click();
+      await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+      await page.waitForTimeout(900);
+      assert.notEqual(snapshot().tag,pendingTag,'Reopening must not replay the failed tag selection');
+      await editDialog.getByRole('button',{name:`Change tag: ${pendingTag ?? 'Untagged'} (not saved)`,exact:true}).waitFor();
+      await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+      await saved(); assert.equal(snapshot().tag,pendingTag);
+    }
+    await editDialog.getByRole('button',{name:'Change tag: Work',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await saved();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await selectTaskAction(page, added.id, 'Edit text…');
     await writeFile(faultFile,'slow-edit');
     await text.fill('Own pending acknowledgement');
     await committed('Own pending acknowledgement');
@@ -1127,7 +1162,7 @@ try {
   await page.keyboard.type(' — still writable');
   assert.equal(await sourceValue(failedCloseEditor),'Private draft before failed close — still writable');
   await chmod(stateDir,0o700);
-  await page.getByRole('button',{name:'Retry saving text (Ctrl+Enter)',exact:true}).click();
+  await page.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
   await page.getByText('All changes saved',{exact:true}).waitFor();
   await failedCloseEditor.fill('Private draft before failed close — still writable; app close flushes');
   const closed = app.waitForEvent('close');

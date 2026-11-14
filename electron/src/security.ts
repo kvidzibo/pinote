@@ -62,7 +62,7 @@ export function validState(value: unknown): value is UIState {
   if (!str(value.draft, 65536) || !str(value.warning, 4096)) return false;
   if (value.filters !== null && (!Array.isArray(value.filters) || value.filters.length > 10000 || !value.filters.every(v => str(v, 256)))) return false;
   if (!record(value.read) || !Object.entries(value.read).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)) return false;
-  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision'].includes(x)) && str(v.text,65536) && str(v.revision,128)) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
+  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision','pendingTag'].includes(x)) && str(v.text,65536) && str(v.revision,128) && (!Object.hasOwn(v, 'pendingTag') || v.pendingTag === null || str(v.pendingTag,256))) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function safeLink(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x20\x7f]/.test(value)) return false;

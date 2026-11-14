@@ -58,7 +58,7 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
   });
   return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
 }
-export type EditDraft = { text: string; revision: string };
+export type EditDraft = { text: string; revision: string; pendingTag?: string | null };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;

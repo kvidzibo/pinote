@@ -726,7 +726,8 @@ async function edit(task: Task): Promise<void> {
   const draft = state.edits[id] ?? { text: task.text, revision: task.updated_at };
   let revision = draft.revision, savedText = task.text, tag = task.tag;
   let paused = !!state.edits[id], conflict = false, saving = false, detached = false, draining = false;
-  let queuedTag: string | null | undefined, work: Promise<void> | undefined;
+  let queuedTag = state.edits[id]?.pendingTag;
+  let work: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const editorHost = el('div', undefined, 'edit-text');
   const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, () => {
@@ -752,27 +753,27 @@ async function edit(task: Task): Promise<void> {
   feedback.append(status, el('span', 'Autosave · Enter: newline', 'edit-hint'));
   const actions = el('div', undefined, 'controls');
   const undoButton = button('undo', 'Undo text edit (Ctrl+Z)', () => { undo(editor.view); editor.view.focus(); check(); });
-  const retryButton = button('save', 'Retry saving text (Ctrl+Enter)', () => retry());
+  const retryButton = button('save', 'Retry saving changes (Ctrl+Enter)', () => retry());
   actions.append(retryButton, undoButton, button('copy', 'Copy edit draft', () => api.copy(editor.value)));
   footer.append(feedback, actions);
   function retain(): void {
-    state.edits[id] = { text: editor.value, revision };
+    state.edits[id] = { text: editor.value, revision, ...(queuedTag !== undefined ? { pendingTag: queuedTag } : {}) };
     saveSoon();
   }
   function check(): void {
     const current = active?.notes.find(t => t.id === task.id);
     if (!saving && (!current || current.updated_at !== revision)) conflict = true;
     editor.readOnly = readonly || closing || conflict;
-    tagName.textContent = tag ?? 'Untagged';
-    tagControl.title = `Change tag: ${tag ?? 'Untagged'}`; tagControl.setAttribute('aria-label', tagControl.title);
+    tagName.textContent = (queuedTag === undefined ? tag : queuedTag) ?? 'Untagged';
+    tagControl.title = `Change tag: ${tagName.textContent}${queuedTag === undefined ? '' : ' (not saved)'}`; tagControl.setAttribute('aria-label', tagControl.title);
     tagControl.disabled = readonly || closing || conflict || paused || saving;
     undoButton.disabled = readonly || closing || conflict || !undoDepth(editor.view.state);
     retryButton.hidden = !paused || conflict || readonly;
     retryButton.disabled = saving || closing;
     warning.hidden = !readonly && !conflict && !paused;
     warning.textContent = readonly ? 'Saving paused. Copy your text and resolve the recovery notice before retrying.'
-      : conflict ? 'Task changed elsewhere. Local text kept; copy it, then close and use draft recovery to reconcile with the latest task.'
-      : paused ? 'Local text kept. Review it, then retry saving. Nothing is retried automatically.' : '';
+      : conflict ? 'Task changed elsewhere. Local changes kept; copy your text, then close and use draft recovery to reconcile with the latest task.'
+      : paused ? 'Local changes kept. Review them, then retry saving. Nothing is retried automatically.' : '';
     status.textContent = readonly || conflict ? 'Saving paused' : saving ? 'Saving…' : paused ? 'Not saved — retry' : editor.value !== savedText ? 'Unsaved changes' : 'All changes saved';
     status.classList.toggle('saved', !readonly && !conflict && !saving && !paused && editor.value === savedText);
     if (readonly || conflict) clearTimeout(timer);
@@ -789,33 +790,33 @@ async function edit(task: Task): Promise<void> {
     work = (async () => {
       while (!readonly && (!closing || draining) && !conflict && !paused && (editor.value !== savedText || queuedTag !== undefined)) {
         const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, base = revision;
-        if (!textChanged) queuedTag = undefined;
         retain(); saving = true; check();
         const result = textChanged
           ? await call('edit', { id: task.id, revision: base, text }, draining)
           : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
-        if (!result) { paused = true; queuedTag = undefined; break; }
+        if (!result) { paused = true; break; }
         // Never infer a committed revision from a later snapshot: another client
         // may have changed the task between our commit and that read.
         if (!result.revision) {
-          paused = true; queuedTag = undefined;
-          report('Backend did not acknowledge the saved revision. Local text kept; update the backend and reconcile before retrying.');
+          paused = true;
+          report('Backend did not acknowledge the saved revision. Local changes kept; update the backend and reconcile before retrying.');
           conflict = true; break;
         }
         revision = result.revision; editEpoch++;
-        if (textChanged) savedText = text; else tag = nextTag!;
+        if (textChanged) savedText = text;
+        else { tag = nextTag!; if (queuedTag === nextTag) queuedTag = undefined; }
         const current = active?.notes.find(t => t.id === task.id);
         if (current && (current.updated_at === base || current.updated_at === revision)) {
           current.updated_at = revision; current.text = savedText.replace(/\r\n/g, '\n').trim(); current.tag = tag;
           task = current;
         }
-        if (editor.value === savedText) delete state.edits[id]; else retain();
+        if (editor.value === savedText && queuedTag === undefined) delete state.edits[id]; else retain();
         saveSoon(); saving = false; check();
         renderTasks();
       }
-    })().catch(e => { paused = true; queuedTag = undefined; report(message(e)); }).finally(() => {
+    })().catch(e => { paused = true; report(message(e)); }).finally(() => {
       saving = false; work = undefined; check();
-      if (detached && (paused || conflict)) report('Editor closed with unsaved local text. Use Menu → Recover private edit drafts.');
+      if (detached && (paused || conflict)) report('Editor closed with unsaved local changes. Use Menu → Recover private edit drafts.');
     });
     return work;
   }
@@ -838,6 +839,7 @@ function recoverDrafts(): void {
     for (const [id, draft] of Object.entries(state.edits)) {
       const row = el('article', undefined, 'aux-row');
       row.append(el('h3', `Task ${id}`), el('p', `Revision: ${draft.revision}`, 'metadata'));
+      if (draft.pendingTag !== undefined) row.append(el('p', `Pending tag: ${draft.pendingTag ?? 'Untagged'}`, 'metadata'));
       const text = el('textarea', undefined, 'recovery-text'); text.value = draft.text; text.readOnly = true; text.setAttribute('aria-label', `Private draft for task ${id}`); row.append(text);
       const bar = controls(row);
       bar.append(button('copy', 'Copy private draft', () => api.copy(draft.text)), button('edit', 'Open revision-bound editor', () => {
