@@ -2486,6 +2486,38 @@ def test_entry_selection_and_scrollbar_keep_native_behavior(gtk, monkeypatch):
     assert clipboard.wait_for_text() == "Keep clipboard"
 
 
+def test_initial_wm_offset_before_map_event_does_not_replace_anchor(gtk, monkeypatch):
+    from pinote.gui.app import ReminderWindow
+
+    show = ReminderWindow.show_all
+
+    def offset_before_map_event(window):
+        show(window)
+        # get_mapped() is already true, but GTK has not dispatched map-event.
+        # Reproduce an idle geometry pass followed by i3's initial border offset.
+        window.get_display().sync()
+
+        def configure():
+            x, y = window.get_position()
+            width, height = window.get_size()
+            window._on_configure(window, SimpleNamespace(x=x, y=y, width=width, height=height))
+
+        configure()
+        window._sync_geometry()
+        window.get_display().sync()
+        area = window.get_display().get_monitor_at_window(window.get_window()).get_workarea()
+        window.move(27, area.y + area.height - window.get_size().height)
+        window.get_display().sync()
+        configure()
+
+    monkeypatch.setattr(ReminderWindow, "show_all", offset_before_map_event)
+    window = gtk.open()
+    area = window.get_display().get_monitor_at_window(window.get_window()).get_workarea()
+    assert window.anchor_x == 25
+    assert window.anchor_bottom == area.y + area.height - 25
+    assert tuple(window.get_position()) == (25, window.anchor_bottom - window.get_size().height)
+
+
 def test_growth_moves_above_bottom_anchor_before_requesting_resize(gtk, monkeypatch):
     window = gtk.open()
     anchor = (window.anchor_x, window.anchor_bottom)

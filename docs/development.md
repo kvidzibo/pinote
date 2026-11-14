@@ -38,6 +38,21 @@ on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK 
 against the built wheel (including its bundled stylesheet and isolated i3 placement).
 GTK regressions also exercise manual window moves during geometry synchronization.
 
+Pi tests run in two file-level shards on each supported Node version (22.19.0
+and 24), including both unit and real-loader tests. Each shard builds MCP before
+testing; type checks run on both, and the package dry-run runs once per Node
+version without rebuilding. To reproduce one shard after `npm run build:mcp`
+in `pi/` (use `2/2` for the other):
+
+```sh
+node --test --experimental-strip-types --test-shard=1/2 tests/*.test.ts test-load.ts test-remote-load.ts
+```
+
+Electron's 1280×900 and 800×600 end-to-end runs use separate parallel jobs, each
+with its own Xvfb and private D-Bus session. Type/unit checks and packaged-app
+validation run once, in the 1280×900 job. No tests or display sizes are dropped;
+parallel jobs trade additional runner setup for shorter elapsed CI time.
+
 On PRs, the standalone GTK job runs when the complete PR diff changes Python
 source (`src/`), Python tests (`tests/`), scripts, `pyproject.toml`, `uv.lock`, or
 GitHub configuration (`.github/`). Electron-, Pi-, and docs-only changes skip
