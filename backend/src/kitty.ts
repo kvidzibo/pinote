@@ -25,9 +25,15 @@ export async function address(kitty: string): Promise<string | null> {
   }
   return null;
 }
+export function validate_directory(directory: string): string {
+  try {
+    const folder = realpathSync(directory);
+    if (statSync(folder).isDirectory()) return folder;
+  } catch { /* Invalid, inaccessible or missing directory. */ }
+  throw new NoteError('Choose an existing directory.');
+}
 export async function start_in_kitty(directory: string, note: Note, title: string, prompt: string): Promise<void> {
-  const folder = realpathSync(directory);
-  if (!statSync(folder).isDirectory()) throw new NoteError('Choose an existing directory.');
+  const folder = validate_directory(directory);
   const kitty = findExecutable('kitty'), pi = findExecutable('pi');
   if (!kitty || !pi) throw new NoteError('Start in Kitty requires kitty and pi on PATH.');
   const launch = jsonStringify({ task_id: note.id, updated_at: note.updated_at, prompt });

@@ -30,7 +30,7 @@ test('selecting a task starts it with one menu activation and returns to the unc
     session = new RemoteSession(remoteConfig({ ...process.env, PINOTE_URL: service.url }), () => {});
     await session.start([], 'task-selection-test');
     initTheme('dark', false);
-    let selections = 0, searches = 0;
+    let selections = 0, searches = 0, pendingMenus = 0;
     const draft = 'Keep my unfinished prompt';
     const ctx = { mode: 'tui', isIdle: () => true, ui: {
       getEditorText: () => draft,
@@ -52,7 +52,12 @@ test('selecting a task starts it with one menu activation and returns to the unc
             component.handleInput('Task selection target');
             component.render(100);
             component.handleInput('\r'); // Pending server search cannot activate old results.
+            // Force an old-query refresh before the queued search completes.
+            void session!.refresh();
           } else {
+            // A notification can replace the component with old results while
+            // searching. Only count an activation once the native menu enables it.
+            if (rows.includes('Selection is disabled until results arrive.')) { pendingMenus++; return; }
             assert.match(rows, /Task selection target/);
             selections++;
             component.handleInput('\r'); // One activation at the task row, never a confirmation.
@@ -74,6 +79,7 @@ test('selecting a task starts it with one menu activation and returns to the unc
       assert.equal(cli('agent', 'get', String(other.id)).state, 'active');
       assert.equal(ctx.ui.getEditorText(), draft);
     }
+    assert.ok(pendingMenus > 0, 'Old-query replacements stay disabled until fresh search results arrive');
   } finally {
     await session?.stop();
     await service?.close();
