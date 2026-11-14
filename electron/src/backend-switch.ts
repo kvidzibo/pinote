@@ -183,7 +183,10 @@ async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.P
     return;
   }
   const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
-  if (text === nodeEntry) { await probe({ ...options, bundles: resolve(dirname(path), '../dist') }, run, env); return; }
+  if (text === nodeEntry) {
+    if (await realpath(executable(env, 'node')) !== await realpath(options.node)) throw new Error('The service CLI PATH selects a different Node runtime; automatic switching was blocked.');
+    await probe({ ...options, bundles: resolve(dirname(path), '../dist') }, run, env); return;
+  }
   if (text === targets(options, undefined)[0].text) { await probe(options, run, env); return; }
   // Never execute an arbitrary wrapper to discover its database: even a read
   // command may activate reminders or hide an XDG override inside the script.

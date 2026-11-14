@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper'] as const) {
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     let injected: ReturnType<typeof spawn> | undefined;
     try {
@@ -19,6 +19,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       // test runner's runtime hooks. Keep the injection fixture explicit below.
       for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key) || ['GCONV_PATH', 'GLIBC_TUNABLES'].includes(key)) delete env[key];
       await mkdir(join(root, 'bin')); await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+      if (mode === 'node-wrapper') await writeFile(join(root, 'bin/node'), '#!/bin/sh\nexport XDG_DATA_HOME=/different\nexit 1\n', { mode: 0o700 });
+      else await symlink(process.execPath, join(root, 'bin/node'));
       await mkdir(join(root, '.local/bin'), { recursive: true });
       const old = join(root, 'old-note'); await writeFile(old, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
       if (mode === 'absent-variable') {
@@ -75,8 +77,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
-      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader'].includes(mode)) {
-        await assert.rejects(operation, mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
+      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper'].includes(mode)) {
+        await assert.rejects(operation, mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }
