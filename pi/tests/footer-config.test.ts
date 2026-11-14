@@ -34,13 +34,23 @@ test("footer config selects fields and clips linked Unicode across segment bound
   assert.equal(customFooterChips(notes, defaultFooterConfig).length, 1);
   for (const footer of [{ titleWidth: 2 }, { fieldWidth: true }, { maxFields: 65 },
     { fields: "Next" }, { fields: [{ label: "Next", width: 1 }] }, { fields: ["Bad\u001b"] },
-    { fields: [{ name: "PR", link: "yes" }] }, { fields: [{ name: "PR", format: "<unknown>" }] }]) {
+    { fields: [{ name: "PR", link: "yes" }] }, { fields: [{ name: "PR", format: "<unknown>" }] },
+    { bar: "Next" }, { bar: ["Bar"] }, { bar: ["PR", "PRs"] }, { bar: ["Bad\u001b"] }]) {
     assert.throws(() => parseFooterConfig({ footer }));
   }
+  const ordered = parseFooterConfig({ footer: {
+    fields: [{ name: "A", enabled: false }, "B", "C"], bar: ["C", "PR"],
+  } });
+  assert.deepEqual(ordered.bar, ["C", "PRs"]);
+  assert.equal(stripVTControlCharacters(renderFooterLinks(customFooterChips({ A: "a", B: "b", C: "c", PR: "https://github.com/org/repo/pull/7" }, ordered), (value) => value)!), "C: c · PRs: #7");
+  assert.deepEqual(customFooterChips({ A: "a", B: "b" }, parseFooterConfig({ footer: { fields: ["A", "B"], bar: [] } })), []);
+  const capped = parseFooterConfig({ footer: { maxFields: 1, fields: ["A", "B"], bar: ["B", "A"] } });
+  assert.equal(stripVTControlCharacters(renderFooterLinks(customFooterChips({ A: "a", B: "b" }, capped), (value) => value)!), "B: b");
   const disabled = { name: "Worktree", enabled: false, instructions: "Save root\nafter choosing it." };
   const configured = parseFooterConfig({ footer: { fields: [disabled] } });
   assert.equal(configured.fields![0].instructions, disabled.instructions);
   assert.deepEqual(customFooterChips({ Worktree: "/tmp/worktree" }, configured), []);
+  assert.equal(stripVTControlCharacters(renderFooterLinks(customFooterChips({ Worktree: "/tmp/worktree" }, parseFooterConfig({ footer: { fields: [disabled], bar: ["Worktree"] } })), (value) => value)!), "Worktree: /tmp/worktree");
   for (const entry of [{ enabled: "yes" }, { instructions: "x".repeat(4097) }, { instructions: "bad\x1bvalue" }]) {
     assert.throws(() => parseFooterConfig({ footer: { fields: [{ name: "Worktree", ...entry }] } }));
   }
