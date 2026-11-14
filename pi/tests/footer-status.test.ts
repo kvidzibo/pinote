@@ -34,6 +34,13 @@ test("task PR parsing and footer rendering retain active-task visibility", () =>
   assert.equal(statuses.get("pinote-pr"), undefined, "the old PR status key stays clear");
   assert.match(statuses.get("pinote-links")!, /^\x1b\[34m/);
 
+  const forgejo = "https://forgejo.example/instance/org/repo/pulls/123";
+  const forgejoTask = { ...item, agent_notes: { PR: `[Fix](${forgejo})` } };
+  assert.deepEqual(taskPR(forgejoTask), { url: forgejo, number: "123" });
+  updateTaskFooter(ctx, forgejoTask);
+  assert.ok(statuses.get("pinote-links")!.includes(`${forgejo}\x1b\\PR #123`));
+
+
   for (const state of ["done", "removed", "scheduled"]) {
     updateTaskFooter(ctx, { ...item, state });
     assert.equal(statuses.get("pinote-links"), undefined, `${state} tasks clear the footer`);

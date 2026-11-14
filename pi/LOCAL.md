@@ -257,7 +257,7 @@ should not contain implementation details. This is agent guidance, not a storage
 
 Agents are guided to keep notes to three short bullets total: relevant outcome,
 blocker, and next action. Replace stale notes; omit narration, repeated task text,
-and routine test logs. Keep a GitHub pull request in `PR`. Set configured footer
+and routine test logs. Keep a GitHub or Forgejo pull-request link in `PR`. Set configured footer
 fields with Markdown values; remove a field to hide it. Without a configured field
 list, append its label to `Bar`, one label per line. Do not list `PR` in `Bar`.
 Agents use `pinote_update_current`; there is no separate `add_to_bottom_bar` tool.
@@ -325,7 +325,7 @@ Concurrent saves use `pi-note.json.lock`; remove stale locks only when no save i
 running. Symlinked configuration must be edited manually; saves never replace the link.
 
 Formats support `<value>` (Markdown display text), `<url>` (one safe link target),
-and `<number>` (a GitHub PR number or numeric field value). With a blank label,
+and `<number>` (a GitHub/Forgejo PR number or numeric field value). With a blank label,
 PR format `#<number>` displays `#123`; Link on makes it clickable. An unavailable
 placeholder hides the field. The template is literal text, not executable code
 or Markdown. Default format is `<value>`, or `#<number>` for PR.
@@ -362,9 +362,12 @@ This extension does not replace other footers. Other fields, such as `Jira` and
 
 ### PR links without polling
 
-Set `PR` with `pinote_update_current` to one `https://github.com/owner/repo/pull/123`
-URL or Markdown link. Legacy footer settings show clickable **PR #123**; global
-field settings can change or hide it. PR and other field links are rendered locally
+Set `PR` with `pinote_update_current` to one GitHub
+`https://github.com/owner/repo/pull/123` or Forgejo
+`https://forgejo.example/owner/repo/pulls/123` URL or Markdown link. Legacy footer settings show clickable **PR #123**; global
+field settings can change or hide it. Numeric-loopback Forgejo HTTP links such as
+`http://127.0.0.1:3000/tomas/production-deploy/pulls/123` also work.
+PR and other field links are rendered locally
 for the active selection and disappear when that selection is cleared.
 
 Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on

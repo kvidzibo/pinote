@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { footerChips, footerStatusKey, legacyFooterStatusKey, renderFooterLinks } from "./footer-links.ts";
 import type { FooterConfig } from "./footer-config.ts";
+import { parsePR } from "./pr-url.ts";
 
 export type FooterTask = {
   id: number;
@@ -10,14 +11,10 @@ export type FooterTask = {
 };
 type PR = { url: string; number: string };
 
-// Accept one bare URL or Markdown link, never arbitrary hosts or terminal escapes.
+// Accept one bare PR URL or Markdown link for display, not network trust.
 export function taskPR(task: FooterTask | null): PR | undefined {
-  const field = task?.agent_notes.PR?.trim();
-  if (!field) return;
-  const url = /^\[[^\r\n]*\]\(([^\s]+)\)$/u.exec(field)?.[1] ?? field;
-  const match = /^https:\/\/github\.com\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)\/?$/u.exec(url);
-  if (!match || [".", ".."].includes(match[2]) || !Number.isSafeInteger(Number(match[3]))) return;
-  return { url: `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`, number: match[3] };
+  const field = task?.agent_notes.PR;
+  return field ? parsePR(field) : undefined;
 }
 
 export function clearTaskFooter(ctx: ExtensionContext): void {

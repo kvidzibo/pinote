@@ -8,7 +8,7 @@ watcher is installed. The local-only extension and stdio service do not run watc
 
 Open **Settings → Footer fields → Watchers**. The fixed package `watchers/` folder
 is scanned for executable `.mjs` files; discovery never executes or enables them.
-Enable **GitHub PR**, or add a custom absolute executable path on the service
+Enable **GitHub PR** or **Forgejo PR**, or add a custom absolute executable path on the service
 machine and enable it separately. Every change requires review and confirmation.
 Watchers are trusted code, not sandboxed; enabling authorizes their alerts to
 trigger the owning worker to investigate and fix the task within existing permissions.
@@ -46,6 +46,53 @@ strikethrough, while keeping their links. Previously cached merged results recei
 the same footer styling without another GitHub check. Closed/merged PRs stop
 polling; merging never completes the Pinote task. Passing means reported checks
 passed, not that every review/branch-protection requirement is satisfied.
+
+## Forgejo PRs
+
+With pi-note **0.42.0+**, configure trusted instances in the **service machine's**
+`pi-note.json` (in `PI_CODING_AGENT_DIR`, default `~/.pi/agent`), then enable
+**Forgejo PR** in Watchers:
+
+```json
+{
+  "forgejoInstances": [
+    { "url": "https://forgejo.example", "tokenEnv": "FORGEJO_TOKEN" }
+  ]
+}
+```
+
+`url` is an HTTPS instance base URL, optionally including its installation subpath
+or port; it is not a repository or API URL. HTTP is also accepted for numeric
+loopback hosts `127.0.0.1` and `[::1]` only. At most 32 instances are allowed.
+`tokenEnv` names a service environment variable holding a read-only API token
+(with repository read access for private repositories). Omit it for anonymous
+public access. Never put tokens in task fields, URLs or `pi-note.json`. Node must
+be on the service's PATH; `gh` is not needed. Source checkouts require
+`npm --prefix pi run build:mcp` before running the executable.
+
+For a local repository such as
+`http://127.0.0.1:3000/tomas/production-deploy`, configure the instance base
+`http://127.0.0.1:3000`, not the repository path. Loopback refers to the **service
+machine**, not the Pi client. A sign-in-required instance needs `tokenEnv` even
+for repository reads; set that variable in the existing service's environment.
+
+Set `PR` to `https://forgejo.example/owner/repo/pulls/123` or, for that local
+instance, `http://127.0.0.1:3000/tomas/production-deploy/pulls/123`, bare or as
+one Markdown link. Only explicitly configured instance URLs receive requests; credentials are scoped
+to that instance, and API redirects are rejected. Both bundled watchers ignore
+other providers' links, so they can be enabled together. Displaying a PR link or
+formatting `<number>` does not authorize network access. After changing instances,
+toggle the Forgejo watcher off/on to rescan existing fields. Restart the existing
+service when changing its environment; no additional service is needed.
+
+Forgejo checks the current head's latest commit statuses across all pages, including
+Forgejo Actions jobs published as commit statuses. Failures trigger the owning
+worker, unchanged alerts are deduplicated, and merged/closed PRs stop polling.
+No reported statuses means pending, not passing. Passing describes reported CI
+only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
+can also mean checking, an error or a draft, so it remains pending rather than
+triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
+Checks run every 60 seconds; API/configuration errors retry after 120 seconds.
 
 To support another field, add another executable using the contract below. Each
 watcher receives all field events and returns `{}` for fields it does not handle.

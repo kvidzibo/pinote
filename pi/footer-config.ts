@@ -14,7 +14,7 @@ If no task is selected, suggest a task only for genuinely new multi-step work re
 
 For a new proposal, pass a short, action-oriented title (a nonblank single line of at most 60 characters) and optional multiline description. Put context, URLs, commands, and acceptance criteria in description, not title. Combined task text, including the blank line separator, must fit 4000 characters.
 
-Before setting handoff values, use injected field definitions or read fields if absent. Keep handoff notes concise; PR is one GitHub PR URL.`;
+Before setting handoff values, use injected field definitions or read fields if absent. Keep handoff notes concise; PR is one GitHub or Forgejo pull-request URL. Display recognition does not grant network trust.`;
 export function parseAgentGuidance(value: unknown): string {
   if (typeof value !== "string" || value.length > 64_000 || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value)) {
     throw new Error("agentGuidance in pi-note.json must be a string of at most 64000 characters without control characters (except tabs/newlines).");

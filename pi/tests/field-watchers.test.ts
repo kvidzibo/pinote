@@ -51,7 +51,7 @@ test('bounded configuration, inert fixed discovery and disabled legacy migration
     const watchers = discoverFieldWatchers({ fieldHandler: path });
     assert.equal(watchers.find((w) => w.path === path)?.enabled, false);
     assert.equal(watchers.find((w) => w.path === path)?.bundled, false);
-    assert.ok(watchers.some((w) => w.name === 'GitHub PR' && w.bundled && !w.enabled));
+    for (const name of ['GitHub PR', 'Forgejo PR']) assert.ok(watchers.some((w) => w.name === name && w.bundled && !w.enabled));
     assert.equal(existsSync(marker), false);
     assert.deepEqual(parseFieldWatchers({ fieldWatchers: [], fieldHandler: 'bad' }), []);
     for (const fieldWatchers of [null, [{ path: 'relative', enabled: true }], [{ path, enabled: 1 }], [{ path, enabled: true }, { path: join(dir, '.', 'custom.mjs'), enabled: false }], Array(33).fill({ path, enabled: true }), [{ path: '/a\n', enabled: false }], [{ path: '/' + 'a'.repeat(4096), enabled: true }]]) {
