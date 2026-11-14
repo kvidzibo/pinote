@@ -42,8 +42,10 @@ async function instances() {
 }
 
 function validatePR(pr) {
-  if (!object(pr) || !['open', 'closed'].includes(pr.state) || typeof pr.merged !== 'boolean'
-    || typeof pr.mergeable !== 'boolean' || !object(pr.head) || typeof pr.head.sha !== 'string' || !sha.test(pr.head.sha)) throw new Error('Invalid PR');
+  if (!object(pr) || !['open', 'closed'].includes(pr.state) || typeof pr.merged !== 'boolean') throw new Error('Invalid PR');
+  // Deleted source branches can leave terminal PRs without a resolvable head.
+  if (!pr.merged && pr.state === 'open' && (typeof pr.mergeable !== 'boolean'
+    || !object(pr.head) || typeof pr.head.sha !== 'string' || !sha.test(pr.head.sha))) throw new Error('Invalid PR');
   return pr;
 }
 
