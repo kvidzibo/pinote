@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new'] as const) {
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
@@ -26,7 +26,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       await mkdir(join(dirname(database), 'electron'));
       await writeFile(join(dirname(database), 'electron/state.json'), '{"draft":"private draft"}', { mode: 0o600 });
       const dropin = join(root, 'config/systemd/user/pinote.service.d/90-node-backend.conf');
-      let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted' || mode === 'deletion';
+      let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted' || mode === 'deletion' || mode === 'deletion-new';
       const existingCLI = mode === 'wrapper' ? old : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
       const commands: string[] = [];
       const dependencies = {
@@ -39,7 +39,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           if (action === 'stop') active = false;
           if (action === 'start') {
             starts++;
-            if (mode === 'deletion' && starts === 1) rmSync(cli); // Owner deletion after publication must survive rollback.
+            if (mode === 'deletion' && starts === 1) rmSync(cli);
+            if (mode === 'deletion-new' && starts === 1) rmSync(dropin); // Owner deletion after publication must survive rollback.
             if (fail && (mode === 'interrupted' || starts === 1)) throw new Error('Injected restart failure');
             active = true;
           }
