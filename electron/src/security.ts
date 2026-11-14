@@ -29,18 +29,22 @@ export function validMenuRequest(value: unknown): value is MenuRequest {
   return value.kind === 'app' && Object.keys(value).every(k => ['kind', 'x', 'y'].includes(k));
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
-function validTaskActionPreferences(value: unknown, ids: readonly string[]): boolean {
+function validTaskActionPreferences(value: unknown, ids: readonly string[], legacy: boolean): boolean {
   const action = (v: unknown) => typeof v === 'string' && ids.includes(v);
-  const actions = (v: unknown): v is unknown[] => Array.isArray(v) && v.length <= ids.length &&
-    [...v].every((entry, index) => Object.hasOwn(v, index) && action(entry)) && new Set(v).size === v.length;
-  return record(value) && Object.keys(value).length === 3 && ['order','hidden','primary'].every(k => Object.hasOwn(value, k)) &&
-    actions(value.order) && value.order.length === ids.length && actions(value.hidden) && action(value.primary);
+  const uniqueList = (v: unknown, allowed: readonly string[]): v is string[] => Array.isArray(v) && v.length <= allowed.length &&
+    [...v].every((entry, index) => Object.hasOwn(v, index) && typeof entry === 'string' && allowed.includes(entry)) && new Set(v).size === v.length;
+  if (!record(value) || Object.keys(value).length !== 3 || !['order','hidden',legacy ? 'primary' : 'row'].every(k => Object.hasOwn(value, k))) return false;
+  if (!uniqueList(value.order, ids) || value.order.length !== ids.length || !uniqueList(value.hidden, ids)) return false;
+  return legacy ? action(value.primary) : uniqueList(value.row, [...ids, 'task-tag', 'task-text', 'actions']) &&
+    value.row.includes('task-tag') && value.row.includes('task-text');
 }
 function validTaskActions(value: unknown): boolean {
   if (!record(value)) return false;
-  if (Object.hasOwn(value, 'order')) return validTaskActionPreferences(value, TASK_ACTION_IDS);
+  if (Object.hasOwn(value, 'order')) return validTaskActionPreferences(value, TASK_ACTION_IDS.filter(id => id !== 'preview'), true);
+  const active = value.active;
+  const legacy = record(active) && Object.hasOwn(active, 'primary');
   return Object.keys(value).length === TASK_ACTION_STATES.length && TASK_ACTION_STATES.every(state =>
-    Object.hasOwn(value, state) && validTaskActionPreferences(value[state], taskActionIds(state)));
+    Object.hasOwn(value, state) && validTaskActionPreferences(value[state], taskActionIds(state).filter(id => !legacy || id !== 'preview'), legacy));
 }
 export function validState(value: unknown): value is UIState {
   if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions'].includes(k))) return false;

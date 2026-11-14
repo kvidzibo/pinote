@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.4.0.
+package is private, version 0.5.0.
 Run from the repository root:
 
 ```sh
@@ -56,20 +56,33 @@ Icons are bundled rather than taken from the host icon theme.
   activate. **Close**, **Escape**, or clicking outside restores the task text;
   **Tab** out also dismisses the toolbar without closing Pinote.
   Right-click an in-progress task's checkmark to reset progress.
-- **Menu → Task actions…** has **Not started**, **In progress**, and
-  **Marked for deletion** tabs, each with independent menu order, visibility,
-  and a **Button** action. Use **←/→** or **Home/End** to switch focused tabs.
-  Toggle **In menu** to show/hide items; drag a handle to reorder them, or focus
-  the handle and use **↑/↓**. Row icons and tooltips match the chosen action,
-  even when hidden from the menu. Defaults are **Start**, **Complete**, and
-  **Cancel deletion mark** (undo icon), respectively. Right-click shortcuts
-  remain unchanged: mark an unstarted task, reset progress, or delete a marked task.
-  **Save** applies all tabs, including to existing in-progress tasks;
-  **Escape/Close** discards unsaved changes. **Restore defaults** resets only
-  the selected tab; save to apply it. Selecting or reordering never runs an action.
-  Existing shared preferences migrate to separate tabs, retaining menu order,
-  visibility, and button choices; the old Start→Complete behavior and safe undo
-  of deletion marks are preserved. These preferences affect Electron only.
+- **Menu → Task actions…** configures the entire task row, separately for
+  **Not started**, **In progress**, and **Marked for deletion** tasks.
+  Drag row elements or focus a handle and use **↑/↓**; the list's top-to-bottom
+  order becomes the row's left-to-right order, shown in a live preview.
+  **Tag** and **Task text** are required but movable; untagged tasks show
+  **Untagged**. Other elements, including **Preview** and **Actions**, can be
+  removed or placed on either side of the text. Each existing action can appear
+  once in the row; custom actions are not supported.
+- **Add actions / configure menu** adds row buttons and independently controls
+  action-menu order and **In menu** visibility. Drag its handles or use **↑/↓**
+  to reorder menu actions. The row can contain actions hidden from the menu.
+  On narrow rows, text shortens first; excess buttons move under **Actions**,
+  even if hidden from the regular menu. An overflow Actions button appears when
+  needed if you removed it. Right-click task text still opens the menu.
+  Reminder timing remains in the task-text tooltip and the configured reminder
+  button's tooltip; no extra reminder button is inserted outside your layout.
+- Use **←/→** or **Home/End** to switch focused state tabs. Default rows begin
+  with **Start**, **Complete**, or **Cancel deletion mark** (safe undo), followed
+  by tag, text, Preview, and Actions. Right-click a row action (other than Preview)
+  to mark an unstarted task, reset progress, or delete a marked task.
+  **Save** applies all tabs, including to existing tasks. **Escape/Close** on
+  the main settings dialog discards changes; closing the action picker returns
+  to the unsaved layout. **Restore defaults** resets only the selected tab.
+  Editing settings and the preview never runs an action. Older shared or
+  per-state settings migrate their button choices, menu order, and visibility;
+  shared Start→Complete behavior and safe marked-task undo are preserved.
+  These preferences affect Electron only.
 - Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
   menu includes draft recovery; stale drafts must be copied/reconciled rather
   than silently overwriting a changed task.
@@ -90,8 +103,8 @@ Icons are bundled rather than taken from the host icon theme.
   task actions use inline toolbars and the bottom menu uses a native popup menu,
   not centered panels.
   Folder selection and recovery confirmation can also use native dialogs.
-  The eye is shown unless the row's action toolbar is open. These are deliberate
-  differences, not a promise of pixel-for-pixel GTK parity.
+  The eye is a configurable Preview action. These are deliberate differences,
+  not a promise of pixel-for-pixel GTK parity.
 
 Kitty launching uses the existing backend integration and its prerequisites;
 see [GTK controls](gui.md). The frontend does not send Dunst notifications.
