@@ -3037,7 +3037,7 @@ def test_editor_keeps_expanded_height_until_draft_is_cleared(gtk):
     buffer = window.entry.get_buffer()
     buffer.place_cursor(buffer.get_end_iter())
     subprocess.run(["xdotool", "key", "shift+Return"], env=gtk.env, check=True, timeout=5)
-    wait_until(gtk.glib, lambda: window.entry.get_text() == "# First line\n- ")
+    wait_until(gtk.glib, lambda: window.entry.get_text() == "First line\n")
     settled()
     expanded_height = window.entry_scroll.get_allocated_height()
     assert expanded_height > single_height
@@ -3049,11 +3049,9 @@ def test_editor_keeps_expanded_height_until_draft_is_cleared(gtk):
 
     window.entry_scroll.connect("size-allocate", record_height)
     for key, expected in (
-        ("a", "# First line\n- a"),
-        ("BackSpace", "# First line\n- "),
-        ("BackSpace", "# First line\n-"),
-        ("BackSpace", "# First line\n"),
-        ("BackSpace", "# First line"),
+        ("a", "First line\na"),
+        ("BackSpace", "First line\n"),
+        ("BackSpace", "First line"),
     ):
         subprocess.run(["xdotool", "key", key], env=gtk.env, check=True, timeout=5)
         wait_until(gtk.glib, lambda expected=expected: window.entry.get_text() == expected)
@@ -3177,111 +3175,6 @@ def test_single_line_titles_keep_truncated_text_in_preview(gtk):
     assert window.preview is None and not preview.get_visible()
 
 
-def test_markdown_input_styling_newlines_and_saved_source(gtk):
-    from pinote.gui.app import Gdk, Gtk
-
-    window = gtk.open()
-    entry = window.entry
-    buffer = entry.get_buffer()
-
-    def source():
-        return buffer.get_text(*buffer.get_bounds(), True)
-
-    def key(window_title, value):
-        subprocess.run(
-            [
-                "xdotool",
-                "search",
-                "--name",
-                window_title,
-                "windowfocus",
-                "--sync",
-                "key",
-                "--clearmodifiers",
-                *value.split(),
-            ],
-            env=gtk.env,
-            check=True,
-            timeout=5,
-        )
-
-    for before, after in (
-        ("Title 🐦", "# Title 🐦\n- "),
-        ("## Heading", "## Heading\n- "),
-        ("# Title\n- detail", "# Title\n- detail\n- "),
-        ("# Title\n  - detail", "# Title\n  - detail\n  - "),
-        ("# Title\n- ", "# Title\n"),
-        ("# Title\nplain", "# Title\nplain\n"),
-        ("", "\n"),
-    ):
-        entry.set_text(before)
-        buffer.place_cursor(buffer.get_end_iter())
-        key("^pinote — Reminders$", "shift+Return")
-        wait_until(gtk.glib, lambda after=after: source() == after)
-        assert not window.rows
-
-    # Splitting/replacing a selection preserves the remaining text and cursor.
-    entry.set_text("# Title\n- old tail")
-    buffer.select_range(buffer.get_iter_at_offset(10), buffer.get_iter_at_offset(13))
-    key("^pinote — Reminders$", "shift+Return")
-    wait_until(gtk.glib, lambda: source() == "# Title\n- \n-  tail")
-    assert buffer.get_iter_at_mark(buffer.get_insert()).get_offset() == 13
-
-    text = "# Plan 🐦\n- **Bold** and *italic* with `code`\n- next"
-    entry.set_text(text)  # Paste/load does not rewrite source.
-    assert source() == text
-    for word, name in (
-        ("Plan", "heading"),
-        ("Bold", "bold"),
-        ("italic", "italic"),
-        ("code", "code"),
-    ):
-        assert buffer.get_iter_at_offset(text.index(word)).has_tag(entry.markdown_tags[name])
-    assert not buffer.get_iter_at_offset(text.index("next")).get_tags()
-    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
-    buffer.select_range(buffer.get_start_iter(), buffer.get_end_iter())
-    buffer.copy_clipboard(clipboard)
-    assert clipboard.wait_for_text() == text
-    key("^pinote — Reminders$", "Return")
-    wait_until(gtk.glib, lambda: not window.pending and 1 in window.rows)
-    assert window.rows[1].body.get_text() == "Plan 🐦"
-    with Store(gtk.paths.database) as store:
-        assert store.get(1).text == text
-
-    window._open_editor(window.rows[1].note)
-    editor = window.editor
-    entry = editor.entry
-    buffer = entry.get_buffer()
-    assert source() == text
-    assert buffer.get_iter_at_offset(2).has_tag(entry.markdown_tags["heading"])
-    buffer.place_cursor(buffer.get_end_iter())
-    key("^pinote — Edit task$", "Return")
-    wait_until(gtk.glib, lambda: source() == text + "\n- ")
-    # Deleting the generated marker is respected on subsequent newlines.
-    key("^pinote — Edit task$", "BackSpace BackSpace")
-    wait_until(gtk.glib, lambda: source() == text + "\n")
-    buffer.insert_at_cursor("Plain detail")
-    key("^pinote — Edit task$", "Return")
-    wait_until(gtk.glib, lambda: source() == text + "\nPlain detail\n")
-    buffer.insert_at_cursor("Last line")
-    edited = source()
-    editor.close()
-    wait_until(gtk.glib, lambda: window.editor is None)
-    with Store(gtk.paths.database) as store:
-        assert store.get(1).text == text
-    window._open_editor(window.rows[1].note)
-    entry = window.editor.entry
-    buffer = entry.get_buffer()
-    assert source() == edited
-    key("^pinote — Edit task$", "ctrl+Return")
-    wait_until(gtk.glib, lambda: window.editor is None and not window.pending)
-    with Store(gtk.paths.database) as store:
-        assert store.get(1).text == edited
-    # Removing syntax clears its old style without leaving hidden source behind.
-    window.entry.set_text("plain")
-    assert not window.entry.get_buffer().get_start_iter().get_tags()
-
-
 def test_multiline_entry_and_read_only_preview(gtk):
     from pinote.gui.app import Gdk, Gtk, Pango
 
@@ -3311,11 +3204,7 @@ def test_multiline_entry_and_read_only_preview(gtk):
         check=True,
         timeout=5,
     )
-    wait_until(gtk.glib, lambda: window.entry.get_text() == "# " + title + "\n- ")
-    # Explicit removal keeps the source literal for this preview/paste regression.
-    buffer.delete(buffer.get_start_iter(), buffer.get_iter_at_offset(2))
-    buffer.delete(buffer.get_iter_at_offset(len(title) + 1), buffer.get_end_iter())
-    assert window.entry.get_text() == title + "\n"
+    wait_until(gtk.glib, lambda: window.entry.get_text() == title + "\n")
     assert not window.pending and len(window.rows) == 1
     subprocess.run(["xdotool", "key", "Tab"], env=gtk.env, check=True, timeout=5)
     wait_until(gtk.glib, lambda: window.get_focus() is window.add_button)
@@ -3517,7 +3406,7 @@ def test_markdown_preview_copy_poll_links_and_opt_out(gtk, monkeypatch, markdown
         ),
     )
     assert preview.body.get_text() == ("Changed\n\nStill Markdown\nWeb" if markdown else changed)
-    assert row.body.get_text() == "Changed"
+    assert row.body.get_text() == "## Changed"
 
     # No real browser/application launch in tests, including prohibited URI schemes.
     opened = []

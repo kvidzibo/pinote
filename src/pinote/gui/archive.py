@@ -14,7 +14,6 @@ from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from pinote.gui.icons import TagLabel, icon_button, icon_image  # noqa: E402
 from pinote.gui.placement import place_child  # noqa: E402
-from pinote.gui.preview_markdown import task_title  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note, NoteError  # noqa: E402
 
@@ -80,7 +79,7 @@ class ArchiveRow(Gtk.ListBoxRow):
         self.tag_badge.label.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)
         self.tag_badge.set_visible(note.tag is not None)
-        title = task_title(note.text)
+        title = note.text.splitlines()[0]
         if self.title.get_text() != title:
             self.title.set_text(title)
         if self.body.get_text() != note.markdown:

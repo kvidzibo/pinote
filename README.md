@@ -62,7 +62,8 @@ GTK remains the default desktop frontend and fallback. An optional Electron
 trial frontend shares the Python backend and task database; it does not replace
 GTK or change desktop startup/configuration. Requires Node.js 22.12+ in addition
 to Python 3.11+. See [Electron installation, use, packaging, and limitations](docs/electron.md).
-Only Linux/X11/i3 is a validation target; pixel-for-pixel GTK parity is not promised.
+Its add-task input and task editor style Markdown source and assist title/bullet
+newlines. Only Linux/X11/i3 is a validation target; pixel-for-pixel GTK parity is not promised.
 
 ## Use
 
@@ -82,9 +83,7 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 
 ### GUI controls
 
-- **Add:** press **Enter** or **+**; **Shift+Enter** adds a line with automatic
-  title/bullet markers. Both desktop frontends style Markdown while keeping its source visible.
-  Unfinished input is restored when reopened.
+- **Add:** press **Enter** or **+**. Unfinished input is restored when reopened.
 - **Task actions:** right-click task text to change its state, edit, tag, or schedule
   it. Unfinished edits are restored when reopened and remain drafts until saved.
 - **Window size:** drag any edge or corner; width and height survive restarts.

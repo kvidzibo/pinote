@@ -21,7 +21,6 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 from pinote.gui.draft import DraftCache  # noqa: E402
 from pinote.gui.folder import FolderPicker  # noqa: E402
 from pinote.gui.icons import icon_button  # noqa: E402
-from pinote.gui.markdown_entry import MarkdownEntry  # noqa: E402
 from pinote.gui.placement import place_child  # noqa: E402
 
 
@@ -118,7 +117,7 @@ class NoteEditor(Gtk.ApplicationWindow):
             )
             layout.pack_start(self.folder_picker, False, False, 0)
         else:
-            self.entry = MarkdownEntry(
+            self.entry = Gtk.TextView(
                 wrap_mode=Gtk.WrapMode.WORD_CHAR,
                 accepts_tab=False,
                 left_margin=6,
@@ -128,8 +127,7 @@ class NoteEditor(Gtk.ApplicationWindow):
             )
             self.entry.get_accessible().set_name("Task text")
             self.entry.get_accessible().set_description(
-                "Enter continues headings and bullets; Ctrl+Enter saves. "
-                "Escape closes and keeps the draft."
+                "Enter inserts a newline; Ctrl+Enter saves. Escape closes and keeps the draft."
             )
             self.entry.get_buffer().set_text(self._restore_draft(note))
             hint = Gtk.Label(label="Edits are kept as a draft until saved.", xalign=0)

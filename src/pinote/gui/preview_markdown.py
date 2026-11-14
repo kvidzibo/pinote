@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from html import escape
 from urllib.parse import urlsplit
@@ -15,11 +14,6 @@ except ImportError:  # Base/CLI installs retain the original literal preview.
 
 
 _CODE = '<span font_family="monospace" background="#1c212a">{}</span>'
-
-
-def task_title(text: str) -> str:
-    """Hide a Markdown heading marker in compact titles, never in stored text."""
-    return re.sub(r"^ {0,3}#{1,6}[ \t]+", "", text.split("\n", 1)[0])
 
 
 def is_safe_link(uri: str) -> bool:

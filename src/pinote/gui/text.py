@@ -9,13 +9,12 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from pinote.gui.icons import icon_button  # noqa: E402
-from pinote.gui.markdown_entry import MarkdownEntry  # noqa: E402
 from pinote.gui.preview_markdown import is_safe_link, render_markdown  # noqa: E402
 from pinote.logging_setup import LOGGER  # noqa: E402
 from pinote.store import Note  # noqa: E402
 
 
-class TaskEntry(MarkdownEntry):
+class TaskEntry(Gtk.TextView):
     """Keep Enter-to-submit while accepting pasted text and Shift+Enter newlines."""
 
     __gsignals__ = {"activate": (GObject.SignalFlags.RUN_LAST, None, ())}
@@ -48,7 +47,7 @@ class TaskEntry(MarkdownEntry):
             if not self.im_context_filter_keypress(event):
                 self.emit("activate")
             return True
-        return super().do_key_press_event(event)
+        return Gtk.TextView.do_key_press_event(self, event)
 
 
 class NotePreview(Gtk.Window):
