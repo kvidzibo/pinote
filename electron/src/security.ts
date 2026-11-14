@@ -1,4 +1,4 @@
-import { TASK_ACTION_IDS } from './protocol.ts';
+import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from './protocol.ts';
 import type { MenuRequest, Operation, UIState } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
@@ -29,11 +29,18 @@ export function validMenuRequest(value: unknown): value is MenuRequest {
   return value.kind === 'app' && Object.keys(value).every(k => ['kind', 'x', 'y'].includes(k));
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
+function validTaskActionPreferences(value: unknown, ids: readonly string[]): boolean {
+  const action = (v: unknown) => typeof v === 'string' && ids.includes(v);
+  const actions = (v: unknown): v is unknown[] => Array.isArray(v) && v.length <= ids.length &&
+    [...v].every((entry, index) => Object.hasOwn(v, index) && action(entry)) && new Set(v).size === v.length;
+  return record(value) && Object.keys(value).length === 3 && ['order','hidden','primary'].every(k => Object.hasOwn(value, k)) &&
+    actions(value.order) && value.order.length === ids.length && actions(value.hidden) && action(value.primary);
+}
 function validTaskActions(value: unknown): boolean {
-  const action = (v: unknown) => typeof v === 'string' && TASK_ACTION_IDS.some(id => id === v);
-  const actions = (v: unknown): v is unknown[] => Array.isArray(v) && v.length <= TASK_ACTION_IDS.length && [...v].every(action) && new Set(v).size === v.length;
-  return record(value) && Object.keys(value).every(k => ['order','hidden','primary'].includes(k)) &&
-    actions(value.order) && value.order.length === TASK_ACTION_IDS.length && actions(value.hidden) && action(value.primary);
+  if (!record(value)) return false;
+  if (Object.hasOwn(value, 'order')) return validTaskActionPreferences(value, TASK_ACTION_IDS);
+  return Object.keys(value).length === TASK_ACTION_STATES.length && TASK_ACTION_STATES.every(state =>
+    Object.hasOwn(value, state) && validTaskActionPreferences(value[state], taskActionIds(state)));
 }
 export function validState(value: unknown): value is UIState {
   if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions'].includes(k))) return false;

@@ -1,6 +1,6 @@
 import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
-import { defaultTaskActions, initialState } from './protocol';
-import type { TaskActionId, TaskActionSettings } from './protocol';
+import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
+import type { TaskActionId, TaskActionState } from './protocol';
 // The optional frontend bundles markdown-it; raw HTML and resource loading are disabled.
 import MarkdownIt from 'markdown-it';
 
@@ -201,7 +201,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
   panel.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;
-    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]'));
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]'));
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) { e.preventDefault(); last?.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -283,14 +283,12 @@ function makeRow(task: Task): HTMLElement {
   const row = el('article', undefined, `task-row${isProgress(task) ? ' progress' : ''}${marked.has(task.id) ? ' marked' : ''}`);
   row.dataset.id = String(task.id);
   const mark = marked.has(task.id);
-  const primary = (state.taskActions ?? defaultTaskActions()).primary;
-  const action = taskAction(task, primary === 'start' && isProgress(task) ? 'done' : primary);
-  const checkbox = button(mark ? 'trash' : action.icon, `Task ${task.id}: ${mark ? 'Cancel deletion mark' : action.label}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
-    if (mark) { marked.delete(task.id); renderTasks(); } else return runTaskAction(task, action.id);
-  }, mark ? readonly || busyTasks.has(task.id) : actionBlocked(task, action.id));
+  const primary = normalizeTaskActions(state.taskActions)[taskActionState(task)].primary;
+  const action = taskAction(task, primary);
+  const checkbox = button(action.icon, `Task ${task.id}: ${action.label}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => runTaskAction(task, action.id), actionBlocked(task, action.id));
   checkbox.classList.add('checkbox');
   if (!mark) checkbox.classList.add(isProgress(task) ? 'in-progress-check' : 'empty-check');
-  if (primary === 'start' && !mark) {
+  if (primary === (isProgress(task) ? 'done' : 'start') && !mark) {
     checkbox.setAttribute('role', 'checkbox'); checkbox.setAttribute('aria-checked', isProgress(task) ? 'mixed' : 'false');
   }
   checkbox.addEventListener('contextmenu', e => {
@@ -409,7 +407,7 @@ function openTaskActions(task: Task, source: HTMLElement): void {
   taskActions = { task, source };
   const bar = el('div', undefined, 'task-actions');
   bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for task ${task.id}: ${task.text.split('\n')[0]}`);
-  const settings = state.taskActions ?? defaultTaskActions();
+  const settings = normalizeTaskActions(state.taskActions)[taskActionState(task)];
   for (const id of settings.order) {
     if (settings.hidden.includes(id)) continue;
     const action = taskAction(task, id);
@@ -432,15 +430,21 @@ function openTaskActions(task: Task, source: HTMLElement): void {
 type TaskAction = TaskActionId | 'reset';
 const actionChoices: Record<TaskActionId, { icon: Icon; label: string }> = {
   kitty: { icon: 'kitty', label: 'Start in Kitty…' }, copy: { icon: 'copy', label: 'Copy note' },
-  start: { icon: 'start', label: 'Start / Reset' }, done: { icon: 'done', label: 'Complete' },
+  start: { icon: 'start', label: 'Start' }, done: { icon: 'done', label: 'Complete' },
   archive: { icon: 'remove', label: 'Remove to archive' }, edit: { icon: 'edit', label: 'Edit text…' },
   schedule: { icon: 'schedule', label: 'Set reminder…' }, tag: { icon: 'tag', label: 'Change tag…' },
+  unmark: { icon: 'reset', label: 'Cancel deletion mark' },
 };
+function taskActionState(task: Task): TaskActionState {
+  return marked.has(task.id) ? 'marked' : isProgress(task) ? 'in_progress' : 'active';
+}
+const actionStateLabels: Record<TaskActionState, string> = { active: 'Not started', in_progress: 'In progress', marked: 'Marked for deletion' };
+function actionChoice(id: TaskActionId, state: TaskActionState): { icon: Icon; label: string } {
+  if (id === 'start' && state === 'in_progress') return { icon: 'reset', label: 'Reset progress' };
+  return actionChoices[id];
+}
 function taskAction(task: Task, id: TaskActionId): { id: TaskAction; icon: Icon; label: string } {
-  if (id === 'start') return isProgress(task)
-    ? { id: 'reset', icon: 'reset', label: 'Reset progress' }
-    : { id: 'start', icon: 'start', label: 'Start' };
-  return { id, ...actionChoices[id] };
+  return { id: id === 'start' && isProgress(task) ? 'reset' : id, ...actionChoice(id, isProgress(task) ? 'in_progress' : 'active') };
 }
 function actionBlocked(task: Task, id: TaskAction): boolean {
   return id !== 'copy' && id !== 'edit' && (readonly || busyTasks.has(task.id));
@@ -450,28 +454,54 @@ function configureTaskActions(): void {
   if (existing) { existing.panel.focus(); return; }
   const modal = layer('Task actions', 'task-actions');
   modal.panel.classList.add('action-settings');
-  let draft: TaskActionSettings = structuredClone(state.taskActions ?? defaultTaskActions());
+  const draft = normalizeTaskActions(state.taskActions);
+  let selected: TaskActionState = 'active';
   let dragging: TaskActionId | undefined, saving = false;
-  modal.panel.append(el('p', 'Drag to reorder, or focus a handle and use ↑ / ↓. Choose visible actions and one row button.', 'settings-hint'));
+  const tabs = el('div', undefined, 'action-state-tabs');
+  tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Task state');
+  const panel = el('div'); panel.id = 'task-action-state-panel'; panel.setAttribute('role', 'tabpanel');
+  const tabButtons = TASK_ACTION_STATES.map((state, index) => {
+    const tab = textButton(actionStateLabels[state], () => selectState(state));
+    tab.id = `task-action-tab-${state}`; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', panel.id);
+    tab.addEventListener('keydown', event => {
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : undefined;
+      if (next === undefined) return;
+      event.preventDefault(); selectState(TASK_ACTION_STATES[next]); tabButtons[next].focus();
+    });
+    tabs.append(tab); return tab;
+  });
+  function selectState(state: TaskActionState): void {
+    if (saving) return;
+    selected = state; dragging = undefined; draw();
+  }
+  modal.panel.append(tabs, el('p', 'Drag to reorder (↑ / ↓ on a handle). Choose visible actions and one row button per tab.', 'settings-hint'), panel);
   const list = el('div', undefined, 'action-settings-list');
   list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Task action preferences');
   const heading = el('div', undefined, 'action-setting headings');
   heading.append(el('span'), el('span', 'Action'), el('span', 'In menu'), el('span', 'Button'));
-  modal.panel.append(heading, list);
+  panel.append(heading, list);
   const status = el('span', undefined, 'sr-only'); status.setAttribute('aria-live', 'polite'); modal.panel.append(status);
   const clearDrop = () => { for (const row of list.children) row.classList.remove('drop-before', 'drop-after'); };
   const move = (id: TaskActionId, to: number) => {
-    const from = draft.order.indexOf(id);
-    if (from === to || to < 0 || to >= draft.order.length) return;
-    draft.order.splice(from, 1); draft.order.splice(to, 0, id);
+    const preferences = draft[selected];
+    const from = preferences.order.indexOf(id);
+    if (readonly || saving || from === to || to < 0 || to >= preferences.order.length) return;
+    preferences.order.splice(from, 1); preferences.order.splice(to, 0, id);
     draw(id);
-    status.textContent = `${actionChoices[id].label}, position ${to + 1} of ${draft.order.length}`;
+    status.textContent = `${actionChoice(id, selected).label}, position ${to + 1} of ${preferences.order.length}`;
   };
   const draw = (focus?: TaskActionId) => {
     const top = modal.panel.scrollTop;
+    const preferences = draft[selected];
+    tabButtons.forEach((tab, index) => {
+      const chosen = TASK_ACTION_STATES[index] === selected;
+      tab.setAttribute('aria-selected', String(chosen)); tab.tabIndex = chosen ? 0 : -1; tab.disabled = saving;
+    });
+    panel.setAttribute('aria-labelledby', `task-action-tab-${selected}`);
+    reset.title = `Restore default actions for ${actionStateLabels[selected]}`; reset.setAttribute('aria-label', reset.title);
     list.replaceChildren();
-    for (const id of draft.order) {
-      const choice = actionChoices[id];
+    for (const id of preferences.order) {
+      const choice = actionChoice(id, selected);
       const row = el('div', undefined, 'action-setting'); row.dataset.action = id;
       const handle = button('grip', `Reorder ${choice.label}`, () => undefined, readonly || saving);
       handle.className = 'action-drag'; handle.draggable = !readonly && !saving;
@@ -479,7 +509,7 @@ function configureTaskActions(): void {
       handle.setAttribute('aria-description', 'Drag, or press Arrow Up or Arrow Down to reorder.');
       handle.addEventListener('keydown', event => {
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-        event.preventDefault(); move(id, draft.order.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1));
+        event.preventDefault(); move(id, preferences.order.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1));
       });
       handle.addEventListener('dragstart', event => {
         if (readonly || saving || !event.dataTransfer) { event.preventDefault(); return; }
@@ -497,21 +527,21 @@ function configureTaskActions(): void {
       row.addEventListener('drop', event => {
         if (!dragging || readonly || saving) return;
         event.preventDefault();
-        const from = draft.order.indexOf(dragging), rect = row.getBoundingClientRect();
-        const at = draft.order.indexOf(id) + (event.clientY < rect.top + rect.height / 2 ? 0 : 1);
+        const from = preferences.order.indexOf(dragging), rect = row.getBoundingClientRect();
+        const at = preferences.order.indexOf(id) + (event.clientY < rect.top + rect.height / 2 ? 0 : 1);
         const moved = dragging; dragging = undefined; clearDrop(); move(moved, at > from ? at - 1 : at);
       });
       const label = el('span', undefined, 'action-name'), icon = el('img');
       icon.src = `icons/${icons[choice.icon]}-symbolic.svg`; icon.alt = '';
       label.append(icon, el('span', choice.label));
-      const shown = el('input'); shown.type = 'checkbox'; shown.checked = !draft.hidden.includes(id);
+      const shown = el('input'); shown.type = 'checkbox'; shown.checked = !preferences.hidden.includes(id);
       shown.setAttribute('aria-label', `Show ${choice.label} in menu`); shown.title = `Show ${choice.label} in menu`;
       shown.disabled = readonly || saving;
-      shown.addEventListener('change', () => { draft.hidden = shown.checked ? draft.hidden.filter(value => value !== id) : [...draft.hidden, id]; });
-      const primary = el('input'); primary.type = 'radio'; primary.name = 'task-row-action'; primary.checked = draft.primary === id;
+      shown.addEventListener('change', () => { preferences.hidden = shown.checked ? preferences.hidden.filter(value => value !== id) : [...preferences.hidden, id]; });
+      const primary = el('input'); primary.type = 'radio'; primary.name = 'task-row-action'; primary.checked = preferences.primary === id;
       primary.setAttribute('aria-label', `Use ${choice.label} as row button`); primary.title = `Use ${choice.label} as row button`;
       primary.disabled = readonly || saving;
-      primary.addEventListener('change', () => { if (primary.checked) draft.primary = id; });
+      primary.addEventListener('change', () => { if (primary.checked) preferences.primary = id; });
       row.append(handle, label, shown, primary); list.append(row);
     }
     modal.panel.scrollTop = top;
@@ -520,9 +550,9 @@ function configureTaskActions(): void {
       handle?.focus({ preventScroll: true }); handle?.scrollIntoView({ block: 'nearest' });
     }
   };
-  modal.panel.append(el('p', 'Applies to all task rows. Default Start becomes Complete in progress. The row button works even if hidden from the menu.', 'settings-hint'));
+  modal.panel.append(el('p', 'Includes existing tasks. Other tabs are unchanged. Hidden menu actions can still be row buttons.', 'settings-hint'));
   const bar = controls(modal.panel);
-  const reset = button('reset', 'Restore default task actions', () => { if (readonly || saving) return; draft = defaultTaskActions(); draw(); }, readonly);
+  const reset = button('reset', 'Restore default task actions', () => { if (readonly || saving) return; draft[selected] = defaultTaskActions()[selected]; draw(); }, readonly);
   const save = button('save', 'Save task actions', async () => {
     if (readonly || closing || saving || !stateLoaded) return;
     saving = true; reset.disabled = save.disabled = true; draw();
@@ -544,6 +574,7 @@ async function runTaskAction(task: Task, action: TaskAction): Promise<void> {
   switch (action) {
     case 'kitty': await startKitty(task); break;
     case 'copy': await api.copy(task.text); break;
+    case 'unmark': if (!actionBlocked(task, action)) { marked.delete(task.id); renderTasks(); } break;
     case 'start': case 'reset': case 'done': await transition(task, action); break;
     case 'archive': await transition(task, 'rm'); break;
     case 'edit': edit(task); break;

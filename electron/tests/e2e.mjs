@@ -393,7 +393,7 @@ try {
     assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
     await dismissNativeMenu(); await focusReturns(bottom);
   }
-  // Task 404: configurable actions, pointer/keyboard reordering, and an independent row button.
+  // State-specific action tabs: migration, independent preferences, and live row behavior.
   {
     const settings = page.getByRole('dialog',{name:'Task actions',exact:true});
     const openSettings = async () => {
@@ -405,17 +405,33 @@ try {
     const actions = page.getByRole('button',{name:`Actions for task ${first}`,exact:true});
     const bar = page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${first}:`)});
     const save = async () => { await settings.getByRole('button',{name:'Save task actions',exact:true}).click(); await settings.waitFor({state:'detached'}); };
-    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(420,580));
+    // An existing installation's shared preferences must remain usable, not open read-only.
+    await page.evaluate(async order => {
+      const state = await window.pinote.loadState();
+      await window.pinote.saveState({...state,taskActions:{order,hidden:[],primary:'start'}});
+    }, original);
+    await page.reload(); await page.locator(`[data-id="${first}"]`).waitFor();
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(420,620));
     await openSettings();
     assert.deepEqual(await order(),original);
+    const tab = name => settings.getByRole('tab',{name,exact:true});
+    await tab('Not started').focus(); await page.keyboard.press('ArrowRight');
+    assert.equal(await tab('In progress').getAttribute('aria-selected'),'true');
+    assert.ok(await settings.getByRole('radio',{name:'Use Complete as row button',exact:true}).isChecked());
+    assert.match(await settings.locator('[data-action="start"] .action-name img').getAttribute('src'),/document-revert-symbolic/);
+    await page.keyboard.press('End');
+    assert.equal(await tab('Marked for deletion').getAttribute('aria-selected'),'true');
+    assert.ok(await settings.getByRole('radio',{name:'Use Cancel deletion mark as row button',exact:true}).isChecked());
+    await page.keyboard.press('Home');
+    assert.equal(await tab('Not started').getAttribute('aria-selected'),'true');
     await settings.getByRole('button',{name:'Reorder Copy note',exact:true}).dragTo(settings.locator('[data-action="kitty"]'),{targetPosition:{x:50,y:2}});
     assert.deepEqual(await order(),['copy','kitty','start','done','archive','edit','schedule','tag']);
     await settings.getByRole('button',{name:'Reorder Change tag…',exact:true}).focus();
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp');
     assert.deepEqual(await order(),['copy','kitty','start','done','archive','tag','edit','schedule']);
     assert.ok(await settings.getByRole('button',{name:'Reorder Change tag…',exact:true}).evaluate(n=>n===document.activeElement));
-    assert.equal(await settings.getByRole('radio',{name:'Use Start / Reset as row button',exact:true}).isChecked(),true,'Reordering must not change the primary action');
-    await settings.getByRole('checkbox',{name:'Show Start / Reset in menu',exact:true}).uncheck();
+    assert.equal(await settings.getByRole('radio',{name:'Use Start as row button',exact:true}).isChecked(),true,'Reordering must not change the primary action');
+    await settings.getByRole('checkbox',{name:'Show Start in menu',exact:true}).uncheck();
     await settings.getByRole('checkbox',{name:'Show Remove to archive in menu',exact:true}).uncheck();
     await settings.getByRole('radio',{name:'Use Copy note as row button',exact:true}).check();
     assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===first).state,'active','Selecting preferences must not run actions');
@@ -436,7 +452,11 @@ try {
     await save();
     await page.reload(); await page.locator(`[data-id="${first}"]`).waitFor();
     const persisted=(await page.evaluate(()=>window.pinote.loadState())).taskActions;
-    assert.deepEqual(persisted,{order:['copy','kitty','start','done','archive','tag','edit','schedule'],hidden:['start','archive'],primary:'copy'});
+    assert.deepEqual(persisted,{
+      active:{order:['copy','kitty','start','done','archive','tag','edit','schedule'],hidden:['start','archive'],primary:'copy'},
+      in_progress:{order:original,hidden:[],primary:'done'},
+      marked:{order:[...original,'unmark'],hidden:[],primary:'unmark'},
+    });
     assert.deepEqual(JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote','electron','state.json'),'utf8')).taskActions,persisted);
     await actions.click();
     assert.deepEqual(await bar.getByRole('button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Copy note','Start in Kitty…','Complete','Change tag…','Edit text…','Set reminder…','Close task actions']);
@@ -471,11 +491,11 @@ try {
     await page.keyboard.press('Escape');
     assert.match(await page.locator(`[data-id="${first}"] .checkbox`).getAttribute('aria-label'),/: Copy note;/);
     await openSettings();
-    await settings.getByRole('button',{name:'Restore default task actions',exact:true}).click();
+    await settings.getByRole('button',{name:'Restore default actions for Not started',exact:true}).click();
     await page.keyboard.press('Escape');
-    assert.equal((await page.evaluate(()=>window.pinote.loadState())).taskActions.hidden.length,8,'Escape discards unsaved defaults');
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).taskActions.active.hidden.length,8,'Escape discards unsaved defaults');
     await openSettings();
-    await settings.getByRole('button',{name:'Restore default task actions',exact:true}).click();
+    await settings.getByRole('button',{name:'Restore default actions for Not started',exact:true}).click();
     await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(280,240));
     await page.waitForFunction(()=>innerWidth===280);
     assert.ok(await settings.evaluate(panel=>panel.scrollWidth<=panel.clientWidth),'Settings must not clip horizontally');
@@ -484,7 +504,71 @@ try {
     await settings.evaluate(panel=>{panel.scrollTop=0;});
     await page.screenshot({path:join(root,'task-actions-settings-narrow.png')});
     await save();
-    assert.deepEqual((await page.evaluate(()=>window.pinote.loadState())).taskActions,{order:original,hidden:[],primary:'start'});
+    assert.deepEqual((await page.evaluate(()=>window.pinote.loadState())).taskActions,{
+      active:{order:original,hidden:[],primary:'start'},
+      in_progress:{order:original,hidden:[],primary:'done'},
+      marked:{order:[...original,'unmark'],hidden:[],primary:'unmark'},
+    });
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(420,660));
+    // Configure progress independently, including a task already in progress.
+    await openSettings(); await tab('In progress').click();
+    await settings.getByRole('radio',{name:'Use Reset progress as row button',exact:true}).check();
+    await settings.getByRole('checkbox',{name:'Show Start in Kitty… in menu',exact:true}).uncheck();
+    await settings.getByRole('button',{name:'Reorder Complete',exact:true}).focus();
+    await page.keyboard.press('ArrowUp');
+    await tab('Not started').click();
+    assert.deepEqual(await order(),original);
+    assert.ok(await settings.getByRole('radio',{name:'Use Start as row button',exact:true}).isChecked());
+    await save();
+    const progressButton = page.locator(`[data-id="${progress}"] .checkbox`);
+    assert.match(await progressButton.getAttribute('title'),/: Reset progress;/);
+    assert.match(await progressButton.locator('img').getAttribute('src'),/document-revert-symbolic/);
+    await page.getByRole('button',{name:`Actions for task ${progress}`,exact:true}).click();
+    const progressBar = page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${progress}:`)});
+    assert.deepEqual(await progressBar.getByRole('button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Copy note','Complete','Reset progress','Remove to archive','Edit text…','Set reminder…','Change tag…','Close task actions']);
+    await page.keyboard.press('Escape');
+    assert.match(await page.locator(`[data-id="${first}"] .checkbox`).getAttribute('title'),/: Start;/);
+    await openSettings(); await tab('In progress').click();
+    await settings.getByRole('radio',{name:'Use Complete as row button',exact:true}).check();
+    await settings.getByRole('checkbox',{name:'Show Complete in menu',exact:true}).uncheck();
+    await save();
+    assert.match(await progressButton.getAttribute('title'),/: Complete;/);
+    assert.match(await progressButton.locator('img').getAttribute('src'),/task-complete-symbolic/);
+    const completeId = call('add',{text:'Complete with the in-progress row button',tag:null}).id;
+    const completeTask = call('snapshot',{view:'active'}).notes.find(n=>n.id===completeId);
+    call('transition',{id:completeId,revision:completeTask.updated_at,state:'active',action:'start'});
+    const completeRow = page.locator(`[data-id="${completeId}"]`); await completeRow.waitFor();
+    await completeRow.locator('.checkbox').click(); await completeRow.waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'archive'}).notes.find(n=>n.id===completeId).state,'done');
+    // Marked tasks have their own settings; the default undo icon never deletes.
+    await openSettings(); await tab('Marked for deletion').click();
+    await settings.getByRole('radio',{name:'Use Copy note as row button',exact:true}).check();
+    await settings.getByRole('checkbox',{name:'Show Complete in menu',exact:true}).uncheck();
+    await save();
+    const firstButton = page.locator(`[data-id="${first}"] .checkbox`);
+    await firstButton.click({button:'right'});
+    assert.match(await firstButton.getAttribute('title'),/: Copy note; right-click delete/);
+    assert.match(await firstButton.locator('img').getAttribute('src'),/edit-copy-symbolic/);
+    await firstButton.click();
+    assert.ok(await page.locator(`[data-id="${first}"]`).evaluate(n=>n.classList.contains('marked')));
+    await actions.click();
+    assert.equal(await bar.getByRole('button',{name:'Complete',exact:true}).count(),0);
+    assert.equal(await bar.getByRole('button',{name:'Cancel deletion mark',exact:true}).count(),1);
+    await page.keyboard.press('Escape');
+    await openSettings(); await tab('Marked for deletion').click();
+    await settings.getByRole('button',{name:'Restore default actions for Marked for deletion',exact:true}).click();
+    await tab('In progress').click();
+    assert.ok(await settings.getByRole('radio',{name:'Use Complete as row button',exact:true}).isChecked());
+    assert.equal(await settings.getByRole('checkbox',{name:'Show Complete in menu',exact:true}).isChecked(),false,'Reset must affect only the selected tab');
+    await settings.getByRole('button',{name:'Restore default actions for In progress',exact:true}).click();
+    await page.screenshot({path:join(root,'task-actions-state-tabs.png')});
+    await save();
+    assert.match(await firstButton.getAttribute('title'),/: Cancel deletion mark;/);
+    assert.match(await firstButton.locator('img').getAttribute('src'),/document-revert-symbolic/);
+    await page.screenshot({path:join(root,'task-actions-state-buttons.png')});
+    await firstButton.click();
+    assert.match(await firstButton.getAttribute('title'),/: Start;/);
+    assert.equal(await page.locator(`[data-id="${first}"]`).evaluate(n=>n.classList.contains('marked')),false);
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
   await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
@@ -522,14 +606,14 @@ try {
   await writeFile(faultFile,'');
   assert.ok(call('snapshot',{view:'archive'}).notes.some(n=>n.id===added.id));
   await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'archive');
-  await page.getByRole('button',{name:'Restore task',exact:true}).click();
+  await page.getByRole('article').filter({hasText:'Edited from Electron ☘'}).getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
   await selectTaskAction(page, added.id, 'Remove to archive');
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
   assert.equal(call('snapshot',{view:'archive'}).notes.find(n=>n.id===added.id).state,'removed');
   await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'archive');
-  await page.getByRole('button',{name:'Restore task',exact:true}).click();
+  await page.getByRole('article').filter({hasText:'Edited from Electron ☘'}).getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
   await selectTaskAction(page, added.id, 'Set reminder…');
