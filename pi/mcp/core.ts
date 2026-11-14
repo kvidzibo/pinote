@@ -14,6 +14,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { defaultAgentGuidance, defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
 import type { FieldAutomation, FieldResult } from './field-events.ts';
+import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from '../field-watchers.ts';
 import { taskTitle } from '../task-title.ts';
 
 const URI = 'pinote://ui';
@@ -35,7 +36,7 @@ const ProposalInput = z.union([
   ExistingProposal,
 ]);
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
-const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), state: z.object({
+const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), fieldReceipts: z.array(z.string().uuid()).max(4096).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
   launch: z.object({ task_id: TaskId, updated_at: z.string().min(1).max(128) }).strict().optional(),
   selectedId: z.number().int().positive().safe().nullable().optional(), screen: z.enum(['tasks', 'settings', 'field']).optional(),
@@ -104,7 +105,7 @@ function settings() {
   if (!['always', 'github-remote', 'never'].includes(policy)) throw new Error('Invalid taskOfferPolicy in pi-note.json');
   const guidanceOverridden = Object.hasOwn(root, 'agentGuidance');
   const guidance = guidanceOverridden ? parseAgentGuidance(root.agentGuidance) : defaultAgentGuidance;
-  return { ...document, handoffPrompt, newSessionPrompt, policy, guidance, guidanceOverridden };
+  return { ...document, handoffPrompt, newSessionPrompt, policy, guidance, guidanceOverridden, watchers: discoverFieldWatchers(root) };
 }
 function agentGuidance(): string {
   const { value: root } = readConfigDocument();
@@ -117,7 +118,7 @@ async function selection(state: State, signal: AbortSignal) {
   if (proposal && 'task_id' in proposal && (!proposedTask || !['active', 'in_progress'].includes(proposedTask.state))) proposal = null;
   return { task, proposal, proposedTask };
 }
-async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string) {
+async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = []) {
   const launchTask: Task | null = state.launch ? JSON.parse(await note(['agent', 'get', String(state.launch.task_id)], signal)) : null;
   const tasks: Task[] = state.launch
     ? launchTask && ['active', 'in_progress'].includes(launchTask.state) ? [launchTask] : []
@@ -129,7 +130,7 @@ async function snapshot(state: State, signal: AbortSignal, automation?: FieldAut
   if (state.screen === 'field' && !fields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
   state = Context.parse({ conversationId: 'canonical', state }).state;
   const fieldStatuses = task ? automation?.statuses(task) ?? [] : [];
-  const fieldNotifications = task && contextId ? automation?.notices(task, contextId) ?? [] : [];
+  const fieldNotifications = task && contextId ? automation?.notices(task, contextId, receipts) ?? [] : [];
   const revision = createHash('sha256').update(JSON.stringify({ state, tasks, task, proposedTask, raw: config.raw, fieldStatuses, fieldNotifications })).digest('hex');
   return { state, tasks, task, proposedTask, suggestion, config, revision, fieldStatuses, fieldNotifications };
 }
@@ -159,6 +160,7 @@ function footerFeatures(meta: Record<string, unknown> | undefined) {
     footerNativeActions: z.object({ footerNativeActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     footerStyles: z.object({ footerStyles: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     fieldEvents: z.object({ fieldEvents: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
+    fieldWatchers: z.object({ fieldWatchers: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     footerDoubleActions: z.object({ footerDoubleActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
   };
 }
@@ -170,7 +172,7 @@ function fullPreview(task: { text: string; agent_notes?: Record<string, string> 
   const document = task.text + notes;
   return document.length <= 20_000 ? document : 'Full preview exceeds the 20000-character display limit. Nothing has been truncated here: read the complete task and handoff notes through the Pinote CLI or service (get_task).';
 }
-function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldEvents?: boolean } = {}) {
+function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean } = {}) {
   const { tasks, task, suggestion, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -202,6 +204,16 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     for (const [key, label, description] of [['titleWidth', 'Task title width', '3–1000 terminal cells.'], ['fieldWidth', 'Default field width', '3–1000 terminal cells; inherited by fields without a width override.'], ['maxFields', 'Maximum visible fields', '0–64 fields; 0 hides all task fields.']] as const) controls.push({ id: key, label, description, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
     controls.push({ id: 'add-field', label: 'Add field', icon: icons.add, kind: 'text', value: '', description: 'Unique nonblank field name, at most 64 characters; Bar is reserved. Changes display definitions, not task values.', confirm: 'Add this global footer field?' });
     fields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.label || '(no label)'} · ${field.format}` }));
+    controls.push({ id: 'add-watcher', label: 'Add watcher file', icon: icons.add, kind: 'text', value: '',
+      description: 'Absolute executable path on the service machine. Added disabled; enable separately after reviewing trusted code.',
+      confirm: 'Add this trusted watcher file to shared fieldWatchers (disabled)?' });
+    for (const watcher of config.watchers) {
+      controls.push({ id: `watcher:${watcher.id}`, label: watcher.name, kind: 'toggle', value: watcher.enabled,
+        description: `${watcher.bundled ? 'Bundled' : 'Custom'} · ${watcher.path}`,
+        confirm: `Change this shared watcher?\n${watcher.path}\nEnabling executes trusted code with the service user’s permissions and credentials. Its alerts automatically trigger the owning Pi worker to investigate and fix the current task. Disabling stops checks and hides its results.` });
+      if (!watcher.bundled) action(`remove-watcher:${watcher.id}`, `Remove ${watcher.name}`, { icon: icons.cross,
+        description: watcher.path, confirm: `Remove this watcher from shared settings? The file and task values are retained.\n${watcher.path}` });
+    }
   } else if (state.screen === 'field') {
     const field = fields(config.config, task?.agent_notes).find((f) => f.name === state.field);
     if (!field) throw new Error('Field no longer exists; open Settings again');
@@ -274,7 +286,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     return false;
   });
   if (scoped) for (const control of editable) control.revision = actionRevision(data, control);
-  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer, ...(features.fieldEvents ? { fieldNotifications: data.fieldNotifications } : {}) };
+  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer, ...(features.fieldEvents ? { fieldNotifications: data.fieldNotifications.map((notice) => ({ ...notice, ...(features.fieldWatchers ? { triggerWorker: true } : {}) })) } : {}) };
   // JSON escaping and expanded footer formats can exceed the host budget even
   // with bounded row counts. Preserve navigation/filter controls ahead of rows.
   let shortened = false;
@@ -337,14 +349,14 @@ server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(a
   }
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const caller = context(request.params._meta);
-  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId);
+  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts);
   return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta), footerFeatures(request.params._meta))) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const caller = context(request.params._meta);
   const state = caller.state;
   const owner = caller.contextId ?? caller.conversationId;
-  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner);
+  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts);
   const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
   const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
@@ -389,7 +401,25 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     const cfg = structuredClone(before.config.config);
     let handoff = before.config.handoffPrompt, newSession = before.config.newSessionPrompt, policy = before.config.policy;
     let guidance: string | null | undefined;
-    if (action === 'agentGuidance') guidance = parseAgentGuidance(value);
+    let watchers: FieldWatcherConfig[] | undefined;
+    if (action === 'add-watcher' || action.startsWith('watcher:') || action.startsWith('remove-watcher:')) {
+      watchers = before.config.watchers.map(({ path, enabled }) => ({ path, enabled }));
+      if (action === 'add-watcher') {
+        const entry = parseFieldWatchers({ fieldWatchers: [{ path: z.string().parse(value), enabled: false }] })[0];
+        validateWatcherExecutable(entry.path);
+        watchers.push(entry);
+      } else {
+        const watcher = before.config.watchers.find((item) => item.id === action.split(':')[1]);
+        if (!watcher) staleAction();
+        if (action.startsWith('remove-watcher:')) watchers = watchers.filter((item) => item.path !== watcher.path);
+        else {
+          const enabled = z.boolean().parse(value);
+          if (enabled) validateWatcherExecutable(watcher.path);
+          watchers.find((item) => item.path === watcher.path)!.enabled = enabled;
+        }
+      }
+      watchers = parseFieldWatchers({ fieldWatchers: watchers });
+    } else if (action === 'agentGuidance') guidance = parseAgentGuidance(value);
     else if (action === 'reset-agent-guidance') guidance = null;
     else if (action === 'handoffPrompt') handoff = z.string().parse(value);
     else if (action === 'newSessionPrompt') newSession = z.string().parse(value);
@@ -408,10 +438,10 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
       }
     }
     extra.signal.throwIfAborted();
-    saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance);
+    saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers);
   }
   if (next.selectedId && (action.startsWith('select:') || action === 'proposal:accept' || action === 'add')) options.fieldAutomation?.claim(next.selectedId, owner, true);
-  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await notifyChanged();
   return result;
 }));

@@ -210,16 +210,26 @@ is stored for compatibility; remote `/new` does not insert it. Selected-task pre
 above the protocol's 20,000-character limit show explicit guidance to read through the
 CLI/service instead of silently truncating.
 
-### Field automations (pi-note 0.39.0+)
+### Field watchers (pi-note 0.40.0+)
 
-An optional, user-configured **single executable** handles field additions, changes,
-removals and scheduled checks on the HTTP service. The bundled PR example reports
-failing checks/conflicts and strikes through merged PRs without changing the URL or
-completing the task. Alerts are deduplicated and current results reach the next
-agent run; scripts never submit prompts. Requires **note 0.24.0+** on the service.
-See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md). Disabled by default.
+Open **Settings → Footer fields → Watchers** to enable bundled watchers or add a
+trusted executable on the service machine. Files in the packaged `watchers/`
+folder are discovered automatically, but remain disabled until enabled explicitly.
+Each watcher handles task-field changes and scheduled checks independently.
+
+The bundled GitHub PR watcher triggers the owning Pi worker to investigate and fix
+failed CI or merge conflicts. Repeated unchanged failures are deduplicated; busy
+workers wait until idle and recheck current state before acting. Merged PRs are
+struck through in the footer, retain their links and stop polling; tasks are not
+completed. Requires authenticated `gh`, Node and **note 0.24.0+** on the service.
+See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md).
 
 ## Migration
+
+Since pi-note 0.40.0, `fieldWatchers` replaces `fieldHandler`. Existing handlers
+appear disabled and need explicit re-enabling: enabling now authorizes automatic
+worker turns, not just notifications. Update/restart the service and `/reload` Pi.
+Watcher changes then apply live; no extra service is installed.
 
 Since pi-note 0.39.3, fullscreen suggestion-title double-click accepts immediately;
 single-click still previews and menu acceptance still requires review/confirmation.

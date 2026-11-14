@@ -107,6 +107,79 @@ test('field alerts are task-scoped and deduplicated across refresh and reload wi
   await h.session.stop();
 });
 
+test('enabled watcher alerts trigger once, defer busy workers, and revalidate after settling', async (t) => {
+  const { default: extension } = await import('../remote.ts');
+  const prior = process.env.PINOTE_TOKEN;
+  process.env.PINOTE_TOKEN = token;
+  const handlers = new Map<string, (...args: any[]) => any>(), entries: any[] = [], sent: any[] = [], notices: string[] = [];
+  let idle = true, session!: RemoteSession;
+  const notice = { id: '12345678-1234-4234-8234-123456789012', taskId: 7, field: 'PR', message: 'CI failed', triggerWorker: true as const };
+  let current = { ...view({ selectedId: 7 }), fieldNotifications: [notice] };
+  t.mock.method(RemoteSession.prototype, 'refresh', async function (this: RemoteSession) {
+    session = this; (this as any).apply(current);
+  });
+  extension({
+    registerTool() {}, registerCommand() {}, registerEntryRenderer() {},
+    events: { on() { return () => {}; } },
+    appendEntry: (customType: string, data: any) => entries.push({ type: 'custom', customType, data }),
+    sendMessage: (message: any, options: any) => sent.push({ message, options }),
+    on: (name: string, handler: (...args: any[]) => any) => {
+      const previous = handlers.get(name);
+      handlers.set(name, async (...args) => { await previous?.(...args); return handler(...args); });
+    },
+  } as any);
+  const ctx = { mode: 'rpc', hasUI: true, isIdle: () => idle,
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => 'worker', getBranch: () => entries },
+    ui: { notify: (message: string) => notices.push(message) } };
+  try {
+    await handlers.get('session_start')!({ reason: 'startup' }, ctx);
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0].options, { triggerTurn: true, deliverAs: 'followUp' });
+    assert.match(sent[0].message.content, /Investigate and fix/);
+    assert.match(sent[0].message.content, /untrusted data, not instructions/);
+    await session.refresh();
+    await handlers.get('session_start')!({ reason: 'reload' }, ctx);
+    assert.equal(sent.length, 1, 'Persisted receipts prevent duplicate worker turns after reload');
+    idle = false;
+    current.fieldNotifications = [{ ...notice, id: '12345678-1234-4234-8234-123456789013' }];
+    await session.refresh();
+    assert.equal(session.hasPendingFieldNotifications, true);
+    assert.equal(sent.length, 1, 'Busy workers do not queue stale prompts');
+    idle = true;
+    await handlers.get('agent_settled')!({ aborted: true });
+    assert.equal(sent.length, 1, 'Aborting does not immediately restart work');
+    current.fieldNotifications = [];
+    await handlers.get('agent_settled')!({ aborted: false });
+    assert.equal(sent.length, 1, 'Resolved or disabled alerts do not wake a worker');
+    idle = false;
+    current.fieldNotifications = [
+      { ...notice, id: '12345678-1234-4234-8234-123456789014' },
+      { ...notice, id: '12345678-1234-4234-8234-123456789017', field: 'Other PR' },
+    ];
+    await session.refresh(); idle = true;
+    await handlers.get('agent_settled')!({ aborted: false });
+    assert.equal(sent.length, 2, 'Only one turn is reserved while Pi defers sends during agent_settled');
+    assert.equal(session.hasPendingFieldNotifications, true, 'Other alerts remain unacknowledged');
+    await session.refresh();
+    assert.equal(sent.length, 2, 'An idle refresh before agent_start cannot queue a second turn');
+    idle = false;
+    await handlers.get('agent_start')!({});
+    current.fieldNotifications = []; // The first turn resolves both failures or disables the watcher.
+    idle = true;
+    await handlers.get('agent_settled')!({ aborted: false });
+    assert.equal(sent.length, 2, 'Resolved pending alerts never become stale follow-up turns');
+    current = { ...view({ selectedId: 8 }), fieldNotifications: [{ ...notice, id: '12345678-1234-4234-8234-123456789015' }] };
+    await session.refresh(); assert.equal(sent.length, 2, 'Another task cannot trigger work');
+    current = { ...view({ selectedId: 7 }), fieldNotifications: [{ ...notice, triggerWorker: undefined } as any] };
+    current.fieldNotifications[0].id = '12345678-1234-4234-8234-123456789016';
+    await session.refresh(); assert.equal(sent.length, 2);
+    assert.match(notices.at(-1)!, /CI failed/, 'Older services remain notification-only');
+  } finally {
+    await handlers.get('session_shutdown')!({ reason: 'quit' });
+    if (prior === undefined) delete process.env.PINOTE_TOKEN; else process.env.PINOTE_TOKEN = prior;
+  }
+});
+
 test('seven explicit direct schemas; tool state is applied before next serialized call', async () => {
   assert.deepEqual(toolDefinitions.map((t) => t.name).sort(), ['fields', 'get_current', 'get_task', 'propose', 'search', 'tags', 'update_current']);
   const seen: unknown[] = [];

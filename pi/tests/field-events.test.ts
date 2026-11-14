@@ -9,7 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { FieldAutomation, configuredFieldHandler, runFieldHandler } from '../mcp/field-events.ts';
+import { FieldAutomation, runFieldHandler } from '../mcp/field-events.ts';
+import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../remote/protocol.ts';
 
 const exec = promisify(execFile);
@@ -35,17 +36,13 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   const callLog = async () => (await readFile(calls, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
   let automation: FieldAutomation | undefined, client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
   let changes = 0, errors = 0;
-  const open = () => FieldAutomation.open({ handler, path, noteCommand: command, changed: () => changes++, log: () => errors++ });
+  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] }), path, noteCommand: command, changed: () => changes++, log: () => errors++ });
   const forceDue = () => {
     const db = new DatabaseSync(path);
-    try { db.exec("UPDATE jobs SET job=json_set(job, '$.due', 0)"); } finally { db.close(); }
+    try { db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)"); } finally { db.close(); }
   };
   try {
-    assert.equal(configuredFieldHandler(), undefined);
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldHandler: 'relative/file' }));
-    assert.throws(() => configuredFieldHandler(), /absolute/);
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldHandler: handler, footer: { fields: [{ name: 'PR', format: '#<number>' }] } }));
-    assert.equal(configuredFieldHandler(), handler);
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers: [{ path: handler, enabled: true }], footer: { fields: [{ name: 'PR', format: '#<number>' }] } }));
     let task = await note('agent', 'add', '--text=Watch PR');
     const update = async (fields: Record<string, string>, remove: string[] = []) => {
       task = await note('agent', 'get', String(task.id));
@@ -84,6 +81,10 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       return ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
     };
     assert.equal((await view()).fieldNotifications?.length, 1);
+    const acknowledged = await client.readResource({ uri: 'pinote://ui', _meta: {
+      ...meta(), 'native-ui/context': { ...meta()['native-ui/context'], fieldReceipts: notices.map((notice) => notice.id) },
+    } });
+    assert.deepEqual(ViewSchema.parse(JSON.parse((acknowledged.contents[0] as { text: string }).text)).fieldNotifications, []);
     assert.deepEqual((await view(true, null)).fieldNotifications, []);
     const legacy = await view(false);
     assert.equal(legacy.fieldNotifications, undefined);
@@ -131,10 +132,10 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     // A competing process cannot execute while the durable lease is held.
     await update({ PR: pr }); await automation.tick();
     const db = new DatabaseSync(path);
-    db.prepare('UPDATE scheduler SET owner=?,lease_until=?').run('another-process', Date.now() + 60_000);
+    db.prepare('UPDATE fw_scheduler SET owner=?,lease_until=?').run('another-process', Date.now() + 60_000);
     const beforeLease = (await callLog()).length;
     await automation.tick(); assert.equal((await callLog()).length, beforeLease);
-    db.exec('UPDATE scheduler SET lease_until=0'); db.close();
+    db.exec('UPDATE fw_scheduler SET lease_until=0'); db.close();
     await automation.tick();
     assert.ok(changes > 0);
 

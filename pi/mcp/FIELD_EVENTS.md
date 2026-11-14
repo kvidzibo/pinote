@@ -1,26 +1,40 @@
-# Field-event handler
+# Field watchers
 
-pi-note **0.39.0+** with **note 0.24.0+** can run one executable for all task-field
-changes. This is opt-in, on the **HTTP service machine**. No extra daemon or Pi-local
-watcher is installed. The local-only extension and stdio service do not run handlers.
+pi-note **0.40.0+** with **note 0.24.0+** runs independently enabled executables for
+task-field changes on the **HTTP service machine**. No extra daemon or Pi-local
+watcher is installed. The local-only extension and stdio service do not run watchers.
 
 ## Enable
 
-Create a trusted executable with a shebang, then add its absolute path to the
-service's `pi-note.json`, preserving existing settings:
+Open **Settings → Footer fields → Watchers**. The fixed package `watchers/` folder
+is scanned for executable `.mjs` files; discovery never executes or enables them.
+Enable **GitHub PR**, or add a custom absolute executable path on the service
+machine and enable it separately. Every change requires review and confirmation.
+Watchers are trusted code, not sandboxed; enabling authorizes their alerts to
+trigger the owning worker to investigate and fix the task within existing permissions.
+
+The corresponding service `pi-note.json` setting is:
 
 ```json
 {
-  "fieldHandler": "/absolute/path/field-events.mjs"
+  "fieldWatchers": [
+    { "path": "/absolute/path/watcher.mjs", "enabled": true }
+  ]
 }
 ```
 
-Restart the existing Pinote HTTP service; update clients and `/reload` Pi for alerts
-and footer styling. Removing the setting or setting it to `null`, then restarting,
-disables execution and hides automation results without modifying task fields.
-Scripts and settings are never installed or enabled automatically.
+Update/restart the existing HTTP service and `/reload` Pi once after upgrading.
+Subsequent watcher changes apply live. Disable a watcher to stop checks and hide
+its results without changing task fields. Custom entries can also be removed;
+the file is retained. At most 32 watchers may be configured. For overlapping
+results, the first nonempty watcher result in configuration order supplies the
+footer style; alerts remain independent.
 
-The bundled [`examples/field-events.mjs`](../examples/field-events.mjs) handles `PR`
+`fieldHandler` is replaced, not run alongside the list. An old handler appears
+disabled until explicitly enabled because the previous setting authorized only
+notifications, not automatic worker actions. Saving watchers removes the old key.
+
+The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PR`
 and ignores other fields. Copy it to a user-owned location before customization,
 make it executable (`chmod u+x`), and ensure authenticated `gh` and Node are on the
 **service's** PATH. It accepts a GitHub PR URL or Markdown link, checks once, and
@@ -29,8 +43,8 @@ strikes through merged PRs while keeping their links. Closed/merged PRs stop
 polling; merging never completes the Pinote task. Passing means reported checks
 passed, not that every review/branch-protection requirement is satisfied.
 
-To support another field, add another branch to this same file. No registry or
-plugin package is needed.
+To support another field, add another executable using the contract below. Each
+watcher receives all field events and returns `{}` for fields it does not handle.
 
 ## Script contract
 
@@ -91,6 +105,7 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - The service stores its history cursor, scheduled checks, results and alert owner
   under `$XDG_STATE_HOME/pinote/field-events/<database-path-hash>/state.db` (default
   state home: `~/.local/state`). Keep this private and local, like `notes.db`.
+  Watcher cursors, jobs and notices are independent; alert ownership is shared.
   It uses Node's built-in SQLite API; Node 22 may print its experimental warning.
 - Monitoring continues without an open Pi session while the HTTP service runs.
   Deadlines survive restarts. A lease prevents overlapping normal execution by
@@ -114,23 +129,31 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   task. For an unowned task, the first selected-task view claims alerts. Other
   sessions still see shared field status. Explicitly selecting the task reclaims
   ownership. No alert is delivered while that conversation has another task selected.
-- Pi shows an alert once and persists receipts across reload/resume (latest 4,096
-  IDs per branch). Current results reach the next agent run through fresh,
-  task-scoped context. Duplicate field values are not repeated; results exceeding
-  the context budget are omitted with a count, preserving the complete task first.
-  **No prompt submission, model wake-up, task selection or
-  completion is authorized by a handler result.**
+- Pi triggers a worker turn once per current alert and persists receipts across
+  reload/resume (latest 4,096 IDs per branch). Receipts accompany view reads so
+  bounded 64-alert pages advance past delivered failures even if they persist.
+  Busy workers defer delivery until
+  idle, then refresh to verify ownership, selection and current status. An aborted
+  run does not immediately drain deferred alerts. There is no launch of a closed
+  Pi process; current alerts are delivered when its owning conversation reconnects.
+  Older clients/services retain notification-only behavior until both are updated.
+- Worker messages use fixed instructions plus explicitly untrusted observations;
+  the worker must verify fresh task context and obey existing scope and approvals.
+  Enabling never authorizes task selection/completion, PR merging or bypassing
+  approvals. Current results reach each agent run through fresh task-scoped
+  context; oversized results are omitted with a count, preserving the task first.
 - Only the latest current alert per field is retained, not an offline alert log.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
   failure. Network recovery remains explicit through `/pinote` or a tool call.
-- Changing the configured handler path resets automation state and reconstructs
-  history; editing the same file affects its next invocation, not stopped checks.
+- Newly enabled watchers reconstruct current fields from history independently.
+  Disabling/removing clears their automation state; enabling again checks afresh.
+  Editing the same file affects its next invocation, not stopped checks.
   Restoring an older notes backup can invalidate the cursor: stop the service and
   deliberately back up/reset its corresponding automation state before restarting.
 
 Handlers run with the service user's permissions and inherited environment,
 including available credentials. They are trusted code, **not sandboxed**. The
-remote UI and agent tools cannot configure executable paths. Service logs report
+human-confirmed Watchers UI can configure executable paths; agent tools cannot. Service logs report
 failures generically; script output and stderr are not copied into logs. Run the
 script manually with synthetic input when debugging; don't put secrets in results,
 which may be displayed and sent to the configured model.

@@ -9,7 +9,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createPinoteServer } from './core.ts';
 import { completionEvents } from './events.ts';
 import { pinoteToken } from '../token.ts';
-import { configuredFieldHandler, FieldAutomation } from './field-events.ts';
+import { FieldAutomation } from './field-events.ts';
 
 export interface PinoteHttpOptions {
   token?: string;
@@ -61,11 +61,10 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   if (configuredHosts?.some((value) => !/^(?:\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+)(?::[0-9]+)?$/.test(value))) throw new Error('Invalid allowed HTTP authority');
   let allowedHosts = new Set(configuredHosts);
   const fieldListeners = new Set<() => void>();
-  const handler = configuredFieldHandler();
-  const fieldAutomation = handler ? await FieldAutomation.open({ handler,
+  const fieldAutomation = await FieldAutomation.open({
     changed: () => { for (const listener of fieldListeners) listener(); },
     log: () => log('field automation check failed; will retry'),
-  }) : undefined;
+  });
   const reject = (res: ServerResponse, status: number) => { res.writeHead(status, { 'Content-Type': 'text/plain' }); res.end(`${status}\n`); };
   const single = (req: IncomingMessage, name: string) => {
     const values = req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === name);
