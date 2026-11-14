@@ -329,6 +329,15 @@ try {
     await page.waitForTimeout(1200);
     assert.deepEqual(await placement(),before,'Leaving the row or losing focus must not release ordering');
     await page.screenshot({path:join(root,'task462-start-held.png')});
+    const ordinaryOrder=()=>page.locator('#ordinary .task-row').evaluateAll(nodes=>nodes.map(node=>Number(node.dataset.id)));
+    const heldOrder=await ordinaryOrder();
+    const appended=call('add',{text:'New task during held ordering',tag:null}).id;
+    await page.locator(`[data-id="${appended}"]`).waitFor();
+    assert.deepEqual(await ordinaryOrder(),[...heldOrder,appended],'New tasks append without reordering existing rows');
+    const appendedTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===appended);
+    call('transition',{id:appended,revision:appendedTask.updated_at,state:appendedTask.state,action:'start'});
+    await page.waitForFunction(id=>document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'),appended);
+    assert.deepEqual(await ordinaryOrder(),[...heldOrder,appended],'External state changes also preserve relative ordering');
     await page.mouse.move(-20,-20);
     await page.waitForFunction(id=>document.querySelector(`#pinned [data-id="${id}"]`),first);
     await page.screenshot({path:join(root,'task462-start-reordered.png')});
@@ -342,6 +351,9 @@ try {
     await page.screenshot({path:join(root,'task462-reset-held.png')});
     await page.mouse.move(-20,-20);
     await page.waitForFunction(id=>document.querySelector(`#ordinary [data-id="${id}"]`),first);
+    const cleanup=call('snapshot',{view:'active'}).notes.find(n=>n.id===appended);
+    call('transition',{id:appended,revision:cleanup.updated_at,state:cleanup.state,action:'rm'});
+    await page.locator(`[data-id="${appended}"]`).waitFor({state:'detached'});
   }
   // Inline row actions: real pointer/keyboard input, stable layout and polling.
   {
