@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultTaskActions, initialState, TASK_ACTION_IDS } from '../src/protocol.ts';
+import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from '../src/protocol.ts';
+import type { LegacyTaskActionSettings } from '../src/protocol.ts';
 import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validState } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
@@ -25,43 +26,98 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validEnvelope('snapshot', {protocol:1,ok:true,result:{notes:[],tags:[]}}));
 });
 
-test('task action preferences are bounded, optional and independently defaulted', () => {
-  const legacy = initialState();
-  const serialized = JSON.stringify(legacy);
-  assert.ok(!Object.hasOwn(legacy, 'taskActions'));
-  assert.ok(validState(legacy));
-  assert.equal(JSON.stringify(legacy), serialized);
+test('task action preferences accept exact state maps and legacy settings and reject malformed values', () => {
+  const state = initialState();
+  assert.ok(!Object.hasOwn(state, 'taskActions'));
+  assert.ok(validState(state));
   const defaults = defaultTaskActions();
-  assert.deepEqual(defaults, { order: [...TASK_ACTION_IDS], hidden: [], primary: 'start' });
-  assert.ok(validState({ ...legacy, taskActions: defaults }));
-  assert.ok(validState({ ...legacy, taskActions: { order: [...TASK_ACTION_IDS].reverse(), hidden: ['kitty', 'done'], primary: 'done' } }));
-  assert.ok(validState({ ...legacy, taskActions: { ...defaults, hidden: [...TASK_ACTION_IDS] } }));
-  for (const taskActions of [
-    null, undefined, [], 'start', {},
-    { order: defaults.order, hidden: [] },
-    { order: defaults.order, primary: 'start' },
-    { hidden: [], primary: 'start' },
-    { ...defaults, extra: true },
-    { ...defaults, order: defaults.order.slice(1) },
-    { ...defaults, order: [...defaults.order, 'kitty'] },
-    { ...defaults, order: defaults.order.map(() => 'kitty') },
-    { ...defaults, order: [...defaults.order.slice(1), 'unknown'] },
-    { ...defaults, order: Array(8) },
-    { ...defaults, hidden: ['copy', 'copy'] },
-    { ...defaults, hidden: ['unknown'] },
-    { ...defaults, hidden: Array(1) },
-    { ...defaults, hidden: null },
-    { ...defaults, hidden: 'copy' },
-    { ...defaults, primary: 'unknown' },
-    { ...defaults, primary: null },
-  ]) assert.ok(!validState({ ...legacy, taskActions }), JSON.stringify(taskActions));
-  const other = defaultTaskActions();
-  defaults.order.reverse();
-  defaults.hidden.push('start');
-  defaults.primary = 'done';
-  assert.deepEqual(other, { order: [...TASK_ACTION_IDS], hidden: [], primary: 'start' });
-  assert.deepEqual(defaultTaskActions(), other);
-  assert.deepEqual(initialState(), legacy);
+  assert.ok(validState({ ...state, taskActions: defaults }));
+  const legacy: LegacyTaskActionSettings = { order: [...TASK_ACTION_IDS].reverse(), hidden: ['kitty', 'done'], primary: 'done' };
+  assert.ok(validState({ ...state, taskActions: legacy }));
+  for (const taskActions of [null, undefined, [], 'start', {},
+    { ...defaults, extra: true }, { active: defaults.active, marked: defaults.marked },
+    { ...defaults, ...legacy }, { ...defaults, in_progress: undefined },
+  ]) assert.ok(!validState({ ...state, taskActions }), JSON.stringify(taskActions));
+  for (const key of ['legacy', ...TASK_ACTION_STATES] as const) {
+    const preferences = key === 'legacy' ? legacy : defaults[key];
+    const accepts = (value: unknown) => validState({ ...state, taskActions: key === 'legacy' ? value : { ...defaults, [key]: value } });
+    assert.ok(accepts({ ...preferences, order: [...preferences.order].reverse(), hidden: [...preferences.order] }));
+    for (const value of [
+      null, undefined, [], {},
+      { order: preferences.order, hidden: [] },
+      { order: preferences.order, primary: preferences.primary },
+      { hidden: [], primary: preferences.primary },
+      { ...preferences, extra: true },
+      { ...preferences, order: preferences.order.slice(1) },
+      { ...preferences, order: [...preferences.order, 'kitty'] },
+      { ...preferences, order: preferences.order.map(() => 'kitty') },
+      { ...preferences, order: [...preferences.order.slice(1), 'unknown'] },
+      { ...preferences, order: Array(preferences.order.length) },
+      { ...preferences, hidden: ['copy', 'copy'] },
+      { ...preferences, hidden: ['unknown'] },
+      { ...preferences, hidden: Array(1) },
+      { ...preferences, hidden: null },
+      { ...preferences, hidden: 'copy' },
+      { ...preferences, primary: 'unknown' },
+      { ...preferences, primary: null },
+    ]) assert.ok(!accepts(value), `${key}: ${JSON.stringify(value)}`);
+    if (key !== 'marked') {
+      assert.ok(!accepts({ ...preferences, order: [...preferences.order.slice(1), 'unmark'] }));
+      assert.ok(!accepts({ ...preferences, hidden: ['unmark'] }));
+      assert.ok(!accepts({ ...preferences, primary: 'unmark' }));
+    } else {
+      assert.ok(accepts({ ...preferences, hidden: ['unmark'], primary: 'unmark' }));
+      assert.ok(!accepts({ ...preferences, order: [...TASK_ACTION_IDS] }));
+    }
+  }
+});
+
+test('task action defaults and normalization provide independent per-state preferences and migrate legacy settings', () => {
+  assert.deepEqual(TASK_ACTION_IDS, ['kitty','copy','start','done','archive','edit','schedule','tag']);
+  assert.deepEqual(TASK_ACTION_STATES, ['active','in_progress','marked']);
+  const defaults = defaultTaskActions();
+  for (const state of TASK_ACTION_STATES) {
+    const ids: string[] = [...TASK_ACTION_IDS, ...(state === 'marked' ? ['unmark'] : [])];
+    assert.deepEqual(taskActionIds(state), ids);
+    assert.notStrictEqual(taskActionIds(state), taskActionIds(state));
+    assert.deepEqual(defaults[state], { order: ids, hidden: [], primary: state === 'active' ? 'start' : state === 'in_progress' ? 'done' : 'unmark' });
+  }
+  assert.deepEqual(normalizeTaskActions(), defaults);
+  for (const primary of TASK_ACTION_IDS) {
+    const legacy: LegacyTaskActionSettings = { order: [...TASK_ACTION_IDS].reverse(), hidden: ['start', 'kitty'], primary };
+    const serialized = JSON.stringify(legacy);
+    const migrated = normalizeTaskActions(legacy);
+    assert.deepEqual(migrated.active, legacy);
+    assert.deepEqual(migrated.in_progress, { ...legacy, primary: primary === 'start' ? 'done' : primary });
+    assert.deepEqual(migrated.marked, { ...legacy, order: [...legacy.order, 'unmark'], primary: 'unmark' });
+    assert.ok(validState({ ...initialState(), taskActions: migrated }));
+    migrated.active.order.reverse();
+    migrated.active.hidden.push('copy');
+    assert.equal(JSON.stringify(legacy), serialized);
+    assert.deepEqual(migrated.in_progress.order, legacy.order);
+    assert.deepEqual(migrated.marked.hidden, legacy.hidden);
+  }
+  defaults.active.order.reverse();
+  defaults.in_progress.hidden.push('copy');
+  defaults.marked.primary = 'edit';
+  const serialized = JSON.stringify(defaults);
+  const normalized = normalizeTaskActions(defaults);
+  assert.deepEqual(normalized, defaults);
+  for (const result of [defaultTaskActions(), normalizeTaskActions(), normalized]) {
+    for (const state of TASK_ACTION_STATES) {
+      assert.notStrictEqual(result[state], defaults[state]);
+      assert.notStrictEqual(result[state].order, defaults[state].order);
+      assert.notStrictEqual(result[state].hidden, defaults[state].hidden);
+      for (const other of TASK_ACTION_STATES.filter(other => other !== state)) {
+        assert.notStrictEqual(result[state], result[other]);
+        assert.notStrictEqual(result[state].order, result[other].order);
+        assert.notStrictEqual(result[state].hidden, result[other].hidden);
+      }
+      result[state].order.reverse();
+      result[state].hidden.push('tag');
+    }
+  }
+  assert.equal(JSON.stringify(defaults), serialized);
 });
 
 test('a full draft payload reserves space for the largest escaped recovery warning', () => {

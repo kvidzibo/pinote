@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { initTheme } from '@earendil-works/pi-coding-agent';
+import { getKeybindings } from '@earendil-works/pi-tui';
 import { RemoteUI } from '../remote/ui.ts';
 import type { NativeView } from '../remote/protocol.ts';
 
 test('only acknowledged task acceptance renames the originating Kitty tab, best effort', async () => {
+  initTheme('dark', false);
   const original = { ...process.env };
   process.env.KITTY_WINDOW_ID = '42';
   process.env.KITTY_LISTEN_ON = 'unix:/tmp/isolated-kitty-test';
@@ -26,7 +29,17 @@ test('only acknowledged task acceptance renames the originating Kitty tab, best 
     if (failExec) throw new Error('Private transport error');
     return { code: 0, stdout: '', stderr: '' };
   } } as any, session);
-  const ctx: any = { mode: 'tui', isIdle: () => true, ui: { notify: (text: string) => notices.push(text) } };
+  const ctx: any = { mode: 'tui', isIdle: () => true, ui: { notify: (text: string) => notices.push(text),
+    select: async (_title: string, choices: string[]) => { assert.deepEqual(choices, ['Cancel', 'Complete task']); return 'Complete task'; },
+    custom: async (factory: any) => {
+      let component: any;
+      try { return await new Promise((resolve) => {
+        component = factory({ terminal: { rows: 36, columns: 100 }, requestRender() {} },
+          { fg: (_color: string, text: string) => text }, getKeybindings(), resolve);
+        component.render(100);
+      }); } finally { component?.dispose(); }
+    },
+  } };
   const dispatch = (id: string) => ui.dispatch(ctx, session.view, { id, kind: 'action', label: id });
   try {
     await dispatch('proposal:dismiss');

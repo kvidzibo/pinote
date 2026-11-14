@@ -48,19 +48,31 @@ state routing, tools and UI.
 
 ## Use
 
-Open **`/pinote`**. Select or create a task, preview it,
-clear the selection, complete it, respond to suggestions, or edit shared settings.
-Selecting an existing task starts it immediately and returns focus to the prompt,
-with no extra confirmation. Creation and settings changes still require confirmation.
-Nothing submits a model prompt automatically; inserting Continue's draft requires
-confirmation and preserves an existing draft.
+Open **`/pinote`** for the selected task's actions, pending suggestion, task picker
+and shared settings. **Choose a task… / Switch task…** opens task-only search:
+all search terms must match the title, description, tag or numeric ID. Results show
+status and the current selection; selection waits for fresh search results.
+Press **F1** on a result to read its full title and text without selecting it.
+Selecting a task starts it and returns to the unchanged prompt without another
+confirmation. **Clear selection** leaves its progress unchanged.
 
-Menus use Pi's native components and configured selection keys. **Escape** goes
-back; **Ctrl+R** refreshes. Settings with fewer than five choices cycle inline.
-Fullscreen has a native clickable footer: **▤** opens Pinote; clicking a selected
-title previews it and double-clicking completes it. A suggested title requires a
-double-click to accept. Regular mode shows status; `/pinote` provides all actions.
-No Kitty action handler is needed for this extension.
+**Preview** opens a scrollable, read-only document. **Insert task prompt…** reviews
+and inserts into an empty editor only; it never submits or replaces a draft.
+Creation, suggestion acceptance and shared changes require complete review, then
+a separate Cancel-first confirmation. Completion also asks explicitly and requires
+idle Pi. Failed or uncertain writes offer refresh/verification, never automatic replay.
+
+**Settings** groups prompts/guidance, task-offer policy, footer layout and field
+definitions. Editors accept plain text or numbers, not JSON; validation retains
+the draft. Cancelling a change's confirmation returns to its text draft. Values
+are saved only after review and confirmation.
+
+Menus use Pi's native inline components, themes and configured selection keys.
+**Escape** goes back; **Ctrl+R** refreshes; page keys scroll lists and documents.
+Small terminals show compact menus or ask you to enlarge the window before acting.
+Fullscreen has a clickable footer: **▤** opens Pinote; task and suggestion titles
+only preview, never complete or accept on double-click. Regular mode shows status;
+`/pinote` provides all actions. No Kitty action handler is needed.
 
 Accepting a suggestion, selecting a different task, or creating and selecting one
 renames the current Kitty tab to `[tag] task title` (tag omitted when unset),
@@ -98,7 +110,7 @@ client-local and is never sent to the service or persisted as launch state.
 Only a fresh session can consume it. The service must share the GUI's database;
 missing/stale revisions fail closed. Resume, reload and `/new` never replay the
 handoff or replace another selection. Pi keeps its normal endpoint/token settings.
-With pi-note 0.33.4+, completing the launched task from the menu, footer or
+With pi-note 0.33.4+, completing the launched task from the menu or
 **Complete task and exit** exits Pi directly, so Kitty closes its dedicated tab
 (or the standalone window's last tab). Pinote itself never runs Git commands;
 optional local completion hooks can briefly delay closing (see below).
@@ -184,7 +196,10 @@ Settings live in `pi-note.json` on the **service machine**, under its
 agent guidance and footer definitions with confirmation and revision checks.
 A malformed configuration fails closed; fix it on the server rather than replacing
 it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task data,
-separate from global display settings.
+separate from global display settings. The remote **New session prompt** setting
+is stored for compatibility; remote `/new` does not insert it. Selected-task previews
+above the protocol's 20,000-character limit show explicit guidance to read through the
+CLI/service instead of silently truncating.
 
 ### Field automations (pi-note 0.38.0+)
 
@@ -196,6 +211,12 @@ agent run; scripts never submit prompts. Requires **note 0.24.0+** on the servic
 See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md). Disabled by default.
 
 ## Migration
+
+Since pi-note 0.38.0, the default HTTP extension uses task-first navigation and
+explicit completion/suggestion approval instead of footer-title double-click
+mutations. Update the client and service together, then `/reload`. The explicit
+local-only extension retains its existing menus.
+
 
 Since pi-note 0.36.0, new-task proposals use `title` and optional `description`
 instead of `text`, in both remote and local modes. Update clients and service

@@ -27,13 +27,34 @@ export type Operations = {
 export type Operation = keyof Operations;
 export type Result<T> = { protocol: 1; ok: true; result: T; warning?: string } | { protocol: 1; ok: false; error: { code: 'invalid' | 'conflict' | 'busy' | 'internal' | 'unknown'; message: string } };
 export const TASK_ACTION_IDS = ['kitty','copy','start','done','archive','edit','schedule','tag'] as const;
-export type TaskActionId = typeof TASK_ACTION_IDS[number];
-export type TaskActionSettings = { order: TaskActionId[]; hidden: TaskActionId[]; primary: TaskActionId };
-export const defaultTaskActions = (): TaskActionSettings => ({ order: [...TASK_ACTION_IDS], hidden: [], primary: 'start' });
+export type TaskActionId = typeof TASK_ACTION_IDS[number] | 'unmark';
+export const TASK_ACTION_STATES = ['active','in_progress','marked'] as const;
+export type TaskActionState = typeof TASK_ACTION_STATES[number];
+export type TaskActionPreferences = { order: TaskActionId[]; hidden: TaskActionId[]; primary: TaskActionId };
+export type TaskActionSettings = Record<TaskActionState, TaskActionPreferences>;
+export type LegacyTaskActionSettings = { order: typeof TASK_ACTION_IDS[number][]; hidden: typeof TASK_ACTION_IDS[number][]; primary: typeof TASK_ACTION_IDS[number] };
+export const taskActionIds = (state: TaskActionState): TaskActionId[] => state === 'marked' ? [...TASK_ACTION_IDS, 'unmark'] : [...TASK_ACTION_IDS];
+export const defaultTaskActions = (): TaskActionSettings => ({
+  active: { order: taskActionIds('active'), hidden: [], primary: 'start' },
+  in_progress: { order: taskActionIds('in_progress'), hidden: [], primary: 'done' },
+  marked: { order: taskActionIds('marked'), hidden: [], primary: 'unmark' },
+});
+export function normalizeTaskActions(value?: TaskActionSettings | LegacyTaskActionSettings): TaskActionSettings {
+  if (!value) return defaultTaskActions();
+  if ('order' in value) return {
+    active: { order: [...value.order], hidden: [...value.hidden], primary: value.primary },
+    in_progress: { order: [...value.order], hidden: [...value.hidden], primary: value.primary === 'start' ? 'done' : value.primary },
+    marked: { order: [...value.order, 'unmark'], hidden: [...value.hidden], primary: 'unmark' },
+  };
+  const clone = (preferences: TaskActionPreferences): TaskActionPreferences => ({
+    order: [...preferences.order], hidden: [...preferences.hidden], primary: preferences.primary,
+  });
+  return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
+}
 export type EditDraft = { text: string; revision: string };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings;
+  edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };

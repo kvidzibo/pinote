@@ -6,7 +6,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
-import { createEventBus } from '@earendil-works/pi-coding-agent';
+import { getKeybindings } from '@earendil-works/pi-tui';
+import { createEventBus, initTheme } from '@earendil-works/pi-coding-agent';
 import { remoteConfig, RemoteFailure, type Peer, type PeerFactory } from '../remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, restoreState, type SavedState } from '../remote/session.ts';
 import { UI_CONTEXT, UI_FEATURES, UI_STATE, type NativeView } from '../remote/protocol.ts';
@@ -32,6 +33,19 @@ function harness(overrides: Partial<Peer> = {}) {
   const factory: PeerFactory = async (_config, _signal, notify) => { connections++; changed = notify; return peer; };
   const session = new RemoteSession(config, (state) => saved.push(structuredClone(state)), factory);
   return { session, saved, metas, connections: () => connections, changed: () => changed() };
+}
+// Instantiate native loaders and keep them mounted until their asynchronous work finishes.
+async function loader(factory: any) {
+  initTheme('dark', false);
+  let component: any;
+  try {
+    return await new Promise((resolve) => {
+      component = factory({ terminal: { rows: 36, columns: 100 }, requestRender() {} },
+        { fg: (_color: string, text: string) => text }, getKeybindings(), resolve);
+      component.render(100);
+      assert.equal(component.handleInput, undefined, 'Pending operations must not accept activation keys');
+    });
+  } finally { component?.dispose(); }
 }
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -135,7 +149,8 @@ test('menu/footer completion refuses busy agents and rechecks immediately before
   });
   await h.session.start([], 'conversation');
   const notices: string[] = [];
-  const ctx = { mode: 'tui', isIdle: () => idle, ui: { notify: (message: string) => notices.push(message) } } as any;
+  const ctx = { mode: 'tui', isIdle: () => idle, ui: { notify: (message: string) => notices.push(message), custom: loader,
+    select: async (_title: string, choices: string[]) => { assert.deepEqual(choices, ['Cancel', 'Complete task']); return 'Complete task'; } } } as any;
   const ui = new RemoteUI({} as any, h.session);
   assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), false);
   assert.equal(actions, 0); assert.match(notices[0], /current agent run/);
@@ -336,7 +351,7 @@ test('remote menu bounds native layout and preserves search/selection across not
     const rows = component.render(tui.terminal.columns);
     assert.ok(rows.length <= tui.terminal.rows - 8, `${rows.length} rows overflow reserved footer`);
     assert.ok(rows.every((row: string) => visibleWidth(row) <= tui.terminal.columns));
-    assert.match(rows.join('\n'), /Ctrl\+R refresh/);
+    assert.match(rows.join(' ').replace(/\s+/g, ' '), /Ctrl\+R refresh/);
     return rows;
   };
   const first = remoteMenu(ctx, current, state, controller.signal, watch);
@@ -357,7 +372,7 @@ test('remote menu bounds native layout and preserves search/selection across not
   tui.terminal.rows = 30; tui.terminal.columns = 80; bounded();
   assert.equal(state.search, 'Setting'); assert.equal(state.selected, 'setting-1');
   component.handleInput('\r');
-  assert.deepEqual(await second, { id: 'setting-1', value: 'true' }); component.dispose();
+  assert.deepEqual(await second, { id: 'setting-1' }); component.dispose();
 });
 
 test('extension registers seven tools before startup and injects unavailable instead of stale task data', async () => {

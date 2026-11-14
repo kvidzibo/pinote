@@ -5,11 +5,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { initTheme } from '@earendil-works/pi-coding-agent';
+import { getKeybindings } from '@earendil-works/pi-tui';
 import pinoteRemote from '../remote.ts';
 import type { startPinoteHttpServer } from '../mcp/http.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 test('GUI launch consent selects exactly one revision, persists, and never replaces or replays', async () => {
+  initTheme('dark', false);
   const temp = mkdtempSync(join(tmpdir(), 'pinote-kitty-'));
   const original = { ...process.env };
   delete process.env.KITTY_LISTEN_ON; // No live terminal controls in the mocked UI test.
@@ -50,7 +53,29 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
       sessionManager: { getBranch: () => entries, getSessionId: () => sessionId, getLeafId: () => 'leaf', getSessionFile: () => join(temp, `${sessionId}.jsonl`) },
       ui: { setWidget() {}, setStatus() {}, getEditorComponent() {}, setEditorComponent() {},
         notify: (message: string) => notices.push(message),
-        custom: async () => choices.shift(), select: async () => 'Confirm',
+        custom: async (factory: any) => {
+          let component: any;
+          try { return await new Promise((resolve) => {
+            component = factory({ terminal: { rows: 40, columns: 120 }, requestRender() {} },
+              { fg: (_color: string, text: string) => text }, getKeybindings(), resolve);
+            component.render(120);
+            if (!component.handleInput) return; // Loader resolves only after real remote work.
+            const choice = choices.shift() as string | undefined;
+            if (choice === undefined) { component.handleInput('\x1b'); return; }
+            for (let i = 0; i < 80; i++) {
+              if (component.render(120).some((row: string) => row.includes('→') && row.includes(choice))) {
+                component.handleInput('\r'); return;
+              }
+              component.handleInput('\x1b[B');
+            }
+            assert.fail(`Menu choice not found: ${choice}`);
+          }); } finally { component?.dispose(); }
+        },
+        select: async (_title: string, values: string[]) => {
+          assert.equal(values[0], 'Cancel');
+          assert.match(values[1], /^Complete task/);
+          return values[1];
+        },
         getEditorText: () => editor.text,
         setEditorText: (text: string) => { editor.text = text; editor.writes.push(text); } } };
     const client = { handlers, ctx, entries, notices, editor,
@@ -114,13 +139,13 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const closingTask = cli('agent', 'add', '--text=Close dedicated Kitty tab');
     const dedicated = await open({ task_id: closingTask.id, updated_at: closingTask.updated_at });
     dedicated.setIdle(false);
-    await dedicated.choose({ id: 'done' });
+    await dedicated.choose('Complete');
     dedicated.setIdle(true);
     await dedicated.choose(undefined); // Cancel the task menu.
     assert.equal(dedicated.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'in_progress');
     const reloaded = await open(undefined, [...dedicated.entries], 'reload', '', 'tui', dedicated.ctx.sessionManager.getSessionId());
-    await reloaded.choose({ id: 'done' });
+    await reloaded.choose('Complete');
     assert.equal(reloaded.shutdowns, 1);
     assert.deepEqual(reloaded.notices, [], 'completion exits without Git warnings');
     assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'done');
@@ -128,17 +153,17 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
 
     const next = cli('agent', 'add', '--text=Normal Pi completion stays open');
     const normal = await open(undefined);
-    await normal.choose({ id: `select:${next.id}` });
-    await normal.choose({ id: 'done' });
+    await normal.choose('Choose a task', 'Normal Pi completion stays open');
+    await normal.choose('Complete');
     assert.equal(normal.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(next.id)).state, 'done');
 
     const originalTask = cli('agent', 'add', '--text=Launch ownership does not follow other tasks');
     const switched = await open({ task_id: originalTask.id, updated_at: originalTask.updated_at });
     const replacement = cli('agent', 'add', '--text=Replacement task');
-    await switched.choose({ id: 'clear' });
-    await switched.choose({ id: `select:${replacement.id}` });
-    await switched.choose({ id: 'done' });
+    await switched.choose('Clear');
+    await switched.choose('Choose a task', 'Replacement task');
+    await switched.choose('Complete');
     assert.equal(switched.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(originalTask.id)).state, 'in_progress');
     assert.equal(cli('agent', 'get', String(replacement.id)).state, 'done');
