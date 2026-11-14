@@ -57,7 +57,12 @@ export class RemoteUI {
   }
   private render(): void {
     if (this.ctx?.mode !== 'tui') return;
-    this.ctx.ui.setStatus('pinote-remote', this.session.fullscreen ? undefined : this.session.view ? footerText(this.session.view, truncateToWidth) : 'Pinote · unavailable (/pinote to reconnect)');
+    const theme = this.ctx.ui.theme;
+    this.ctx.ui.setStatus('pinote-remote', this.session.fullscreen ? undefined : this.session.view ? footerText(this.session.view, truncateToWidth, (text, style) => {
+      let rendered = style.color ? theme.fg(style.color, text) : text;
+      if (style.italic) rendered = theme.italic(rendered);
+      return style.strikethrough ? theme.strikethrough(rendered) : rendered;
+    }) : 'Pinote · unavailable (/pinote to reconnect)');
     this.repaint();
   }
   async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value']): Promise<boolean> {

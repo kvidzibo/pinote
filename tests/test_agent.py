@@ -221,3 +221,104 @@ def test_agent_add_and_tag_without_desktop_refresh(cli, tmp_path):
     assert not calls.exists()
     history = cli("history", str(selected["id"])).stdout
     assert "add" in history and "start" in history
+
+
+def test_bounded_field_events_updates_lifecycle_and_pagination(cli, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    assert json.loads(cli("field-events").stdout) == {"cursor": 0, "events": []}
+    with Store(cli.database) as store:
+        task = store.add_note("Fields")  # Creation has default snapshots, not current fields.
+
+        def update(fields, remove=()):
+            return store.update_agent(
+                task.id, fields, list(remove), expected_updated_at=store.get(task.id).updated_at
+            )
+
+        update({"PR": "one", "Next": "review"})
+        update({"PR": "two"})
+        tail = store.history()[-1]["id"]
+        update({"PR": "two"})  # No-op does not append a row.
+        assert store.history()[-1]["id"] == tail
+        update({}, ["Next"])
+        store.edit(task.id, "Edited", expected_updated_at=store.get(task.id).updated_at)
+        store.transition(task.id, "start")
+        store.transition(task.id, "done")
+        store.transition(task.id, "rm")  # Inactive -> inactive must not remove fields again.
+        store.transition(task.id, "restore")
+        store.schedule(task.id, datetime.now(UTC) + timedelta(days=1))
+        with monkeypatch.context() as clock:
+            future = (datetime.now(UTC) + timedelta(days=2)).isoformat(timespec="microseconds")
+            clock.setattr("pinote.store.timestamp", lambda: future)
+            assert store.activate_due() == 1
+        store.import_notes("old", [("Imported", "active", None)])
+        store.transition(store.add("Empty"), "rm")
+        store.transition(task.id, "rm")
+        store.transition(task.id, "restore")
+        tail = store.history()[-1]["id"]
+
+        for cursor in (-1, True, 1.0, "1", 9007199254740992, tail + 1):
+            with pytest.raises(NoteError, match="Cursor"):
+                store.field_events(cursor)
+        for limit in (0, 1001, True, 1.0, "1"):
+            with pytest.raises(NoteError, match="Limit"):
+                store.field_events(0, limit)
+
+    def event(row, field, kind, value, previous):
+        return {
+            "id": row,
+            "taskId": task.id,
+            "field": field,
+            "event": kind,
+            "value": value,
+            "previousValue": previous,
+        }
+
+    expected = [
+        event(2, "Next", "added", "review", None),
+        event(2, "PR", "added", "one", None),
+        event(3, "PR", "changed", "two", "one"),
+        event(4, "Next", "removed", None, "review"),
+        event(7, "PR", "removed", None, "two"),
+        event(9, "PR", "added", "two", None),
+        event(10, "PR", "removed", None, "two"),
+        event(11, "PR", "added", "two", None),
+        event(15, "PR", "removed", None, "two"),
+        event(16, "PR", "added", "two", None),
+    ]
+    assert json.loads(cli("field-events").stdout) == {"cursor": tail, "events": []}
+    assert json.loads(cli("field-events", "--after", "0").stdout) == {
+        "cursor": tail,
+        "events": expected,
+    }
+    # Limit bounds scanned rows, not emitted fields; irrelevant rows still advance.
+    cursor, events = 0, []
+    while cursor < tail:
+        page = json.loads(cli("field-events", "--after", str(cursor), "--limit", "1").stdout)
+        assert page["cursor"] == cursor + 1
+        events.extend(page["events"])
+        cursor = page["cursor"]
+    assert events == expected
+    assert json.loads(cli("field-events", "--after", str(tail)).stdout) == {
+        "cursor": tail,
+        "events": [],
+    }
+    for cursor in ("-1", "+1", "1.0", "bad", "9007199254740992", str(tail + 1)):
+        assert cli("field-events", "--after", cursor, check=False).returncode != 0
+    for limit in ("0", "1001"):
+        assert cli("field-events", "--limit", limit, check=False).returncode != 0
+
+    # History reads must not activate due reminders or append events.
+    with Store(cli.database) as store:
+        due = store.add("Due reminder")
+        store.schedule(due, datetime.now(UTC) + timedelta(days=1))
+        with store.connection:
+            store.connection.execute(
+                "UPDATE notes SET remind_at = ? WHERE id = ?",
+                ((datetime.now(UTC) - timedelta(days=1)).isoformat(), due),
+            )
+        before = len(store.history())
+    cli("field-events", "--after", "0")
+    with Store(cli.database) as store:
+        assert store.get(due).state == "scheduled"
+        assert len(store.history()) == before

@@ -841,6 +841,73 @@ class Store:
                 )
         return {"cursor": rows[-1]["id"] if rows else after, "events": events}
 
+    def field_events(self, after: int | None = None, limit: int = 256) -> dict:
+        """Scan at most limit rows, not output fields; a row's fields share its ID.
+
+        Only snapshot-writing actions are compared. Creation/import rows use
+        default empty snapshots, and pre-agent history cannot be reconstructed.
+        """
+        maximum = 9007199254740991
+        if after is not None and (type(after) is not int or not 0 <= after <= maximum):
+            raise NoteError("Cursor must be a nonnegative safe integer.")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise NoteError("Limit must be between 1 and 1000.")
+        tail = self.connection.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
+        if tail > maximum:
+            raise NoteError("Event history exceeds the safe cursor range.")
+        if after is None:
+            return {"cursor": tail, "events": []}
+        if after > tail:
+            raise NoteError("Cursor is ahead of current event history.")
+        rows = self.connection.execute(
+            "SELECT id, note_id, action, state, previous_state, agent_notes, previous_agent_notes "
+            "FROM events WHERE id > ? AND id <= ? ORDER BY id LIMIT ?",
+            (after, tail, limit),
+        ).fetchall()
+        events = []
+        snapshot_actions = {
+            "agent",
+            "edit",
+            "tag",
+            "start",
+            "reset",
+            "done",
+            "rm",
+            "restore",
+            "schedule",
+            "remind",
+        }
+        for row in rows:
+            if row["action"] not in snapshot_actions:
+                continue
+            before = (
+                json.loads(row["previous_agent_notes"])
+                if row["previous_state"] in {"active", "in_progress"}
+                else {}
+            )
+            after_fields = (
+                json.loads(row["agent_notes"]) if row["state"] in {"active", "in_progress"} else {}
+            )
+            for key in sorted(before.keys() | after_fields.keys()):
+                previous, value = before.get(key), after_fields.get(key)
+                if previous == value:
+                    continue
+                if row["note_id"] > maximum:
+                    raise NoteError("Task ID exceeds the safe integer range.")
+                events.append(
+                    {
+                        "id": row["id"],
+                        "taskId": row["note_id"],
+                        "field": key,
+                        "event": "added"
+                        if key not in before
+                        else ("removed" if key not in after_fields else "changed"),
+                        "value": value,
+                        "previousValue": previous,
+                    }
+                )
+        return {"cursor": rows[-1]["id"] if rows else after, "events": events}
+
     def history(self, note_id: int | None = None) -> list[sqlite3.Row]:
         if (
             note_id is not None

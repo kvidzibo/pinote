@@ -97,11 +97,11 @@ test('completion SSE authenticates, checkpoints, resumes durable history and cle
   const { promisify } = await import('node:util');
   const exec = promisify(execFile);
   const dir = await mkdtemp(join(tmpdir(), 'pinote-events-'));
-  const names = ['PINOTE_NOTE_COMMAND', 'XDG_DATA_HOME', 'XDG_STATE_HOME'];
+  const names = ['PINOTE_NOTE_COMMAND', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PI_CODING_AGENT_DIR'];
   const previous = names.map((name) => process.env[name]);
   Object.assign(process.env, {
     PINOTE_NOTE_COMMAND: fileURLToPath(new URL('../../.venv/bin/note', import.meta.url)),
-    XDG_DATA_HOME: dir, XDG_STATE_HOME: dir,
+    XDG_DATA_HOME: dir, XDG_STATE_HOME: dir, PI_CODING_AGENT_DIR: pathToFileURL(dir).href,
   });
   const { startPinoteHttpServer } = await import('../mcp/http.ts');
   const token = 'events-test-secret-'.repeat(3);

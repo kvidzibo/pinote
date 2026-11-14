@@ -24,6 +24,7 @@ COMMANDS = {
     "restore",
     "history",
     "events",
+    "field-events",
     "show",
     "import",
     "export",
@@ -79,6 +80,7 @@ def parser() -> argparse.ArgumentParser:
         ("restore", "return an archived/scheduled note to active, or clear progress"),
         ("history", "show timestamped activity, optionally for one note"),
         ("events", "read bounded task-completion events as JSON"),
+        ("field-events", "read bounded active field changes as JSON"),
         ("show", "show or reopen the desktop reminder"),
         ("import", "import a Markdown file once, without changing it"),
         ("export", "write active notes as Markdown to stdout"),
@@ -131,7 +133,7 @@ def parser() -> argparse.ArgumentParser:
                     choice = operation.add_mutually_exclusive_group(required=True)
                     choice.add_argument("--tag")
                     choice.add_argument("--clear", action="store_true")
-        elif name == "events":
+        elif name in {"events", "field-events"}:
             sub.add_argument("--after", type=event_cursor)
             sub.add_argument("--limit", type=event_limit, default=256)
         elif name == "add":
@@ -249,7 +251,7 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         # No nested lock, and ordinary reads stay lock-free unless a timer is due.
         if needs_lock:
             store.activate_due()
-        elif args.command != "events" and store.has_due():
+        elif args.command not in {"events", "field-events"} and store.has_due():
             with display_lock(paths):
                 store.activate_due()
         if args.command == "agent":
@@ -303,6 +305,8 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                     print("No notes." if args.all else "No active notes.")
         elif args.command == "events":
             print(json.dumps(store.completion_events(args.after, args.limit)))
+        elif args.command == "field-events":
+            print(json.dumps(store.field_events(args.after, args.limit)))
         elif args.command == "history":
             events = store.history(args.id)
             for event in events:

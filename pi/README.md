@@ -201,6 +201,15 @@ is stored for compatibility; remote `/new` does not insert it. Selected-task pre
 above the protocol's 20,000-character limit show explicit guidance to read through the
 CLI/service instead of silently truncating.
 
+### Field automations (pi-note 0.39.0+)
+
+An optional, user-configured **single executable** handles field additions, changes,
+removals and scheduled checks on the HTTP service. The bundled PR example reports
+failing checks/conflicts and strikes through merged PRs without changing the URL or
+completing the task. Alerts are deduplicated and current results reach the next
+agent run; scripts never submit prompts. Requires **note 0.24.0+** on the service.
+See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md). Disabled by default.
+
 ## Migration
 
 Since pi-note 0.38.0, the default HTTP extension uses task-first navigation and

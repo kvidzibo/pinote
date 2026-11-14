@@ -4,14 +4,17 @@ import { connectPeer, remoteFailure, RemoteFailure, type Peer, type PeerFactory,
 import { StateSchema, ViewSchema, UI_CONTEXT, UI_FEATURES, UI_STATE, type NativeView, type NativeControl } from './protocol.ts';
 
 export const ENTRY_TYPE = 'pinote-remote-v1';
-export interface SavedState { scope: string; contextId: string; state: Record<string, unknown>; retainOnNew?: boolean }
+export interface SavedState { scope: string; contextId: string; state: Record<string, unknown>; retainOnNew?: boolean; fieldReceipts?: string[] }
 export interface BranchEntry { type: string; customType?: string; data?: unknown }
 export function restoreState(branch: readonly BranchEntry[], scope: string): SavedState {
   let saved: SavedState = { scope, contextId: randomUUID(), state: {} };
   for (const entry of branch) {
     if (entry.type !== 'custom' || entry.customType !== ENTRY_TYPE) continue;
     const data = entry.data as SavedState | undefined;
-    if (data?.scope === scope && typeof data.contextId === 'string' && data.contextId.length > 0 && data.contextId.length <= 256 && StateSchema.safeParse(data.state).success) saved = structuredClone(data);
+    if (data?.scope === scope && typeof data.contextId === 'string' && data.contextId.length > 0 && data.contextId.length <= 256 && StateSchema.safeParse(data.state).success) {
+      saved = structuredClone(data);
+      saved.fieldReceipts = Array.isArray(data.fieldReceipts) ? data.fieldReceipts.filter((id) => typeof id === 'string' && /^[a-f0-9-]{36}$/.test(id)).slice(-4096) : [];
+    }
   }
   return saved;
 }
@@ -33,6 +36,7 @@ export class RemoteSession {
   fullscreen = false;
   onChange = () => {};
   onCompleted?: (taskId: number, signal: AbortSignal) => Promise<void>;
+  onFieldNotification?: (notice: NonNullable<NativeView['fieldNotifications']>[number]) => boolean;
   private config: RemoteConfig;
   private persist: (saved: SavedState) => void;
   private factory: PeerFactory;
@@ -61,7 +65,7 @@ export class RemoteSession {
     if (!this.saved) throw new RemoteFailure();
     return {
       [UI_CONTEXT]: { conversationId: this.conversationId, contextId: this.saved.contextId, state: this.saved.state },
-      [UI_FEATURES]: { actionRevisions: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
+      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
     };
   }
   private serial<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -95,9 +99,15 @@ export class RemoteSession {
     throw remoteFailure(error, mutation);
   }
   private apply(view: NativeView): void {
-    const changed = JSON.stringify(this.saved?.state) !== JSON.stringify(view.state) || this.saved?.retainOnNew !== view.retainOnNew;
+    let changed = JSON.stringify(this.saved?.state) !== JSON.stringify(view.state) || this.saved?.retainOnNew !== view.retainOnNew;
     this.view = view;
     this.saved = { ...this.saved!, state: view.state, retainOnNew: view.retainOnNew };
+    const receipts = new Set(this.saved.fieldReceipts ?? []);
+    for (const notice of view.fieldNotifications ?? []) {
+      if (notice.taskId !== view.state.selectedId || receipts.has(notice.id)) continue;
+      if (this.onFieldNotification?.(notice)) { receipts.add(notice.id); changed = true; }
+    }
+    if (receipts.size) this.saved.fieldReceipts = [...receipts].slice(-4096);
     if (changed) this.persist(structuredClone(this.saved));
     this.onChange();
   }

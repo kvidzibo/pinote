@@ -43,7 +43,8 @@ export class NativeFooter implements Component {
           (value, budget) => truncateToWidth(value, Math.max(0, Math.min(budget, width - x))),
           (value, style) => {
             const colored = style.color ? this.theme.fg(style.color, value) : value;
-            return style.italic ? this.theme.italic(colored) : colored;
+            const italic = style.italic ? this.theme.italic(colored) : colored;
+            return style.strikethrough ? this.theme.strikethrough(italic) : italic;
           });
         const end = x + visibleWidth(text);
         if (end > x && (item.openApp || item.action || item.doubleAction || item.secondaryAction)) {
