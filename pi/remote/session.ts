@@ -70,7 +70,7 @@ export class RemoteSession {
     if (!this.saved) throw new RemoteFailure();
     return {
       [UI_CONTEXT]: { conversationId: this.conversationId, piSessionId: this.piSessionId, contextId: this.saved.contextId, state: this.saved.state, fieldReceipts: this.saved.fieldReceipts ?? [] },
-      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, fieldWatchers: true, watcherDiagnostics: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
+      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, fieldReceiptGroups: true, fieldWatchers: true, watcherDiagnostics: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
     };
   }
   private serial<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -126,7 +126,7 @@ export class RemoteSession {
   }
   get hasPendingFieldNotifications(): boolean {
     const receipts = new Set(this.saved?.fieldReceipts ?? []);
-    return !!this.view?.fieldNotifications?.some((notice) => notice.taskId === this.view?.state.selectedId && !receipts.has(notice.id));
+    return !!this.view?.fieldNotifications?.some((notice) => notice.taskId === this.view?.state.selectedId && (notice.receiptIds ?? [notice.id]).some((id) => !receipts.has(id)));
   }
   private apply(view: NativeView): void {
     clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; this.reconnectDelay = 1000;
@@ -136,8 +136,12 @@ export class RemoteSession {
     const receipts = new Set(this.saved.fieldReceipts ?? []);
     let delivered = false;
     for (const notice of view.fieldNotifications ?? []) {
-      if (notice.taskId !== view.state.selectedId || receipts.has(notice.id)) continue;
-      if (this.onFieldNotification?.(notice)) { receipts.add(notice.id); changed = delivered = true; }
+      const ids = notice.receiptIds ?? [notice.id];
+      if (notice.taskId !== view.state.selectedId || ids.every((id) => receipts.has(id))) continue;
+      if (this.onFieldNotification?.(notice)) {
+        for (const id of ids) receipts.add(id);
+        changed = delivered = true;
+      }
     }
     if (receipts.size) this.saved.fieldReceipts = [...receipts].slice(-4096);
     if (changed) this.persist(structuredClone(this.saved));

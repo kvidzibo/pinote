@@ -15,17 +15,19 @@ test('Forgejo executable trusts configured instances only and checks complete cu
   const requestsFile = join(dir, 'requests.json');
   const preload = join(dir, 'fetch.mjs');
   writeFileSync(preload, `import { writeFileSync } from 'node:fs';
-const scenario = JSON.parse(process.env.SCENARIO);
-const requests = []; let pulls = 0;
+const defaults = JSON.parse(process.env.SCENARIO);
+const requests = []; const pulls = {};
 globalThis.fetch = async (url, options) => {
   requests.push({url, headers:options.headers, redirect:options.redirect, timed:!!options.signal});
   writeFileSync(process.env.REQUESTS_FILE, JSON.stringify(requests));
+  const repo = /\\/repos\\/owner\\/([^/]+)\\//.exec(url)?.[1] ?? 'repo';
+  const scenario = { ...defaults, ...defaults.routes?.[repo] };
   if (scenario.fail) throw new Error('SECRET credential');
   if (scenario.httpStatus) return new Response('SECRET credential', {status:scenario.httpStatus});
   if (scenario.oversize) return new Response('x'.repeat(1024 * 1024 + 1));
   if (scenario.raw !== undefined) return new Response(scenario.raw);
   const page = /[?&]page=(\\d+)/.exec(url)?.[1];
-  const body = page ? scenario.pages[Number(page)-1] ?? {statuses:null,total_count:0} : scenario.pulls[Math.min(pulls++,scenario.pulls.length-1)];
+  const body = page ? scenario.pages[Number(page)-1] ?? {statuses:null,total_count:0} : scenario.pulls[Math.min((pulls[repo] = (pulls[repo] ?? -1) + 1),scenario.pulls.length-1)];
   return new Response(JSON.stringify(body));
 };`);
   const script = fileURLToPath(new URL('../watchers/forgejo-pr.mjs', import.meta.url));
@@ -55,6 +57,7 @@ globalThis.fetch = async (url, options) => {
   }
   const passing = run({}, { event: 'check', value: `[PR](${value})` });
   assert.equal(passing.output.state, 'passing');
+  assert.equal(passing.output.display?.color, 'success');
   assert.deepEqual(passing.requests.map((r) => r.url), [
     `${base}/api/v1/repos/owner/repo/pulls/42`,
     `${base}/api/v1/repos/owner/repo/commits/${pr.head.sha}/status?page=1&limit=50`,
@@ -75,7 +78,7 @@ globalThis.fetch = async (url, options) => {
   const failureScenario = { pages: [page([check]), page([{ ...check, context: 'other', status: 'failure' }])] };
   const failure = run(failureScenario).output;
   assert.equal(failure.state, 'failed', 'Server-capped pages and per-page totals cannot hide a later failure');
-  assert.equal(failure.display?.color, 'warning');
+  assert.equal(failure.display?.color, 'error');
   assert.equal(failure.recheckAfterSeconds, 60);
   assert.equal(run(failureScenario, { previousResult: failure }).output.notification?.key, failure.notification?.key);
   assert.notEqual(run(failureScenario, { value: value.replace('forgejo.example', 'other.example') },
@@ -85,6 +88,7 @@ globalThis.fetch = async (url, options) => {
     run({ pages: [page([{ ...check, status: 'failure' }])] }).output.notification?.key);
   const stale = run({ ...failureScenario, pulls: [pr, moved] }).output;
   assert.equal(stale.state, 'pending');
+  assert.equal(stale.display?.color, 'warning');
   assert.equal(stale.notification, undefined, 'A changed head never triggers an obsolete failure');
   for (const status of ['pending', 'error', 'failure', 'warning', 'success', 'skipped']) {
     assert.equal(run({ pages: [page([{ ...check, status }])] }).output.state,
@@ -93,6 +97,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(run({ pages: [] }).output.state, 'pending');
   const unmergeable = run({ pulls: [{ ...pr, mergeable: false }] }).output;
   assert.equal(unmergeable.state, 'pending');
+  assert.equal(unmergeable.display?.color, 'warning');
   assert.equal(unmergeable.notification, undefined, 'False mergeability is not definitive conflict evidence');
   for (const merged of [false, true]) {
     const terminal = { ...pr, state: 'closed', merged };
@@ -151,6 +156,52 @@ globalThis.fetch = async (url, options) => {
     assert.deepEqual(output, {});
     assert.equal(requests.length, 0, 'Untrusted values cannot cause authenticated requests');
   }
+  const routes = {
+    passing: {},
+    failed: { pages: [page([{ ...check, status: 'failure' }])] },
+    pending: { pages: [] },
+    merged: { pulls: [{ state: 'closed', merged: true }] },
+    closed: { pulls: [{ state: 'closed', merged: false }] },
+    broken: { fail: true },
+  };
+  const batchURLs = Object.keys(routes).map((repo) => `${base}/owner/${repo}/pulls/42`);
+  const foreign = [
+    'https://github.com/owner/repo/pull/42', 'https://untrusted.example/owner/repo/pulls/42',
+    `${base}-other/owner/repo/pulls/42`, `${value}?secret=1`, `${value}/extra`,
+    `${base}/owner/%2e%2e/pulls/42`, 'https://user:SECRET@forgejo.example/git/owner/repo/pulls/42',
+    `${base}/owner/repo/pulls/9007199254740992`,
+  ];
+  const batchValue = [...batchURLs.map((url) => `- [PR](${url})`), ...foreign].join('\n');
+  const batch = run({ routes }, { field: 'PRs', value: batchValue });
+  assert.deepEqual(batch.output.items?.map((item) => item.url), batchURLs);
+  assert.deepEqual(batch.output.items?.map((item) => item.state), ['passing', 'failed', 'pending', 'merged', 'closed', 'error']);
+  assert.deepEqual(batch.output.items?.slice(0, 5).map((item) => item.display?.color), ['success', 'error', 'warning', 'accent', 'muted']);
+  assert.equal(batch.output.items?.[1].notification?.key,
+    run(routes.failed, { value: batchURLs[1] }).output.notification?.key, 'Batch failure retains single-PR identity');
+  assert.equal(batch.output.items?.[5].recheckAfterSeconds, 120);
+  assert.equal(batch.output.recheckAfterSeconds, 60);
+  assert.ok(batch.output.notification);
+  assert.ok(batch.requests.every((request) => request.url.startsWith(`${base}/api/v1/repos/owner/`)
+    && Object.keys(routes).some((repo) => request.url.startsWith(`${base}/api/v1/repos/owner/${repo}/`))
+    && request.headers.Authorization === 'token SECRET' && request.redirect === 'error' && request.timed));
+  const outage = run({ routes: { ...routes, failed: { fail: true } } },
+    { field: 'PRs', value: batchValue, previousResult: batch.output });
+  assert.equal(outage.output.items?.[1].state, 'error');
+  assert.equal(outage.output.items?.[1].notification?.key, batch.output.items?.[1].notification?.key);
+  assert.equal(outage.output.notification?.key, batch.output.notification?.key);
+  assert.equal(outage.output.items?.[0].state, 'passing');
+  const missingTokenURL = 'https://no-token.example/owner/repo/pulls/42';
+  const missingToken = run({}, { field: 'PRs', value: `${batchURLs[0]}\n${missingTokenURL}` }, [
+    ...trusted, { url: 'https://no-token.example', tokenEnv: 'TEST_FORGEJO_TOKEN' },
+  ], '');
+  assert.deepEqual(missingToken.output.items?.map((item) => item.state), ['error', 'error']);
+  assert.equal(missingToken.requests.length, 0, 'Missing environment tokens never cause anonymous fallback');
+  const ignoredBatch = run({}, { field: 'PRs', value: foreign.join('\n') });
+  assert.deepEqual(ignoredBatch.output, {});
+  assert.equal(ignoredBatch.requests.length, 0);
+  const noTrust = run({ routes }, { field: 'PRs', value: batchValue }, []);
+  assert.deepEqual(noTrust.output, {});
+  assert.equal(noTrust.requests.length, 0);
   assert.deepEqual(run({}, {}, []).output, {});
 });
 
@@ -170,11 +221,13 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   const pullPath = `${api}/pulls/135`;
   const statusPath = `${api}/commits/${sha}/status`;
   const requests: { path: string | undefined; token: string | undefined; accept: string | undefined }[] = [];
-  let mode: 'passing' | 'merged' | 'redirect' = 'passing';
+  let mode: 'passing' | 'merged' | 'redirect' | 'batch' = 'passing';
   const server = createServer((req, res) => {
     requests.push({ path: req.url, token: req.headers.authorization, accept: req.headers.accept });
     res.setHeader('Content-Type', 'application/json');
-    if (mode === 'redirect' && req.url === pullPath) {
+    if (mode === 'batch' && req.url === `${api}/pulls/137`) {
+      res.end(JSON.stringify({ state: 'closed', merged: true }));
+    } else if ((mode === 'redirect' && req.url === pullPath) || (mode === 'batch' && req.url === `${api}/pulls/136`)) {
       res.writeHead(302, { Location: '/redirect-target' });
       res.end('{}');
     } else if (req.url === pullPath) {
@@ -222,6 +275,25 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   assert.equal(merged.recheckAfterSeconds, undefined);
   assert.equal(merged.notification, undefined);
   assert.deepEqual(requests.map((r) => r.path), [pullPath], 'Merged PRs do not fetch commit statuses');
+
+  requests.length = 0;
+  mode = 'batch';
+  const batchURLs = [135, 136, 137].map((number) => `${base}/tomas/production-deploy/pulls/${number}`);
+  const batch = FieldResult.parse(await handleFieldEvent({ ...event, field: 'PRs', value: [
+    ...batchURLs, `${base}-other/tomas/production-deploy/pulls/135`,
+    'https://github.com/tomas/production-deploy/pull/135',
+    `http://127.0.0.1:${address.port}/untrusted/tomas/production-deploy/pulls/135`,
+  ].join('\n') }));
+  assert.deepEqual(batch.items?.map((item) => item.url), batchURLs);
+  assert.deepEqual(batch.items?.map((item) => item.state), ['passing', 'error', 'merged']);
+  assert.equal(batch.items?.[0].display?.color, 'success');
+  assert.equal(batch.items?.[1].recheckAfterSeconds, 120);
+  assert.equal(batch.items?.[2].display?.color, 'accent');
+  assert.ok(requests.every((request) => request.path?.startsWith(`${api}/`)
+    && request.token === 'token fake-loopback-only-token' && request.accept === 'application/json'));
+  assert.equal(requests.filter((request) => request.path === `${api}/pulls/136`).length, 1);
+  assert.equal(requests.filter((request) => request.path === `${api}/pulls/137`).length, 1);
+  assert.equal(requests.length, 6, 'Each PR is independent; foreign scopes and redirect targets are never requested');
 
   requests.length = 0;
   mode = 'redirect';

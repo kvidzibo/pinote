@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAgentDir } from '../dist-mcp/config-path.js';
+import { checkPRBatch } from '../pr-batch.ts';
+import { parsePullRequests } from '../pull-requests.ts';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const errorResult = () => ({ state: 'error', summary: 'Unable to check Forgejo PR status', recheckAfterSeconds: 120 });
@@ -58,23 +60,43 @@ export async function handleFieldEvent(event) {
     || !(event.previousValue === null || typeof event.previousValue === 'string')
     || typeof event.eventId !== 'string'
     || (event.previousResult !== undefined && !object(event.previousResult))) throw new Error('Invalid event');
-  if (event.field !== 'PR' || event.event === 'removed') return {};
+  if (!['PR', 'PRs'].includes(event.field) || event.event === 'removed') return {};
   const value = event.value?.trim() ?? '';
+  if (event.field === 'PRs') {
+    const parsed = parsePullRequests(value);
+    if (!parsed.length) return {};
+    const trusted = await instances();
+    const requests = parsed.filter((request) => matchRequest(request.url, trusted));
+    if (!requests.length) return {};
+    return checkPRBatch(event, requests, (request, signal) => checkPR(matchRequest(request.url, trusted), signal), errorResult);
+  }
   const raw = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
+  // Preserve legacy validation before loading configuration.
+  try { instanceURL(raw); } catch { return {}; }
+  const request = matchRequest(raw, await instances());
+  return request ? checkPR(request) : {};
+}
+
+function matchRequest(raw, trusted) {
   let url;
-  try { url = instanceURL(raw).href.replace(/\/$/, ''); } catch { return {}; }
-  const instance = (await instances()).find((entry) => url.startsWith(`${entry.url}/`));
-  if (!instance) return {};
+  try { url = instanceURL(raw).href.replace(/\/$/, ''); } catch { return; }
+  const instance = trusted.find((entry) => url.startsWith(`${entry.url}/`));
+  if (!instance) return;
   const match = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pulls\/([1-9][0-9]*)$/.exec(url.slice(instance.url.length));
-  if (!match || !Number.isSafeInteger(Number(match[3]))) return {};
+  if (!match || !Number.isSafeInteger(Number(match[3]))) return;
   const [, owner, repo, number] = match;
+  return { instance, owner, repo, number };
+}
+
+async function checkPR({ instance, owner, repo, number }, batchSignal) {
   const headers = { Accept: 'application/json' };
   if (instance.tokenEnv !== undefined) {
     const token = process.env[instance.tokenEnv];
     if (!token || unsafe.test(token)) throw new Error('Missing token');
     headers.Authorization = `token ${token}`;
   }
-  const signal = AbortSignal.timeout(20_000);
+  const timeout = AbortSignal.timeout(20_000);
+  const signal = batchSignal ? AbortSignal.any([timeout, batchSignal]) : timeout;
   const api = `${instance.url}/api/v1/repos/${owner}/${repo}`;
   async function request(path) {
     // Never follow API redirects or URLs returned by the server with credentials.
@@ -122,7 +144,7 @@ export async function handleFieldEvent(event) {
   const finished = terminal(current);
   if (finished) return finished;
   if (current.head.sha.toLowerCase() !== pr.head.sha.toLowerCase()) return {
-    state: 'pending', summary: `${summary} head changed; checks pending`, display: { strikethrough: false, color: 'muted' }, recheckAfterSeconds: 60,
+    state: 'pending', summary: `${summary} head changed; checks pending`, display: { strikethrough: false, color: 'warning' }, recheckAfterSeconds: 60,
   };
   const failed = checks.filter((check) => ['error', 'failure', 'warning'].includes(check.status));
   if (failed.length) {
@@ -130,13 +152,13 @@ export async function handleFieldEvent(event) {
       instance.url, owner, repo, number, pr.head.sha.toLowerCase(),
       failed.map((check) => JSON.stringify([check.context, check.status])).sort(),
     ])).digest('hex');
-    return { state: 'failed', summary: `${summary} checks failed`, display: { strikethrough: false, color: 'warning' },
+    return { state: 'failed', summary: `${summary} checks failed`, display: { strikethrough: false, color: 'error' },
       notification: { key: `forgejo-pr:${fingerprint}`, message: 'PR checks failed' }, recheckAfterSeconds: 60 };
   }
   // mergeable=false also means checking, errors or drafts: never invent a conflict alert.
   const pending = !current.mergeable || checks.length === 0 || checks.some((check) => check.status === 'pending');
   return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : 'checks passing'}`,
-    display: { strikethrough: false, color: pending ? 'muted' : 'success' }, recheckAfterSeconds: 60 };
+    display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

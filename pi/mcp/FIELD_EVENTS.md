@@ -34,18 +34,31 @@ footer style; alerts remain independent.
 disabled until explicitly enabled because the previous setting authorized only
 notifications, not automatic worker actions. Saving watchers removes the old key.
 
-The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PR`
-and ignores other fields. Copy it to a user-owned location before customization,
-make it executable (`chmod u+x`), and ensure authenticated `gh` and Node are on the
+The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PRs`
+and legacy `PR`, ignoring other fields. Keep it in its package directory so its
+shared parser remains available; add a separate executable for custom behavior.
+If customizing a copy of the package, make the watcher executable
+(`chmod u+x`), and ensure authenticated `gh` and Node 22.19+ are on the
 **service's** PATH. For systemd, follow the [service PATH setup](README.md#run-continuously);
 using an absolute Node path in `ExecStart` alone is insufficient for the watcher's
-`#!/usr/bin/env node` interpreter. It accepts a GitHub PR URL or Markdown link, checks once, and
-requests another check in 60 seconds. It warns on failing checks/conflicts and
-colours merged PRs with the theme accent (purple in Pi's default theme), without
-strikethrough, while keeping their links. Previously cached merged results receive
-the same footer styling without another GitHub check. Closed/merged PRs stop
-polling; merging never completes the Pinote task. Passing means reported checks
-passed, not that every review/branch-protection requirement is satisfied.
+`#!/usr/bin/env node` interpreter. `PRs` accepts one GitHub or Forgejo PR URL or Markdown link
+per line (optional `- ` bullets), deduplicating up to 64 valid links. Each number
+keeps its own link and status: green passing, red failed/conflicting, amber pending,
+accent merged (default purple), or neutral closed/unavailable. Invalid lines are
+ignored. Legacy `PR` accepts one URL/link and retains its single-result contract.
+
+Batch checks run at most four `gh` calls at once, within a 25-second deadline.
+Unavailable entries do not erase successful results or retrigger workers on
+outage/recovery; they appear in grouped watcher diagnostics and retry. Each PR
+has its own durable acknowledgement, shared across the built-in legacy/plural
+aliases. New failures and confirmed recovery followed by failure alert again;
+adding/removing other URLs does not repeat acknowledged failures. Edited fields
+still require fresh checks. Legacy-only custom watchers keep independent alerts.
+Updated clients group alerts only when every included PR fits the message budget;
+older clients receive individual alerts. PRs alerts include
+PR numbers and URLs, within the notification budget. Checks repeat every 60
+seconds until all entries are closed/merged; merging never completes the task.
+Passing means reported checks passed, not that all review/protection rules passed.
 
 ## Forgejo PRs
 
@@ -76,9 +89,11 @@ For a local repository such as
 machine**, not the Pi client. A sign-in-required instance needs `tokenEnv` even
 for repository reads; set that variable in the existing service's environment.
 
-Set `PR` to `https://forgejo.example/owner/repo/pulls/123` or, for that local
-instance, `http://127.0.0.1:3000/tomas/production-deploy/pulls/123`, bare or as
-one Markdown link. Only explicitly configured instance URLs receive requests; credentials are scoped
+Set `PRs` to `https://forgejo.example/owner/repo/pulls/123` or, for that local
+instance, `http://127.0.0.1:3000/tomas/production-deploy/pulls/123`, one URL or
+Markdown link per line. Since 0.43.0, GitHub and Forgejo URLs can share one field;
+each watcher checks only its supported, trusted URLs. Legacy `PR` still accepts
+one URL/link. Only explicitly configured instance URLs receive requests; credentials are scoped
 to that instance, and API redirects are rejected. Both bundled watchers ignore
 other providers' links, so they can be enabled together. Displaying a PR link or
 formatting `<number>` does not authorize network access. After changing instances,
@@ -92,7 +107,8 @@ No reported statuses means pending, not passing. Passing describes reported CI
 only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
 can also mean checking, an error or a draft, so it remains pending rather than
 triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
-Checks run every 60 seconds; API/configuration errors retry after 120 seconds.
+Checks run every 60 seconds. Legacy `PR` API/configuration errors retry after
+120 seconds; partial `PRs` batch errors retry with the field's 60-second check.
 
 To support another field, add another executable using the contract below. Each
 watcher receives all field events and returns `{}` for fields it does not handle.
@@ -131,7 +147,7 @@ Return `{}` for an ignored field, or:
 {
   "state": "failed",
   "summary": "PR #123 checks failed",
-  "display": { "color": "warning", "strikethrough": false },
+  "display": { "color": "error", "strikethrough": false },
   "notification": { "key": "head-sha:failed-check-fingerprint", "message": "PR checks failed" },
   "recheckAfterSeconds": 60
 }
@@ -146,6 +162,17 @@ All result properties are optional. Unknown properties are rejected.
 | `display` | `strikethrough` boolean; `color`: `accent`, `muted`, `text`, `warning`, `error`, `success` |
 | `notification` | Stable `key` (1–256 characters) and `message` (1–1,000); changes create a fresh alert |
 | `recheckAfterSeconds` | Integer 10–86,400; omitted/null stops successful checks |
+| `items` | Up to 64 URL-keyed results; each has `url` (max 2,048) plus the properties above except nested `items` |
+
+Since pi-note 0.43.0, the bundled `PRs` result has `state: "multiple"` and
+`items: [{"url": "https://github.com/owner/repo/pull/123", "state": "passing",
+"display": {"color": "success"}}]`. Top-level recheck settings control polling;
+each item styles and notifies only its matching PR URL. The service tracks each
+item's notification key independently; message-only changes do not repeat alerts.
+The bundled top-level batch notification remains available to handler consumers,
+but is not used for PR acknowledgements. Error items may retain earlier keys,
+but are never actionable or sent as current model observations.
+Update the service before using handlers that return `items`.
 
 Results replace previous results, not the original field value. Omitting a
 notification clears the current alert. Identical notification key/message pairs
@@ -192,6 +219,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - Pi triggers a worker turn once per current alert and persists receipts across
   reload/resume (latest 4,096 IDs per branch). Receipts accompany view reads so
   bounded 64-alert pages advance past delivered failures even if they persist.
+  Clients advertising `fieldReceiptGroups` receive bounded groups with every
+  per-PR `receiptIds` UUID; delivery acknowledges all members together. Clients
+  without this capability keep individual notices with the existing wire shape.
   Busy workers defer delivery until
   idle, then refresh to verify ownership, selection and current status. An aborted
   run does not immediately drain deferred alerts. There is no launch of a closed
@@ -204,7 +234,8 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   context; stale/unavailable checks are excluded. Oversized current results are
   omitted with a count, preserving the task first. Actionable results such as PR
   CI failures still use the separately enabled worker-alert behavior above.
-- Only the latest current alert per field is retained, not an offline alert log.
+- Only current alerts are retained: one per PR, or one per other field, not an
+  offline alert log.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
   failure. Network recovery remains explicit through `/pinote` or a tool call.
 - Newly enabled watchers reconstruct current fields from history independently.
