@@ -180,6 +180,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
 
     // Multiple PRs share one field slot but keep separate links and current statuses.
     const urls = Array.from({ length: 6 }, (_, index) => `https://github.com/example/repo/pull/${42 + index}`);
+    urls[3] = 'https://forgejo.example/git/example/repo/pulls/45';
     await update({ PRs: urls.map((url) => `[Review](${url})`).join('\n'), Next: 'Review all' });
     assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR'), 'Fresh bundled legacy alerts are not hidden before the plural job finishes');
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));

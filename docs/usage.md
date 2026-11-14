@@ -126,10 +126,10 @@ literal text in the archive/reminders. Completion, removal and scheduling clear
 project selections; restoring does not silently reselect tasks.
 
 The existing `list --json` format is unchanged; use `agent get` for handoff data.
-`PRs` shows multiple GitHub PR links in the Pi footer, one URL or Markdown link
-per line, with independent CI/merge status colours when the GitHub watcher is
-enabled. Legacy `PR` values remain readable; see
-[multiple PRs](../pi/README.md#multiple-prs-pi-note-0420).
+`PRs` shows multiple GitHub or Forgejo PR links in the Pi footer, one URL or
+Markdown link per line, with independent CI/merge status colours when the
+corresponding provider's watcher is enabled. Legacy `PR` values remain readable; see
+[multiple PRs](../pi/README.md#multiple-prs-pi-note-0430).
 `Bar`, one field label per line, shows those fields as Markdown text; links in them
 are clickable. Other fields stay on the task only.
 See the [Pi extension](../pi/README.md) for `/pinote`, Settings actions, footer status, and tools.

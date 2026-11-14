@@ -1,3 +1,4 @@
+import { parsePR } from "./pr-url.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 import { defaultFooterConfig, defaultFooterField, type FooterConfig, type FooterField } from "./footer-config.ts";
@@ -110,10 +111,11 @@ function readBare(source: string, index: number): { text: string; dest: string; 
   const scheme = /^[a-z][a-z0-9+.-]*:\/\//iu.exec(source.slice(index));
   if (!scheme) return;
   let end = index + scheme[0].length;
+  const hostBracketEnd = source[end] === "[" ? source.indexOf("]", end + 1) : -1;
   let depth = 0;
   for (; end < source.length; end++) {
     const char = source[end];
-    if (/[\s<>\]*]/u.test(char) || control.test(char)) break;
+    if (/[\s<>\]*]/u.test(char) && end !== hostBracketEnd || control.test(char)) break;
     if (char === "(") depth++;
     else if (char === ")") {
       if (depth === 0) break;
@@ -186,8 +188,8 @@ function fieldSegments(field: FooterField, value: string | undefined): FooterSeg
   const original = renderMarkdown(value);
   const urls = [...new Set(original.flatMap((part) => part.url ? [part.url] : []))];
   const url = urls.length === 1 ? urls[0] : undefined;
-  const number = url && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/([1-9][0-9]*)\/?$/u.exec(url)?.[1]
-    || (/^[0-9]+$/u.test(value.trim()) ? value.trim() : undefined);
+  const number = parsePR(value)?.number
+    ?? (/^[0-9]+$/u.test(value.trim()) ? value.trim() : undefined);
   if (field.format.includes("<number>") && !number || field.format.includes("<url>") && !url) return [];
   let body: FooterSegment[];
   if (field.format === "<value>") body = original;

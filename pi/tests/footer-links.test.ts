@@ -4,6 +4,9 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 import { customFooterChips, footerChips, renderFooterLinks, renderMarkdown } from "../footer-links.ts";
 
+import { parseFooterConfig } from "../footer-config.ts";
+import { taskPR } from "../footer-status.ts";
+
 const color = (text: string) => `\x1b[34m${text}\x1b[39m`;
 const shown = (notes: Record<string, string>) =>
   stripVTControlCharacters(renderFooterLinks(customFooterChips(notes), color) ?? "");
@@ -63,4 +66,38 @@ test("footer shows Markdown bar fields and links any safe scheme", () => {
   assert.match(wide, /^D+\.\.\.: /u);
   assert.equal(shown({ Bar: "A\u001b[31m", "A\u001b[31m": "local note" }), "A: local note");
   assert.equal(renderFooterLinks([], color), undefined);
+});
+
+
+test("PR number displays recognize Forgejo without granting host trust or normalizing unsafe input", () => {
+  const config = parseFooterConfig({ footer: { fields: [{ name: "PR", label: "", format: "#<number>", link: true }] } });
+  const github = "https://github.com/org/repo/pull/42";
+  const forgejo = "https://forgejo.example/instance/org/repo/pulls/42";
+  for (const url of [github, forgejo, "https://evil.test/org/repo/pulls/42", "https://code.example:8443/a/b/org/repo/pulls/42",
+    "http://127.0.0.1:3000/tomas/production-deploy/pulls/42", "http://[::1]:3000/org/repo/pulls/42"]) {
+    for (const PR of [url, `[Review](${url})`, `${url}/`, ` ${url} `, `${url}\n`]) {
+      assert.deepEqual(taskPR({ id: 1, state: "active", updated_at: "r1", agent_notes: { PR } }), { url, number: "42" });
+      const rendered = renderFooterLinks(customFooterChips({ PR }, config), color)!;
+      // Node's generic VT stripper misreads OSC 8 destinations containing IPv6 brackets.
+      assert.equal(stripVTControlCharacters(rendered.replace(/\x1b\]8;;[^\x1b]*\x1b\\/gu, "")), "#42");
+      assert.ok(rendered.includes(url));
+    }
+  }
+  for (const PR of [
+    "https://evil.test/org/repo/pull/42", "https://github.com/instance/org/repo/pull/42",
+    "http://forgejo.example/org/repo/pulls/42", "http://192.168.1.2:3000/org/repo/pulls/42",
+    "http://127.0.0.1.evil:3000/org/repo/pulls/42", "http://user:pass@127.0.0.1:3000/org/repo/pulls/42",
+    "http://127.0.0.1:3000/org/repo/pull/42", "https://user:pass@forgejo.example/org/repo/pulls/42",
+    "https://@forgejo.example/org/repo/pulls/42", "https://forgejo.example:bad/org/repo/pulls/42",
+    `${forgejo}?x=1`, `${forgejo}#x`, `${forgejo}/files`, `${forgejo}extra`,
+    `${forgejo}\x1b[31m`, `${forgejo}\u009d`,
+    forgejo.replace("instance", "."), forgejo.replace("instance", ".."),
+    forgejo.replace("instance", "%2e%2e"), forgejo.replace("/org", "\\org"),
+    forgejo.replace("42", "9007199254740992"), forgejo.replace("42", "0"), forgejo.replace("42", "042"),
+    forgejo.replace("repo", "re po"), forgejo.replace("repo", "re\tpo"),
+    `[Review](${forgejo}) suffix`, `[One](${forgejo}) [Two](${forgejo})`, `${forgejo} and ${github}`, "https:///org/repo/pulls/42",
+  ]) {
+    assert.equal(taskPR({ id: 1, state: "active", updated_at: "r1", agent_notes: { PR } }), undefined, PR);
+    assert.deepEqual(customFooterChips({ PR }, config), [], PR);
+  }
 });

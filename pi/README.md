@@ -204,10 +204,14 @@ task is selected. Tool results and injected context can reach your configured
 model: do not put secrets in tasks.
 
 External CLI/GTK/client edits refresh connected views through notifications.
-After a network failure, use `/pinote` or a tool call to reconnect. Mutations are
-**never automatically replayed**: a failed write may already have committed, so
-read fresh state before retrying. Server restart loses HTTP sessions, not notes.
-There is no offline write queue or database replication.
+After a network failure or service restart, the footer shows **Pinote disconnected ·
+reconnecting…** until a fresh view is available. Read-only recovery retries after
+1 second, doubling to a maximum 30-second delay, preserving each conversation's
+saved selection. `/pinote` can refresh immediately. Task actions are unavailable
+until fresh state returns; session shutdown/reload cancels recovery.
+Mutations are **never automatically replayed**: a failed write may already have
+committed, so read fresh state before retrying. Server restart loses HTTP sessions,
+not notes. There is no offline write queue or database replication.
 
 ### Shared settings
 
@@ -221,13 +225,14 @@ is stored for compatibility; remote `/new` does not insert it. Selected-task pre
 above the protocol's 20,000-character limit show explicit guidance to read through the
 CLI/service instead of silently truncating.
 
-### Multiple PRs (pi-note 0.42.0+)
+### Multiple PRs (pi-note 0.43.0+)
 
-Set `PRs` to GitHub PR URLs or Markdown links, **one per line**. Each PR number
+Set `PRs` to GitHub or Forgejo PR URLs or Markdown links, **one per line**. Each PR number
 is its own footer link: green for passing CI, red for failures/conflicts, amber
 for pending checks, and the theme accent (default purple) for merged PRs.
-Closed or unavailable PRs are neutral. Status checks require the enabled GitHub
-PR watcher; without it, links still work but remain neutral.
+Closed or unavailable PRs are neutral. Status checks require the corresponding
+enabled watcher and, for Forgejo, an explicitly trusted instance. Unwatched links
+still work but remain neutral; display recognition never authorizes network access.
 
 Existing `PR` values and footer definitions remain readable as `PRs`; task data
 is not rewritten. If both fields exist, their links are combined and deduplicated.
@@ -247,10 +252,14 @@ Each watcher handles task-field changes and scheduled checks independently.
 The bundled GitHub PR watcher triggers the owning Pi worker to investigate and fix
 failed CI or merge conflicts. Repeated unchanged failures are deduplicated; busy
 workers wait until idle and recheck current state before acting. Merged PRs retain
-their links without strikethrough. Polling stops once all PRs in a field are closed
-or merged; tasks are not completed. Requires authenticated `gh`, Node and
-**note 0.25.0+** on the service.
-See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md).
+their links without strikethrough. Polling stops once all PRs handled by a watcher
+in a field are closed or merged; tasks are not completed. GitHub requires
+authenticated `gh`, Node and **note 0.25.0+** on the service.
+The **Forgejo PR** watcher supports configured HTTPS instances (or numeric
+loopback HTTP) and service-side API tokens without `gh`; it alerts on failed CI
+and styles merged/closed PRs. Ambiguous Forgejo mergeability remains pending,
+not a conflict alert. Both providers support multiple independent PRs.
+See [setup, configuration, script contract and safeguards](mcp/FIELD_EVENTS.md).
 
 ## Migration
 

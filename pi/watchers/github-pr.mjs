@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { parsePullRequests } from '../pull-requests.ts';
+import { checkPRBatch } from '../pr-batch.ts';
 
 const run = promisify(execFile);
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -43,48 +44,17 @@ export async function handleFieldEvent(event) {
     || typeof event.eventId !== 'string'
     || (event.previousResult !== undefined && !object(event.previousResult))) throw new Error('Invalid event');
   if (!['PR', 'PRs'].includes(event.field) || event.event === 'removed') return {};
-  const signal = AbortSignal.timeout(25_000);
-  const requests = parsePullRequests(event.value ?? undefined);
+  const parsed = parsePullRequests(event.value ?? undefined);
+  const requests = parsed.filter((pr) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\//.test(pr.url));
   if (event.field === 'PR') {
+    const value = event.value?.trim() ?? '';
+    const url = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
+    try { if (new URL(url).hostname !== 'github.com') return {}; } catch { /* Invalid GitHub values remain errors. */ }
     if (requests.length !== 1) return errorResult();
-    return checkPullRequest(requests[0], signal);
+    return checkPullRequest(requests[0], AbortSignal.timeout(25_000));
   }
-  const items = new Array(requests.length);
-  let next = 0;
-  async function worker() {
-    while (next < requests.length) {
-      const index = next++;
-      const request = requests[index];
-      try {
-        if (signal.aborted) throw new Error('Deadline exceeded');
-        items[index] = { url: request.url, ...await checkPullRequest(request, signal) };
-      } catch {
-        const previous = event.previousResult?.items?.find((item) => item.url === request.url);
-        // Retain the last failure identity only for alert deduplication. Error
-        // items are never actionable or exposed as current model observations.
-        items[index] = { url: request.url, ...errorResult(),
-          ...(previous?.notification ? { notification: previous.notification } : {}) };
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(4, requests.length) }, worker));
-  const result = { state: 'multiple', items };
-  if (items.some((item) => !['merged', 'closed'].includes(item.state))) result.recheckAfterSeconds = 60;
-  const failures = items.filter((item) => ['failed', 'conflict'].includes(item.state));
-  const knownFailures = items.filter((item) => item.notification);
-  if (knownFailures.length) {
-    const fingerprint = createHash('sha256').update(JSON.stringify(
-      knownFailures.map((item) => [item.url, item.notification.key]).sort((a, b) => a[0].localeCompare(b[0])),
-    )).digest('hex');
-    // The full failing set is fingerprinted even when the message exceeds its display budget.
-    result.notification = {
-      key: `prs:${fingerprint}`,
-      message: failures.length
-        ? failures.map((item) => `PR #${item.url.split('/').at(-1)} ${item.url}: ${item.notification.message}`).join('\n').slice(0, 1000)
-        : event.previousResult?.notification?.message ?? 'PR checks unavailable',
-    };
-  }
-  return result;
+  if (!requests.length && event.value?.trim()) return {};
+  return checkPRBatch(event, requests, checkPullRequest, errorResult);
 }
 
 async function checkPullRequest({ url, number }, signal) {

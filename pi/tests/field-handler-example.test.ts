@@ -109,6 +109,8 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   assert.equal(allUnavailable.notification.key, multiple.notification.key, 'Retain identity even when every failed PR is unavailable');
   const recovered = run(base, { field: 'PRs', value, previousResult: allUnavailable }, false, responses).output;
   assert.equal(recovered.notification.key, multiple.notification.key, 'Recovery of unchanged failures does not create another alert');
+  const mixedProviders = run(base, { field: 'PRs', value: `${prUrl(3)}\nhttps://forgejo.example/owner/repo/pulls/42` }, false, responses).output;
+  assert.deepEqual(mixedProviders.items.map((item: { url: string }) => item.url), [prUrl(3)], 'GitHub checks only its own entries in a mixed field');
   const terminal = run(base, { field: 'PRs', value: `${prUrl(1)}\n${prUrl(2)}` }, false, responses).output;
   assert.equal(terminal.recheckAfterSeconds, undefined);
   assert.equal(terminal.notification, undefined);
@@ -117,8 +119,12 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   // Removing gh proves ignored fields and rejected URLs never invoke it.
   rmSync(gh);
   for (const patch of [{ field: 'Other' }, { event: 'removed' }]) assert.deepEqual(run(base, patch).output, {});
+  for (const value of ['https://codeberg.org/owner/repo/pulls/42', 'https://github.com.evil/owner/repo/pull/42']) {
+    assert.deepEqual(run(base, { value }).output, {}, 'Other providers never invoke gh or mask their watcher results');
+    assert.deepEqual(run(base, { field: 'PRs', value }).output, {}, 'Foreign-only plural fields are ignored');
+  }
   for (const value of ['https://github.com/owner/repo/pull/42?x=1', 'https://github.com/owner/repo/pull/42/extra',
-    'https://github.com.evil/owner/repo/pull/42', 'https://github.com/owner/repo/pull/42;echo SECRET', null]) {
+    'https://github.com/owner/repo/pull/42;echo SECRET', null]) {
     assert.equal(run(base, { value }).output.state, 'error');
   }
 });
@@ -133,6 +139,7 @@ test('PR parser canonicalizes safe bounded links and combines notes without muta
     'https://github.com/owner/repo/pull/9007199254740992',
     'https://github.com/owner/repo/pull/1;echo', 'https://github.com/owner/repo%2Fbad/pull/1',
     `${url} ${url}`, `[PR](${url}) trailing`]) assert.deepEqual(parsePullRequests(value), []);
+  assert.deepEqual(parsePullRequests(`${url}\nhttps://forgejo.example/git/owner/repo/pulls/43\nhttp://127.0.0.1:3000/owner/repo/pulls/44`).map((pr) => pr.number), ['42', '43', '44']);
   assert.equal(parsePullRequests('https://github.com/owner/repo/pull/9007199254740991')[0].number, '9007199254740991');
   assert.equal(parsePullRequests(Array.from({ length: 70 }, (_, i) => `https://github.com/owner/repo/pull/${i + 1}`).join('\n')).length, 64);
   const notes = { PRs: `${url}\nhttps://github.com/owner/repo/pull/43`, PR: url, Other: 'untouched' };

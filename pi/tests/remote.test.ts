@@ -6,7 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
-import { getKeybindings } from '@earendil-works/pi-tui';
+import { getKeybindings, visibleWidth } from '@earendil-works/pi-tui';
 import { createEventBus, initTheme } from '@earendil-works/pi-coding-agent';
 import { remoteConfig, RemoteFailure, type Peer, type PeerFactory } from '../remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, restoreState, type SavedState } from '../remote/session.ts';
@@ -199,16 +199,70 @@ test('seven explicit direct schemas; tool state is applied before next serialize
   await h.session.stop();
 });
 
-test('mutations never replay; transport errors are secret-free, reconnect is explicit and lazy', async () => {
-  let calls = 0;
-  const h = harness({ tool: async () => { calls++; throw new Error(`Authorization Bearer ${token}`); } });
+test('mutations never replay; read-only recovery preserves selection and shows disconnected status', async (t) => {
+  const { RemoteUI } = await import('../remote/ui.ts');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0, failRead = false, selectedId = 7, pendingRead: Promise<void> | undefined;
+  const h = harness({
+    tool: async () => { calls++; throw new Error(`Authorization Bearer ${token}`); },
+    read: async () => {
+      const captured = view({ selectedId });
+      if (pendingRead) await pendingRead;
+      if (failRead) throw new Error(token);
+      return resource(captured);
+    },
+  });
   await h.session.start([], 'conversation');
+  const components: any[] = [], statuses: Array<string | undefined> = [];
+  for (const mode of ['fullscreen', 'regular']) {
+    new RemoteUI({} as any, h.session).attach({ mode: 'tui', ui: {
+      theme: { fg: (_color: string, text: string) => text },
+      setWidget: (_key: string, factory: any) => components.push(factory({ mode, requestRender() {} }, { fg: (_color: string, text: string) => text })),
+      setStatus: (_key: string, value: string | undefined) => statuses.push(value),
+    } } as any);
+  }
+  // Both attachments share one session; repaint the fullscreen component directly.
+  assert.match(components[0].render(80).join(''), /Task/);
   await assert.rejects(h.session.tool('update_current', { expected_updated_at: 'old' }), (e: Error) => e.message.includes('may have committed') && !e.message.includes(token));
   assert.equal(calls, 1); assert.equal(h.connections(), 1); assert.equal(h.session.view, undefined);
-  h.changed(); await sleep(100);
-  assert.equal(h.connections(), 1);
-  await h.session.refresh(true);
-  assert.equal(h.connections(), 2); assert.equal(calls, 1);
+  assert.equal(h.session.snapshot()?.state.selectedId, 7);
+  assert.match(components[0].render(80).join(''), /disconnected · reconnecting/);
+  assert.match(statuses.at(-1)!, /disconnected · reconnecting/);
+  assert.ok(visibleWidth(components[0].render(20)[0]) <= 20);
+  assert.equal(components[0].handleMouse({ type: 'click', button: 'left', x: 0, y: 0 }), undefined);
+  const advance = async (ms: number) => { t.mock.timers.tick(ms); await new Promise<void>((resolve) => setImmediate(resolve)); };
+  failRead = true;
+  await advance(1000); assert.equal(h.connections(), 2);
+  await advance(1999); assert.equal(h.connections(), 2);
+  await advance(1); assert.equal(h.connections(), 3);
+  let connections = 3;
+  for (const delay of [4000, 8000, 16_000, 30_000, 30_000]) {
+    await advance(delay - 1); assert.equal(h.connections(), connections);
+    await advance(1); assert.equal(h.connections(), ++connections);
+  }
+  failRead = false;
+  await advance(30_000); assert.equal(h.connections(), ++connections);
+  assert.equal(calls, 1); assert.equal((h.session.view as NativeView | undefined)?.state.selectedId, 7);
+  assert.match(components[0].render(80).join(''), /Task/);
+  assert.doesNotMatch(statuses.at(-1)!, /disconnected/);
+  await assert.rejects(h.session.tool('update_current', {}), RemoteFailure);
+  await h.session.stop();
+  await advance(60_000);
+  assert.equal(h.connections(), connections, 'Stopping cancels pending recovery');
+  await h.session.start([], 'before-reload'); connections++;
+  await assert.rejects(h.session.tool('update_current', {}), RemoteFailure);
+  let release!: () => void;
+  pendingRead = new Promise<void>(resolve => { release = resolve; });
+  await advance(1000); assert.equal(h.connections(), ++connections, 'Recovery is in flight');
+  await h.session.stop('reload');
+  pendingRead = undefined; selectedId = 8;
+  const savedBeforeReload = h.saved.length;
+  await h.session.start([], 'after-reload'); connections++;
+  release(); await advance(60_000);
+  assert.equal(h.connections(), connections, 'Old recovery cannot restart after reload');
+  assert.equal(h.session.snapshot()?.state.selectedId, 8);
+  assert.equal((h.session.view as NativeView | undefined)?.state.selectedId, 8);
+  assert.ok(!h.saved.slice(savedBeforeReload).some(saved => saved.state.selectedId === 7), 'Late old view never overwrites the new session');
   await h.session.stop();
 });
 
