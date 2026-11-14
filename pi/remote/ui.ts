@@ -1,5 +1,5 @@
 import { type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Text, truncateToWidth } from '@earendil-works/pi-tui';
+import { Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
 import { clean, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
@@ -9,6 +9,7 @@ import { document, editValue, working, type Draft } from './dialogs.ts';
 import { disclosure, menuView, parentScreen, serverScreen, type Screen } from './navigation.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
+const disconnected = 'Pinote disconnected · reconnecting… (/pinote)';
 
 /** Review and approval are separate; Enter can never approve by default. */
 export async function review(ctx: ExtensionContext, title: string, text: string, signal: AbortSignal, accept = 'Confirm'): Promise<boolean> {
@@ -39,7 +40,7 @@ export class RemoteUI {
       this.session.fullscreen = tui.mode === 'fullscreen';
       this.repaint = () => tui.requestRender();
       if (!this.session.fullscreen) return { render: () => [], invalidate() {} };
-      return new NativeFooter(() => this.session.view ? [{ uri: 'pinote://ui', view: this.session.view }] : [], theme,
+      const footer = new NativeFooter(() => this.session.view ? [{ uri: 'pinote://ui', view: this.session.view }] : [], theme,
         async ({ view }, item, action) => {
           if (this.opening || this.acting) return false;
           if (item.openApp) { await this.open(ctx); return true; }
@@ -48,6 +49,13 @@ export class RemoteUI {
           const approved = (action === 'done' || action === 'proposal:accept') && item.doubleAction === action;
           return control ? this.dispatch(ctx, view, control, undefined, approved) : false;
         }, this.repaint);
+      return {
+        render: (width: number) => this.session.view ? footer.render(width) :
+          [truncateToWidth(theme.fg('warning', disconnected), width)],
+        handleMouse: (event: TuiMouseEvent) => this.session.view ? footer.handleMouse(event) : undefined,
+        invalidate: () => footer.invalidate(),
+        dispose: () => footer.dispose(),
+      };
     }, { placement: 'belowEditor' });
     this.render();
   }
@@ -76,7 +84,7 @@ export class RemoteUI {
       let rendered = style.color ? theme.fg(style.color, text) : text;
       if (style.italic) rendered = theme.italic(rendered);
       return style.strikethrough ? theme.strikethrough(rendered) : rendered;
-    }) : 'Pinote · unavailable (/pinote to reconnect)');
+    }) : disconnected);
     this.repaint();
   }
   async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value'], footerConfirmed = false): Promise<boolean> {
@@ -183,7 +191,7 @@ export class RemoteUI {
         if (this.failure || !this.session.view) {
           const failure = this.failure;
           const title = failure?.uncertain ? 'Pinote / Verify result' : failure?.stale ? 'Pinote / State changed' : 'Pinote / Unavailable';
-          const choice = await ctx.ui.select(`${title}\n${failure?.message ?? 'Task state could not be verified.'}\nNo automatic retries. Invalid config needs repair on the service.`,
+          const choice = await ctx.ui.select(`${title}\n${failure?.message ?? 'Task state could not be verified.'}\nConnection recovery uses reads only; writes are never retried. Invalid config needs repair on the service.`,
             ['Refresh and verify', 'Close'], { signal });
           if (choice !== 'Refresh and verify' || !current()) return;
           if (await this.refresh(ctx)) await go(screen === 'field' ? 'fields' : screen);
