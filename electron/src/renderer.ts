@@ -353,6 +353,12 @@ function fitTaskRows(): void {
       action.hidden = true;
       if (overflow) overflow.hidden = false;
     }
+    // Inset the separator to the required text/tag fields, regardless of action order.
+    const row = content.closest<HTMLElement>('.task-row')!;
+    const bounds = row.getBoundingClientRect();
+    const fields = ['.task-title', '.badge'].map(selector => content.querySelector(selector)!.getBoundingClientRect());
+    row.style.setProperty('--separator-left', `${Math.min(...fields.map(r => r.left)) - bounds.left - row.clientLeft}px`);
+    row.style.setProperty('--separator-right', `${bounds.right - Math.max(...fields.map(r => r.right)) - row.clientLeft}px`);
     if (content.contains(document.activeElement) && (document.activeElement as HTMLElement).hidden) {
       content.querySelector<HTMLElement>('[data-row-element="actions"], [data-overflow-menu]')?.focus();
     }

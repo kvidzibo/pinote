@@ -19,7 +19,10 @@ textarea { resize: none; line-height: 1.5; }
 .task-list { min-height: 0; overflow: auto; scrollbar-gutter: stable; flex: 1 1 0; padding-right: 3px; }
 .pinned { border-top: 1px solid #4b5563; flex: 0 1 auto; max-height: 100%; }
 #checklist.mixed .pinned { max-height: 50%; }
-.task-row { display: flex; align-items: center; min-height: 33px; gap: 2px; border: 1px solid transparent; border-radius: 4px; overflow: hidden; }
+.task-row { position: relative; display: flex; align-items: center; min-height: 33px; gap: 2px; border: 1px solid transparent; border-radius: 4px; overflow: hidden; }
+.task-row::after { content: ''; position: absolute; left: var(--separator-left); right: var(--separator-right); bottom: 0; height: 1px; background: rgb(89 101 119 / 38%); pointer-events: none; }
+.task-row.progress::after { background: rgb(102 117 139 / 28%); }
+.task-row:hover:not(.completed) { background-image: linear-gradient(rgb(255 255 255 / 4%), rgb(255 255 255 / 4%)); }
 .task-row.selected { border-color: #94a3b8; }
 .task-content, .task-actions { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
 .task-actions { background: #343c49; overflow-x: auto; scrollbar-width: none; }

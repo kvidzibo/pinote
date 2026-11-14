@@ -447,6 +447,29 @@ try {
     const load = () => page.evaluate(async()=> (await window.pinote.loadState()).taskActions);
     const row = page.locator(`[data-id="${first}"]`);
     const action = id => row.locator(`[data-row-element="${id}"]`);
+    const checkRowDecoration = async target => {
+      await page.mouse.move(0,0);
+      const measure = () => target.evaluate(node => {
+        const box=node.getBoundingClientRect(), style=getComputedStyle(node), line=getComputedStyle(node,'::after');
+        const fields=['.task-title','.badge'].map(selector=>node.querySelector(selector).getBoundingClientRect());
+        return {height:box.height,width:box.width,background:style.backgroundColor,image:style.backgroundImage,border:style.borderColor,
+          left:parseFloat(line.left),right:parseFloat(line.right),lineHeight:line.height,pointerEvents:line.pointerEvents,
+          expectedLeft:Math.min(...fields.map(r=>r.left))-box.left-node.clientLeft,
+          expectedRight:box.right-Math.max(...fields.map(r=>r.right))-node.clientLeft,
+          whiteSpace:getComputedStyle(node.querySelector('.task-title')).whiteSpace};
+      });
+      const before=await measure();
+      assert.equal(before.height,33,'Separators must not increase row height');
+      assert.equal(before.whiteSpace,'nowrap');
+      assert.equal(before.lineHeight,'1px'); assert.equal(before.pointerEvents,'none');
+      assert.ok(Math.abs(before.left-before.expectedLeft)<0.1 && Math.abs(before.right-before.expectedRight)<0.1,'Separator must follow the configured text/tag span, not action positions');
+      assert.equal(before.image,'none');
+      await target.locator('.task-title').hover();
+      const hover=await measure();
+      assert.match(hover.image,/rgba\(255, 255, 255, 0\.04\)/);
+      for(const key of ['height','width','background','border','left','right']) assert.equal(hover[key],before[key],`Hover must preserve ${key}`);
+      await page.mouse.move(0,0);
+    };
     const bar = page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${first}:`)});
     const resize = async width => {
       await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,660),width);
@@ -539,6 +562,7 @@ try {
     await resize(1100);
     const liveOrder = () => row.locator('.task-content > [data-row-element]').evaluateAll(nodes=>nodes.filter(n=>!n.hidden).map(n=>n.dataset.rowElement));
     assert.deepEqual(await liveOrder(),customRow);
+    await checkRowDecoration(row);
     await page.screenshot({path:join(root,'task-actions-custom-row.png')});
     const expected=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
     await action('copy').click();
@@ -561,6 +585,7 @@ try {
     await resize(280);
     const hidden=await row.locator('.row-action').evaluateAll(nodes=>nodes.filter(n=>n.hidden).map(n=>n.dataset.rowElement));
     assert.ok(hidden.length>0);
+    await checkRowDecoration(row);
     await action('actions').click();
     const labels={kitty:'Start in Kitty…',copy:'Copy note',start:'Start',done:'Complete',archive:'Remove to archive',edit:'Edit text…',schedule:'Set reminder…',tag:'Change tag…',preview:'Preview'};
     for(const id of hidden) assert.equal(await bar.getByRole('button',{name:labels[id],exact:true}).count(),1,`Overflow ${id} must remain reachable`);
@@ -600,6 +625,7 @@ try {
     await tab('Not started').click(); assert.deepEqual(await rowOrder(),defaultRow('start')); await save();
     assert.deepEqual((await load()).in_progress.row,[...defaultRow('done'),'start']);
     const progressRow=page.locator(`[data-id="${progress}"]`);
+    await checkRowDecoration(progressRow);
     assert.match(await progressRow.locator('[data-row-element="start"]').getAttribute('title'),/: Reset progress;/);
     const completeId=call('add',{text:'Complete with the in-progress row button',tag:null}).id;
     const completeTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===completeId);
@@ -609,6 +635,7 @@ try {
     assert.equal(call('snapshot',{view:'archive'}).notes.find(n=>n.id===completeId).state,'done');
     await action('start').click({button:'right'});
     assert.ok(await row.evaluate(n=>n.classList.contains('marked')));
+    await checkRowDecoration(row);
     assert.match(await action('unmark').getAttribute('title'),/: Cancel deletion mark;/);
     await action('copy').click(); assert.ok(await row.evaluate(n=>n.classList.contains('marked')),'Copy must not confirm deletion');
     await action('actions').click();

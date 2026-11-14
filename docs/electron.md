@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.9.1.
+package is private, version 0.9.2.
 Run from the repository root:
 
 ```sh
@@ -41,6 +41,10 @@ intended automatic-floating mechanism in i3, without additional rules. Although
 Icons are bundled rather than taken from the host icon theme.
 
 ## Controls and deliberate differences
+
+Task rows stay single-line and compact. Subtle separators span the text/tag area;
+a light hover highlight follows the whole row without moving it or replacing
+progress, deletion-mark, or keyboard-focus styling. Row action order is unchanged.
 
 - Add with **Enter**; **Shift+Enter** inserts a newline. The composer grows
   and shrinks with its text. Ordinary tasks use the available window height;
