@@ -37,6 +37,13 @@ test("footer config selects fields and clips linked Unicode across segment bound
     { fields: [{ name: "PR", link: "yes" }] }, { fields: [{ name: "PR", format: "<unknown>" }] }]) {
     assert.throws(() => parseFooterConfig({ footer }));
   }
+  const disabled = { name: "Worktree", enabled: false, instructions: "Save root\nafter choosing it." };
+  const configured = parseFooterConfig({ footer: { fields: [disabled] } });
+  assert.equal(configured.fields![0].instructions, disabled.instructions);
+  assert.deepEqual(customFooterChips({ Worktree: "/tmp/worktree" }, configured), []);
+  for (const entry of [{ enabled: "yes" }, { instructions: "x".repeat(4097) }, { instructions: "bad\x1bvalue" }]) {
+    assert.throws(() => parseFooterConfig({ footer: { fields: [{ name: "Worktree", ...entry }] } }));
+  }
   const pr = { name: "PR", label: "", format: "#<number>", link: true };
   const linkedConfig = parseFooterConfig({ footer: { fields: [pr, "Empty"] } });
   const prNotes = { PR: "[Fix](https://github.com/org/repo/pull/42)", Empty: "  " };

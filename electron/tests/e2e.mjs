@@ -10,6 +10,7 @@ const sourceValue = locator => locator.evaluate(node => node.querySelector('.cm-
 
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
+const handoffOnly = process.argv.includes('--handoff-only');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
 const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../.venv/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
@@ -31,11 +32,26 @@ function call(operation, params) {
 call('create_tag',{name:'Work',folder:null});
 call('create_tag',{name:'Empty filter',folder:null});
 const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
+const sessions = ['a1234567-89ab-4cde-8fab-0123456789ab', 'session_' + '0123456789abcdef'.repeat(15)];
+const handoffFields = { Summary: 'Saved **summary**', Next: 'Run the focused checks', Risks: '<script>window.compromised=true</script>' };
+if (handoffOnly) {
+  const note = resolve('../.venv/bin/note');
+  const cli = args => {
+    const result = spawnSync(note, ['--no-notify', ...args], { env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  for (const session of sessions) {
+    const task = call('snapshot', { view: 'active' }).notes.find(n => n.id === first);
+    cli(['agent', 'start', String(first), '--expected-updated-at', task.updated_at, '--pi-session-id', session]);
+  }
+  const task = call('snapshot', { view: 'active' }).notes.find(n => n.id === first);
+  cli(['agent', 'update', String(first), '--expected-updated-at', task.updated_at, '--set-json', JSON.stringify(handoffFields)]);
+}
 const progress = call('add',{text:'Check GTK, CLI and Pi coexistence',tag:'Work'}).id;
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
 call('transition',{id:t.id,revision:t.updated_at,state:t.state,action:'start'});
 call('add',{text:'Review drafts, reminders and archive',tag:null});
-for(let index=0;index<100;index++) call('add',{text:`Benchmark task ${index}`,tag:'Work'});
+for(let index=0;index<(handoffOnly ? 0 : 100);index++) call('add',{text:`Benchmark task ${index}`,tag:'Work'});
 let wm, app, gtk;
 let service, client;
 const logs=[]; const pageErrors=[];
@@ -109,6 +125,7 @@ try {
   wm = spawn('i3',['-a','-c',config],{env,stdio:'ignore'});
   for(let i=0;i<100;i++) { if(spawnSync('i3-msg',['-s',socket,'-t','get_tree'],{env,stdio:'ignore'}).status===0) break; await new Promise(r=>setTimeout(r,30)); }
   env.I3SOCK = socket;
+  if (!handoffOnly) {
   const gtkPath=resolve('../.venv-gui/bin/pinote-gui');
   gtk=spawn(gtkPath,[],{env:{...env,GDK_BACKEND:'x11'},stdio:['ignore','pipe','pipe']});
   gtk.stdout.on('data',b=>logs.push(`GTK: ${b}`));
@@ -125,6 +142,7 @@ try {
     await new Promise(resolve=>setTimeout(resolve,100));
   }
   assert.ok(gtkReady,`GTK must show its window before Electron starts: ${logs.join('\n')}`);
+  }
   const started = performance.now();
   app = await _electron.launch({ executablePath:createRequire(import.meta.url)('electron'), args:['--class=pinote-electron',resolve('dist/main.cjs')], env, chromiumSandbox:true, timeout:20000 });
   app.process().stderr.on('data',b=>logs.push(b.toString()));
@@ -154,6 +172,32 @@ try {
     assert.equal(page.isClosed(), false, 'Escape closes only the preview');
   };
   await page.locator('.task-row').first().waitFor();
+  if (handoffOnly) {
+    const saved = call('snapshot', { view: 'active' }).notes.find(n => n.id === first);
+    assert.deepEqual(saved.pi_sessions, sessions);
+    assert.deepEqual(saved.agent_notes, handoffFields);
+    const preview = await openPreview(() => page.locator(`[data-id="${first}"]`).getByRole('button', { name: 'Unread agent update — click to view.', exact: true }).click());
+    assert.deepEqual(await preview.locator('.sessions pre').allTextContents(), sessions);
+    assert.deepEqual(await preview.locator('.agent h4').allTextContents(), Object.keys(saved.agent_notes));
+    await preview.locator('.agent strong').getByText('summary', { exact: true }).waitFor();
+    assert.ok((await preview.locator('.agent').textContent()).includes(handoffFields.Risks));
+    assert.equal(await preview.evaluate(() => window.compromised), undefined);
+    assert.equal(await preview.locator('.sessions a, .sessions strong, .sessions script').count(), 0);
+    const wrapping = await preview.locator('.sessions pre').last().evaluate(node => ({
+      wrap: getComputedStyle(node).overflowWrap, whiteSpace: getComputedStyle(node).whiteSpace,
+      fits: node.scrollWidth <= node.clientWidth + 1, height: node.getBoundingClientRect().height,
+      lineHeight: parseFloat(getComputedStyle(node).lineHeight),
+    }));
+    assert.equal(wrapping.wrap, 'anywhere');
+    assert.equal(wrapping.whiteSpace, 'pre-wrap');
+    assert.ok(wrapping.fits && wrapping.height > wrapping.lineHeight, 'Full long session ID must wrap without horizontal clipping');
+    assert.deepEqual(outgoing, []);
+    assert.deepEqual(pageErrors, []);
+    const screenshot = join(root, 'handoff-preview.png');
+    await preview.screenshot({ path: screenshot });
+    console.log(`Handoff preview screenshot: ${screenshot}`);
+    await dismissPreview(preview);
+  } else {
   await installNativeMenuProbe();
   const taskReadyMs=performance.now()-started;
   await page.waitForTimeout(350);
@@ -1689,6 +1733,7 @@ try {
     assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
   } finally { await chmod(stateDir,0o700); }
   console.log(`Electron UI validation artifacts: ${root}`);
+  }
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally {
   if(app) {

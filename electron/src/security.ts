@@ -78,6 +78,8 @@ function validTask(value: unknown): boolean {
   if (!record(value) || !id(value.id) || !str(value.text) || !['active','in_progress','scheduled','done','removed'].includes(String(value.state))) return false;
   if (!str(value.created_at,128) || !str(value.updated_at,128) || !value.updated_at || !nullable(value.tag)) return false;
   if (!['remind_at','reminder_due_at','archived_at'].every(k => nullable(value[k]))) return false;
+  if (!Array.isArray(value.pi_sessions) ||
+    ![...value.pi_sessions].every(session => str(session,256) && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(session as string))) return false;
   return typeof value.agent_event_id === 'number' && Number.isSafeInteger(value.agent_event_id) && value.agent_event_id >= 0 && record(value.agent_notes) && Object.entries(value.agent_notes).every(([k,v]) => str(k,256) && str(v));
 }
 export function validEnvelope(operation: Operation, value: unknown): boolean {
