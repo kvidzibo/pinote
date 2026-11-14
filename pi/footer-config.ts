@@ -36,8 +36,8 @@ export function parseHandoffPrompt(value: unknown): string {
 export type PinoteSettings = { footer: FooterConfig; handoffPrompt: string; newSessionPrompt?: string };
 
 export type FooterField = { name: string; label: string; link: boolean; format: string; width?: number; enabled?: boolean; instructions?: string };
-export type FooterConfig = { titleWidth: number; fieldWidth: number; maxFields: number; fields: FooterField[] | null };
-export const defaultFooterConfig: FooterConfig = { titleWidth: 60, fieldWidth: 60, maxFields: 4, fields: null };
+export type FooterConfig = { titleWidth: number; fieldWidth: number; maxFields: number; fields: FooterField[] | null; bar?: string[] | null };
+export const defaultFooterConfig: FooterConfig = { titleWidth: 60, fieldWidth: 60, maxFields: 4, fields: null, bar: null };
 export const defaultFooterField = (name: string): FooterField => ({
   name, label: name, link: true, format: name === "PR" || name === "PRs" ? "#<number>" : "<value>",
 });
@@ -95,10 +95,24 @@ export function parseFooterConfig(value: unknown): FooterConfig {
         ...(field.width === undefined ? {} : { width: field.width as number }) };
     });
   }
+  let bar: string[] | null = null;
+  if (footer.bar !== undefined && footer.bar !== null) {
+    if (!Array.isArray(footer.bar) || footer.bar.length > 64) throw new Error("bar must be null or an array of at most 64 field names");
+    const seen = new Set<string>();
+    bar = footer.bar.map((entry) => {
+      if (!safeText(entry)) throw new Error("invalid field name");
+      const name = entry.normalize("NFC").trim();
+      if (!name || [...name].length > 64 || name === "Bar") throw new Error("invalid field name");
+      const normalized = name === "PR" ? "PRs" : name;
+      if (seen.has(normalized)) throw new Error("duplicate field name");
+      seen.add(normalized);
+      return normalized;
+    });
+  }
   return {
     titleWidth: footer.titleWidth as number | undefined ?? defaultFooterConfig.titleWidth,
     fieldWidth: footer.fieldWidth as number | undefined ?? defaultFooterConfig.fieldWidth,
-    maxFields: footer.maxFields as number | undefined ?? defaultFooterConfig.maxFields, fields,
+    maxFields: footer.maxFields as number | undefined ?? defaultFooterConfig.maxFields, fields, bar,
   };
 }
 
@@ -132,6 +146,7 @@ export function loadFooterConfig(warn: (message: string) => void): FooterConfig 
 export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null, fieldWatchers?: FieldWatcherConfig[]) {
   if (taskOfferPolicy !== undefined && !["always", "github-remote", "never"].includes(taskOfferPolicy)) throw new Error("Invalid taskOfferPolicy");
   const checked = parseFooterConfig({ footer: config });
+  if (checked.bar == null) delete checked.bar;
   const prompts = {
     ...(handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) }),
     ...(newSessionPrompt === undefined ? {} : { newSessionPrompt: parseNewSessionPrompt(newSessionPrompt) }),
@@ -172,4 +187,42 @@ export function effectiveFooterFields(config: FooterConfig, notes: Record<string
     seen.add(name);
     return [defaultFooterField(name)];
   });
+}
+
+/** Configured definitions plus unsaved presets. PR is presented as PRs without rewriting settings. */
+export function footerCatalog(config: FooterConfig, notes: Record<string, string> = {}): FooterField[] {
+  const seen = new Set<string>();
+  const configured = config.fields === null
+    ? effectiveFooterFields(config, notes).filter((entry) => entry.name !== "PR" || Boolean(notes.PR))
+    : config.fields;
+  const checked = configured.flatMap((entry) => {
+    const field = entry.name === "PR"
+      ? { ...entry, name: "PRs", label: entry.label === "PR" ? "PRs" : entry.label } : entry;
+    if (seen.has(field.name)) return [];
+    try {
+      const parsed = parseFooterConfig({ footer: { fields: [field] } }).fields!;
+      seen.add(field.name);
+      return parsed;
+    } catch { return []; }
+  }).slice(0, 64);
+  return [...checked, ...defaultFieldPresets().filter((preset) => !checked.some((field) => field.name === preset.name))];
+}
+
+/** Bottom-bar names in display order. An unset bar keeps enabled fields in definition order. */
+export function footerBarNames(config: FooterConfig, catalog: FooterField[]): string[] {
+  const known = new Set(catalog.map((field) => field.name));
+  const source = config.bar ?? catalog.filter((field) => field.enabled !== false).map((field) => field.name);
+  const seen = new Set<string>();
+  return source.flatMap((raw) => {
+    const name = raw === "PR" ? "PRs" : raw;
+    if (!known.has(name) || seen.has(name)) return [];
+    seen.add(name);
+    return [name];
+  });
+}
+
+/** Fields to render. An explicit bar can include disabled fields and omit enabled ones. */
+export function footerDisplayFields(config: FooterConfig, catalog: FooterField[]): FooterField[] {
+  const byName = new Map(catalog.map((field) => [field.name, field]));
+  return footerBarNames(config, catalog).flatMap((name) => byName.has(name) ? [byName.get(name)!] : []);
 }

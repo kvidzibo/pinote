@@ -75,6 +75,13 @@ retained. Editors accept plain text or numbers, not JSON; validation retains the
 draft. Cancelling a change's confirmation returns to its text draft. Values
 are saved only after review and confirmation.
 
+**Footer layout** lists the current fields under the width settings. Select a
+field to show it next in the bottom bar; its number is that order. Select it
+again to hide it and renumber the rest. None selected hides every handoff field.
+Empty values stay hidden, and **Max fields** still caps the bar. Until an order
+is saved, enabled fields appear in definition order. This does not change agent
+instructions.
+
 Menus use Pi's native inline components, themes and configured selection keys.
 **Escape** goes back; **Ctrl+R** refreshes; page keys scroll lists and documents.
 Small terminals show compact menus or ask you to enlarge the window before acting.
@@ -246,9 +253,10 @@ check missing/changed relevant values before ending implementation or handing of
 This is model guidance, not a guaranteed filesystem hook. It does not create
 worktrees or PRs, and never authorizes work beyond the user's request.
 
-Disabling stops automatic population guidance and hides the Pi footer field;
-saved values remain visible in Electron's task preview, alongside full Pi session
-IDs. Session recording is integration-managed and independent of field switches.
+Disabling stops automatic population guidance. Bottom-bar display is chosen in
+**Footer layout**; until that order is saved, enabled fields still appear in
+definition order. Saved values remain visible in Electron's task preview, alongside
+full Pi session IDs. Session recording is integration-managed and independent of field switches.
 Watchers have separate enable switches. Removing a preset definition restores its
 disabled default; other definitions are removed without deleting saved values.
 New definitions/edits require confirmation and affect every connected client.
@@ -294,6 +302,10 @@ not a conflict alert. Both providers support multiple independent PRs.
 See [setup, configuration, script contract and safeguards](mcp/FIELD_EVENTS.md).
 
 ## Migration
+
+Since pi-note 0.45.0, **Footer layout** chooses which fields appear in the bottom
+bar and in what order. Update the client and service, then `/reload` Pi. Existing
+layouts are unchanged until an order is saved.
 
 Since pi-note 0.40.1, `/pinote` opens tasks directly and **Tab** opens settings.
 Update both client and service for newest-created-first search results, then

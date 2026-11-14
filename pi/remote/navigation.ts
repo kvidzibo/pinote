@@ -22,7 +22,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       title = 'Pinote / Settings'; body = 'Shared service settings · affects all connected clients. Task values are unchanged.';
       controls = [group('prompts', 'Agent guidance', 'Edit shared task prompts and injected instructions.'),
         group('fields', 'Fields', 'Enable fields and edit display settings and automatic agent instructions.'),
-        ...take('taskOfferPolicy'), group('footer', 'Footer layout', 'Set title/field widths and the maximum visible handoff fields.')];
+        ...take('taskOfferPolicy'), group('footer', 'Footer layout', 'Set widths, the field cap, and which fields appear in the bottom bar.')];
       break;
     case 'prompts':
       title = 'Pinote / Settings / Agent guidance'; body = 'Shared prompts and instructions · each change requires review and confirmation.';
@@ -31,11 +31,12 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       if (view.body?.includes('editor limit')) body = view.body;
       break;
     case 'footer':
-      title = 'Pinote / Settings / Footer layout'; body = 'Shared display settings · widths are terminal columns. Task values are retained.';
-      controls = take('titleWidth', 'fieldWidth', 'maxFields');
+      title = 'Pinote / Settings / Footer layout';
+      body = 'Widths are terminal columns. Numbered fields appear in the bottom bar in that order. Select a field to show or hide it. Empty values stay hidden, and Max fields still caps the bar.';
+      controls = [...take('titleWidth', 'fieldWidth', 'maxFields'), ...view.controls.filter((c) => c.id.startsWith('bar:'))];
       break;
     case 'fields':
-      title = 'Pinote / Settings / Fields'; body = 'Enable fields for automatic agent updates and the Pi footer. Electron retains all saved values. Worktree and PRs presets start disabled.';
+      title = 'Pinote / Settings / Fields'; body = 'Enable fields for automatic agent updates. Bottom-bar display is set in Footer layout. Electron retains all saved values. Worktree and PRs presets start disabled.';
       controls = [group('watchers', 'Watchers…', 'Bundled and custom field watchers; explicitly enable trusted code and automatic worker actions.'),
         ...view.controls.filter((c) => c.id.startsWith('field:')), ...take('add-field')];
       break;
