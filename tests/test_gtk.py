@@ -236,6 +236,7 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
         history = [dict(event) for event in store.history()]
         # Exercise a real schema-6 upgrade with an existing tag and task.
         store.connection.execute("ALTER TABLE tags DROP COLUMN default_folder")
+        store.connection.execute("ALTER TABLE notes DROP COLUMN pi_sessions")
         store.connection.execute("PRAGMA user_version = 6")
     calls = []
     monkeypatch.setattr(
@@ -274,7 +275,7 @@ def test_tag_default_folder_skips_chooser_and_can_be_cleared(gtk, monkeypatch):
     assert manager.folders == {"Project": str(gtk.paths.data)}
     manager.close()
     with Store(gtk.paths.database) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
         note = store.get(note.id)
         assert [dict(event) for event in store.history()][:-1] == history
         assert store.tag_folders() == {"Project": str(gtk.paths.data)}

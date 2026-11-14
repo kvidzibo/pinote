@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import string
 import unicodedata
@@ -65,6 +66,7 @@ class Note:
     archived_at: str | None = None  # Completion/deletion time, independent of later tag edits.
     agent_notes: dict[str, str] = field(default_factory=dict)
     agent_event_id: int = 0
+    pi_sessions: list[str] = field(default_factory=list)
 
     @property
     def markdown(self) -> str:
@@ -88,6 +90,7 @@ class ImportSummary:
 def note_from_row(row: sqlite3.Row) -> Note:
     values = dict(row)
     values["agent_notes"] = json.loads(values["agent_notes"])
+    values["pi_sessions"] = json.loads(values["pi_sessions"])
     return Note(**values)
 
 
@@ -257,6 +260,9 @@ MIGRATION_6 = (
 MIGRATION_7 = ("ALTER TABLE tags ADD COLUMN default_folder TEXT",)
 
 
+MIGRATION_8 = ("ALTER TABLE notes ADD COLUMN pi_sessions TEXT NOT NULL DEFAULT '[]'",)
+
+
 class Store:
     def __init__(self, path: Path, *, timeout: float = 10):
         private_directory(path.parent)
@@ -272,15 +278,15 @@ class Store:
 
     def _initialize(self) -> None:
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 7:
+        if version == 8:
             return  # Ordinary reads must not take a write lock.
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             # Another process may have upgraded while this connection waited.
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-            if version == 7:
+            if version == 8:
                 return
-            if version not in (0, 1, 2, 3, 4, 5, 6):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
                 raise NoteError(f"Unsupported database version {version}; update pinote.")
             if version == 0:
                 for statement in SCHEMA:
@@ -300,9 +306,12 @@ class Store:
             if version < 6:
                 for statement in MIGRATION_6:
                     self.connection.execute(statement)
-            for statement in MIGRATION_7:
+            if version < 7:
+                for statement in MIGRATION_7:
+                    self.connection.execute(statement)
+            for statement in MIGRATION_8:
                 self.connection.execute(statement)
-            self.connection.execute("PRAGMA user_version = 7")
+            self.connection.execute("PRAGMA user_version = 8")
 
     def __enter__(self) -> Store:
         return self
@@ -649,7 +658,19 @@ class Store:
         expected_states: set[str] | None = None,
         expected_updated_at: str | None = None,
         allow_unchanged: bool = False,
+        pi_session_id: str | None = None,
     ) -> bool:
+        if pi_session_id is not None:
+            if (
+                not isinstance(pi_session_id, str)
+                or len(pi_session_id) > 256
+                or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", pi_session_id)
+            ):
+                raise NoteError(
+                    "--pi-session-id must be a valid Pi session ID (at most 256 characters)."
+                )
+            if action != "start":
+                raise NoteError("Pi sessions can only be recorded when starting a task.")
         target = {
             "start": "in_progress",
             "reset": "active",
@@ -661,7 +682,7 @@ class Store:
             # Read and write under the same lock, even for non-CLI callers.
             self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute(
-                "SELECT state, updated_at FROM notes WHERE id = ?", (note_id,)
+                "SELECT state, updated_at, pi_sessions FROM notes WHERE id = ?", (note_id,)
             ).fetchone()
             # GUI actions carry the state they were drawn for. Check it under
             # the same transaction as the write, not in a preceding snapshot.
@@ -672,13 +693,22 @@ class Store:
             if expected_updated_at is not None and row["updated_at"] != expected_updated_at:
                 return False  # The archive row was restored/changed since it was drawn.
             previous = row["state"]
-            if previous == target:
-                return allow_unchanged
+            if previous == target and not allow_unchanged:
+                return False
             if action in {"start", "reset"} and previous in {"done", "removed", "scheduled"}:
                 raise NoteError(f"Note {note_id} is {previous}; restore it first.")
             if action == "done" and previous in {"removed", "scheduled"}:
                 raise NoteError(f"Note {note_id} is {previous}; restore it first.")
-            self._change_state(note_id, action, previous, target)
+            if previous != target:
+                self._change_state(note_id, action, previous, target)
+            if pi_session_id is not None:
+                sessions = json.loads(row["pi_sessions"])
+                if pi_session_id not in sessions:
+                    sessions.append(pi_session_id)
+                    self.connection.execute(
+                        "UPDATE notes SET pi_sessions = ? WHERE id = ?",
+                        (json.dumps(sessions), note_id),
+                    )
         return True
 
     def archived_notes(self) -> list[Note]:

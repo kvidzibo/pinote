@@ -31,7 +31,14 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
     { ...request, point: { x: 0.5, y: 0 } }, { ...request, point: { x: 100001, y: 0 } },
     { ...request, point: { x: 0, y: 0, command: 'edit' } }, { ...request, command: 'edit' },
   ]) assert.ok(!validPreviewRequest(value));
-  assert.ok(validState(initialState()));
+  assert.ok(validState(initialState())); // Legacy state without working-state fields remains readable.
+  assert.ok(validState({ ...initialState(), creationTag: 'Work', collapsed: true, scroll: { ordinary: 42, pinned: 0 } }));
+  assert.ok(validState({ ...initialState(), creationTag: null, collapsed: false }));
+  for (const extra of [
+    { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
+    { scroll: null }, { scroll: { ordinary: 0 } }, { scroll: { ordinary: -1, pinned: 0 } },
+    { scroll: { ordinary: Infinity, pinned: 0 } }, { scroll: { ordinary: 0, pinned: 0, extra: 1 } },
+  ]) assert.ok(!validState({ ...initialState(), ...extra }));
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));
   for (const pendingTag of [null, 'Work']) assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));

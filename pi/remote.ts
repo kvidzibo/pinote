@@ -89,7 +89,8 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
           ctx.ui.notify('Pinote launch ignored: invalid request or nonempty/resumed session. Existing selection is unchanged.', 'warning');
         }
       }
-      await session.start(branch, ctx.sessionManager.getSessionId() || randomUUID(), carried);
+      const piSessionId = ctx.sessionManager.getSessionId();
+      await session.start(branch, piSessionId || randomUUID(), carried, piSessionId || undefined);
       if (launch) {
         const view = session.view!;
         // The service exposes this control only for the exact GUI-displayed revision.

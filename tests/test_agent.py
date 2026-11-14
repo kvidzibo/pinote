@@ -8,7 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from pinote.store import MIGRATION_3, MIGRATION_4, MIGRATION_5, SCHEMA, NoteError, Store
+from pinote.store import (
+    MIGRATION_3,
+    MIGRATION_4,
+    MIGRATION_5,
+    MIGRATION_6,
+    MIGRATION_7,
+    SCHEMA,
+    NoteError,
+    Store,
+)
 
 
 def test_agent_handoff_upgrade_restart_and_revision_safe_updates(cli, tmp_path):
@@ -98,7 +107,7 @@ def test_agent_handoff_upgrade_restart_and_revision_safe_updates(cli, tmp_path):
         )
     assert agent("get", "7") == current
     with Store(cli.database) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
         assert store.history(7)[0]["id"] == 9 and store.history(7)[1]["id"] == 81
         assert json.loads(store.history(7)[2]["previous_agent_notes"]) == {}
         assert json.loads(store.history(7)[2]["agent_notes"]) == patch
@@ -322,3 +331,93 @@ def test_bounded_field_events_updates_lifecycle_and_pagination(cli, monkeypatch)
     with Store(cli.database) as store:
         assert store.get(due).state == "scheduled"
         assert len(store.history()) == before
+
+
+def test_pi_sessions_migrate_and_append_only_on_revision_checked_start(cli):
+    cli.database.parent.mkdir(parents=True)
+    with sqlite3.connect(cli.database) as db:
+        for statement in (
+            *SCHEMA,
+            *MIGRATION_3,
+            *MIGRATION_4,
+            *MIGRATION_5,
+            *MIGRATION_6,
+            *MIGRATION_7,
+        ):
+            db.execute(statement)
+        db.execute("PRAGMA user_version = 7")
+        db.execute(
+            "INSERT INTO notes(id,text,state,created_at,updated_at,agent_notes) "
+            "VALUES (1,'Legacy task','active','created','old',?)",
+            ('{"Next":"Review"}',),
+        )
+        db.execute(
+            "INSERT INTO events(note_id,action,state,occurred_at,text) "
+            "VALUES (1,'add','active','created','Legacy task')"
+        )
+
+    def agent(*args, check=True):
+        result = cli("agent", *args, check=check)
+        return json.loads(result.stdout) if result.returncode == 0 else result
+
+    def start(session, revision, note_id="1"):
+        return agent(
+            "start",
+            note_id,
+            "--expected-updated-at",
+            revision,
+            "--pi-session-id",
+            session,
+            check=False,
+        )
+
+    first = "12345678-1234-1234-1234-123456789abc"
+    second = "22345678-1234-1234-1234-123456789abc"
+    third = "Custom.Session_3"
+    legacy = agent("get", "1")
+    assert legacy["pi-sessions"] == [] and legacy["updated_at"] == "old"
+    assert legacy["agent_notes"] == {"Next": "Review"}
+    with Store(cli.database) as store:
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert store.add_note("New task").pi_sessions == []
+        assert store.history(1)[0]["text"] == "Legacy task"
+    started = start(first, "old")
+    assert started["state"] == "in_progress" and started["updated_at"] != "old"
+    assert started["pi-sessions"] == [first]
+    assert started["markdown"] == legacy["markdown"]
+    assert start(first, started["updated_at"]) == started
+    # Already-started selections share a revision: serialize appends, not overwrite them.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(lambda session: start(session, started["updated_at"]), (second, third))
+        )
+    assert all(isinstance(result, dict) for result in results)
+    current = agent("get", "1")
+    assert current["pi-sessions"][0] == first
+    assert set(current["pi-sessions"]) == {first, second, third}
+    assert current["updated_at"] == started["updated_at"]
+    assert start(second, "old").returncode == 1
+    for invalid in ("", "../session", "session\n", "session-", "x" * 257):
+        assert start(invalid, current["updated_at"]).returncode == 1
+    assert start(first, "old", "999").returncode == 1
+    assert agent("get", "1") == current
+    with Store(cli.database) as store:
+        assert [event["action"] for event in store.history(1)] == ["add", "start"]
+        assert store.get(1).agent_event_id == 0
+        store.edit(1, "Edited task", expected_updated_at=current["updated_at"])
+    edited = agent("get", "1")
+    assert edited["pi-sessions"] == current["pi-sessions"]
+    updated = agent(
+        "update",
+        "1",
+        "--expected-updated-at",
+        edited["updated_at"],
+        "--set-json",
+        '{"Next":"Done"}',
+    )
+    assert updated["pi-sessions"] == current["pi-sessions"]
+    done = agent("done", "1", "--expected-updated-at", updated["updated_at"])
+    assert start("42345678-1234-1234-1234-123456789abc", done["updated_at"]).returncode == 1
+    assert agent("get", "1") == done
+    cli("start", "2", "--no-notify")  # Ordinary CLI start needs no session ID.
+    assert agent("get", "2")["pi-sessions"] == []

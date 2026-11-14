@@ -118,6 +118,10 @@ def parser() -> argparse.ArgumentParser:
                     operation.add_argument("--cwd", type=Path, required=True)
                 if action in {"start", "update", "done", "tag"}:
                     operation.add_argument("--expected-updated-at", required=True)
+                if action == "start":
+                    operation.add_argument(
+                        "--pi-session-id", help="Pi session ID (at most 256 characters)"
+                    )
                 if action == "update":
                     operation.add_argument("--set-json", default="{}", help="label: Markdown pairs")
                     operation.add_argument(
@@ -179,6 +183,7 @@ def agent_task(note: Note | None) -> dict | None:
         "tag": note.tag,
         "updated_at": note.updated_at,
         "agent_notes": note.agent_notes,
+        "pi-sessions": note.pi_sessions,
         "markdown": note.markdown,
     }
 
@@ -218,6 +223,7 @@ def execute_agent(args: argparse.Namespace, store: Store) -> None:
             expected_states={"active", "in_progress"},
             expected_updated_at=args.expected_updated_at,
             allow_unchanged=action == "start",
+            pi_session_id=args.pi_session_id if action == "start" else None,
         ):
             raise NoteError("This task changed elsewhere. Read it again before acting.")
         note = store.get(args.id)

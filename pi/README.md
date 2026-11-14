@@ -107,6 +107,15 @@ Unrelated fresh launches start unselected.
 Changing endpoints starts a separate selection namespace. Unsaved Pi sessions
 cannot guarantee selection persistence.
 
+With pi-note 0.41.0+ on both client and service, and note 0.25.0+, selecting a task
+(including accepting a suggestion, creating one, or **Start in Kitty…**) appends
+the actual Pi session ID to its persistent `pi-sessions` array, without duplicates.
+Task reads and injected agent context include the array so later agents can locate
+previous sessions on the machine that saved them. Reads, previews, reload/resume,
+and carried selections do not append IDs; select the task in a new session to record it.
+IDs are metadata only: transcripts are not uploaded, and unsaved/deleted sessions
+may no longer be available. The array is separate from editable handoff fields.
+
 The GTK app's **Start in Kitty…** action (note 0.13.0+) chooses a working directory
 and opens a named tab with this task selected, without submitting a prompt.
 In note 0.16.0+, it uses the tag's default folder when available, otherwise keeps

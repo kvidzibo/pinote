@@ -111,6 +111,12 @@ rejected; use `--remove` instead. Conflicting set/remove labels are rejected.
 `agent start` starts an active task without storing a project selection. It also
 accepts an unchanged in-progress task without adding history. Its revision check
 and transition are atomic; use it for a task selected by another UI.
+With note 0.25.0+, optional `--pi-session-id ID` also appends that Pi
+session ID (up to 256 characters) atomically to the task's `pi-sessions` array. Duplicate IDs are ignored;
+recording session metadata alone does not change `updated_at` or add history events.
+`agent get` and other task JSON responses include the array (initially `[]`). It
+survives edits, completion and restoration, is not an editable handoff field, and
+is omitted from Markdown exports. Remote Pi selection supplies the ID automatically.
 
 Use the returned `updated_at` for guarded starts, updates, tagging, and completion; a stale revision fails
 without changing anything. Fields are retained as history snapshots and displayed

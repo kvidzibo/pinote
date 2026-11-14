@@ -57,7 +57,12 @@ function validTaskActions(value: unknown): boolean {
     Object.hasOwn(value, state) && validTaskActionPreferences(value[state], taskActionIds(state).filter(id => !legacy || id !== 'preview'), legacy));
 }
 export function validState(value: unknown): value is UIState {
-  if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions'].includes(k))) return false;
+  if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions','creationTag','collapsed','scroll'].includes(k))) return false;
+  if (Object.hasOwn(value, 'creationTag') && value.creationTag !== null && (typeof value.creationTag !== 'string' || !str(value.creationTag, 256) || !value.creationTag.length)) return false;
+  if (Object.hasOwn(value, 'collapsed') && typeof value.collapsed !== 'boolean') return false;
+  const scroll = value.scroll;
+  if (Object.hasOwn(value, 'scroll') && (!record(scroll) || Object.keys(scroll).length !== 2 ||
+    !['ordinary','pinned'].every(k => typeof scroll[k] === 'number' && Number.isFinite(scroll[k]) && scroll[k] >= 0 && scroll[k] <= 100000000))) return false;
   if (Object.hasOwn(value, 'taskActions') && !validTaskActions(value.taskActions)) return false;
   if (!str(value.draft, 65536) || !str(value.warning, 4096)) return false;
   if (value.filters !== null && (!Array.isArray(value.filters) || value.filters.length > 10000 || !value.filters.every(v => str(v, 256)))) return false;

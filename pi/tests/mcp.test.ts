@@ -41,7 +41,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   let client = await connect();
   let state: Record<string, unknown> = {};
   let scoped = false, secondary = false, styles = false, double = false, native = false;
-  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', state }, ...((scoped || secondary || styles || double || native) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}), ...(styles ? { footerStyles: true } : {}), ...(double ? { footerDoubleActions: true } : {}), ...(native ? { footerNativeActions: true } : {}) } } : {}) });
+  const meta = () => ({ 'native-ui/context': { conversationId: 'conversation-a', piSessionId: '12345678-1234-4234-8234-123456789012', state }, ...((scoped || secondary || styles || double || native) ? { 'native-ui/features': { ...(scoped ? { actionRevisions: true } : {}), ...(secondary ? { footerSecondaryActions: true } : {}), ...(styles ? { footerStyles: true } : {}), ...(double ? { footerDoubleActions: true } : {}), ...(native ? { footerNativeActions: true } : {}) } } : {}) });
   const read = async () => {
     const result = await client.readResource({ uri: 'pinote://ui', _meta: meta() });
     assert.ok('text' in result.contents[0]);
@@ -73,6 +73,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     const task = JSON.parse((currentResult.content as any[])[0].text);
     assert.equal(task.id, id);
     assert.equal(task.text, '# MCP task\n\nDetails');
+    assert.deepEqual(task['pi-sessions'], ['12345678-1234-4234-8234-123456789012'], 'Create-and-select records the Pi session, not conversation/context IDs');
     const update = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: task.updated_at, set: { PR: 'https://github.com/example/repo/pull/42', '--Flag': 'remove me', Large: 'https://example.com/' + 'x'.repeat(3000) } }, _meta: meta() });
     assert.equal(update.isError, undefined);
     await assert.rejects(act(view, 'done'), /changed/);
@@ -459,7 +460,7 @@ test('agent context is complete, read-only, consent-validated and fails closed',
     state = { selectedId: task.id };
     const selectedText = await read();
     const selectedTask = JSON.parse(selectedText.split('Selected task (complete text, revision and handoff notes):\n')[1].split('\n')[0]);
-    assert.deepEqual(selectedTask, { id: task.id, text: task.text, tag: 'Saved', state: task.state, updated_at: updated.updated_at, agent_notes: updated.agent_notes });
+    assert.deepEqual(selectedTask, { id: task.id, text: task.text, tag: 'Saved', state: task.state, updated_at: updated.updated_at, agent_notes: updated.agent_notes, 'pi-sessions': [] });
     assert.match(selectedText, /Effective handoff field definitions/);
     assert.equal(await read(), selectedText);
     assert.deepEqual(await cli('agent', 'get', String(task.id)), updated, 'Resource reads never mutate the task');
