@@ -102,6 +102,13 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   assert.ok(multiple.notification.key.length <= 256);
   const reordered = run(base, { field: 'PRs', value: value.split('\n').reverse().join('\n') }, false, responses).output;
   assert.equal(reordered.notification.key, multiple.notification.key);
+  const unavailable = run(base, { field: 'PRs', value, previousResult: multiple }, false, { ...responses, '5': 'error' }).output;
+  assert.equal(unavailable.notification.key, multiple.notification.key, 'Availability alone never changes the failure identity');
+  assert.ok(!unavailable.notification.message.includes('#5'), 'Only currently actionable failures enter the message');
+  const allUnavailable = run(base, { field: 'PRs', value, previousResult: unavailable }, false, { ...responses, '5': 'error', '6': 'error' }).output;
+  assert.equal(allUnavailable.notification.key, multiple.notification.key, 'Retain identity even when every failed PR is unavailable');
+  const recovered = run(base, { field: 'PRs', value, previousResult: allUnavailable }, false, responses).output;
+  assert.equal(recovered.notification.key, multiple.notification.key, 'Recovery of unchanged failures does not create another alert');
   const terminal = run(base, { field: 'PRs', value: `${prUrl(1)}\n${prUrl(2)}` }, false, responses).output;
   assert.equal(terminal.recheckAfterSeconds, undefined);
   assert.equal(terminal.notification, undefined);

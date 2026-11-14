@@ -267,7 +267,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   let fieldCount = 0;
   if (task) {
     for (const field of fields(config.config, task.agent_notes)) {
-      if (fieldCount >= config.config.maxFields) break;
+      if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
       if (field.name === 'PRs') {
         const prs = parsePullRequests(pullRequestValues(task.agent_notes));
         if (!prs.length) continue;
@@ -349,7 +349,10 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
     .flatMap((status) => {
       if (!status.result.items) return [status];
       const items = status.result.items.filter((item) => item.state !== 'error');
-      return items.length ? [{ ...status, result: { ...status.result, items } }] : [];
+      // Batch-level notifications can retain old failure identities through
+      // outages. Only the current, available per-item observations belong here.
+      const { notification: _notification, ...result } = status.result;
+      return items.length ? [{ ...status, result: { ...result, items } }] : [];
     });
   let text = guidance ? `${guidance}\n${data}` : data;
   if (statuses.length) {

@@ -120,9 +120,22 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
       assert.equal(capped.footer![index + 1].text, ' ↗', 'Every retained label keeps its link icon');
       assert.ok(capped.footer![index + 1].url);
     }
+    const manyPrs = Array.from({ length: 64 }, (_, index) => `https://github.com/o/r/pull/${index + 1}`);
+    const largeTask = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
+    assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: largeTask.updated_at,
+      remove: ['Link0'], set: { PRs: manyPrs.join('\n') } }, _meta: meta() })).isError, undefined);
+    await writeFile(config, JSON.stringify({ footer: { maxFields: 64, fields: [
+      { name: 'PRs', label: '', width: 1000 }, ...linkedFields.slice(1),
+    ] } }));
+    native = false;
+    const maximumRegular = await read();
+    assert.equal(maximumRegular.footer!.length, 128, 'Multi-PR groups also respect the non-native protocol limit');
+    assert.equal(maximumRegular.footer!.filter((item) => item.url?.startsWith('https://github.com/')).length, 64);
+    native = true;
+    assert.equal((await read()).footer!.length, 128, 'Multi-PR groups respect the native protocol limit');
     const expanded = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
     assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: expanded.updated_at,
-      remove: linkedFields.map((field) => field.name), set: current.agent_notes }, _meta: meta() })).isError, undefined);
+      remove: ['PRs', ...linkedFields.map((field) => field.name)], set: current.agent_notes }, _meta: meta() })).isError, undefined);
     native = false; scoped = false;
     await writeFile(config, savedConfig);
     view = (await act(await read(), 'screen:settings')).view;

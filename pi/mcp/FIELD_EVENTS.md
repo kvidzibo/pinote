@@ -48,8 +48,9 @@ accent merged (default purple), or neutral closed/unavailable. Invalid lines are
 ignored. Legacy `PR` accepts one URL/link and retains its single-result contract.
 
 Batch checks run at most four `gh` calls at once, within a 25-second deadline.
-Unavailable entries do not erase successful results or trigger workers; they
-appear in grouped watcher diagnostics and retry. Failure/conflict alerts include
+Unavailable entries do not erase successful results or retrigger workers on
+outage/recovery; they appear in grouped watcher diagnostics and retry. Overlapping
+legacy/new PR links deliver only the plural field's alerts. Failure/conflict alerts include
 PR numbers and URLs, within the notification budget. Checks repeat every 60
 seconds until all entries are closed/merged; merging never completes the task.
 Passing means reported checks passed, not that all review/protection rules passed.
@@ -112,6 +113,9 @@ Since pi-note 0.42.0, the bundled `PRs` result has `state: "multiple"` and
 `items: [{"url": "https://github.com/owner/repo/pull/123", "state": "passing",
 "display": {"color": "success"}}]`. Top-level notification/recheck settings
 control the whole field; each item's result styles only its matching PR URL.
+For batches, the notification key identifies the failure set: message-only changes
+keep the existing receipt. Error items may retain earlier notification identities
+for deduplication, but are never actionable or sent as current model observations.
 Update the service before using handlers that return `items`.
 
 Results replace previous results, not the original field value. Omitting a

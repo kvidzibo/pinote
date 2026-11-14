@@ -158,7 +158,11 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     const urls = Array.from({ length: 6 }, (_, index) => `https://github.com/example/repo/pull/${42 + index}`);
     await update({ PRs: urls.map((url) => `[Review](${url})`).join('\n'), Next: 'Review all' });
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
-    await setMode({ state: 'multiple', items: urls.map((url, index) => ({ url, state: ['passing', 'failed', 'pending', 'merged', 'closed', 'error'][index] })), recheckAfterSeconds: 10 });
+    const batchResult = { state: 'multiple', items: urls.map((url, index) => ({ url,
+      state: ['passing', 'failed', 'pending', 'merged', 'closed', 'error'][index],
+      ...(index === 1 ? { notification: { key: 'pr-43-failed', message: 'CI failed' } } : {}),
+    })), notification: { key: 'batch-failure', message: 'PR #43 failed' }, recheckAfterSeconds: 10 };
+    await setMode(batchResult);
     await automation.tick(); forceDue();
     for (let index = 0; index < 3; index++) await automation.tick();
     for (const native of [false, true]) {
@@ -175,10 +179,27 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.ok((await view()).watcherDiagnostics?.failures.some((failure) => failure.fields.includes('PRs')), 'Partial errors remain visible in terminal-only diagnostics');
     const partialContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
     assert.doesNotMatch(JSON.parse((partialContext.contents[0] as { text: string }).text).text, /"state":"error"/, 'Unavailable entries do not enter model observations');
+    assert.equal(task.agent_notes.PR, pr, 'Legacy values are preserved without migrating task data');
+    await update({ PR: urls[1] }); // Both fields now contain the same failing PR.
+    await automation.tick(); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    const currentNotices = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
+    assert.equal(currentNotices.length, 1, 'Overlapping legacy/new fields deliver only the plural alert');
+    assert.equal(currentNotices[0].field, 'PRs');
+    const outage = { ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'error' } : item) };
+    await setMode(outage); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    assert.ok(!automation.notices(task, 'session-a').some((notice) => ['PR', 'PRs'].includes(notice.field)), 'Unavailable failures never trigger workers');
+    await setMode({ ...batchResult, notification: { ...batchResult.notification, message: 'PR #43 checks still failing' } });
+    forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    const recoveredNotices = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
+    assert.equal(recoveredNotices.length, 1);
+    assert.equal(recoveredNotices[0].id, currentNotices[0].id, 'Recovery and message changes preserve the failure receipt');
+    assert.deepEqual(automation.notices(task, 'session-a', [currentNotices[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), []);
     const fieldDefs = await client.callTool({ name: 'fields', arguments: {}, _meta: meta() });
     assert.match(JSON.stringify(fieldDefs.content), /PRs/);
-    assert.equal(task.agent_notes.PR, pr, 'Legacy values are preserved without migrating task data');
-    await update({ PRs: urls[1] });
+    await update({ PR: pr, PRs: urls[1] });
     const edited = await view();
     assert.deepEqual(edited.footer!.filter((item) => item.url).map((item) => item.url), [urls[1], pr]);
     assert.equal(edited.footer!.find((item) => item.url === urls[1])?.style?.color, 'muted', 'Edited values never inherit stale statuses');

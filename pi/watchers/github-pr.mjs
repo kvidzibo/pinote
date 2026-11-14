@@ -59,7 +59,11 @@ export async function handleFieldEvent(event) {
         if (signal.aborted) throw new Error('Deadline exceeded');
         items[index] = { url: request.url, ...await checkPullRequest(request, signal) };
       } catch {
-        items[index] = { url: request.url, ...errorResult() };
+        const previous = event.previousResult?.items?.find((item) => item.url === request.url);
+        // Retain the last failure identity only for alert deduplication. Error
+        // items are never actionable or exposed as current model observations.
+        items[index] = { url: request.url, ...errorResult(),
+          ...(previous?.notification ? { notification: previous.notification } : {}) };
       }
     }
   }
@@ -67,14 +71,17 @@ export async function handleFieldEvent(event) {
   const result = { state: 'multiple', items };
   if (items.some((item) => !['merged', 'closed'].includes(item.state))) result.recheckAfterSeconds = 60;
   const failures = items.filter((item) => ['failed', 'conflict'].includes(item.state));
-  if (failures.length) {
+  const knownFailures = items.filter((item) => item.notification);
+  if (knownFailures.length) {
     const fingerprint = createHash('sha256').update(JSON.stringify(
-      failures.map((item) => [item.url, item.notification?.key ?? item.state]).sort((a, b) => a[0].localeCompare(b[0])),
+      knownFailures.map((item) => [item.url, item.notification.key]).sort((a, b) => a[0].localeCompare(b[0])),
     )).digest('hex');
     // The full failing set is fingerprinted even when the message exceeds its display budget.
     result.notification = {
       key: `prs:${fingerprint}`,
-      message: failures.map((item) => `PR #${item.url.split('/').at(-1)} ${item.url}: ${item.notification?.message ?? item.summary}`).join('\n').slice(0, 1000),
+      message: failures.length
+        ? failures.map((item) => `PR #${item.url.split('/').at(-1)} ${item.url}: ${item.notification.message}`).join('\n').slice(0, 1000)
+        : event.previousResult?.notification?.message ?? 'PR checks unavailable',
     };
   }
   return result;

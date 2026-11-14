@@ -8,6 +8,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { readConfigDocument } from '../footer-config.ts';
 import { discoverFieldWatchers, type FieldWatcher } from '../field-watchers.ts';
+import { parsePullRequests } from '../pull-requests.ts';
 
 const exec = promisify(execFile);
 const integer = z.number().int().nonnegative().safe();
@@ -180,9 +181,14 @@ export class FieldAutomation {
     const owner = this.db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id);
     if (owner?.context_id !== contextId) return [];
     const received = new Set(receipts);
-    const fields = new Set(this.statuses(task).filter((s) => !s.stale && s.result.notification).map((s) => `${s.watcherId}:${s.field}`));
+    const fields = new Set(this.statuses(task).filter((s) => !s.stale && s.result.notification
+      && (!s.result.items || s.result.items.some((item) => item.state !== 'error' && item.notification)))
+      .map((s) => `${s.watcherId}:${s.field}`));
+    const pluralUrls = new Set(parsePullRequests(task.agent_notes.PRs).map((pr) => pr.url));
+    const legacyCovered = parsePullRequests(task.agent_notes.PR).some((pr) => pluralUrls.has(pr.url));
     return (this.db.prepare('SELECT watcher_id, id, field, message FROM fw_notices WHERE task_id=?').all(task.id) as { watcher_id: string; id: string; field: string; message: string }[])
-      .filter((n) => !received.has(n.id) && fields.has(`${n.watcher_id}:${n.field}`)).slice(0, 64).map(({ id, field, message }) => ({ id, field, message, taskId: task.id }));
+      .filter((n) => !received.has(n.id) && fields.has(`${n.watcher_id}:${n.field}`) && !(n.field === 'PR' && legacyCovered))
+      .slice(0, 64).map(({ id, field, message }) => ({ id, field, message, taskId: task.id }));
   }
   start(): void {
     const schedule = () => {
@@ -285,9 +291,15 @@ export class FieldAutomation {
         else {
           const notification = result.notification;
           if (!notification) this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(job.watcherId, event.taskId, event.field);
-          else if (JSON.stringify(notification) !== JSON.stringify(job.result?.notification)) {
+          else if (notification.key !== job.result?.notification?.key
+            || (!result.items && notification.message !== job.result?.notification?.message)) {
             this.db.prepare('INSERT INTO fw_notices(watcher_id,task_id,field,id,message) VALUES (?,?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET id=excluded.id,message=excluded.message')
               .run(job.watcherId, event.taskId, event.field, randomUUID(), notification.message);
+          } else {
+            // A batch can lose an unavailable item without a new failure. Keep
+            // its receipt while updating the remaining actionable message.
+            this.db.prepare('UPDATE fw_notices SET message=? WHERE watcher_id=? AND task_id=? AND field=?')
+              .run(notification.message, job.watcherId, event.taskId, event.field);
           }
           this.save({ watcherId: job.watcherId, event, result, due: result.recheckAfterSeconds ? Date.now() + result.recheckAfterSeconds * 1000 : null,
             attempts: 0, checkedAt: new Date().toISOString(), stale: false });
