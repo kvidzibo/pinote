@@ -195,7 +195,13 @@ existing task, pass only `task_id`.
 
 Suggestions do not create/start/select tasks until accepted in the UI. Reads by ID
 do not change selection. Updates require the task's `expected_updated_at` revision;
-concurrent edits are rejected rather than overwritten.
+concurrent edits are rejected rather than overwritten. `set` replaces each named
+value; `append` adds unique nonblank, trimmed lines while preserving existing
+content. Do not combine `set`, `append` or `remove` for the same field. For example:
+
+```json
+{"expected_updated_at":"<current revision>","append":{"PRs":"https://github.com/owner/repo/pull/42"}}
+```
 
 Fresh selected-task context and service guidance are read before every agent run.
 Task text and handoff fields are untrusted data, not authorization. Failed reads
@@ -224,6 +230,28 @@ separate from global display settings. The remote **New session prompt** setting
 is stored for compatibility; remote `/new` does not insert it. Selected-task previews
 above the protocol's 20,000-character limit show explicit guidance to read through the
 CLI/service instead of silently truncating.
+
+### Automatic field updates (pi-note 0.44.0+)
+
+Open **Settings → Fields → Worktree / PRs** and turn **Enabled** on.
+Both presets are offered disabled by default; existing configured fields remain
+enabled unless explicitly disabled. Legacy `PR`/`Bar` task display remains readable.
+**Add field** creates a definition, not a task value.
+
+Each field has editable **Agent instructions** describing what to save and when.
+Enabled instructions are injected before untrusted task data on every agent run:
+Worktree records the verified absolute worktree root after choosing/creating it;
+PRs appends a URL after creating each PR. Default guidance also asks agents to
+check missing/changed relevant values before ending implementation or handing off.
+This is model guidance, not a guaranteed filesystem hook. It does not create
+worktrees or PRs, and never authorizes work beyond the user's request.
+
+Disabling stops automatic population guidance and hides the Pi footer field;
+saved values remain visible in Electron's task preview, alongside full Pi session
+IDs. Session recording is integration-managed and independent of field switches.
+Watchers have separate enable switches. Removing a preset definition restores its
+disabled default; other definitions are removed without deleting saved values.
+New definitions/edits require confirmation and affect every connected client.
 
 ### Multiple PRs (pi-note 0.43.0+)
 

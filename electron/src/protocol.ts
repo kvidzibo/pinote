@@ -3,7 +3,7 @@ export type View = 'active' | 'archive' | 'scheduled';
 export type Task = {
   id: number; text: string; state: string; created_at: string; updated_at: string;
   tag: string | null; remind_at: string | null; reminder_due_at: string | null;
-  archived_at: string | null; agent_notes: Record<string, string>; agent_event_id: number;
+  archived_at: string | null; agent_notes: Record<string, string>; agent_event_id: number; pi_sessions: string[];
 };
 export type Tag = { name: string; folder: string | null; available?: boolean };
 export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean; kittyStartPrompt: string } };

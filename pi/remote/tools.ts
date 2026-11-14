@@ -13,7 +13,7 @@ export const toolDefinitions = [
     Type.Object({ task_id: id }, { additionalProperties: false }),
     Type.Object({ title: Type.String(proposalTitleOptions), description: Type.Optional(Type.String(proposalDescriptionOptions)), tag: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })) }, { additionalProperties: false }),
   ]) },
-  { name: 'update_current', description: 'Merge Markdown handoff fields on the selected task with expected_updated_at revision. Does not replace task text or tag. Never retry an uncertain write without a fresh read.', parameters: Type.Object({ expected_updated_at: Type.String(), set: Type.Optional(Type.Record(Type.String(), Type.String())), remove: Type.Optional(Type.Array(Type.String())) }, { additionalProperties: false }) },
+  { name: 'update_current', description: 'Merge Markdown handoff fields on the selected task with expected_updated_at revision. set replaces named values; append adds unique newline-separated entries while preserving existing values. Do not combine operations on the same field. Does not replace task text or tag. Never retry an uncertain write without a fresh read.', parameters: Type.Object({ expected_updated_at: Type.String(), set: Type.Optional(Type.Record(Type.String(), Type.String())), append: Type.Optional(Type.Record(Type.String(), Type.String())), remove: Type.Optional(Type.Array(Type.String())) }, { additionalProperties: false }) },
   { name: 'fields', description: 'Read remote global footer field definitions; never edits settings.', parameters: empty },
   { name: 'tags', description: 'List saved remote Pinote tags.', parameters: empty },
 ] as const;

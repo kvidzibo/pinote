@@ -21,7 +21,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
     case 'settings':
       title = 'Pinote / Settings'; body = 'Shared service settings · affects all connected clients. Task values are unchanged.';
       controls = [group('prompts', 'Agent guidance', 'Edit shared task prompts and injected instructions.'),
-        group('fields', 'Fields', 'Edit display definitions, not saved task values.'),
+        group('fields', 'Fields', 'Enable fields and edit display settings and automatic agent instructions.'),
         ...take('taskOfferPolicy'), group('footer', 'Footer layout', 'Set title/field widths and the maximum visible handoff fields.')];
       break;
     case 'prompts':
@@ -35,7 +35,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       controls = take('titleWidth', 'fieldWidth', 'maxFields');
       break;
     case 'fields':
-      title = 'Pinote / Settings / Fields'; body = 'Display definitions only. Populated task values appear in the footer.';
+      title = 'Pinote / Settings / Fields'; body = 'Enable fields for automatic agent updates and the Pi footer. Electron retains all saved values. Worktree and PRs presets start disabled.';
       controls = [group('watchers', 'Watchers…', 'Bundled and custom field watchers; explicitly enable trusted code and automatic worker actions.'),
         ...view.controls.filter((c) => c.id.startsWith('field:')), ...take('add-field')];
       break;
@@ -47,7 +47,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
     case 'field':
       title = `Pinote / Settings / Fields / ${clean(String(view.state.field ?? ''))}`;
       body = view.body ?? 'Shared display definition. Task values are unchanged.';
-      controls = take('label', 'format', 'width', 'link', 'remove-field');
+      controls = take('enabled', 'instructions', 'label', 'format', 'width', 'link', 'remove-field');
       break;
   }
   return { ...view, title, body, controls };
@@ -71,6 +71,9 @@ export function inputValue(control: NativeControl, text: string, view: NativeVie
     case 'handoffPrompt': parseHandoffPrompt(text); break;
     case 'newSessionPrompt': parseNewSessionPrompt(text); break;
     case 'agentGuidance': parseAgentGuidance(text); break;
+    case 'instructions':
+      parseFooterConfig({ footer: { fields: [{ name: 'Example', instructions: text }] } });
+      break;
     case 'add-watcher':
       return parseFieldWatchers({ fieldWatchers: [{ path: text, enabled: false }] })[0].path;
     case 'add-field': {

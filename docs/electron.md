@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.11.1. Editor autosave requires the matching
+package is private, version 0.12.0. Editor autosave requires the matching
 Python backend (0.25.1+); update both from this checkout.
 Run from the repository root:
 
@@ -143,7 +143,10 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   recovery. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
 - The task row's eye opens a floating Markdown preview about 10 px from the
-  click, including agent fields and unread updates. It may overlap or extend
+  click, including all saved agent fields, full Pi session IDs, and unread updates.
+  Fields remain visible here even when disabled in Pi's field settings. Session
+  IDs are recorded by the Pi integration and wrap as literal text, not Markdown.
+  The preview may overlap or extend
   beyond the checklist without resizing it. Placement flips at screen edges;
   moving the pointer or receiving updates does not move the open preview.
   Keyboard activation anchors to the focused button. **Escape**, **Close**, or

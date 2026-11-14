@@ -58,4 +58,10 @@ export function fillPreview(parent: HTMLElement, task: Task, options: PreviewOpt
     for (const [key, value] of Object.entries(task.agent_notes)) { agent.append(el('h4', key)); const body = el('div'); markdownDOM(value, body, options, false); agent.append(body); }
     parent.append(agent);
   }
+  if (task.pi_sessions.length) {
+    const sessions = el('section', undefined, 'sessions');
+    sessions.append(el('h3', 'Pi sessions'));
+    for (const session of task.pi_sessions) sessions.append(el('pre', session, 'literal'));
+    parent.append(sessions);
+  }
 }

@@ -15,11 +15,24 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
     assert.ok(!validMenuRequest({ kind: 'task', x: 10, y: 20, inProgress, readOnly }));
   }
   for (const request of [null, {}, { kind: 'app', x: NaN, y: 0 }, { kind: 'app', x: -1, y: 0 }, { kind: 'app', x: 0.5, y: 0 }, { kind: 'app', x: 0, y: Infinity }, { kind: 'task', x: 0, y: 0 }, { kind: 'app', x: 0, y: 0, items: ['execute'] }, { kind: 'app', x: 0, y: 0, inProgress: false, readOnly: false }, { kind: 'task', x: 0, y: 0, inProgress: 'yes', readOnly: false }]) assert.ok(!validMenuRequest(request));
-  const task = { id: 1, text: 'Preview', tag: null, state: 'active', created_at: 'now', updated_at: 'rev', remind_at: null, reminder_due_at: null, archived_at: null, agent_notes: {}, agent_event_id: 0 };
+  const task = { id: 1, text: 'Preview', tag: null, state: 'active', created_at: 'now', updated_at: 'rev', remind_at: null, reminder_due_at: null, archived_at: null, agent_notes: {}, agent_event_id: 0, pi_sessions: [] };
   const data = { task, markdown: true, unread: false };
   const request = { token: 1, data, point: { x: 0, y: 100 } };
   assert.ok(validPreviewData(data));
   assert.ok(validPreviewRequest(request));
+  const snapshot = (pi_sessions: unknown) => ({ protocol: 1, ok: true, result: {
+    notes: [{ ...task, pi_sessions }], tags: [],
+    config: { maxVisibleNotes: 10, markdownPreview: true, kittyStartPrompt: '' },
+  } });
+  for (const pi_sessions of [[], ['abc-123', 'a.b_c'], ['a'.repeat(256)]]) {
+    assert.ok(validPreviewData({ ...data, task: { ...task, pi_sessions } }));
+    assert.ok(validEnvelope('snapshot', snapshot(pi_sessions)));
+  }
+  for (const pi_sessions of [undefined, null, {}, 'session', [1], [null], [''], ['a'.repeat(257)],
+    ['<script>'], ['**bold**'], ['space id'], ['a\n'], ['-id'], ['id.'], Array(1)]) {
+    assert.ok(!validPreviewData({ ...data, task: { ...task, pi_sessions } }));
+    assert.ok(!validEnvelope('snapshot', snapshot(pi_sessions)));
+  }
   for (const value of [null, {}, { ...data, markdown: 'yes' }, { ...data, unread: 1 },
     { ...data, task: { ...task, id: true } }, { ...data, task: { ...task, agent_event_id: -1 } },
     { ...data, executable: '/bin/sh' }, { ...data, task: { ...task, text: 'x'.repeat(MAX_STATE_PAYLOAD_BYTES + 1) } },

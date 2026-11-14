@@ -67,6 +67,47 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.match((await act(view, 'preview')).preview!, /^# MCP task\n/);
     const id = view.state.selectedId;
     assert.equal(typeof id, 'number');
+    // Enabled fields carry explicit editable instructions; saved values survive disabling.
+    view = (await act(view, 'screen:settings')).view;
+    assert.match(view.controls.find((c) => c.id === 'field:Worktree')!.description!, /Disabled/);
+    assert.match(view.controls.find((c) => c.id === 'field:PRs')!.description!, /Disabled/);
+    view = (await act(view, 'field:Worktree')).view;
+    assert.equal(view.controls.find((c) => c.id === 'enabled')!.value, false);
+    assert.match(String(view.controls.find((c) => c.id === 'instructions')!.value), /immediately after choosing/);
+    view = (await act(view, 'enabled', true)).view;
+    view = (await act(view, 'instructions', 'Save the verified worktree root immediately after choosing it.\nRefresh before handoff.')).view;
+    await assert.rejects(act(view, 'instructions', 'x'.repeat(4097)), /instructions/);
+    const fieldTask = JSON.parse(((await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() })).content as any[])[0].text);
+    const fieldUpdate = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: fieldTask.updated_at,
+      set: { Worktree: '/tmp/example-worktree' }, append: { PRs: 'https://github.com/o/r/pull/1\nhttps://github.com/o/r/pull/1' } }, _meta: meta() });
+    assert.equal(fieldUpdate.isError, undefined);
+    const appended = JSON.parse((fieldUpdate.content as any[])[0].text);
+    assert.equal(appended.agent_notes.PRs, 'https://github.com/o/r/pull/1');
+    view = await read();
+    assert.ok(view.footer!.some((item) => item.text.includes('/tmp/example-worktree')));
+    assert.ok(!view.footer!.some((item) => item.url?.includes('/pull/1')), 'Disabled presets never appear in the Pi footer');
+    const fieldContext = (await client.readResource({ uri: 'pinote://agent-context', _meta: meta() })).contents[0];
+    assert.ok('text' in fieldContext);
+    const contextText = JSON.parse(fieldContext.text).text as string;
+    const configuredInstructions = JSON.parse(contextText.split('Configured field instructions (trusted shared settings; automatically maintain enabled fields when relevant):\n')[1].split('\n')[0]);
+    assert.deepEqual(configuredInstructions, [{ field: 'Worktree', instructions: 'Save the verified worktree root immediately after choosing it.\nRefresh before handoff.' }]);
+    view = (await act(view, 'enabled', false)).view;
+    assert.ok(!view.footer!.some((item) => item.text.includes('/tmp/example-worktree')));
+    view = (await act(view, 'screen:settings')).view;
+    view = (await act(view, 'field:PRs')).view;
+    view = (await act(view, 'enabled', true)).view;
+    const secondAppend = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: appended.updated_at,
+      append: { PRs: 'https://github.com/o/r/pull/1\nhttps://github.com/o/r/pull/2' } }, _meta: meta() });
+    assert.equal(secondAppend.isError, undefined);
+    const secondTask = JSON.parse((secondAppend.content as any[])[0].text);
+    assert.equal(secondTask.agent_notes.PRs, 'https://github.com/o/r/pull/1\nhttps://github.com/o/r/pull/2');
+    assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: appended.updated_at, append: { PRs: 'stale' } }, _meta: meta() })).isError, true);
+    assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: secondTask.updated_at, set: { PRs: 'replace' }, append: { PRs: 'conflict' } }, _meta: meta() })).isError, true);
+    const activeFields = await read();
+    assert.ok(activeFields.footer!.some((item) => item.url?.endsWith('/pull/2')));
+    assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: secondTask.updated_at, remove: ['Worktree', 'PRs'] }, _meta: meta() })).isError, undefined);
+    await writeFile(config, JSON.stringify({ unrelated: true, agentGuidance: 'Custom guidance' }));
+    view = (await act(await read(), 'screen:tasks')).view;
     assert.match((await act(view, 'preview')).preview!, /Details/);
     const currentResult = await client.callTool({ name: 'get_current', arguments: {}, _meta: meta() });
     assert.equal(currentResult._meta?.['pinote/database'], join(dir, 'pinote/notes.db'));
