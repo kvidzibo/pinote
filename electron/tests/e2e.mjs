@@ -1297,6 +1297,7 @@ try {
   await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await selectTaskAction(page, added.id, 'Start in Kitty…');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).state,'in_progress','A real failed Kitty launch retains the saved start');
   await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
@@ -1427,7 +1428,7 @@ try {
   const readonlyActions=reopened.getByRole('button',{name:`Actions for task ${added.id}`,exact:true});
   await readonlyActions.click();
   const readonlyBar=reopened.getByRole('toolbar');
-  for(const name of ['Start in Kitty…','Start','Complete','Remove to archive','Change tag…','Set reminder…']) {
+  for(const name of ['Start in Kitty…','Reset progress','Complete','Remove to archive','Change tag…','Set reminder…']) {
     assert.equal(await readonlyBar.getByRole('button',{name,exact:true}).isDisabled(),true,`${name} must be disabled during recovery`);
   }
   for(const name of ['Copy note','Edit text…']) assert.equal(await readonlyBar.getByRole('button',{name,exact:true}).isEnabled(),true);
