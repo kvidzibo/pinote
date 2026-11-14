@@ -740,6 +740,7 @@ try {
     await editor.press('Control+Enter');
     await page.getByRole('dialog').waitFor({state:'detached'});
     assert.equal(call('snapshot',{view:'active'}).notes.find(note=>note.id===added.id).text,composerSource,'Saving preserves two-space nesting');
+    await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Bullet indentation$/}).waitFor();
     await selectTaskAction(page, added.id, 'Edit text…');
     assert.equal(await sourceValue(editor),composerSource,'Reload preserves nesting');
     await editor.fill(source);
