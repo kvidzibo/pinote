@@ -202,10 +202,15 @@ test('seven explicit direct schemas; tool state is applied before next serialize
 test('mutations never replay; read-only recovery preserves selection and shows disconnected status', async (t) => {
   const { RemoteUI } = await import('../remote/ui.ts');
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  let calls = 0, failRead = false;
+  let calls = 0, failRead = false, selectedId = 7, pendingRead: Promise<void> | undefined;
   const h = harness({
     tool: async () => { calls++; throw new Error(`Authorization Bearer ${token}`); },
-    read: async () => { if (failRead) throw new Error(token); return resource(view({ selectedId: 7 })); },
+    read: async () => {
+      const captured = view({ selectedId });
+      if (pendingRead) await pendingRead;
+      if (failRead) throw new Error(token);
+      return resource(captured);
+    },
   });
   await h.session.start([], 'conversation');
   const components: any[] = [], statuses: Array<string | undefined> = [];
@@ -229,15 +234,36 @@ test('mutations never replay; read-only recovery preserves selection and shows d
   failRead = true;
   await advance(1000); assert.equal(h.connections(), 2);
   await advance(1999); assert.equal(h.connections(), 2);
-  failRead = false;
   await advance(1); assert.equal(h.connections(), 3);
+  let connections = 3;
+  for (const delay of [4000, 8000, 16_000, 30_000, 30_000]) {
+    await advance(delay - 1); assert.equal(h.connections(), connections);
+    await advance(1); assert.equal(h.connections(), ++connections);
+  }
+  failRead = false;
+  await advance(30_000); assert.equal(h.connections(), ++connections);
   assert.equal(calls, 1); assert.equal((h.session.view as NativeView | undefined)?.state.selectedId, 7);
   assert.match(components[0].render(80).join(''), /Task/);
   assert.doesNotMatch(statuses.at(-1)!, /disconnected/);
   await assert.rejects(h.session.tool('update_current', {}), RemoteFailure);
   await h.session.stop();
   await advance(60_000);
-  assert.equal(h.connections(), 3, 'Stopping cancels pending recovery');
+  assert.equal(h.connections(), connections, 'Stopping cancels pending recovery');
+  await h.session.start([], 'before-reload'); connections++;
+  await assert.rejects(h.session.tool('update_current', {}), RemoteFailure);
+  let release!: () => void;
+  pendingRead = new Promise<void>(resolve => { release = resolve; });
+  await advance(1000); assert.equal(h.connections(), ++connections, 'Recovery is in flight');
+  await h.session.stop('reload');
+  pendingRead = undefined; selectedId = 8;
+  const savedBeforeReload = h.saved.length;
+  await h.session.start([], 'after-reload'); connections++;
+  release(); await advance(60_000);
+  assert.equal(h.connections(), connections, 'Old recovery cannot restart after reload');
+  assert.equal(h.session.snapshot()?.state.selectedId, 8);
+  assert.equal((h.session.view as NativeView | undefined)?.state.selectedId, 8);
+  assert.ok(!h.saved.slice(savedBeforeReload).some(saved => saved.state.selectedId === 7), 'Late old view never overwrites the new session');
+  await h.session.stop();
 });
 
 test('menu/footer completion refuses busy agents and rechecks immediately before queued writes', async () => {
