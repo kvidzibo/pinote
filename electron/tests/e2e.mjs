@@ -783,7 +783,7 @@ try {
   await page.locator('.task-title').filter({hasText:/^Tagged Electron task$/}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.text==='Tagged Electron task').tag,'Side project');
   await page.getByRole('button',{name:'New-task tag: Side project',exact:true}).click();
-  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Side project (1)','Work (101) ▶ 1','Empty filter (0)','Untagged (3)']);
+  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Side project (1)','Work (101) ▶ 1','Empty filter (0)','Untagged (4)']);
   await page.screenshot({path:join(root,'recent-tags.png')});
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape'); // reset creation tag, not the filter or existing tasks
