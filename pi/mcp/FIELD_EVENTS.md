@@ -62,15 +62,23 @@ With pi-note **0.42.0+**, configure trusted instances in the **service machine's
 ```
 
 `url` is an HTTPS instance base URL, optionally including its installation subpath
-or port; it is not a repository or API URL. At most 32 instances are allowed.
+or port; it is not a repository or API URL. HTTP is also accepted for numeric
+loopback hosts `127.0.0.1` and `[::1]` only. At most 32 instances are allowed.
 `tokenEnv` names a service environment variable holding a read-only API token
 (with repository read access for private repositories). Omit it for anonymous
 public access. Never put tokens in task fields, URLs or `pi-note.json`. Node must
 be on the service's PATH; `gh` is not needed. Source checkouts require
 `npm --prefix pi run build:mcp` before running the executable.
 
-Set `PR` to `https://forgejo.example/owner/repo/pulls/123` or one Markdown link.
-Only explicitly configured instance URLs receive requests; credentials are scoped
+For a local repository such as
+`http://127.0.0.1:3000/tomas/production-deploy`, configure the instance base
+`http://127.0.0.1:3000`, not the repository path. Loopback refers to the **service
+machine**, not the Pi client. A sign-in-required instance needs `tokenEnv` even
+for repository reads; set that variable in the existing service's environment.
+
+Set `PR` to `https://forgejo.example/owner/repo/pulls/123` or, for that local
+instance, `http://127.0.0.1:3000/tomas/production-deploy/pulls/123`, bare or as
+one Markdown link. Only explicitly configured instance URLs receive requests; credentials are scoped
 to that instance, and API redirects are rejected. Both bundled watchers ignore
 other providers' links, so they can be enabled together. Displaying a PR link or
 formatting `<number>` does not authorize network access. After changing instances,

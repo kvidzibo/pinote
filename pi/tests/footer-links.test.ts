@@ -73,17 +73,21 @@ test("PR number displays recognize Forgejo without granting host trust or normal
   const config = parseFooterConfig({ footer: { fields: [{ name: "PR", label: "", format: "#<number>", link: true }] } });
   const github = "https://github.com/org/repo/pull/42";
   const forgejo = "https://forgejo.example/instance/org/repo/pulls/42";
-  for (const url of [github, forgejo, "https://evil.test/org/repo/pulls/42", "https://code.example:8443/a/b/org/repo/pulls/42"]) {
+  for (const url of [github, forgejo, "https://evil.test/org/repo/pulls/42", "https://code.example:8443/a/b/org/repo/pulls/42",
+    "http://127.0.0.1:3000/tomas/production-deploy/pulls/42", "http://[::1]:3000/org/repo/pulls/42"]) {
     for (const PR of [url, `[Review](${url})`, `${url}/`, ` ${url} `, `${url}\n`]) {
       assert.deepEqual(taskPR({ id: 1, state: "active", updated_at: "r1", agent_notes: { PR } }), { url, number: "42" });
       const rendered = renderFooterLinks(customFooterChips({ PR }, config), color)!;
-      assert.equal(stripVTControlCharacters(rendered), "#42");
+      // Node's generic VT stripper misreads OSC 8 destinations containing IPv6 brackets.
+      assert.equal(stripVTControlCharacters(rendered.replace(/\x1b\]8;;[^\x1b]*\x1b\\/gu, "")), "#42");
       assert.ok(rendered.includes(url));
     }
   }
   for (const PR of [
     "https://evil.test/org/repo/pull/42", "https://github.com/instance/org/repo/pull/42",
-    "http://forgejo.example/org/repo/pulls/42", "https://user:pass@forgejo.example/org/repo/pulls/42",
+    "http://forgejo.example/org/repo/pulls/42", "http://192.168.1.2:3000/org/repo/pulls/42",
+    "http://127.0.0.1.evil:3000/org/repo/pulls/42", "http://user:pass@127.0.0.1:3000/org/repo/pulls/42",
+    "http://127.0.0.1:3000/org/repo/pull/42", "https://user:pass@forgejo.example/org/repo/pulls/42",
     "https://@forgejo.example/org/repo/pulls/42", "https://forgejo.example:bad/org/repo/pulls/42",
     `${forgejo}?x=1`, `${forgejo}#x`, `${forgejo}/files`, `${forgejo}extra`,
     `${forgejo}\x1b[31m`, `${forgejo}\u009d`,

@@ -111,10 +111,11 @@ function readBare(source: string, index: number): { text: string; dest: string; 
   const scheme = /^[a-z][a-z0-9+.-]*:\/\//iu.exec(source.slice(index));
   if (!scheme) return;
   let end = index + scheme[0].length;
+  const hostBracketEnd = source[end] === "[" ? source.indexOf("]", end + 1) : -1;
   let depth = 0;
   for (; end < source.length; end++) {
     const char = source[end];
-    if (/[\s<>\]*]/u.test(char) || control.test(char)) break;
+    if (/[\s<>\]*]/u.test(char) && end !== hostBracketEnd || control.test(char)) break;
     if (char === "(") depth++;
     else if (char === ")") {
       if (depth === 0) break;

@@ -164,8 +164,8 @@ are discovered disabled; trusted custom executables can be added and enabled.
 Independent checks survive restarts and settings apply live, without another daemon.
 The GitHub PR watcher triggers the owning worker on failed CI/conflicts and marks
 merged PRs with the theme accent (default purple), without strikethrough.
-The Forgejo PR watcher uses explicitly configured HTTPS instances and service-side
-API tokens to watch CI and merged/closed PRs; ambiguous mergeability remains pending,
+The Forgejo PR watcher uses explicitly configured HTTPS or numeric-loopback HTTP
+instances and service-side API tokens to watch CI and merged/closed PRs; ambiguous mergeability remains pending,
 not a conflict alert. With pi-note 0.41.1+ on both sides, failed watcher executions
 produce grouped terminal-only notices pointing to the service log; retries do not
 spam the terminal or trigger model turns. Requires note 0.24.0+. Review the

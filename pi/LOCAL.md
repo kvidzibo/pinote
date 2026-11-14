@@ -365,7 +365,9 @@ This extension does not replace other footers. Other fields, such as `Jira` and
 Set `PR` with `pinote_update_current` to one GitHub
 `https://github.com/owner/repo/pull/123` or Forgejo
 `https://forgejo.example/owner/repo/pulls/123` URL or Markdown link. Legacy footer settings show clickable **PR #123**; global
-field settings can change or hide it. PR and other field links are rendered locally
+field settings can change or hide it. Numeric-loopback Forgejo HTTP links such as
+`http://127.0.0.1:3000/tomas/production-deploy/pulls/123` also work.
+PR and other field links are rendered locally
 for the active selection and disappear when that selection is cleared.
 
 Pinote no longer polls GitHub, runs `gh`, watches completed tasks, or prompts on

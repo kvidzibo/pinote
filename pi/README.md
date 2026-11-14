@@ -233,8 +233,8 @@ failed CI or merge conflicts. Repeated unchanged failures are deduplicated; busy
 workers wait until idle and recheck current state before acting. Merged PRs use
 the theme accent (default purple), retain their links and stop polling; tasks are not
 completed. Requires authenticated `gh`, Node and **note 0.24.0+** on the service.
-The **Forgejo PR** watcher supports configured HTTPS instances and service-side
-API tokens without `gh`; it alerts on failed CI and styles merged/closed PRs.
+The **Forgejo PR** watcher supports configured HTTPS instances (or numeric
+loopback HTTP) and service-side API tokens without `gh`; it alerts on failed CI and styles merged/closed PRs.
 Forgejo's ambiguous mergeability flag stays pending rather than generating false
 conflict alerts. GitHub and Forgejo links both support `#<number>` footer formats.
 See [setup, configuration, script contract and safeguards](mcp/FIELD_EVENTS.md).

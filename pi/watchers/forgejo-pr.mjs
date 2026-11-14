@@ -13,12 +13,13 @@ const segment = /^[A-Za-z0-9_.-]+$/;
 const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i;
 const states = new Set(['pending', 'success', 'error', 'failure', 'warning', 'skipped']);
 
-function httpsURL(value) {
+function instanceURL(value) {
   if (typeof value !== 'string' || value.length > 2048 || unsafe.test(value) || /[?#]/u.test(value)) throw new Error('Invalid URL');
-  const raw = /^https:\/\/([^/]+)(\/.*)?$/.exec(value);
+  const raw = /^https?:\/\/([^/]+)(\/.*)?$/.exec(value);
   if (!raw || raw[1].includes('@')) throw new Error('Invalid URL');
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid URL');
+  const loopbackHTTP = url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !loopbackHTTP || url.username || url.password) throw new Error('Invalid URL');
   // Check the raw path before URL normalization can hide traversal.
   const path = (raw[2] ?? '').replace(/\/$/, '');
   if (path && path.slice(1).split('/').some((part) => !segment.test(part) || ['.', '..'].includes(part))) throw new Error('Invalid path');
@@ -35,7 +36,7 @@ async function instances() {
   const seen = new Set();
   return entries.map((entry) => {
     if (!object(entry) || Object.keys(entry).some((key) => !['url', 'tokenEnv'].includes(key))) throw new Error('Invalid instance');
-    const url = httpsURL(entry.url).href.replace(/\/$/, '');
+    const url = instanceURL(entry.url).href.replace(/\/$/, '');
     if (seen.has(url) || entry.tokenEnv !== undefined && (typeof entry.tokenEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry.tokenEnv))) throw new Error('Invalid instance');
     seen.add(url);
     return { url, tokenEnv: entry.tokenEnv };
@@ -61,7 +62,7 @@ export async function handleFieldEvent(event) {
   const value = event.value?.trim() ?? '';
   const raw = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
   let url;
-  try { url = httpsURL(raw).href.replace(/\/$/, ''); } catch { return {}; }
+  try { url = instanceURL(raw).href.replace(/\/$/, ''); } catch { return {}; }
   const instance = (await instances()).find((entry) => url.startsWith(`${entry.url}/`));
   if (!instance) return {};
   const match = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pulls\/([1-9][0-9]*)$/.exec(url.slice(instance.url.length));
