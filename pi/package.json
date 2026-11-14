@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.41.1",
+  "version": "0.42.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
@@ -36,6 +36,7 @@
     "field-watchers.ts",
     "footer-status.ts",
     "footer-links.ts",
+    "pr-url.ts",
     "footer-config.ts",
     "config-path.ts",
     "token.ts",

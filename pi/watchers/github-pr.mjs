@@ -44,6 +44,7 @@ export async function handleFieldEvent(event) {
   if (event.field !== 'PR' || event.event === 'removed') return {};
   const value = event.value?.trim() ?? '';
   const url = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
+  try { if (new URL(url).hostname !== 'github.com') return {}; } catch { /* Invalid PR values remain errors. */ }
   const match = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url);
   if (!match || ['.', '..'].includes(match[2])) return errorResult();
   const [, owner, repo, number] = match;
