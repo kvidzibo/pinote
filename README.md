@@ -82,7 +82,9 @@ note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 
 ### GUI controls
 
-- **Add:** press **Enter** or **+**. Unfinished input is restored when reopened.
+- **Add:** press **Enter** or **+**; **Shift+Enter** adds a line with automatic
+  title/bullet markers. Both desktop frontends style Markdown while keeping its source visible.
+  Unfinished input is restored when reopened.
 - **Task actions:** right-click task text to change its state, edit, tag, or schedule
   it. Unfinished edits are restored when reopened and remain drafts until saved.
 - **Window size:** drag any edge or corner; width and height survive restarts.

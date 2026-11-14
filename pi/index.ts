@@ -11,6 +11,7 @@ import { FooterSettings, TaskMenu, withSettingsTab, type SettingsOption, type Se
 import { TaskPicker, taskState, taskTag } from "./task-picker.ts";
 import { bundledCLIVersion, detectCLI, setupCLI, setupHint, versionAtLeast, type CLIAction } from "./setup.ts";
 import { createPreviewBridge } from "./preview-bridge.ts";
+import { taskTitle } from "./task-title.ts";
 import { renderSuggestion, renderSelectedTask } from "./task-suggestion.ts";
 
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from "./proposal.ts";
@@ -52,7 +53,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const text = (value: unknown): value is string =>
   typeof value === "string" && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value);
 const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/gu, "�");
-const firstLine = (task: Summary) => clean(task.text.split("\n", 1)[0]).replace(/\s+/gu, " ").trim();
+const firstLine = (task: Summary) => clean(taskTitle(task.text)).replace(/\s+/gu, " ").trim();
 const title = (task: Summary) => truncateToWidth(`#${task.id} ${firstLine(task)}`, 60);
 
 function readConfig(): Record<string, unknown> {

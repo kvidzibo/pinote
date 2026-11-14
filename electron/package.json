@@ -1,6 +1,6 @@
 {
   "name": "pinote-electron",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "description": "Optional isolated desktop frontend for Pinote's Python backend",
@@ -24,6 +24,12 @@
     "minimatch": "11.0.5"
   },
   "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/highlight": "1.2.5",
     "markdown-it": "15.0.3"
   },
   "devDependencies": {

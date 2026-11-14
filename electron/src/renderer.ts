@@ -1,3 +1,4 @@
+import { MarkdownEditor, compactTitle } from './markdown-editor';
 import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
@@ -9,7 +10,11 @@ const markdown = new MarkdownIt({ html: false, linkify: false, typographer: fals
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
-const composer = $<HTMLTextAreaElement>('draft');
+const composerEditor = new MarkdownEditor($('draft-host'), '', 'Add a task…', true, () => {
+  if (closing || !stateLoaded) return;
+  state.draft = composerEditor.value; draftVersion++; resizeComposer(); saveSoon();
+}, () => { void track(addTask()); });
+const composer = composerEditor.dom; composer.id = 'draft';
 const toolbar = $('toolbar'), notice = $('notice'), popupRoot = $('popups');
 new ResizeObserver(() => document.documentElement.style.setProperty('--notice-height', `${notice.hidden ? 0 : notice.getBoundingClientRect().height + 6}px`)).observe(notice);
 let state: UIState = initialState();
@@ -62,14 +67,14 @@ function report(message: string): void {
   if (readonly && state.warning) {
     if (message !== state.warning) notice.append(el('span', state.warning));
     notice.append(button('done', 'I checked saved tasks; enable writes', async () => {
-      if (await api.acknowledgeWarning()) { readonly = false; state.warning = ''; composer.readOnly = false; notice.hidden = true; updateEditors(); renderTasks(); renderToolbar(); }
+      if (await api.acknowledgeWarning()) { readonly = false; state.warning = ''; composerEditor.readOnly = false; notice.hidden = true; updateEditors(); renderTasks(); renderToolbar(); }
     }));
   } else notice.append(button('close', 'Dismiss notice', () => { notice.hidden = true; fitWindow(); }));
   fitWindow();
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function recoveryWarning(text: string, preserveDrafts = false): void {
-  readonly = true; state.warning = text; composer.readOnly = true; updateEditors(); report(text); renderTasks(); renderToolbar();
+  readonly = true; state.warning = text; composerEditor.readOnly = true; updateEditors(); report(text); renderTasks(); renderToolbar();
   if (preserveDrafts) void track(persist(true)).catch(() => undefined);
 }
 function button(icon: Icon, label: string, action: (event: MouseEvent) => unknown, disabled = false): HTMLButtonElement {
@@ -153,19 +158,16 @@ function showSaved(id?: number): void {
   }
 }
 function resizeComposer(): void {
-  if (!composer.value) { composer.style.height = ''; fitWindow(); return; }
-  composer.style.height = 'auto';
-  composer.style.height = `${Math.min(144, composer.scrollHeight + composer.offsetHeight - composer.clientHeight)}px`;
   fitWindow();
 }
 async function addTask(): Promise<void> {
-  if (!composer.value.trim() || adding || readonly || closing) return;
-  const text = composer.value, tag = creationTag, version = draftVersion;
+  if (!composerEditor.value.trim() || adding || readonly || closing) return;
+  const text = composerEditor.value, tag = creationTag, version = draftVersion;
   adding = true; renderToolbar();
   try {
     const result = await call('add', { text, tag });
     if (!result) return;
-    if (version === draftVersion) { state.draft = ''; composer.value = ''; draftVersion++; resizeComposer(); saveSoon(); }
+    if (version === draftVersion) { state.draft = ''; composerEditor.setText(''); draftVersion++; resizeComposer(); saveSoon(); }
     // Commit success is independent of the following read/cache operations.
     scrollToId = result.id;
     await refresh(); showSaved(result.id);
@@ -174,10 +176,6 @@ async function addTask(): Promise<void> {
 let adding = false;
 let nativeMenuOpen = false;
 let taskActions: { task: Task; source: HTMLElement } | undefined;
-composer.addEventListener('input', () => { if (closing) return; state.draft = composer.value; draftVersion++; resizeComposer(); saveSoon(); });
-composer.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void track(addTask()); }
-});
 $('composer').addEventListener('submit', e => { e.preventDefault(); void track(addTask()); });
 
 // Each layer owns its callbacks. Escape removes only the topmost layer.
@@ -197,7 +195,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     renderSelected();
     if (kind === 'task-actions') fitWindow();
   } };
-  header.append(button('close', `Close ${title}`, item.close)); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
+  header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
   panel.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;
@@ -281,7 +279,7 @@ function dueLabel(task: Task): string {
 }
 function taskContent(task: Task, preferences: TaskActionPreferences, sample = false): HTMLElement {
   const mark = marked.has(task.id);
-  const title = el('span', task.text.split('\n')[0], 'task-title');
+  const title = el('span', compactTitle(task.text), 'task-title');
   title.title = [task.text, dueLabel(task)].filter(Boolean).join('\n'); title.tabIndex = sample ? -1 : 0;
   if (!sample) title.addEventListener('contextmenu', e => { e.preventDefault(); openTaskActions(task, title); });
   if (!sample) title.addEventListener('keydown', e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); openTaskActions(task, title); } });
@@ -449,7 +447,7 @@ function openTaskActions(task: Task, source: HTMLElement): void {
   closeTaskActions(false);
   taskActions = { task, source };
   const bar = el('div', undefined, 'task-actions');
-  bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for task ${task.id}: ${task.text.split('\n')[0]}`);
+  bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for task ${task.id}: ${compactTitle(task.text)}`);
   const settings = normalizeTaskActions(state.taskActions)[taskActionState(task)];
   for (const id of settings.order) {
     if (settings.hidden.includes(id) && !row.querySelector<HTMLElement>(`.row-action[data-row-element="${id}"]`)?.hidden) continue;
@@ -744,21 +742,22 @@ function edit(task: Task): void {
   const id = String(task.id), modal = layer(`Edit task ${task.id}`, 'edit', task.id);
   const draft = state.edits[id] ?? { text: task.text, revision: task.updated_at };
   const revision = draft.revision;
-  const textarea = el('textarea', undefined, 'edit-text'); textarea.value = draft.text; textarea.setAttribute('aria-label', 'Task text'); textarea.spellcheck = false;
+  const editorHost = el('div', undefined, 'edit-text');
+  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, () => retain(), () => { void track(saveText()); });
+  const close = modal.close; modal.close = () => { editor.destroy(); close(); };
   const warning = el('p', undefined, 'warning');
   const check = () => {
     const current = active?.notes.find(t => t.id === task.id);
     const conflict = !current || current.updated_at !== revision;
-    textarea.readOnly = readonly || closing || conflict;
+    editor.readOnly = readonly || closing || conflict;
     warning.textContent = readonly ? 'Read-only: local draft state could not be loaded safely. Copy your text; nothing will be overwritten.' : conflict ? 'This revision changed or left the active list. Your private draft is safe and read-only. Copy it, discard, then reopen the latest task to reconcile.' : 'Private draft. Enter inserts a newline; Ctrl+Enter saves text only.';
     save.disabled = readonly || closing || conflict || saving;
   };
-  const retain = () => { if (!readonly && !closing) { state.edits[id] = { text: textarea.value, revision }; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); } };
-  textarea.addEventListener('input', retain);
+  const retain = () => { if (!readonly && !closing) { state.edits[id] = { text: editor.value, revision }; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); } };
   let saving = false;
   const saveText = async () => {
     if (closing || save.disabled || saving) return;
-    const text = textarea.value, version = editVersions.get(id) ?? 0;
+    const text = editor.value, version = editVersions.get(id) ?? 0;
     retain(); const submittedVersion = editVersions.get(id) ?? version;
     saving = true; check();
     try {
@@ -773,12 +772,11 @@ function edit(task: Task): void {
   };
   const bar = controls(modal.panel);
   const save = button('save', 'Save text (Ctrl+Enter)', saveText);
-  bar.append(button('copy', 'Copy edit draft', () => api.copy(textarea.value)), button('trash', 'Discard private draft', () => confirmAction('Discard draft?', 'Discard this private text without changing the task?', async () => {
+  bar.append(button('copy', 'Copy edit draft', () => api.copy(editor.value)), button('trash', 'Discard private draft', () => confirmAction('Discard draft?', 'Discard this private text without changing the task?', async () => {
     if (readonly) { report('Read-only draft store cannot be changed. Repair the local state before discarding.'); return; }
     delete state.edits[id]; editVersions.set(id, (editVersions.get(id) ?? 0) + 1); saveSoon(); modal.close();
   }), readonly), save);
-  modal.panel.append(warning, textarea); modal.update = check; check(); textarea.focus();
-  textarea.addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); void track(saveText()); } });
+  modal.panel.append(warning, editorHost); modal.update = check; check(); editor.view.focus();
 }
 function recoverDrafts(): void {
   const modal = layer('Private edit drafts');
@@ -958,7 +956,7 @@ function auxiliary(view: 'archive' | 'scheduled'): void {
     const top = list.scrollTop; list.replaceChildren();
     for (const task of notes) {
       const row = el('article', undefined, 'aux-row');
-      const heading = el('div', undefined, 'aux-heading'); heading.append(el('span', task.text.split('\n')[0], 'task-title'), button(expanded.has(task.id) ? 'collapse' : 'expand', 'Expand/collapse full text', () => { if (expanded.has(task.id)) expanded.delete(task.id); else expanded.add(task.id); draw(); }));
+      const heading = el('div', undefined, 'aux-heading'); heading.append(el('span', compactTitle(task.text), 'task-title'), button(expanded.has(task.id) ? 'collapse' : 'expand', 'Expand/collapse full text', () => { if (expanded.has(task.id)) expanded.delete(task.id); else expanded.add(task.id); draw(); }));
       row.append(heading);
       const metadata = el('div', undefined, 'metadata'); metadata.append(el('span', view === 'archive' ? `${task.state === 'done' ? 'Completed' : 'Deleted'} · ${task.archived_at ? new Date(task.archived_at).toLocaleString() : ''}` : `${task.remind_at ? new Date(task.remind_at).toLocaleString() : ''}`));
       if (task.tag) metadata.append(tagBadge(task.tag));
@@ -1031,7 +1029,7 @@ function updateEditors(): void {
   for (const modal of layers) if (modal.kind === 'edit') modal.update?.();
 }
 function setClosing(value: boolean): void {
-  closing = value; document.body.inert = value; composer.readOnly = readonly || value; updateEditors();
+  closing = value; document.body.inert = value; composerEditor.readOnly = readonly || value; updateEditors();
 }
 api.onCloseRequested(() => {
   if (closing) return;
@@ -1046,10 +1044,10 @@ api.onCloseRequested(() => {
   })().catch(async e => { setClosing(false); await api.cancelClose(); report(`Could not finish closing: ${message(e)}`); if (focused?.isConnected) focused.focus(); });
 });
 async function init(): Promise<void> {
-  composer.disabled = true;
+  composerEditor.readOnly = true;
   try { state = await api.loadState(); stateLoaded = true; if (state.warning) { readonly = true; report(`Read-only draft recovery: ${state.warning}`); } }
   catch (e) { readonly = true; report(`Read-only: local drafts could not be loaded: ${message(e)}. Existing state will not be overwritten.`); }
-  composer.value = state.draft; composer.disabled = false; composer.readOnly = readonly;
+  composerEditor.setText(state.draft); composerEditor.readOnly = readonly;
   if (readonly) {
     composer.title = 'Read-only draft recovery: copy your text; existing state will not be overwritten.'; composer.setAttribute('aria-description', composer.title);
     recoveryWarning(state.warning);

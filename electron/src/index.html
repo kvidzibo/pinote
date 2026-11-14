@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="style-nonce" content="PINOTE_STYLE_NONCE">
   <title>Pinote</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,7 +15,7 @@
       <div id="pinned" class="task-list pinned" aria-label="In progress"></div>
     </section>
     <form id="composer" aria-label="Add task">
-      <textarea id="draft" rows="1" placeholder="Add a task…" aria-label="Add a task…" spellcheck="false"></textarea>
+      <div id="draft-host"></div>
       <div id="toolbar"></div>
     </form>
   </main>

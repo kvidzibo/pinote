@@ -62,7 +62,9 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.deepEqual((await read()).footer, [{ text: '▤ ', openApp: true, width: 3 }, { text: 'Pinote · No task', width: 60 }]);
     native = false;
     assert.deepEqual((await read()).footer, idleFooter, 'Regular host footer is unchanged');
-    view = (await act(view, 'add', 'MCP task\n\nDetails')).view;
+    view = (await act(view, 'add', '# MCP task\n\nDetails')).view;
+    assert.equal(view.footer?.find((item) => item.action === 'preview')?.text, 'MCP task');
+    assert.match((await act(view, 'preview')).preview!, /^# MCP task\n/);
     const id = view.state.selectedId;
     assert.equal(typeof id, 'number');
     assert.match((await act(view, 'preview')).preview!, /Details/);
@@ -70,6 +72,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(currentResult._meta?.['pinote/database'], join(dir, 'pinote/notes.db'));
     const task = JSON.parse((currentResult.content as any[])[0].text);
     assert.equal(task.id, id);
+    assert.equal(task.text, '# MCP task\n\nDetails');
     const update = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: task.updated_at, set: { PR: 'https://github.com/example/repo/pull/42', '--Flag': 'remove me', Large: 'https://example.com/' + 'x'.repeat(3000) } }, _meta: meta() });
     assert.equal(update.isError, undefined);
     await assert.rejects(act(view, 'done'), /changed/);
@@ -87,6 +90,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     const compact = await read();
     assert.deepEqual(compact.footer?.[0], { text: '▤ ', openApp: true, width: 3 });
     assert.equal(compact.footer?.[1].action, 'preview');
+    assert.equal(compact.footer?.[1].text, 'MCP task');
     assert.equal(compact.footer?.[1].doubleAction, 'done', 'Double-click opens the existing completion action');
     assert.ok(compact.footer?.every((item) => item.action !== 'done' && item.action !== 'proposal:accept'));
     assert.equal(compact.footer?.length, 5, 'Split links do not consume another field slot');
@@ -254,12 +258,13 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
       assert.equal(JSON.parse((current.content as any[])[0].text), null, 'Proposals never select tasks');
       view = (await act(await read(), 'proposal:dismiss')).view;
     });
-    const proposal = await client.callTool({ name: 'propose', arguments: { title: 'Suggested task', description: 'Details', tag: 'MCP' }, _meta: meta() });
+    const proposal = await client.callTool({ name: 'propose', arguments: { title: '# Suggested task', description: 'Details', tag: 'MCP' }, _meta: meta() });
     assert.equal(proposal.isError, undefined);
     state = proposal._meta!['native-ui/state'] as Record<string, unknown>;
     const first = await read();
     assert.match(first.controls.find((control) => control.id === 'proposal:accept')!.confirm!, /Create, start, and select[\s\S]*Tag: MCP[\s\S]*Suggested task\n\nDetails/);
-    assert.equal((await act(first, 'proposal:preview')).preview, 'Suggested task\n\nDetails');
+    assert.equal((await act(first, 'proposal:preview')).preview, '# Suggested task\n\nDetails');
+    assert.equal(first.footer?.find((item) => item.action === 'proposal:preview')?.text, '[MCP] Suggested task');
     assert.deepEqual(state, first.state);
     assert.ok(first.footer?.some((item) => item.action === 'proposal:accept'));
     assert.ok(first.footer?.every((item) => item.action !== 'proposal:dismiss' && item.secondaryAction === undefined), 'Legacy hosts use the app menu to dismiss, without a cross');

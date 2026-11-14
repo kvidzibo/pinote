@@ -118,6 +118,14 @@ test("native suggestion and completion controls require consent and reject stale
         assert.equal(visibleWidth(sanitized.split(" · ")[0]) - visibleWidth(selectedSanitized.split(" · ")[0]), 3);
       }
     }
+    for (const [text, title] of [
+      ["# Heading 🐦\n- body", "Heading 🐦"], ["  ## Nested\nbody", "Nested"],
+      ["#123 issue", "#123 issue"], ["C# code", "C# code"],
+    ]) {
+      for (const render of [renderSuggestion, renderSelectedTask]) {
+        assert.ok(stripVTControlCharacters(render({ text }, 80, theme, {})).endsWith(title));
+      }
+    }
     const longTag = renderSuggestion({ text: "Meaningful title", tag: "x".repeat(64) }, 60, theme, {});
     assert.match(stripVTControlCharacters(longTag), / · Meaningful title$/u);
     assert.doesNotMatch(stripVTControlCharacters(longTag), /xxx/u);

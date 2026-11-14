@@ -162,7 +162,16 @@ Edits and tag changes retain the task ID and record old/new values in history;
   configuration; the launcher does not copy credentials or install extensions.
   Launch errors appear in the checklist; check any new tab before retrying.
 - **Right-click note text → Edit…** opens a full multiline editor. Click **Save**
-  or press **Ctrl+Enter** to save; **Enter** inserts a newline. Closing the editor,
+  or press **Ctrl+Enter** to save; **Enter** inserts a newline. Both this editor and
+  the add-task box (**Shift+Enter**) add `# ` to a plain single-line task when you
+  insert its first newline, then start a `- ` bullet. Newlines after headings or
+  `- ` items continue with `- `; an empty bullet ends the list. Delete a bullet
+  marker for plain text; subsequent plain lines stay plain. Pasting and opening
+  existing tasks never insert markers. The task list hides leading heading markers.
+  Headings, **bold**, *italic*, and code have lightweight live source styling;
+  Markdown markers remain visible, editable, and included when copying/saving.
+  Styling is independent of the preview setting, not a full rich-text renderer.
+  Closing the editor,
   pressing **Esc**, or closing the checklist keeps a private draft, restored when you
   next edit that task—even after restarting. The **Discard draft** icon abandons the
   draft and closes the editor; **Save** commits it and clears the cache. Drafts do not

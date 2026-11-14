@@ -28,6 +28,7 @@ from pinote.gui.icons import (  # noqa: E402
 )
 from pinote.gui.kitty import start_in_kitty  # noqa: E402
 from pinote.gui.model import ReminderModel, TransitionResult, application_id  # noqa: E402
+from pinote.gui.preview_markdown import task_title  # noqa: E402
 from pinote.gui.reminders import ScheduledWindow  # noqa: E402
 from pinote.gui.state import AgentReadCache, FilterCache, WindowSizeCache  # noqa: E402
 from pinote.gui.tag_menu import TagMenu  # noqa: E402
@@ -76,9 +77,7 @@ class NoteRow(Gtk.ListBoxRow):
         self.tag_badge.set_no_show_all(True)
         self.tag_badge.get_style_context().add_class("tag-badge")
         # Never treat stored text as Pango markup, commands, or widget source.
-        self.body = Gtk.Label(
-            label=note.text.split("\n", 1)[0], xalign=0, yalign=0, selectable=True
-        )
+        self.body = Gtk.Label(label=task_title(note.text), xalign=0, yalign=0, selectable=True)
         self.body.set_single_line_mode(True)
         self.body.set_ellipsize(Pango.EllipsizeMode.END)
         self.body.connect("size-allocate", lambda *_args: self._update_preview_visibility())
@@ -174,7 +173,7 @@ class NoteRow(Gtk.ListBoxRow):
             # Only unchanged empty tasks can keep a deletion confirmation.
             self.deletion_marked = False
         if note.text != self.note.text:
-            self.body.set_text(note.text.split("\n", 1)[0])
+            self.body.set_text(task_title(note.text))
         self.note = note
         self.tag_badge.label.set_text(note.tag or "")
         self.tag_badge.set_tooltip_text(note.tag)

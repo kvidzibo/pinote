@@ -13,6 +13,10 @@ Host Pi ── Pinote extension ──┐
 VM Pi ──── Pinote extension ──┘
 ```
 
+Compact suggestion and selected-task titles hide leading Markdown heading markers
+(`# ` through `###### `); saved task text and
+full Markdown previews keep the original source.
+
 Tasks, tags, progress and handoff fields are shared. Selection and pending
 suggestions belong to each Pi conversation/branch, not the HTTP connection.
 Other tools continue running wherever Pi and their services run.
