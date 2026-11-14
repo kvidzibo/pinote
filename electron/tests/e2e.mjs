@@ -130,6 +130,27 @@ try {
   page.on('pageerror',e=>pageErrors.push(String(e)));
   page.on('console',m=>{if(m.type()==='error') logs.push(m.text());});
   const outgoing=[]; page.on('request',req=>{if(/^https?:/.test(req.url()))outgoing.push(req.url());});
+  app.on('window', child => {
+    if (child === page) return;
+    child.on('pageerror', e => pageErrors.push(String(e)));
+    child.on('request', req => { if (/^https?:/.test(req.url())) outgoing.push(req.url()); });
+  });
+  const openPreview = async opener => {
+    const created = app.waitForEvent('window');
+    await opener();
+    const child = await created;
+    await child.waitForURL('pinote-app://ui/preview.html');
+    await child.getByRole('dialog').waitFor();
+    await child.waitForFunction(() => document.activeElement === document.querySelector('.panel'));
+    return child;
+  };
+  const dismissPreview = async child => {
+    const closed = child.waitForEvent('close');
+    // Escape destroys this renderer on keydown, so keyup may race its closure.
+    await child.keyboard.press('Escape').catch(error => { if (!child.isClosed()) throw error; });
+    await closed;
+    assert.equal(page.isClosed(), false, 'Escape closes only the preview');
+  };
   await page.locator('.task-row').first().waitFor();
   await installNativeMenuProbe();
   const taskReadyMs=performance.now()-started;
@@ -266,17 +287,17 @@ try {
 
     // Tab to a real Markdown link without activating it (and thus without network I/O).
     await resize(580,620);
-    await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
-    const link = page.getByRole('dialog').getByRole('link',{name:'Safe preview link',exact:true});
+    const preview = await openPreview(() => page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click());
+    const link = preview.getByRole('dialog').getByRole('link',{name:'Safe preview link',exact:true});
     await link.waitFor();
     let reachedLink=false;
     for(let tab=0;tab<12;tab++) {
-      await page.keyboard.press('Tab');
+      await preview.keyboard.press('Tab');
       if(await link.evaluate(node=>node===document.activeElement)) { reachedLink=true; break; }
     }
     assert.ok(reachedLink,'Dialog Tab order must reach the preview Markdown link');
     assert.equal(outgoing.length,0,'Tab must not request remote resources');
-    await page.keyboard.press('Escape');
+    await dismissPreview(preview);
 
     // Restore the original Untagged view and compact geometry for the existing workflow.
     await filter.click();
@@ -603,12 +624,29 @@ try {
     await save(); assert.deepEqual(await load(),defaults);
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
-  await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
-  await page.getByRole('dialog').waitFor();
-  assert.equal(await page.evaluate(()=>window.compromised),undefined);
-  assert.equal(await page.getByRole('dialog').locator('img[src^="http"]').count(),0);
-  await page.screenshot({path:join(root,'preview.png')});
-  await page.keyboard.press('Escape');
+  {
+    const preview = await openPreview(() => page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click());
+    assert.equal(await preview.evaluate(()=>window.compromised),undefined);
+    assert.equal(await preview.getByRole('dialog').locator('img[src^="http"]').count(),0);
+    assert.equal(await preview.evaluate(()=>typeof window.pinote),'undefined');
+    assert.deepEqual(await preview.evaluate(()=>Object.keys(window.pinotePreview).sort()),['action','load','onUpdate','openLink','ready']);
+    assert.equal(await page.evaluate(()=>typeof window.pinotePreview),'undefined');
+    await app.evaluate(async ({BrowserWindow, ipcMain}) => {
+      const child = BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()==='pinote-app://ui/preview.html');
+      const event = { sender: child.webContents, senderFrame: child.webContents.mainFrame };
+      for (const channel of ['backend','save-state','finish-close']) {
+        const handler = ipcMain._invokeHandlers.get(channel);
+        if (!handler) throw new Error(`Missing owner handler: ${channel}`);
+        try { await handler(event, 'edit', {}); } catch (error) {
+          if (/Untrusted IPC sender/.test(String(error))) continue;
+          throw error;
+        }
+        throw new Error(`Preview invoked owner channel: ${channel}`);
+      }
+    });
+    await preview.screenshot({path:join(root,'preview.png')});
+    await dismissPreview(preview);
+  }
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Electron lifecycle ☘\nsecond line');
   await page.keyboard.press('Enter');
   await page.locator('.task-title').filter({hasText:/^Electron lifecycle ☘$/}).waitFor();
@@ -756,12 +794,77 @@ try {
   client=new Client({name:'electron-coexistence-test',version:'1'});
   await client.connect(new StreamableHTTPClientTransport(new URL(service.url),{requestInit:{headers:{Authorization:`Bearer ${'isolated-electron-test-token-'.repeat(3)}`}}}));
   const task=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
-  const update=await client.callTool({name:'update_current',arguments:{expected_updated_at:task.updated_at,set:{Next:'Shared update from Pi'}},_meta:{'native-ui/context':{conversationId:'isolated-test',state:{selectedId:first}}}});
+  const update=await client.callTool({name:'update_current',arguments:{expected_updated_at:task.updated_at,set:{Next:'Shared update from Pi\n\n' + 'Long preview paragraph.\n\n'.repeat(60)}},_meta:{'native-ui/context':{conversationId:'isolated-test',state:{selectedId:first}}}});
   assert.ok(!update.isError,JSON.stringify(update));
   await page.getByRole('button',{name:'Unread agent update — click to view.',exact:true}).waitFor();
   await page.screenshot({path:join(root,'agent-update.png')});
+  let disappearingPreview, previewOwnerBounds;
+  // One popup lifecycle: captured pointer, edge placement, keyboard fallback and live data.
+  {
+    previewOwnerBounds = await app.evaluate(({BrowserWindow, screen}) => {
+      const owner = BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html'));
+      const before = owner.getBounds(), area = screen.getDisplayMatching(before).workArea;
+      owner.setBounds({...before, x:area.x+area.width-before.width, y:area.y+area.height-before.height});
+      return before;
+    });
+    const placement = () => app.evaluate(({BrowserWindow, screen}) => {
+      const owner = BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html'));
+      const popup = BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/preview.html'));
+      return { owner:owner.getBounds(), content:owner.getContentBounds(), popup:popup?.getBounds(), area:screen.getDisplayMatching(owner.getBounds()).workArea };
+    });
+    const assertPlacement = (layout, point) => {
+      const {popup, content, area} = layout;
+      const axis = (at, size, start, span) => Math.max(start, Math.min(at+10+size<=start+span ? at+10 : at-10-size, start+span-size));
+      assert.equal(popup.x,axis(content.x+point.x,popup.width,area.x,area.width));
+      assert.equal(popup.y,axis(content.y+point.y,popup.height,area.y,area.height));
+      assert.ok(popup.x>=area.x && popup.y>=area.y && popup.x+popup.width<=area.x+area.width && popup.y+popup.height<=area.y+area.height);
+    };
+    const opener = page.locator(`[data-id="${first}"] [data-row-element="preview"]`);
+    await opener.scrollIntoViewIfNeeded();
+    const box = await opener.boundingBox();
+    const click = {x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2)};
+    const before = await placement();
+    let preview = await openPreview(async () => {
+      await page.mouse.click(click.x,click.y);
+      await page.mouse.move(1,1);
+    });
+    const shown = await placement();
+    assertPlacement(shown,click);
+    assert.deepEqual(shown.owner,before.owner,'Opening a preview must not resize or move its owner');
+    assert.ok(shown.popup.x < shown.content.x+click.x,'Near the right screen edge the popup must flip left');
+    const openedEvent = call('snapshot',{view:'active'}).notes.find(n=>n.id===first).agent_event_id;
+    await page.waitForFunction(async ({id,event})=>(await window.pinote.loadState()).read[String(id)]===event,{id:first,event:openedEvent});
+    await preview.locator('#body').evaluate(body=>{body.scrollTop=100;});
+    const scroll = await preview.locator('#body').evaluate(body=>body.scrollTop);
+    assert.ok(scroll>0,'Long agent fixture must exercise preview scrolling');
+    const latest = call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+    const live = await client.callTool({name:'update_current',arguments:{expected_updated_at:latest.updated_at,set:{Next:'Live popup update\n\n'+'Long preview paragraph.\n\n'.repeat(60)}},_meta:{'native-ui/context':{conversationId:'isolated-test',state:{selectedId:first}}}});
+    assert.ok(!live.isError,JSON.stringify(live));
+    await preview.getByText('Live popup update',{exact:true}).waitFor();
+    assert.equal(await preview.locator('#body').evaluate(body=>body.scrollTop),scroll);
+    assert.deepEqual(await placement(),shown,'Live updates must preserve both windows and popup geometry');
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).read[String(first)],openedEvent,'Live updates must not acknowledge a later agent event');
+    await dismissPreview(preview);
+    await opener.focus();
+    const fallback = await opener.evaluate(node=>{const r=node.getBoundingClientRect();return {x:Math.max(0,Math.round(r.left)),y:Math.max(0,Math.round(r.bottom))};});
+    preview = await openPreview(()=>page.keyboard.press('Enter'));
+    assertPlacement(await placement(),fallback);
+    await preview.getByRole('button',{name:'Copy note',exact:true}).click();
+    assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),latest.text);
+    const closed = preview.waitForEvent('close');
+    await preview.getByRole('button',{name:'Edit text…',exact:true}).click();
+    await closed;
+    await page.getByRole('textbox',{name:'Task text',exact:true}).waitFor();
+    assert.equal(page.isClosed(),false);
+    await page.keyboard.press('Escape');
+    preview = await openPreview(()=>opener.click());
+    // Keep this popup open for the existing CLI disappearance below.
+    disappearingPreview = preview;
+  }
   const cli=spawnSync(resolve('../.venv/bin/note'),['--no-notify','done',String(first)],{env,encoding:'utf8'}); assert.equal(cli.status,0,cli.stderr);
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
+  if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
+  await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);
   assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
   // Failed Kitty launch must keep the acknowledgement action, not offer a blocked retry.
   await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});

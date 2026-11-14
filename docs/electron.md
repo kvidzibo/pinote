@@ -102,10 +102,15 @@ Icons are bundled rather than taken from the host icon theme.
   Archive (including restore), tag management, task-action settings, and draft
   recovery. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
-- The task row's eye opens a safe Markdown preview, including agent fields
-  and unread updates. Raw HTML and remote images are not loaded. Supported links
+- The task row's eye opens a floating Markdown preview about 10 px from the
+  click, including agent fields and unread updates. It may overlap or extend
+  beyond the checklist without resizing it. Placement flips at screen edges;
+  moving the pointer or receiving updates does not move the open preview.
+  Keyboard activation anchors to the focused button. **Escape**, **Close**, or
+  losing focus dismisses only the preview; **Edit** returns to the checklist's
+  editor. Raw HTML and remote images are not loaded. Supported links
   open externally only on explicit activation.
-- Editors, previews, and searchable tag pickers are scrollable in-window dialogs;
+- Editors and searchable tag pickers are scrollable in-window dialogs;
   task actions use inline toolbars and the bottom menu uses a native popup menu,
   not centered panels.
   Folder selection and recovery confirmation can also use native dialogs.

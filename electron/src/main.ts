@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
+import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, mutating, safeLink, validMenuRequest, validParams, validState } from './security.ts';
@@ -122,7 +123,7 @@ async function boot() {
   }
   await app.whenReady();
   const styleNonce = randomUUID();
-  const assets = new Set(['index.html','renderer.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
+  const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
   protocol.handle('pinote-app', async request => {
     const url = new URL(request.url);
     const path = decodeURIComponent(url.pathname).replace(/^\//,'');
@@ -144,6 +145,7 @@ async function boot() {
     minWidth: 280, minHeight: 120, type: 'utility', frame: false, show: false, title: 'Pinote Electron', backgroundColor: '#232832', alwaysOnTop: true,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
   });
+  const preview = previewWindow(window);
   window.webContents.setWindowOpenHandler(() => ({ action:'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
@@ -188,6 +190,8 @@ async function boot() {
     if (!closing) { closing = true; activeMenu?.closePopup(window); window?.webContents.send('close-requested'); }
   });
   const handlers: Record<string, (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown> = {
+    'open-preview': (_event, request: unknown) => closing ? false : preview.open(request),
+    'update-preview': (_event, token: unknown, data: unknown) => preview.update(token, data),
     'popup-menu': (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request); },
     'load-state': () => structuredClone(state),
     'acknowledge-warning': async () => {
