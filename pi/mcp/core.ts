@@ -271,13 +271,15 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
       const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
       const legacy = field.name === 'PRs' ? task.agent_notes.PR : undefined;
-      const legacyExtra = Boolean(prs.length && legacy?.trim() && !parsePullRequests(legacy).length);
+      const legacyRemainder = (legacy ?? '').split(/\r?\n/).filter((line) => !parsePullRequests(line).length).join('\n');
+      const legacyExtra = Boolean(prs.length && legacyRemainder.trim());
       let room = field.width ?? config.config.fieldWidth;
       if (prs.length) {
         for (const [index, pr] of prs.entries()) {
           if (room <= 0 || footer.length >= 128) break;
           const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
-            .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url));
+            .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url))
+            .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? ''));
           const observation = (status: FieldStatus) => status.result.items
             ? status.result.items.find((item) => item.url === pr.url)
             : parsePullRequests(status.value).length === 1 ? status.result : undefined;
@@ -302,7 +304,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       // Preserve custom legacy text/links alongside valid plural URLs, using
       // the same field slot and the group's remaining column budget.
       let raw: string | undefined = task.agent_notes[field.name];
-      if (field.name === 'PRs') raw = legacyExtra ? legacy : raw?.trim() ? raw : legacy;
+      if (field.name === 'PRs') raw = legacyExtra ? legacyRemainder : raw?.trim() ? raw : legacy;
       if (!raw) continue;
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
       const url = link?.[2] ?? (/^https?:\/\/[^\s]+$/.test(raw) ? raw : undefined);

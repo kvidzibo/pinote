@@ -192,14 +192,17 @@ export class FieldAutomation {
     if (legacyUrl && parsePullRequests(task.agent_notes.PRs).some((pr) => pr.url === legacyUrl)) {
       for (const watcher of this.enabled) {
         const legacy = rows.find((row) => row.watcher_id === watcher.id && row.field === 'PR');
-        if (!legacy) continue;
         const plural = statuses.find((status) => status.watcherId === watcher.id && status.field === 'PRs');
         const item = plural?.result.items?.find((item) => item.url === legacyUrl);
-        // Prefer a checked plural result, but keep fresh legacy alerts when
-        // it is unavailable. Legacy-only custom watchers remain independent.
-        legacy.suppressed = Boolean(item && !plural?.stale && item.state !== 'error');
+        // Prefer the latest available observation across aliases.
+        // Legacy-only custom watchers remain independent.
         const legacyStatus = statuses.find((status) => status.watcherId === watcher.id && status.field === 'PR');
+        const pluralIsNewer = !legacyStatus || (plural?.checkedAt ?? '') >= (legacyStatus.checkedAt ?? '');
         const batch = rows.find((row) => row.watcher_id === watcher.id && row.field === 'PRs');
+        if (batch && !pluralIsNewer && legacyStatus && !legacyStatus.stale
+          && plural?.result.items?.filter((item) => item.notification).every((item) => item.url === legacyUrl)) batch.suppressed = true;
+        if (!legacy) continue;
+        legacy.suppressed = Boolean(item && !plural?.stale && item.state !== 'error' && pluralIsNewer);
         if (!batch || !item?.notification || item.notification.key !== legacyStatus?.result.notification?.key) continue;
         const knownFailures = plural!.result.items!.filter((item) => item.notification);
         if (knownFailures.length === 1) {

@@ -43,9 +43,12 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   const diagnostics: WatcherFailureLog[] = [];
   const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] })
     .map((watcher) => watcher.path === handler ? { ...watcher, bundled: true, name: 'GitHub PR' } : watcher), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
-  const forceDue = () => {
+  const forceDue = (field?: string) => {
     const db = new DatabaseSync(path);
-    try { db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)"); } finally { db.close(); }
+    try {
+      if (field) db.prepare("UPDATE fw_jobs SET job=json_set(job, '$.due', 0) WHERE field=?").run(field);
+      else db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)");
+    } finally { db.close(); }
   };
   try {
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers: [{ path: handler, enabled: true }], footer: { fields: [{ name: 'PR', format: '#<number>' }] } }));
@@ -160,15 +163,15 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.ok(changes > 0);
 
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 1, fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
-    for (const value of ['Needs review', '[Review](https://forgejo.example/repo/pulls/42)']) {
+    for (const value of ['Needs review', '[Review](https://forgejo.example/repo/pulls/42)', `Needs review\n${pr}`]) {
       await update({ PR: value });
       const legacyValue = await view();
-      assert.ok(legacyValue.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value)), 'Legacy non-GitHub <value> content stays visible');
+      assert.ok(legacyValue.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value.split('\n')[0])), 'Legacy non-GitHub <value> content stays visible');
       if (value.startsWith('[')) assert.ok(legacyValue.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
       await update({ PRs: pr });
       const combined = await view();
       assert.ok(combined.footer!.some((item) => item.url === pr), 'Plural PR links remain visible');
-      assert.ok(combined.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value)), 'Legacy custom values coexist in the same field slot');
+      assert.ok(combined.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value.split('\n')[0])), 'Legacy custom values coexist in the same field slot');
       if (value.startsWith('[')) assert.ok(combined.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
       await update({}, ['PRs']);
     }
@@ -214,6 +217,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await update({ PR: urls[1] }); // Both fields now contain the same failing PR.
     await automation.tick(); forceDue();
     for (let index = 0; index < 3; index++) await automation.tick();
+    forceDue('PRs'); await automation.tick();
     const currentNotices = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
     assert.equal(currentNotices.length, 1, 'Overlapping legacy/new fields deliver only the plural alert');
     assert.equal(currentNotices[0].field, 'PRs');
@@ -235,6 +239,17 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.equal(recoveredNotices.length, 1);
     assert.equal(recoveredNotices[0].id, currentNotices[0].id, 'Recovery and message changes preserve the failure receipt');
     assert.deepEqual(automation.notices(task, 'session-a', [currentNotices[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), []);
+    await setMode({ ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'passing', notification: undefined } : item), notification: undefined });
+    forceDue('PRs'); await automation.tick();
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
+    await setMode({ state: 'failed', notification: { key: 'new-legacy-head', message: 'Fresh legacy CI failure' }, recheckAfterSeconds: 10 });
+    forceDue('PR'); await automation.tick();
+    assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR' && notice.message === 'Fresh legacy CI failure'), 'An older plural passing result never suppresses a newer legacy failure');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'error', 'Footer colours use the latest available observation');
+    await setMode(batchResult); forceDue('PRs'); await automation.tick();
+    await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
+    assert.ok(!automation.notices(task, 'session-a').some((notice) => ['PR', 'PRs'].includes(notice.field)), 'An older plural failure never alerts after a newer legacy recovery');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
     await setMode({ state: 'failed', notification: { key: 'custom-legacy', message: 'Custom PR alert' }, recheckAfterSeconds: 10 });
     forceDue();
     for (let index = 0; index < 3; index++) await automation.tick();
