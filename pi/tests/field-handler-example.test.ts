@@ -62,8 +62,8 @@ process.stdout.write(process.env.GH_RESPONSE);
   for (const state of ['MERGED', 'CLOSED']) {
     const output = run({ ...passing, state }).output;
     assert.equal(output.state, state.toLowerCase());
-    assert.equal(output.display.strikethrough, state === 'MERGED');
-    assert.equal(output.display.color, 'muted');
+    assert.equal(output.display.strikethrough, false);
+    assert.equal(output.display.color, state === 'MERGED' ? 'accent' : 'muted');
     assert.equal(output.recheckAfterSeconds, undefined);
     assert.equal(output.notification, undefined);
   }

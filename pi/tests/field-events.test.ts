@@ -116,7 +116,8 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     forceDue(); await automation.tick();
     const merged = await view();
     assert.deepEqual(merged.watcherDiagnostics?.failures, []);
-    assert.ok(merged.footer!.some((item) => item.text.includes('#42') && item.style?.strikethrough));
+    assert.ok(merged.footer!.some((item) => item.text.includes('#42') && item.style?.color === 'accent' && item.style.strikethrough === false),
+      'Previously cached merged PRs use the theme accent without strikethrough');
     assert.ok(merged.footer!.some((item) => item.url === pr), 'link stays clickable');
     assert.deepEqual(merged.fieldNotifications, []);
     const context = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });

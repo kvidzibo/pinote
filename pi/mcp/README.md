@@ -162,8 +162,8 @@ Xvfb and private D-Bus; never point them at personal data.
 Manage `fieldWatchers` in **Settings → Footer fields → Watchers**. Bundled files
 are discovered disabled; trusted custom executables can be added and enabled.
 Independent checks survive restarts and settings apply live, without another daemon.
-The GitHub PR watcher triggers the owning worker on failed CI/conflicts and strikes
-through merged PRs. With pi-note 0.41.1+ on both sides, failed watcher executions
+The GitHub PR watcher triggers the owning worker on failed CI/conflicts and marks
+merged PRs with the theme accent (default purple), without strikethrough. With pi-note 0.41.1+ on both sides, failed watcher executions
 produce grouped terminal-only notices pointing to the service log; retries do not
 spam the terminal or trigger model turns. Requires note 0.24.0+. Review the
 [watcher contract and safeguards](FIELD_EVENTS.md) before enabling trusted code.

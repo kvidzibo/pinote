@@ -51,7 +51,7 @@ export async function handleFieldEvent(event) {
   const pr = JSON.parse(stdout);
   const checks = validateResponse(pr);
   const summary = `PR #${number}`;
-  if (pr.state === 'MERGED') return { state: 'merged', summary: `${summary} merged`, display: { strikethrough: true, color: 'muted' } };
+  if (pr.state === 'MERGED') return { state: 'merged', summary: `${summary} merged`, display: { strikethrough: false, color: 'accent' } };
   if (pr.state === 'CLOSED') return { state: 'closed', summary: `${summary} closed`, display: { strikethrough: false, color: 'muted' } };
   const conflict = pr.mergeable === 'CONFLICTING';
   const failed = checks.filter((check) => check.failed);
