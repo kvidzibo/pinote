@@ -1,6 +1,6 @@
 # Field-event handler
 
-pi-note **0.38.0+** with **note 0.24.0+** can run one executable for all task-field
+pi-note **0.39.0+** with **note 0.24.0+** can run one executable for all task-field
 changes. This is opt-in, on the **HTTP service machine**. No extra daemon or Pi-local
 watcher is installed. The local-only extension and stdio service do not run handlers.
 
