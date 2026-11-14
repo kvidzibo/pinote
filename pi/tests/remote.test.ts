@@ -76,12 +76,15 @@ test('branch-only restoration, endpoint isolation and independent unrelated laun
   assert.equal(restoreState(branch, config.scope).state.selectedId, 7);
   assert.deepEqual(restoreState(branch, 'another endpoint').state, {});
   const h = harness();
-  await h.session.start(branch, 'pi-session');
+  const piSessionId = '12345678-1234-4234-8234-123456789012';
+  await h.session.start(branch, 'pi-session', undefined, piSessionId);
+  assert.equal((h.metas[0][UI_CONTEXT] as any).piSessionId, piSessionId);
   assert.equal((h.metas[0][UI_CONTEXT] as any).contextId, a.contextId);
   assert.equal((h.metas[0][UI_CONTEXT] as any).conversationId, 'pi-session');
   assert.equal((h.metas[0][UI_FEATURES] as any).actionRevisions, true);
   const carried = h.session.snapshot();
   await h.session.start([], 'new-pi-session', carried);
+  assert.equal((h.metas.at(-1)![UI_CONTEXT] as any).piSessionId, undefined, 'Never inherit a prior Pi session ID');
   assert.equal(h.session.snapshot()?.state.selectedId, 7);
   assert.equal(h.session.snapshot()?.contextId, a.contextId);
   await h.session.start([], 'unrelated');

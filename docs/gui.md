@@ -63,12 +63,13 @@ does not reinstall packages or change desktop configuration.
 Update **both** the CLI and GUI installations before reopening the GUI. For the
 editable setup above, update the checkout and run `uv tool install --reinstall .`
 for the separately installed CLI. Back up `notes.db` first ([backup instructions](usage.md#data-privacy-and-backup)).
-The first database open upgrades schema 1–6 to **7** atomically, retaining note IDs,
+The first database open upgrades schema 1–7 to **8** atomically, retaining note IDs,
 timestamps, tags, reminders, history, and import markers. Schema 5 stores tags separately,
 including unused tags; schema 6 adds agent fields, history snapshots, and per-directory
 Pi task selections. Existing tasks start with no agent fields; schema 1/2 tasks start
 untagged. Schema 7 adds optional default folders to saved tags; existing tags have
-none. Versions before 0.16.0 cannot read schema 7. Upgrade every CLI/GUI installation
+none. Schema 8 adds persistent Pi session IDs, initially empty. Versions before
+0.25.0 cannot read schema 8. Upgrade every CLI/GUI installation
 using the database, including the CLI used by the Pinote service.
 Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Historical text is preserved, not replaced when a task is edited.

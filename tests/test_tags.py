@@ -59,7 +59,7 @@ def test_legacy_upgrade_allows_edits_and_tags_without_losing_history(tmp_path, v
         db.execute("UPDATE sqlite_sequence SET seq = 40 WHERE name = 'notes'")
         db.execute("UPDATE sqlite_sequence SET seq = 80 WHERE name = 'events'")
     with Store(path) as store:
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
         original = store.notes()[0]
         assert original.tag is None
         assert store.edit(7, "Edited\nDetails", expected_updated_at=original.updated_at)
@@ -156,6 +156,7 @@ def test_persistent_registry_upgrade_and_management_preserve_tasks_and_history(t
         store.connection.execute("DROP TABLE tags")
         store.connection.execute("DROP TABLE agent_selections")
         store.connection.execute("ALTER TABLE notes DROP COLUMN agent_notes")
+        store.connection.execute("ALTER TABLE notes DROP COLUMN pi_sessions")
         store.connection.execute("ALTER TABLE events DROP COLUMN agent_notes")
         store.connection.execute("ALTER TABLE events DROP COLUMN previous_agent_notes")
         store.connection.execute("PRAGMA user_version = 4")
@@ -166,7 +167,7 @@ def test_persistent_registry_upgrade_and_management_preserve_tasks_and_history(t
         assert store.tags() == ["Café", "Work"]
         assert store.notes(all_states=True) == before
         assert [dict(event) for event in store.history()] == history
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
     with display_lock(model.paths), pytest.raises(BlockingIOError):
         model.create_tag("Blocked")
     with pytest.raises(NoteError, match="already exists"):

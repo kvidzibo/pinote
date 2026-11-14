@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -29,7 +30,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
   execFileSync('git', ['-C', temp, 'config', 'branch.completion-test.remote', 'origin']);
   execFileSync('git', ['-C', temp, 'config', 'branch.completion-test.merge', 'refs/heads/main']);
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));
-  const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui', sessionId = `client-${clients.length}`) => {
+  const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui', sessionId = randomUUID()) => {
     const previous = clients.at(-1);
     if (previous) await previous.handlers.get('session_shutdown')!({ reason: reason === 'reload' ? 'reload' : 'quit' }, previous.ctx);
     if (request === undefined) delete process.env.PINOTE_LAUNCH_TASK;
@@ -96,6 +97,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.deepEqual(stale.editor.writes, []);
     assert.equal(stale.entries.at(-1).data.state.selectedId, null);
     assert.equal(cli('agent', 'get', String(task.id)).state, 'active');
+    assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], [], 'Stale launches never record sessions');
     const malformed = await open('not-json');
     assert.ok(malformed.notices.some((notice) => notice.includes('invalid request')));
     const launched = await open(request, [{ type: 'thinking_level_change', thinkingLevel: 'off' }]);
@@ -110,9 +112,21 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal(launched.entries.at(-1).data.state.selectedId, task.id);
     assert.equal(cli('agent', 'get', String(task.id)).updated_at, revision);
     assert.deepEqual(launched.editor.writes, ['is task clear?']); // Never refill on reload.
+    const launchSession = launched.ctx.sessionManager.getSessionId();
+    assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], [launchSession]);
+    await launched.choose('Clear');
+    await launched.choose('Kitty launch target');
+    assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], [launchSession], 'Reselection deduplicates the actual Pi ID');
+    assert.equal(cli('agent', 'get', String(task.id)).updated_at, revision);
     const current = { ...request, updated_at: revision };
     const custom = await open({ ...current, prompt: 'Clarify scope\nthen wait 日本語' });
     assert.equal(custom.editor.text, 'Clarify scope\nthen wait 日本語');
+    const sessions = [launchSession, custom.ctx.sessionManager.getSessionId()];
+    assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], sessions);
+    const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
+    await custom.handlers.get('before_agent_start')!(event, custom.ctx);
+    assert.ok(event.systemPromptOptions.sections.pinote_remote.includes('pi-sessions'));
+    for (const id of sessions) assert.ok(event.systemPromptOptions.sections.pinote_remote.includes(id));
     const occupied = await open(current, [], 'startup', 'Keep my draft');
     assert.equal(occupied.editor.text, 'Keep my draft');
     assert.deepEqual(occupied.editor.writes, []);

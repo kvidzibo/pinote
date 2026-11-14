@@ -22,7 +22,7 @@ test('find, read, suggest, and accept an existing task without duplication or au
   };
   let client = await connect();
   let state: Record<string, unknown> = {};
-  const meta = () => ({ 'native-ui/context': { conversationId: 'existing-task', state }, 'native-ui/features': { actionRevisions: true, footerNativeActions: true, footerStyles: true } });
+  const meta = () => ({ 'native-ui/context': { conversationId: 'existing-task', piSessionId: '12345678-1234-4234-8234-123456789012', state }, 'native-ui/features': { actionRevisions: true, footerNativeActions: true, footerStyles: true } });
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await client.callTool({ name, arguments: args, _meta: meta() });
     if (result._meta?.['native-ui/state']) state = result._meta['native-ui/state'] as Record<string, unknown>;
@@ -86,6 +86,7 @@ test('find, read, suggest, and accept an existing task without duplication or au
     assert.equal(current.text, task.text);
     assert.equal(current.tag, task.tag);
     assert.deepEqual(current.agent_notes, changed.agent_notes);
+    assert.deepEqual(current['pi-sessions'], ['12345678-1234-4234-8234-123456789012']);
     assert.equal((await cli('list', '--all', '--json')).filter((item: any) => item.text === task.text).length, 1);
     assert.equal((await call('propose', { task_id: task.id })).isError, true, 'Existing selection is never replaced');
     await assert.rejects(act(view, 'proposal:accept'), /changed/);

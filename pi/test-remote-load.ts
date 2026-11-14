@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -28,7 +29,7 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
   const context = (branch: any[], id: string) => ({ cwd: temp, mode: 'rpc', hasUI: false, isIdle: () => true,
     sessionManager: { getSessionFile: () => join(temp, `${id}.jsonl`), getSessionId: () => id, getBranch: () => branch },
     ui: { notify: (message: string) => notices.push(message) } });
-  const ctx = context(entries, 'host'), otherCtx = context(otherEntries, 'vm');
+  const ctx = context(entries, randomUUID()), otherCtx = context(otherEntries, randomUUID());
   try {
     const { startPinoteHttpServer } = await import(pathToFileURL(join(root, 'dist-mcp/mcp/http.js')).href);
     service = await startPinoteHttpServer({ port: 0, logPath: join(temp, 'app.log') });

@@ -7,7 +7,8 @@ resources, notifications and its native terminal UI. No browser UI is served.
 ## Build and run
 
 On the machine holding your notes, requires **Node.js 22.19+**, **Python 3.11+**
-and the checkout's `note` CLI:
+and the checkout's `note` CLI **0.25.0+** (schema 8). Upgrade all installations
+sharing the database before starting the service:
 
 ```sh
 uv sync --locked
