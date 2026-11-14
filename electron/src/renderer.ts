@@ -753,6 +753,9 @@ async function edit(task: Task): Promise<void> {
   const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async (name, folder) => {
     if (readonly || closing || conflict || paused) return false;
     queuedTag = name; queuedFolder = folder;
+    // The picker may outlive the debounce and accept this while text is already
+    // in flight. Journal it now, even if that earlier write fails.
+    retain(); check();
     await save();
     return !paused && !conflict && queuedTag === undefined;
   }));
