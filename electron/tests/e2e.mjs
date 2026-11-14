@@ -35,7 +35,7 @@ const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK**
 const sessions = ['a1234567-89ab-4cde-8fab-0123456789ab', 'session_' + '0123456789abcdef'.repeat(15)];
 const handoffFields = { Summary: 'Saved **summary**', Next: 'Run the focused checks', Risks: '<script>window.compromised=true</script>' };
 if (handoffOnly) {
-  const note = resolve('../.venv/bin/note');
+  const note = resolve('../backend/bin/note');
   const cli = args => {
     const result = spawnSync(note, ['--no-notify', ...args], { env, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
