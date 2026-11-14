@@ -148,7 +148,7 @@ export class RemoteUI {
     this.opening = true;
     const current = this.session.current(), signal = this.session.signal;
     const menus = new Map<string, MenuState>(), drafts = new Map<string, Draft>();
-    let screen = 'home' as Screen, notice = '';
+    let screen = 'tasks' as Screen, notice = '';
     const go = async (next: Screen): Promise<boolean> => {
       const view = this.session.view;
       if (!view) return false;
@@ -163,7 +163,7 @@ export class RemoteUI {
     };
     try {
       await this.refresh(ctx);
-      await go('home');
+      await go('tasks');
       while (current() && !signal.aborted && !this.closing) {
         if (this.failure || !this.session.view) {
           const failure = this.failure;
@@ -184,6 +184,7 @@ export class RemoteUI {
           this.menuChanged = changed;
           return () => { if (this.menuChanged === changed) this.menuChanged = undefined; };
         }, { search: screen === 'tasks' ? 'tasks' : screen === 'fields' ? 'local' : 'none', notice,
+          tab: screen === 'tasks' ? 'settings' : screen === 'settings' ? 'tasks' : undefined,
           searchLabel: screen === 'fields' ? 'Filter fields' : undefined,
           onSearch: async (query) => {
             const latest = this.session.view, control = latest?.controls.find((c) => c.id === 'search');

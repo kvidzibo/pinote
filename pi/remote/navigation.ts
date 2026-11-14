@@ -2,34 +2,30 @@ import { defaultFooterField, parseAgentGuidance, parseFooterConfig, parseHandoff
 import { parseFieldWatchers } from '../field-watchers.ts';
 import { clean, editorText, type NativeControl, type NativeView } from './protocol.ts';
 
-export type Screen = 'home' | 'tasks' | 'settings' | 'prompts' | 'footer' | 'fields' | 'field' | 'watchers';
+export type Screen = 'tasks' | 'settings' | 'prompts' | 'footer' | 'fields' | 'field' | 'watchers';
 const group = (id: Screen, label: string, description: string): NativeControl => ({ id: `__${id}`, label, description, kind: 'action' });
-export const parentScreen = (screen: Screen): Screen | undefined => ({ tasks: 'home', settings: 'home', prompts: 'settings', footer: 'settings', fields: 'settings', field: 'fields', watchers: 'fields' } as const)[screen as Exclude<Screen, 'home'>];
-export const serverScreen = (screen: Screen) => screen === 'home' || screen === 'tasks' ? 'tasks' : screen === 'field' ? 'field' : 'settings';
+export const parentScreen = (screen: Screen): Screen | undefined => ({ settings: 'tasks', prompts: 'settings', footer: 'settings', fields: 'settings', field: 'fields', watchers: 'fields' } as const)[screen as Exclude<Screen, 'tasks'>];
+export const serverScreen = (screen: Screen) => screen === 'tasks' ? 'tasks' : screen === 'field' ? 'field' : 'settings';
 
 /** Local navigation only. Server controls/revisions remain the authority for every action. */
 export function menuView(view: NativeView, screen: Screen): NativeView {
   const take = (...ids: string[]) => ids.flatMap((id) => view.controls.filter((c) => c.id === id));
   let controls: NativeControl[], title: string, body: string;
   switch (screen) {
-    case 'home':
-      title = 'Pinote'; body = view.body ?? '';
-      controls = [...take('preview', 'proposal:preview', 'proposal:accept', 'proposal:dismiss', 'continue'),
-        group('tasks', view.state.selectedId ? 'Switch task…' : 'Choose a task…', 'Search tasks by title, description, tag or #ID. Enter starts and selects the chosen task.'),
-        ...take('add'), group('settings', 'Settings…', 'Shared prompts, task suggestions and footer display settings.'), ...take('done', 'clear')];
-      break;
     case 'tasks':
-      title = 'Pinote / Tasks'; body = view.body ?? '';
-      controls = view.controls.filter((c) => c.id.startsWith('select:'));
+      title = 'Pinote'; body = view.body ?? '';
+      controls = [...take('add'), ...view.controls.filter((c) => c.id.startsWith('select:')),
+        ...take('preview', 'proposal:preview', 'proposal:accept', 'proposal:dismiss', 'continue', 'done', 'clear')];
+      if (!controls.some((c) => c.id.startsWith('select:'))) body = view.state.search ? 'No tasks match this search.' : 'No active tasks. Create one with + New task.';
       break;
     case 'settings':
       title = 'Pinote / Settings'; body = 'Shared service settings · affects all connected clients. Task values are unchanged.';
-      controls = [group('prompts', 'Prompts and agent guidance…', 'Edit shared task prompts and injected instructions.'),
-        ...take('taskOfferPolicy'), group('footer', 'Footer layout…', 'Set title/field widths and the maximum visible handoff fields.'),
-        group('fields', 'Footer fields…', 'Edit display definitions, not saved task values.')];
+      controls = [group('prompts', 'Agent guidance', 'Edit shared task prompts and injected instructions.'),
+        group('fields', 'Fields', 'Edit display definitions, not saved task values.'),
+        ...take('taskOfferPolicy'), group('footer', 'Footer layout', 'Set title/field widths and the maximum visible handoff fields.')];
       break;
     case 'prompts':
-      title = 'Pinote / Settings / Prompts'; body = 'Shared prompts and instructions · each change requires review and confirmation.';
+      title = 'Pinote / Settings / Agent guidance'; body = 'Shared prompts and instructions · each change requires review and confirmation.';
       controls = take('handoffPrompt', 'newSessionPrompt', 'agentGuidance', 'reset-agent-guidance');
       // The service deliberately omits oversized editors. Keep its explanation visible.
       if (view.body?.includes('editor limit')) body = view.body;
@@ -39,7 +35,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       controls = take('titleWidth', 'fieldWidth', 'maxFields');
       break;
     case 'fields':
-      title = 'Pinote / Settings / Footer fields'; body = 'Display definitions only. Populated task values appear in the footer.';
+      title = 'Pinote / Settings / Fields'; body = 'Display definitions only. Populated task values appear in the footer.';
       controls = [group('watchers', 'Watchers…', 'Bundled and custom field watchers; explicitly enable trusted code and automatic worker actions.'),
         ...view.controls.filter((c) => c.id.startsWith('field:')), ...take('add-field')];
       break;

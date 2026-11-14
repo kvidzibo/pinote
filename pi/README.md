@@ -52,10 +52,11 @@ state routing, tools and UI.
 
 ## Use
 
-Open **`/pinote`** for the selected task's actions, pending suggestion, task picker
-and shared settings. **Choose a task… / Switch task…** opens task-only search:
-all search terms must match the title, description, tag or numeric ID. Results show
-status and the current selection; selection waits for fresh search results.
+Open **`/pinote`** for the searchable task list, newest-created first, with
+**+ New task** as its first option. All search terms must match the title,
+description, tag or numeric ID. Results show status and the current selection;
+selection waits for fresh search results. Selected-task and pending-suggestion
+actions follow the task results.
 Press **F1** on a result to read its full title and text without selecting it.
 Selecting a task starts it and returns to the unchanged prompt without another
 confirmation. **Clear selection** leaves its progress unchanged.
@@ -68,9 +69,10 @@ Footer double-click directly approves suggestion acceptance or completion;
 completion requires idle Pi. Failed or uncertain
 writes offer refresh/verification, never automatic replay.
 
-**Settings** groups prompts/guidance, task-offer policy, footer layout and field
-definitions. Editors accept plain text or numbers, not JSON; validation retains
-the draft. Cancelling a change's confirmation returns to its text draft. Values
+Press **Tab** for **Settings**: **Agent guidance**, **Fields**, **Task offers**,
+then **Footer layout**. **Tab** or **Escape** returns to tasks with the search
+retained. Editors accept plain text or numbers, not JSON; validation retains the
+draft. Cancelling a change's confirmation returns to its text draft. Values
 are saved only after review and confirmation.
 
 Menus use Pi's native inline components, themes and configured selection keys.
@@ -212,7 +214,7 @@ CLI/service instead of silently truncating.
 
 ### Field watchers (pi-note 0.40.0+)
 
-Open **Settings → Footer fields → Watchers** to enable bundled watchers or add a
+Open **Settings → Fields → Watchers** to enable bundled watchers or add a
 trusted executable on the service machine. Files in the packaged `watchers/`
 folder are discovered automatically, but remain disabled until enabled explicitly.
 Each watcher handles task-field changes and scheduled checks independently.
@@ -225,6 +227,10 @@ completed. Requires authenticated `gh`, Node and **note 0.24.0+** on the service
 See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md).
 
 ## Migration
+
+Since pi-note 0.40.1, `/pinote` opens tasks directly and **Tab** opens settings.
+Update both client and service for newest-created-first search results, then
+`/reload` Pi.
 
 Since pi-note 0.40.0, `fieldWatchers` replaces `fieldHandler`. Existing handlers
 appear disabled and need explicit re-enabling: enabling now authorizes automatic

@@ -32,7 +32,7 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
   initTheme('dark', false);
   await t.test('local groups retain server control identity and revisions', () => {
     const current = view();
-    assert.deepEqual(menuView(current, 'settings').controls.map((c) => c.id), ['__prompts', 'taskOfferPolicy', '__footer', '__fields']);
+    assert.deepEqual(menuView(current, 'settings').controls.map((c) => c.id), ['__prompts', '__fields', 'taskOfferPolicy', '__footer']);
     for (const [screen, id] of [['prompts', 'handoffPrompt'], ['footer', 'titleWidth'], ['fields', 'field:Owner']] as const) {
       const grouped = menuView(current, screen);
       assert.equal(grouped.revision, current.revision);
@@ -40,7 +40,7 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
       assert.equal(serverScreen(screen), 'settings');
       assert.equal(parentScreen(screen), 'settings');
     }
-    assert.equal(menuView(current, 'settings').controls[1], current.controls[2]);
+    assert.equal(menuView(current, 'settings').controls[2], current.controls[2]);
     current.controls.push({ id: 'watcher:abc', label: 'GitHub PR', kind: 'toggle', value: false, revision: 'watcher-revision' });
     assert.equal(menuView(current, 'fields').controls[0].id, '__watchers');
     assert.equal(menuView(current, 'watchers').controls[0], current.controls.at(-1));
@@ -110,12 +110,11 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
     const ctx: any = { mode: 'tui', ui: { notify: (message: string) => assert.fail(message),
       custom: native((component, rows) => {
         switch (step++) {
-          case 0: component.handleInput('\r'); break; // Home -> picker.
-          case 1:
+          case 0:
             assert.match(rows.join(' '), /F1 preview/);
             assert.ok(!rows.join(' ').includes('DISTINCT END'));
             component.handleInput('\x1bOP'); break;
-          case 2:
+          case 1:
             assert.match(rows.join(' '), /Task text #7/);
             component.handleInput('\x1b[6~');
             assert.match(component.render(100).join(' '), /DISTINCT END/);
@@ -125,7 +124,47 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
       }),
     } };
     await new RemoteUI({} as any, session).open(ctx);
-    assert.equal(step, 5); assert.equal(reads, 1); assert.equal(current.state.selectedId, null);
+    assert.equal(step, 3); assert.equal(reads, 1); assert.equal(current.state.selectedId, null);
+  });
+  await t.test('tasks open directly with New task first; Tab and Escape preserve the task search', async () => {
+    const taskControls: NativeView['controls'] = [
+      { id: 'add', kind: 'text', label: 'New task', icon: '+', value: '', multiline: true },
+      { id: 'select:7', kind: 'action', label: 'Sample task' },
+      { id: 'screen:settings', kind: 'action', label: 'Settings' },
+    ];
+    const current: NativeView = { version: 1, title: 'Pinote', revision: 'r', state: { screen: 'tasks', search: '' }, controls: taskControls };
+    let step = 0;
+    const session: any = { signal: new AbortController().signal, current: () => () => true, view: current,
+      refresh: async () => {}, action: async (_view: NativeView, control: { id: string }) => {
+        assert.ok(['screen:settings', 'screen:tasks'].includes(control.id), 'Navigation never mutates tasks');
+        current.state.screen = control.id.slice(7);
+        current.controls = current.state.screen === 'tasks' ? taskControls : [...view().controls, { id: 'screen:tasks', kind: 'action', label: 'Tasks' }];
+        return {};
+      },
+    };
+    const ctx: any = { mode: 'tui', ui: { notify: (message: string) => assert.fail(message), custom: native((component, rows) => {
+      switch (step++) {
+        case 0:
+          assert.match(rows.join(' '), /Search tasks/);
+          assert.ok(rows.findIndex((row) => row.includes('+ New task')) < rows.findIndex((row) => row.includes('Sample task')));
+          component.handleInput('\x1bOP'); // F1 on New task is inert.
+          component.handleInput('Sample'); component.render(100); component.handleInput('\t'); break;
+        case 1:
+          assert.match(rows.join(' '), /Pinote \/ Settings/);
+          assert.ok(rows.findIndex((row) => row.includes('Agent guidance')) < rows.findIndex((row) => row.includes('Fields')));
+          component.handleInput('\x1b'); break;
+        case 2:
+          assert.match(rows.join(' ').replace(/\x1b_pi:\/?fc\x07/g, ''), /Sample/);
+          component.handleInput('\t'); break;
+        case 3: component.handleInput('\t'); break; // Tab returns to tasks too.
+        case 4: component.handleInput('\x1b'); break; // Root closes, no old home screen.
+        default: assert.fail('Unexpected extra menu');
+      }
+    }) } };
+    await new RemoteUI({} as any, session).open(ctx);
+    assert.equal(step, 5);
+    assert.equal(parentScreen('tasks'), undefined);
+    assert.equal(parentScreen('settings'), 'tasks');
   });
   await t.test('server search suppresses keyboard and mouse activation until results arrive', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });

@@ -30,7 +30,7 @@ test('selecting a task starts it with one menu activation and returns to the unc
     session = new RemoteSession(remoteConfig({ ...process.env, PINOTE_URL: service.url }), () => {});
     await session.start([], 'task-selection-test');
     initTheme('dark', false);
-    let homes = 0, selections = 0, searches = 0;
+    let selections = 0, searches = 0;
     const draft = 'Keep my unfinished prompt';
     const ctx = { mode: 'tui', isIdle: () => true, ui: {
       getEditorText: () => draft,
@@ -45,14 +45,9 @@ test('selecting a task starts it with one menu activation and returns to the unc
           component = factory(tui, theme, getKeybindings(), resolve);
           if (!component.handleInput) { component.render(100); return; } // asynchronous native loader
           const rows = component.render(100).join(' ');
-          if (!rows.includes('Search tasks ·')) {
-            assert.equal(++homes, 1, 'Selection must not return to the home screen');
-            assert.ok(!rows.includes('Type to filter'), 'Home has no filter');
-            while (!component.render(100).some((row: string) => row.includes('→') && /Choose a task|Switch task/.test(row))) {
-              component.handleInput('\x1b[B');
-            }
-            component.handleInput('\r');
-          } else if (searches++ === 0) {
+          assert.ok(rows.includes('Search tasks ·'), 'Open goes directly to searchable tasks');
+          assert.ok(rows.includes('New task'), 'Creation remains available above results');
+          if (searches++ === 0) {
             component.handleInput('\x15');
             component.handleInput('Task selection target');
             component.render(100);
@@ -67,15 +62,16 @@ test('selecting a task starts it with one menu activation and returns to the unc
     } } as any;
     const ui = new RemoteUI({} as any, session);
     const task = cli('agent', 'add', '--text=Task selection target');
+    const other = cli('agent', 'add', '--text=Newer unrelated task');
     for (const expectedState of ['active', 'in_progress']) {
       assert.equal(cli('agent', 'get', String(task.id)).state, expectedState);
-      homes = selections = 0;
+      selections = 0;
       searches = session.snapshot()?.state.search === 'Task selection target' ? 1 : 0;
       await ui.open(ctx);
-      assert.equal(homes, 1);
       assert.equal(selections, 1);
       assert.equal(session.snapshot()?.state.selectedId, task.id);
       assert.equal(cli('agent', 'get', String(task.id)).state, 'in_progress');
+      assert.equal(cli('agent', 'get', String(other.id)).state, 'active');
       assert.equal(ctx.ui.getEditorText(), draft);
     }
   } finally {
