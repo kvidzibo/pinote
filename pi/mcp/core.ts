@@ -229,7 +229,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     : [{ text: `${icons.note} `, width: 3 }];
   if (features.footerNativeActions) {
     if (task) footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(features.footerDoubleActions ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
-    else if (state.proposal) footer.push({ text: `? ${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    else if (state.proposal) footer.push({ text: `? ${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerDoubleActions ? { doubleAction: 'proposal:accept' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
     else footer.push({ text: 'Pinote · No task', width: config.config.titleWidth });
   } else if (task) {
     footer.push({ text: `${icons.check} `, action: 'done', width: 3 });

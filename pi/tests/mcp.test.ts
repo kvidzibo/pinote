@@ -279,7 +279,10 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(nativeSuggestion.footer?.length, 2);
     assert.match(nativeSuggestion.footer![1].text, /^\? /);
     assert.equal(nativeSuggestion.footer![1].action, 'proposal:preview', 'Suggestion single click previews without acceptance');
-    assert.equal(nativeSuggestion.footer![1].doubleAction, undefined);
+    assert.equal(nativeSuggestion.footer![1].doubleAction, 'proposal:accept');
+    double = false;
+    assert.equal((await read()).footer![1].doubleAction, undefined, 'Suggestion acceptance requires double-action support');
+    double = true;
     assert.deepEqual(nativeSuggestion.footer![1].style, { italic: true, color: 'accent' });
     native = false;
     secondary = true; styles = true;
@@ -294,7 +297,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     await assert.rejects(act(first, 'proposal:accept'), /changed/);
     native = true; scoped = true;
     view = await read();
-    view = (await act(view, 'proposal:accept')).view;
+    view = (await act(view, view.footer![1].doubleAction!)).view;
     native = false; scoped = false;
     view = await read();
     assert.equal(view.retainOnNew, true);
