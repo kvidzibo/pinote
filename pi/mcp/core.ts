@@ -268,9 +268,8 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   if (task) {
     for (const field of fields(config.config, task.agent_notes)) {
       if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
-      if (field.name === 'PRs') {
-        const prs = parsePullRequests(pullRequestValues(task.agent_notes));
-        if (!prs.length) continue;
+      const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
+      if (prs.length) {
         let room = field.width ?? config.config.fieldWidth;
         for (const [index, pr] of prs.entries()) {
           if (room <= 0 || footer.length >= 128) break;
@@ -296,7 +295,8 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
         fieldCount++;
         continue;
       }
-      const raw = task.agent_notes[field.name];
+      // Keep custom <value>/<url> presentations of non-GitHub legacy values.
+      const raw = field.name === 'PRs' ? task.agent_notes.PRs ?? task.agent_notes.PR : task.agent_notes[field.name];
       if (!raw) continue;
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
       const url = link?.[2] ?? (/^https?:\/\/[^\s]+$/.test(raw) ? raw : undefined);
@@ -307,7 +307,8 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       const rendered = ` · ${field.label ? `${field.label}: ` : ''}${field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key])}`;
       const target = field.link && url && url.length <= 2048 ? url : undefined;
       const width = field.width ?? config.config.fieldWidth;
-      const status = data.fieldStatuses.find((item) => item.field === field.name);
+      const status = data.fieldStatuses.find((item) => item.field === field.name)
+        ?? (field.name === 'PRs' ? data.fieldStatuses.find((item) => item.field === 'PR') : undefined);
       const style = features.fieldEvents && status ? { ...(status.result.display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
       if (features.footerNativeActions) {
         if (footer.length + (target ? 2 : 1) > 128) break;

@@ -8,10 +8,13 @@ export function parsePullRequests(value: string | undefined): { url: string; num
     const match = /^https:\/\/github\.com\/([a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?)\/([a-z0-9_.-]{1,100})\/pull\/([1-9][0-9]*)\/?$/i.exec(url);
     if (!match || ['.', '..'].includes(match[2]) || !Number.isSafeInteger(Number(match[3]))) continue;
     const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`.toLowerCase();
-    if (seen.has(canonical)) continue;
+    if (seen.has(canonical)) {
+      if (link) results.find((pr) => pr.url === canonical)!.label ??= link[1];
+      continue;
+    }
+    if (results.length >= 64) continue;
     seen.add(canonical);
     results.push({ url: canonical, number: match[3], ...(link ? { label: link[1] } : {}) });
-    if (results.length === 64) break;
   }
   return results;
 }

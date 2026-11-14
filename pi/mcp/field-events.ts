@@ -197,8 +197,7 @@ export class FieldAutomation {
         const item = plural?.result.items?.find((item) => item.url === legacyUrl);
         // Prefer a checked plural result, but keep fresh legacy alerts when
         // it is unavailable. Legacy-only custom watchers remain independent.
-        legacy.suppressed = Boolean(item && !plural?.stale && item.state !== 'error'
-          || !plural && watcher.bundled && watcher.name === 'GitHub PR');
+        legacy.suppressed = Boolean(item && !plural?.stale && item.state !== 'error');
         const legacyStatus = statuses.find((status) => status.watcherId === watcher.id && status.field === 'PR');
         const batch = rows.find((row) => row.watcher_id === watcher.id && row.field === 'PRs');
         if (!batch || !item?.notification || item.notification.key !== legacyStatus?.result.notification?.key) continue;

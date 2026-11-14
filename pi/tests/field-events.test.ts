@@ -41,7 +41,8 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   let automation: FieldAutomation | undefined, client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
   let changes = 0, errors = 0;
   const diagnostics: WatcherFailureLog[] = [];
-  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] }), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
+  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] })
+    .map((watcher) => watcher.path === handler ? { ...watcher, bundled: true, name: 'GitHub PR' } : watcher), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
   const forceDue = () => {
     const db = new DatabaseSync(path);
     try { db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)"); } finally { db.close(); }
@@ -158,9 +159,21 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick();
     assert.ok(changes > 0);
 
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { fields: [{ name: 'PR', label: '', format: '<value>' }] } }));
+    for (const value of ['Needs review', '[Review](https://forgejo.example/repo/pulls/42)']) {
+      await update({ PR: value });
+      const legacyValue = await view();
+      assert.ok(legacyValue.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value)), 'Legacy non-GitHub <value> content stays visible');
+      if (value.startsWith('[')) assert.ok(legacyValue.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
+    }
+    await update({ PR: pr });
+    await setMode({ state: 'failed', notification: { key: 'early-failure', message: 'Legacy CI failed' }, recheckAfterSeconds: 10 });
+    await automation.tick(); forceDue(); await automation.tick();
+
     // Multiple PRs share one field slot but keep separate links and current statuses.
     const urls = Array.from({ length: 6 }, (_, index) => `https://github.com/example/repo/pull/${42 + index}`);
     await update({ PRs: urls.map((url) => `[Review](${url})`).join('\n'), Next: 'Review all' });
+    assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR'), 'Fresh bundled legacy alerts are not hidden before the plural job finishes');
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
     const batchResult = { state: 'multiple', items: urls.map((url, index) => ({ url,
       state: ['passing', 'failed', 'pending', 'merged', 'closed', 'error'][index],

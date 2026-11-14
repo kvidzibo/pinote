@@ -142,6 +142,7 @@ test('PR parser canonicalizes safe bounded links and combines notes without muta
   assert.deepEqual(notes, before);
   assert.equal(pullRequestValues({}), undefined);
   assert.equal(pullRequestValues({ PR: url }), url);
+  assert.equal(parsePullRequests(pullRequestValues({ PRs: url, PR: `[Review](${url})` }))[0].label, 'Review', 'A bare alias does not discard the legacy Markdown label');
 });
 
 
