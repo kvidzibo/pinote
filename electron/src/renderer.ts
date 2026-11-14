@@ -355,7 +355,7 @@ function configureBackend(): void {
   modal.update = update;
   void track(load()); fitWindow();
 }
-api.onBackendSwitchProgress(text => { report(`Backend switch: ${text}`); });
+api.onBackendSwitchProgress(text => { report(`Backend switch: ${text}`); notice.inert = false; });
 function dueLabel(task: Task): string {
   const date = task.reminder_due_at ?? task.remind_at;
   if (!date) return '';
@@ -1283,8 +1283,10 @@ function updateEditors(): void {
 }
 function setClosing(value: boolean): void {
   closing = value;
-  // Keep the live notice readable during installation, while all editing/layers stay inert.
-  checklist.inert = $('composer').inert = popupRoot.inert = value;
+  // Preserve the normal whole-window close guard. During the confirmed switch,
+  // only the plain progress notice becomes accessible; all controls stay inert.
+  document.body.inert = value && !backendSwitchBusy;
+  checklist.inert = $('composer').inert = popupRoot.inert = notice.inert = value;
   composerEditor.readOnly = readonly || value; updateEditors();
 }
 api.onCloseRequested(() => {

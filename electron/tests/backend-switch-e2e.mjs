@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { openSync, closeSync, constants } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { _electron } from 'playwright';
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./);
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'));
+// Both display-size lanes share the real updater lock protocol. Serialize this
+// focused scenario, not production locks from unrelated unit-test fixtures.
+const lockRoot = join(tmpdir(), `pinote-switch-ui-tests-${process.getuid()}`);
+await mkdir(lockRoot, { recursive: true, mode: 0o700 });
+const lock = openSync(join(lockRoot, 'run.lock'), constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+assert.equal(spawnSync('/usr/bin/flock', ['-x', '3'], { stdio: ['ignore', 'ignore', 'ignore', lock], timeout: 20000 }).status, 0);
 const root = await mkdtemp(join(tmpdir(), 'pinote-switch-ui-'));
 const env = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_RUNTIME_DIR: join(root, 'runtime'), PATH: `${root}/bin:${dirname(process.execPath)}:/usr/bin:/bin`, PINOTE_NODE: process.execPath, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend'), NO_AT_BRIDGE: '1' };
 for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE']) delete env[key];
@@ -76,4 +83,4 @@ try {
   await page.getByRole('dialog', { name: 'Backend settings' }).waitFor({ state: 'detached' });
   console.log(`Backend-switch UI artifacts: ${root}`);
 } catch (error) { console.error(`Backend-switch failure artifacts: ${root}`); throw error; }
-finally { await app?.close().catch(() => {}); wm.kill('SIGTERM'); }
+finally { await app?.close().catch(() => {}); wm.kill('SIGTERM'); closeSync(lock); }

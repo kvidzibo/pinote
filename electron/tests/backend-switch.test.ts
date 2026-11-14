@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rm, lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted'] as const) {
-    const root = await mkdtemp(join(tmpdir(), 'pinote-switch-'));
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict'] as const) {
+    const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     try {
       const env = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
       await mkdir(join(root, 'bin')); await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
@@ -21,9 +22,12 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       await mkdir(join(dirname(database), 'electron'));
       await writeFile(join(dirname(database), 'electron/state.json'), '{"draft":"private draft"}', { mode: 0o600 });
       const dropin = join(root, 'config/systemd/user/pinote.service.d/90-node-backend.conf');
-      let active = true, starts = 0, fail = mode !== 'success';
+      let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted';
+      const existingCLI = mode === 'wrapper' ? old : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
       const commands: string[] = [];
       const dependencies = {
+        updateLock: join(root, 'update-lock/update.lock'),
+        processArguments: async () => [process.execPath, resolve('../pi/dist-mcp/mcp/http.js')],
         run: async (executable: string, args: string[], childEnv: NodeJS.ProcessEnv, input?: string) => {
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
@@ -36,31 +40,46 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           }
           return '';
         },
-        processEnvironment: async () => ({ ...env, PINOTE_NOTE_COMMAND: active && starts > 0 ? cli : old }),
+        processEnvironment: async () => {
+          const override = await readFile(dropin, 'utf8').catch(() => '');
+          // Model EnvironmentFile keeping its OLD value unless ExecStart's env
+          // command explicitly overrides it in the launched server process.
+          return { ...env, PINOTE_NOTE_COMMAND: active && starts > 0 && override.includes('ExecStart=:/usr/bin/env ') ? cli : existingCLI };
+        },
         listening: async () => {}, wait: async () => {},
       };
       const phases: string[] = [];
-      const operation = switchToNode({ env, node: process.execPath, bundles, database }, text => phases.push(text), dependencies);
+      const operation = switchToNode({ env, node: process.execPath, bundles, database }, text => {
+        phases.push(text);
+        if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
+      }, dependencies);
+      if (mode === 'wrapper') {
+        await assert.rejects(operation, /custom CLI wrapper/);
+        assert.equal(active, true); assert.ok(!commands.includes('stop'));
+        assert.deepEqual(await readFile(database), source); continue;
+      }
       if (mode === 'success') {
         await operation;
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
-        assert.match(await readFile(dropin, 'utf8'), /PINOTE_NOTE_COMMAND=/);
+        assert.match(await readFile(dropin, 'utf8'), /ExecStart=:\/usr\/bin\/env /);
         const different = { ...env, PINOTE_ELECTRON_BACKEND: '/another/explicit/backend' };
         assert.equal((await preferredBackendEnvironment(different)).PINOTE_ELECTRON_BACKEND, different.PINOTE_ELECTRON_BACKEND);
       } else {
-        await assert.rejects(operation, mode === 'interrupted' ? /rollback could not finish/ : /Injected restart failure/);
+        await assert.rejects(operation, mode === 'interrupted' || mode === 'conflict' ? /rollback could not finish/ : /Injected restart failure/);
         if (mode === 'interrupted') {
           assert.equal(active, false); fail = false;
           await recoverBackendSwitch(env, dependencies);
         }
-        assert.equal(await readlink(cli), old);
+        if (mode === 'conflict') assert.equal(await readFile(cli, 'utf8'), 'owner changed configuration');
+        else assert.equal(await readlink(cli), old);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, env.PINOTE_ELECTRON_BACKEND);
         await assert.rejects(lstat(dropin), { code: 'ENOENT' });
       }
       assert.equal(active, true, 'Previously running service resumes on success or completed rollback');
       assert.deepEqual(await readFile(database), source, 'Switching and rollback never mutate or restore task data');
-      await assert.rejects(lstat(join(root, 'state/pinote/backend-switch/pending.json')), { code: 'ENOENT' });
+      if (mode === 'conflict') assert.ok((await lstat(join(root, 'state/pinote/backend-switch/pending.json'))).isFile());
+      else await assert.rejects(lstat(join(root, 'state/pinote/backend-switch/pending.json')), { code: 'ENOENT' });
       const backupRoot = join(root, 'state/pinote/backend-switch/backups');
       const backup = join(backupRoot, (await readdir(backupRoot))[0]);
       assert.equal((await lstat(join(backup, 'notes.db'))).mode & 0o777, 0o600);

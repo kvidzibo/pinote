@@ -54,7 +54,11 @@ the bundled CLI/bridge against the same database, then:
 - Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
 - Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
 - Adds a user override for the **existing** `pinote.service`; no service is created
-  or enabled. A present service must be running so its database can be verified.
+  or enabled. A present service must be running with the documented direct Node
+  HTTP command. Its original CLI's database is verified before changing anything;
+  custom CLI wrappers or runtime injection require manual verification. The
+  drop-in preserves service arguments/environment files and overrides the CLI
+  at execution, including an old command supplied by `EnvironmentFile`.
 - Saves an explicit Node preference, restarts the previously running service,
   verifies its CLI/listener, and relaunches Electron.
 
@@ -76,6 +80,9 @@ On failure, configuration is restored and the prior active service is restarted;
 task data is **never** automatically restored or converted. Interrupted rollback
 is recovered on the next launch. Concurrent configuration edits are not overwritten:
 if recovery cannot finish, preserve `pending.json` and the private backups for repair.
+Original configuration inodes are also kept beside their paths as hidden
+`.NAME.pinote-switch-*.previous` files; interrupted rollback can retain matching
+`.rollback` files. Do not delete these while reconciling a concurrent editor's changes.
 A busy updater, unsafe paths, a stopped/transitioning service, a different service
 database, or an unsupported/nonlocal listener blocks the switch rather than guessing.
 

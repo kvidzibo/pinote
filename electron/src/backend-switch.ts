@@ -1,9 +1,9 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants, closeSync, openSync, accessSync, statSync } from 'node:fs';
-import { access, chmod, lstat, mkdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, link, lstat, mkdir, readFile, readlink, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { backendEnvironment } from './backend-command.ts';
@@ -13,9 +13,9 @@ import { backendEnvironment } from './backend-command.ts';
 export type SwitchOptions = { env: NodeJS.ProcessEnv; node: string; bundles: string; database: string };
 type Run = (executable: string, args: string[], env: NodeJS.ProcessEnv, input?: string) => Promise<string>;
 type Service = { present: boolean; active: boolean; pid: number };
-type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string; mode: number; replacement: string; replacementMode: number };
+type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string; mode: number; replacement: string; replacementMode: number; stash?: string };
 type Journal = { version: 1; complete: boolean; backup: string; service: Service; files: SavedFile[] };
-export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
+export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; processArguments?: (pid: number) => Promise<string[]>; updateLock?: string; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
 const limit = 1024 * 1024;
 const xdg = (env: NodeJS.ProcessEnv, name: string, fallback: string) => env[name] && isAbsolute(env[name]!) ? env[name]! : join(env.HOME || homedir(), fallback);
 function locations(env: NodeJS.ProcessEnv) {
@@ -70,16 +70,43 @@ async function originalMatches(file: SavedFile): Promise<boolean> {
   const current = await snapshot(file.path, '', 0, file.kind === 'link');
   return current.kind === file.kind && current.data === file.data && current.mode === file.mode;
 }
+function sameFile(a: SavedFile, b: SavedFile): boolean { return a.kind === b.kind && a.data === b.data && a.mode === b.mode; }
+const conflict = () => new Error('Configuration changed concurrently; its contents were preserved for recovery.');
+async function install(file: SavedFile): Promise<void> {
+  const temp = `${file.path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, file.replacement, { mode: file.replacementMode, flag: 'wx' });
+    if (file.kind !== 'missing') {
+      // Capture the actual inode, not just a prior snapshot. The hidden original
+      // stays on the same filesystem and preserves even an editor's open FD.
+      await rename(file.path, file.stash!);
+      if (!sameFile(await snapshot(file.stash!, '', 0, true), file)) {
+        await link(file.stash!, file.path).catch(() => {});
+        throw conflict();
+      }
+    }
+    // Atomic create-if-absent: never rename over a concurrent writer's file.
+    await link(temp, file.path);
+  } finally { await rm(temp, { force: true }); }
+}
 async function restore(file: SavedFile): Promise<void> {
   if (await originalMatches(file)) return;
-  const now = await snapshot(file.path, '', 0);
-  if (now.kind !== 'file' || now.data !== Buffer.from(file.replacement).toString('base64') || now.mode !== file.replacementMode) throw new Error('Configuration changed concurrently; automatic rollback will not overwrite it.');
-  if (file.kind === 'missing') await rm(file.path);
-  else if (file.kind === 'file') await atomic(file.path, Buffer.from(file.data, 'base64'), file.mode);
-  else {
-    const temp = `${file.path}.${randomUUID()}.tmp`;
-    try { await symlink(file.data, temp); await rename(temp, file.path); } finally { await rm(temp, { force: true }); }
+  const now = await snapshot(file.path, '', 0, true);
+  if (now.kind === 'missing' && file.kind !== 'missing') { await link(file.stash!, file.path); return; }
+  const ours = (value: SavedFile) => value.kind === 'file' && value.data === Buffer.from(file.replacement).toString('base64') && value.mode === file.replacementMode;
+  if (!ours(now)) throw conflict();
+  const captured = join(dirname(file.path), `.${basename(file.path)}.pinote-switch-${randomUUID()}.rollback`);
+  await rename(file.path, captured);
+  if (!ours(await snapshot(captured, '', 0, true))) {
+    await link(captured, file.path).catch(() => {});
+    throw conflict();
   }
+  if (file.kind !== 'missing') {
+    try { await link(file.stash!, file.path); }
+    catch (error) { await link(captured, file.path).catch(() => {}); throw error; }
+  }
+  // Keep captured originals/replacements named in their directory for recovery;
+  // unlinking them could discard a concurrent editor's still-open inode.
 }
 export async function preferredBackendEnvironment(env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
   try {
@@ -109,7 +136,7 @@ async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
   if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Cannot verify the running Pinote service.');
   const raw = await readFile(`/proc/${pid}/environ`);
   if (raw.length > limit) throw new Error('Cannot verify the running Pinote service.');
-  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_HOST', 'PINOTE_PORT']);
+  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_HOST', 'PINOTE_PORT', 'PYTHONPATH', 'PYTHONHOME', 'PYTHONUSERBASE', 'PYTHONNOUSERSITE', 'PYTHONSAFEPATH', 'NODE_OPTIONS']);
   return Object.fromEntries(raw.toString().split('\0').map(item => { const at = item.indexOf('='); return [item.slice(0, at), item.slice(at + 1)]; }).filter(([name]) => allowed.has(name)));
 }
 async function listening(env: NodeJS.ProcessEnv): Promise<void> {
@@ -134,22 +161,50 @@ async function probe(options: SwitchOptions, run: Run, env = options.env): Promi
   if (value.protocol !== 1 || value.ok !== true || typeof value.result?.database !== 'string' || typeof value.result?.version !== 'string' || resolve(value.result.database) !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
   return value.result.version;
 }
+async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<void> {
+  if (['PYTHONPATH', 'PYTHONHOME', 'PYTHONUSERBASE', 'NODE_OPTIONS'].some(key => env[key])) throw new Error('Custom service runtime injection settings require manual database verification.');
+  const command = env.PINOTE_NOTE_COMMAND || 'note';
+  if (command !== 'note' && !isAbsolute(command)) throw new Error('The service CLI must be a trusted absolute executable.');
+  const path = await realpath(command === 'note' ? executable(env, 'note') : command);
+  const stat = await lstat(path);
+  if (!stat.isFile() || stat.size > 8192) throw new Error('The existing service CLI cannot be verified safely.');
+  const text = await readFile(path, 'utf8');
+  const pythonBody = 'import sys\nfrom pinote.cli import main\nif __name__ == "__main__":\n    if sys.argv[0].endswith("-script.pyw"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(".exe"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())';
+  const first = text.split('\n')[0];
+  const body = text.slice(first.length + 1).replace(/^# -\*- coding: utf-8 -\*-\n/, '').trim();
+  if (/^#!\/[^\r\n]*\/python(?:3(?:\.\d+)?)?$/.test(first) && body === pythonBody) {
+    const code = 'import json,sys; from pathlib import Path; sys.path.__setitem__(0, str(Path(sys.argv[1]).parent)) if not sys.flags.safe_path else None; from pinote.paths import Paths; print(json.dumps(str(Paths.discover().database.resolve())))';
+    const database = JSON.parse(await run(first.slice(2), ['-c', code, path], env));
+    if (typeof database !== 'string' || resolve(database) !== resolve(options.database)) throw new Error('The existing service CLI uses a different database; the switch was blocked.');
+    return;
+  }
+  const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
+  if (text === nodeEntry) { await probe({ ...options, bundles: resolve(dirname(path), '../dist') }, run, env); return; }
+  if (text === targets(options, undefined)[0].text) { await probe(options, run, env); return; }
+  // Never execute an arbitrary wrapper to discover its database: even a read
+  // command may activate reminders or hide an XDG override inside the script.
+  throw new Error('The existing service uses a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.');
+}
 function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
-function targets(options: SwitchOptions, includeService: boolean) {
+function systemdQuote(value: string): string {
+  if (/[\u0000-\u001f\u007f]/.test(value)) throw new Error('Unsupported service command path.');
+  return JSON.stringify(value.replaceAll('%', '%%'));
+}
+function targets(options: SwitchOptions, serviceArguments: string[] | undefined) {
   const paths = locations(options.env);
   const launcher = `#!/bin/sh\nunset NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS NODE_REDIRECT_WARNINGS NODE_V8_COVERAGE ELECTRON_RUN_AS_NODE\nexec ${shellQuote(options.node)} --disable-warning=ExperimentalWarning ${shellQuote(join(options.bundles, 'cli.mjs'))} "$@"\n`;
   const command = paths.cli.replaceAll('%', '%%');
   if (/[\r\n\0]/.test(command)) throw new Error('Unsupported CLI installation path.');
   return [
     { path: paths.cli, text: launcher, mode: 0o700, link: true },
-    ...(includeService ? [{ path: paths.dropin, text: `[Service]\nEnvironment=${JSON.stringify(`PINOTE_NOTE_COMMAND=${command}`)}\n`, mode: 0o600, link: false }] : []),
+    ...(serviceArguments ? [{ path: paths.dropin, text: `[Service]\nEnvironment=${JSON.stringify(`PINOTE_NOTE_COMMAND=${command}`)}\nExecStart=\nExecStart=:/usr/bin/env ${[`PINOTE_NOTE_COMMAND=${paths.cli}`, ...serviceArguments].map(systemdQuote).join(' ')}\n`, mode: 0o600, link: false }] : []),
     { path: paths.preference, text: JSON.stringify({ version: 1, backend: 'node', ignoredOverride: options.env.PINOTE_ELECTRON_BACKEND ?? null }), mode: 0o600, link: false },
   ];
 }
-async function acquire(env: NodeJS.ProcessEnv): Promise<() => void> {
+async function acquire(env: NodeJS.ProcessEnv, updateLock = `/tmp/pi-extension-update-${process.getuid!()}/update.lock`): Promise<() => void> {
   const paths = locations(env), fds: number[] = [];
   try {
-    for (const path of [join(paths.updater, 'operation.lock'), join(paths.updater, 'pinote-toggle.lock'), `/tmp/pi-extension-update-${process.getuid!()}/update.lock`, join(paths.state, 'switch.lock')]) {
+    for (const path of [join(paths.updater, 'operation.lock'), join(paths.updater, 'pinote-toggle.lock'), updateLock, join(paths.state, 'switch.lock')]) {
       await safeDirectory(dirname(path), true);
       const fd = openSync(path, constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600); fds.push(fd);
       // A short helper acquires the shared open-file-description lock, retained
@@ -167,35 +222,40 @@ async function loadJournal(env: NodeJS.ProcessEnv): Promise<Journal | undefined>
   const paths = locations(env), path = join(paths.state, 'pending.json');
   try {
     const stat = await lstat(path);
-    if (!stat.isFile() || stat.uid !== process.getuid!() || stat.size > 4 * limit || (stat.mode & 0o077)) throw new Error('Unsafe switch recovery journal.');
+    if (!stat.isFile() || stat.uid !== process.getuid!() || stat.size > 6 * limit || (stat.mode & 0o077)) throw new Error('Unsafe switch recovery journal.');
     const journal = JSON.parse(await readFile(path, 'utf8')) as Journal;
     const expected = [paths.cli, paths.dropin, paths.preference];
-    if (journal.version !== 1 || typeof journal.complete !== 'boolean' || !journal.service || typeof journal.service.active !== 'boolean' || typeof journal.service.present !== 'boolean' || !Array.isArray(journal.files) || ![2, 3].includes(journal.files.length) || new Set(journal.files.map(f => f.path)).size !== journal.files.length || !journal.files.every(f => expected.includes(f.path) && ['missing', 'file', 'link'].includes(f.kind) && (f.kind !== 'link' || f.path === paths.cli) && typeof f.data === 'string' && f.data.length <= 2 * limit && typeof f.replacement === 'string' && f.replacement.length < 16384 && Number.isInteger(f.mode) && f.mode >= 0 && f.mode <= 0o777 && [0o600, 0o700].includes(f.replacementMode)) || typeof journal.backup !== 'string' || dirname(journal.backup) !== join(paths.state, 'backups')) throw new Error('Invalid switch recovery journal; preserve it for manual recovery.');
+    if (journal.version !== 1 || typeof journal.complete !== 'boolean' || !journal.service || typeof journal.service.active !== 'boolean' || typeof journal.service.present !== 'boolean' || !Array.isArray(journal.files) || ![2, 3].includes(journal.files.length) || new Set(journal.files.map(f => f.path)).size !== journal.files.length || !journal.files.every(f => expected.includes(f.path) && ['missing', 'file', 'link'].includes(f.kind) && (f.kind !== 'link' || f.path === paths.cli) && typeof f.data === 'string' && f.data.length <= 2 * limit && typeof f.replacement === 'string' && f.replacement.length < 16384 && typeof f.stash === 'string' && dirname(f.stash) === dirname(f.path) && basename(f.stash).startsWith('.' + basename(f.path) + '.pinote-switch-') && Number.isInteger(f.mode) && f.mode >= 0 && f.mode <= 0o777 && [0o600, 0o700].includes(f.replacementMode)) || typeof journal.backup !== 'string' || dirname(journal.backup) !== join(paths.state, 'backups')) throw new Error('Invalid switch recovery journal; preserve it for manual recovery.');
     return journal;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
 }
 async function rollback(env: NodeJS.ProcessEnv, journal: Journal, run: Run): Promise<void> {
   const systemctl = executable(env, 'systemctl');
-  if (journal.service.present) await run(systemctl, ['--user', 'stop', 'pinote.service'], env);
-  for (const file of [...journal.files].reverse()) await restore(file);
+  const failures: unknown[] = [];
+  const attempt = async (action: () => Promise<unknown>) => { try { await action(); } catch (error) { failures.push(error); } };
+  if (journal.service.present) await attempt(() => run(systemctl, ['--user', 'stop', 'pinote.service'], env));
+  for (const file of [...journal.files].reverse()) await attempt(() => restore(file));
   if (journal.service.present) {
-    await run(systemctl, ['--user', 'daemon-reload'], env);
-    if (journal.service.active) await run(systemctl, ['--user', 'start', 'pinote.service'], env);
+    await attempt(() => run(systemctl, ['--user', 'daemon-reload'], env));
+    if (journal.service.active) await attempt(() => run(systemctl, ['--user', 'start', 'pinote.service'], env));
   }
+  if (journal.service.active) await attempt(async () => { if (!(await service(run, env)).active) throw new Error('The prior service could not be resumed.'); });
+  if (failures.length) throw new Error('Configuration recovery needs repair; service restoration was attempted.');
   await atomic(join(journal.backup, 'manifest.json'), JSON.stringify({ ...journal, recovered: true }));
   await rm(join(locations(env).state, 'pending.json'));
 }
 export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, dependencies: SwitchDependencies = {}): Promise<void> {
-  const journal = await loadJournal(env); if (!journal) return;
-  const release = await acquire(env);
+  if (!await loadJournal(env)) return;
+  const release = await acquire(env, dependencies.updateLock);
   try {
+    const journal = await loadJournal(env); if (!journal) return;
     if (!journal.complete) await rollback(env, journal, dependencies.run || runCommand);
     else await rm(join(locations(env).state, 'pending.json'));
   } finally { release(); }
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
   const { env } = options, paths = locations(env), run = dependencies.run || runCommand;
-  const release = await acquire(env);
+  const release = await acquire(env, dependencies.updateLock);
   let journal: Journal | undefined;
   try {
     if (await loadJournal(env)) throw new Error('An interrupted switch needs recovery; restart Pinote before trying again.');
@@ -205,17 +265,22 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     if (version !== `pinote ${targetVersion}`) throw new Error('Bundled CLI verification failed.');
     const before = await service(run, env);
     if (before.present && !before.active) throw new Error('The installed Pinote service is stopped. Leave it stopped; switch when it is running so its database can be verified.');
+    let serviceArguments: string[] | undefined;
     if (before.active) {
+      await access('/usr/bin/env', constants.X_OK);
+      serviceArguments = await (dependencies.processArguments || (async pid => (await readFile(`/proc/${pid}/cmdline`)).toString().split('\0').filter(Boolean)))(before.pid);
+      if (serviceArguments.length !== 2 || !isAbsolute(serviceArguments[0]) || !isAbsolute(serviceArguments[1]) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
       const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(before.pid);
-      await probe(options, run, serviceProbeEnvironment(env, serviceEnv));
+      await verifyExistingCLI(options, run, serviceProbeEnvironment(env, serviceEnv));
       await (dependencies.listening || listening)(serviceEnv);
     }
     const files: SavedFile[] = [];
-    for (const target of targets(options, before.present)) {
+    for (const target of targets(options, serviceArguments)) {
       await safeDirectory(dirname(target.path));
       files.push(await snapshot(target.path, target.text, target.mode, target.link));
     }
     const backup = join(paths.state, 'backups', randomUUID()); await safeDirectory(backup, true);
+    for (const file of files) file.stash = join(dirname(file.path), `.${basename(file.path)}.pinote-switch-${randomUUID()}.previous`);
     journal = { version: 1, complete: false, backup, service: before, files };
     await atomic(join(paths.state, 'pending.json'), JSON.stringify(journal));
     await atomic(join(backup, 'manifest.json'), JSON.stringify(journal));
@@ -232,7 +297,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     progress('Installing the CLI and selecting the Node backend…');
     for (const file of files) {
       if (!await originalMatches(file)) throw new Error('Configuration changed during preparation; nothing will be overwritten.');
-      await atomic(file.path, file.replacement, file.replacementMode);
+      await install(file);
     }
     if ((await run(paths.cli, ['--version'], env)).trim() !== version) throw new Error('Installed CLI verification failed.');
     await probe(options, run, await preferredBackendEnvironment(env));
@@ -250,10 +315,13 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
         await (dependencies.listening || listening)(serviceEnv);
       }
     }
-    journal.complete = true;
-    await atomic(join(paths.state, 'pending.json'), JSON.stringify(journal));
-    await atomic(join(backup, 'manifest.json'), JSON.stringify(journal));
-    await rm(join(paths.state, 'pending.json'));
+    const committed: Journal = { ...journal, complete: true };
+    await atomic(join(paths.state, 'pending.json'), JSON.stringify(committed));
+    journal = committed; // This persisted record is the configuration commit point.
+    try {
+      await atomic(join(backup, 'manifest.json'), JSON.stringify(journal));
+      await rm(join(paths.state, 'pending.json'));
+    } catch { progress('Node verified; a completed recovery record is retained for the next launch.'); }
     progress('Node backend verified. Restarting Electron; backups are saved.');
   } catch (error) {
     if (journal && !journal.complete) {

@@ -277,6 +277,7 @@ async function boot() {
       await tasks; await stateWrites; await saveGeometry();
       if (switchRequested) {
         try {
+          if (readonly || state.warning) throw new Error('Resolve the saved-state warning before switching backends.');
           await switchToNode(switchOptions(), text => window?.webContents.send('backend-switch-progress', text));
           app.relaunch();
         } catch (error) { switchRequested = false; throw error; }
