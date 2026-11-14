@@ -90,6 +90,8 @@ npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c 'npm --prefix electron run check && npm --prefix electron test && npm --prefix electron run test:e2e'
 xvfb-run -a -s '-screen 0 800x600x24' dbus-run-session -- npm --prefix electron run test:e2e
+# Focused saved-fields/session-ID preview check; prints its /tmp screenshot path:
+xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:e2e -- --handoff-only
 npm --prefix electron run build
 npm --prefix electron run package
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:package

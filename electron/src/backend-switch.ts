@@ -140,12 +140,13 @@ async function service(run: Run, env: NodeJS.ProcessEnv): Promise<Service> {
   if (!['loaded', 'not-found'].includes(values.LoadState) || !['active', 'inactive', 'failed'].includes(values.ActiveState) || !/^\d+$/.test(values.MainPID || '')) throw new Error('The existing Pinote service is unavailable or changing state; retry when it has settled.');
   return { present: values.LoadState === 'loaded', active: values.ActiveState === 'active', pid: Number(values.MainPID) };
 }
+function runtimeInjection(name: string): boolean { return /^(LD_|NODE_|ELECTRON_|PYTHON)/.test(name) || name === 'GCONV_PATH' || name === 'GLIBC_TUNABLES'; }
 async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
   if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Cannot verify the running Pinote service.');
   const raw = await readFile(`/proc/${pid}/environ`);
   if (raw.length > limit) throw new Error('Cannot verify the running Pinote service.');
-  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_HOST', 'PINOTE_PORT', 'PYTHONPATH', 'PYTHONHOME', 'PYTHONUSERBASE', 'PYTHONNOUSERSITE', 'PYTHONSAFEPATH', 'NODE_OPTIONS']);
-  return Object.fromEntries(raw.toString().split('\0').map(item => { const at = item.indexOf('='); return [item.slice(0, at), item.slice(at + 1)]; }).filter(([name]) => allowed.has(name)));
+  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_HOST', 'PINOTE_PORT']);
+  return Object.fromEntries(raw.toString().split('\0').map(item => { const at = item.indexOf('='); return [item.slice(0, at), item.slice(at + 1)]; }).filter(([name]) => allowed.has(name) || runtimeInjection(name)));
 }
 async function listening(env: NodeJS.ProcessEnv): Promise<void> {
   const hosts: Record<string, string> = { '127.0.0.1': '127.0.0.1', '0.0.0.0': '127.0.0.1', '::': '::1', '::1': '::1' };
@@ -165,7 +166,7 @@ async function probe(options: SwitchOptions, run: Run, env = options.env): Promi
   return value.result.version;
 }
 async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<void> {
-  if (['PYTHONPATH', 'PYTHONHOME', 'PYTHONUSERBASE', 'NODE_OPTIONS'].some(key => env[key])) throw new Error('Custom service runtime injection settings require manual database verification.');
+  if (Object.keys(env).some(key => env[key] && runtimeInjection(key))) throw new Error('Custom service runtime injection settings require manual database verification.');
   const command = env.PINOTE_NOTE_COMMAND || 'note';
   if (command !== 'note' && !isAbsolute(command)) throw new Error('The service CLI must be a trusted absolute executable.');
   const path = await realpath(command === 'note' ? executable(env, 'note') : command);

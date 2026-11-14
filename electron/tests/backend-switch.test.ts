@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rm, lstat, readdir } from 'node:fs/promises';
@@ -8,10 +10,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader'] as const) {
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
+    let injected: ReturnType<typeof spawn> | undefined;
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
+      // A real service does not inherit node:test's NODE_TEST_CONTEXT or the
+      // test runner's runtime hooks. Keep the injection fixture explicit below.
+      for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key) || ['GCONV_PATH', 'GLIBC_TUNABLES'].includes(key)) delete env[key];
       await mkdir(join(root, 'bin')); await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
       await mkdir(join(root, '.local/bin'), { recursive: true });
       const old = join(root, 'old-note'); await writeFile(old, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
@@ -23,6 +29,10 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const bundles = resolve('../backend/dist'), database = join(root, 'data/pinote/notes.db');
       await runCommand(process.execPath, [join(bundles, 'cli.mjs'), '--no-notify', 'Keep all history and IDs'], env);
       const source = await readFile(database);
+      if (mode === 'loader') {
+        injected = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { env: { ...env, LD_PRELOAD: join(root, 'missing-injection.so') }, stdio: 'ignore' });
+        await once(injected, 'spawn');
+      }
       await mkdir(join(dirname(database), 'electron'));
       await writeFile(join(dirname(database), 'electron/state.json'), '{"draft":"private draft"}', { mode: 0o600 });
       const script = mode === 'service-script' ? join(root, 'foreign/dist-mcp/mcp/http.js') : resolve('../pi/dist-mcp/mcp/http.js');
@@ -39,7 +49,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         run: async (executable: string, args: string[], childEnv: NodeJS.ProcessEnv, input?: string) => {
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
-          if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? 123 : 0}\n`;
+          if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? injected?.pid || 123 : 0}\n`;
           if (action === 'stop') active = false;
           if (action === 'start') {
             starts++;
@@ -50,7 +60,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           }
           return '';
         },
-        processEnvironment: async () => {
+        processEnvironment: mode === 'loader' ? undefined : async () => {
           const override = await readFile(dropin, 'utf8').catch(() => '');
           // Model EnvironmentFile keeping its OLD value unless ExecStart's env
           // command explicitly overrides it in the launched server process.
@@ -65,8 +75,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
-      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script'].includes(mode)) {
-        await assert.rejects(operation, mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
+      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader'].includes(mode)) {
+        await assert.rejects(operation, mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }
@@ -100,6 +110,9 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       try { assert.equal(db.prepare('SELECT text FROM notes').get()!.text, 'Keep all history and IDs'); } finally { db.close(); }
       assert.equal(await readFile(join(backup, 'state.json'), 'utf8'), '{"draft":"private draft"}');
       assert.ok(commands.includes('daemon-reload')); assert.ok(phases.some(text => text.includes('Backing up')));
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally {
+      if (injected && injected.exitCode === null && injected.signalCode === null) { const exited = once(injected, 'exit'); injected.kill('SIGTERM'); await exited; }
+      await rm(root, { recursive: true, force: true });
+    }
   }
 });

@@ -45,7 +45,7 @@ for (const list of [ordinary, pinned]) list.addEventListener('scroll', () => {
   state.scroll = next; saveSoon();
 });
 const busyTasks = new Set<number>();
-const stayOrdinary = new Set<number>();
+let pointerInside = false;
 const icons = {
   add: 'list-add', edit: 'document-edit', save: 'document-save', copy: 'edit-copy',
   reset: 'document-revert', start: 'media-playback-start', done: 'task-complete',
@@ -111,11 +111,6 @@ function tagBadge(name: string): HTMLElement {
 }
 function textButton(text: string, action: () => unknown): HTMLButtonElement {
   const b = button('save', text, action); b.replaceChildren(document.createTextNode(text)); return b;
-}
-let choosingFolder = false;
-async function chooseFolder(): Promise<string | null> {
-  choosingFolder = true;
-  try { return await api.chooseFolder(); } finally { choosingFolder = false; }
 }
 function saveSoon(): void {
   if (readonly || closing) return;
@@ -460,6 +455,13 @@ function renderTasks(): void {
     }
   }
   const wanted = new Set<number>();
+  // Capture placement before replacing row content; state and controls still update.
+  const placement = new Map<number, { parent: HTMLElement; index: number }>();
+  if (pointerInside) for (const parent of [ordinary, pinned]) {
+    Array.from(parent.children).forEach((row, index) => {
+      if (row instanceof HTMLElement && row.dataset.id) placement.set(Number(row.dataset.id), { parent, index });
+    });
+  }
   const ordinaryRows: HTMLElement[] = [], progressRows: HTMLElement[] = [];
   for (const task of active.notes) {
     if (!visible(task)) continue;
@@ -468,7 +470,8 @@ function renderTasks(): void {
     let row = rowNodes.get(task.id);
     // Keep the exit node until its timer finishes, even if busy clears before refresh.
     if (!row || (!exiting.has(task.id) && rowKeys.get(task.id) !== key)) { const next = makeRow(task); row?.replaceWith(next); row = next; rowNodes.set(task.id, row); rowKeys.set(task.id, key); }
-    (isProgress(task) && !stayOrdinary.has(task.id) ? progressRows : ordinaryRows).push(row);
+    const parent = placement.get(task.id)?.parent ?? (isProgress(task) ? pinned : ordinary);
+    (parent === pinned ? progressRows : ordinaryRows).push(row);
   }
   for (const [id, row] of rowNodes) {
     if (!wanted.has(id) && !exiting.has(id)) { row.remove(); rowNodes.delete(id); rowKeys.delete(id); }
@@ -481,6 +484,9 @@ function renderTasks(): void {
       if (row === cursor) cursor = cursor.nextSibling; else parent.insertBefore(row, cursor);
     }
     for (const empty of parent.querySelectorAll('.empty')) empty.remove();
+  }
+  if (pointerInside) for (const rows of [ordinaryRows, progressRows]) {
+    rows.sort((a, b) => (placement.get(Number(a.dataset.id))?.index ?? Infinity) - (placement.get(Number(b.dataset.id))?.index ?? Infinity));
   }
   reconcile(ordinary, ordinaryRows); reconcile(pinned, progressRows);
   if (!wanted.size && !exiting.size) {
@@ -512,8 +518,6 @@ async function transition(task: Task, action: 'start' | 'reset' | 'done' | 'rm' 
     const result = await call('transition', { ...target(task), action, state: task.state });
     if (!result) return;
     if (action === 'done' && result.changed) animateDone(task.id);
-    if (action === 'start' && document.hasFocus()) stayOrdinary.add(task.id);
-    if (action === 'reset') stayOrdinary.delete(task.id);
     marked.delete(task.id);
     await refresh();
     if (action === 'restore') showSaved(task.id);
@@ -705,7 +709,7 @@ function configureTaskActions(): void {
     });
     panel.setAttribute('aria-labelledby', `task-action-tab-${selected}`);
     reset.title = `Restore default actions for ${actionStateLabels[selected]}`; reset.setAttribute('aria-label', reset.title);
-    const sample: Task = { id: 0, text: 'Configure the task row', tag: 'pinote', state: selected === 'in_progress' ? 'in_progress' : 'active', created_at: '', updated_at: '', remind_at: null, reminder_due_at: null, archived_at: null, agent_notes: {}, agent_event_id: 0 };
+    const sample: Task = { id: 0, text: 'Configure the task row', tag: 'pinote', state: selected === 'in_progress' ? 'in_progress' : 'active', created_at: '', updated_at: '', remind_at: null, reminder_due_at: null, archived_at: null, agent_notes: {}, agent_event_id: 0, pi_sessions: [] };
     previewRow.className = `task-row layout-preview${selected === 'in_progress' ? ' progress' : selected === 'marked' ? ' marked' : ''}`;
     previewRow.replaceChildren(taskContent(sample, preferences, true));
     orderedList(list, preferences.row, draw, (row, id) => {
@@ -761,7 +765,7 @@ async function startKitty(task: Task): Promise<void> {
   try {
     const folder = active?.tags.find(t => t.name === task.tag)?.folder;
     const available = active?.tags.find(t => t.name === task.tag)?.available;
-    const directory = folder && available !== false ? folder : await chooseFolder();
+    const directory = folder && available !== false ? folder : await api.chooseFolder();
     if (!directory) return;
     let launchTask = task;
     if (!isProgress(task)) {
@@ -770,7 +774,7 @@ async function startKitty(task: Task): Promise<void> {
       // Read explicitly: refresh() may skip while another poll is running.
       const next = await call('snapshot', { view: 'active' });
       if (!next) return;
-      active = next; marked.delete(task.id); stayOrdinary.delete(task.id);
+      active = next; marked.delete(task.id);
       renderTasks(); renderToolbar();
       const current = next.notes.find(t => t.id === task.id);
       if (!current || !isProgress(current)) { report('Task changed before Kitty could start. Check its current state before retrying.'); return; }
@@ -1067,7 +1071,7 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
   let folder: string | null = null;
   const folderLabel = el('p', 'No default folder', 'folder-path'); modal.panel.append(folderLabel);
   const bar = controls(modal.panel); let saving = false;
-  bar.append(button('folder', 'Choose default Kitty folder', async () => { const chosen = await chooseFolder(); if (chosen) { folder = chosen; folderLabel.textContent = chosen; } }),
+  bar.append(button('folder', 'Choose default Kitty folder', async () => { const chosen = await api.chooseFolder(); if (chosen) { folder = chosen; folderLabel.textContent = chosen; } }),
     button('clear', 'Clear default folder', () => { folder = null; folderLabel.textContent = 'No default folder'; }),
     button('save', 'Create tag', async () => {
       if (saving) return; saving = true;
@@ -1129,7 +1133,7 @@ function manageTags(selected?: string): void {
     const folder = el('section', undefined, 'tag-folder'), folderRow = el('div', undefined, 'tag-folder-row');
     folderPath = el('p', undefined, 'folder-path');
     folderRow.append(folderPath, button('folder', 'Set default Kitty folder', () => save(async () => {
-      const chosen = await chooseFolder(); if (chosen === null) return;
+      const chosen = await api.chooseFolder(); if (chosen === null) return;
       if (await call('tag_folder', { name: tag.name, folder: chosen })) await refresh();
     })), button('clear', 'Clear default Kitty folder', () => save(async () => {
       if (await call('tag_folder', { name: tag.name, folder: null })) await refresh();
@@ -1273,7 +1277,9 @@ document.addEventListener('pointerdown', dismissOutsideActions, true);
 document.addEventListener('focusin', dismissOutsideActions);
 document.addEventListener('visibilitychange', () => { baseline = false; if (!document.hidden) void track(refresh()); });
 window.addEventListener('focus', () => { if (!document.hidden) void track(refresh()); });
-window.addEventListener('blur', () => { closeTaskActions(false); if (!choosingFolder) { stayOrdinary.clear(); renderTasks(); } });
+document.documentElement.addEventListener('pointerenter', () => { pointerInside = true; });
+document.documentElement.addEventListener('pointerleave', () => { pointerInside = false; renderTasks(); });
+window.addEventListener('blur', () => { closeTaskActions(false); });
 checklist.addEventListener('mouseup', e => {
   const target = e.target as HTMLElement;
   if (target === checklist || target === ordinary || target === pinned || target.classList.contains('empty')) composer.focus();

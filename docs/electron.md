@@ -12,7 +12,8 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package bundles the matching Node backend.
+The private `electron/` package (0.13.0) bundles the matching Node backend;
+editor autosave does not require Python.
 Run from the repository root:
 
 ```sh
@@ -125,6 +126,10 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   activate. **Close**, **Escape**, or clicking outside restores the task text;
   **Tab** out also dismisses the toolbar without closing Pinote.
   Right-click an in-progress task's checkmark to reset progress.
+  State styling and controls update immediately, but existing rows keep their
+  order and section while the pointer is inside the window. Moving to another
+  row or losing keyboard focus does not release them; leaving the window does.
+  Completed, archived, and filtered-out tasks still disappear normally.
 - **Menu → Task actions…** configures the entire task row, separately for
   **Not started**, **In progress**, and **Marked for deletion** tasks.
   Drag row elements or focus a handle and use **↑/↓**; the list's top-to-bottom
@@ -190,7 +195,10 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   recovery. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
 - The task row's eye opens a floating Markdown preview about 10 px from the
-  click, including agent fields and unread updates. It may overlap or extend
+  click, including all saved agent fields, full Pi session IDs, and unread updates.
+  Fields remain visible here even when disabled in Pi's field settings. Session
+  IDs are recorded by the Pi integration and wrap as literal text, not Markdown.
+  The preview may overlap or extend
   beyond the checklist without resizing it. Placement flips at screen edges;
   moving the pointer or receiving updates does not move the open preview.
   Keyboard activation anchors to the focused button. **Escape**, **Close**, or

@@ -195,7 +195,13 @@ existing task, pass only `task_id`.
 
 Suggestions do not create/start/select tasks until accepted in the UI. Reads by ID
 do not change selection. Updates require the task's `expected_updated_at` revision;
-concurrent edits are rejected rather than overwritten.
+concurrent edits are rejected rather than overwritten. `set` replaces each named
+value; `append` adds unique nonblank, trimmed lines while preserving existing
+content. Do not combine `set`, `append` or `remove` for the same field. For example:
+
+```json
+{"expected_updated_at":"<current revision>","append":{"PRs":"https://github.com/owner/repo/pull/42"}}
+```
 
 Fresh selected-task context and service guidance are read before every agent run.
 Task text and handoff fields are untrusted data, not authorization. Failed reads
@@ -219,11 +225,54 @@ Settings live in `pi-note.json` on the **service machine**, under its
 `PI_CODING_AGENT_DIR` (default `~/.pi/agent`). The Pinote app edits prompts, injected
 agent guidance and footer definitions with confirmation and revision checks.
 A malformed configuration fails closed; fix it on the server rather than replacing
-it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task data,
+it with defaults. Task fields such as `PRs`, `Worktree` and `Next` remain task data,
 separate from global display settings. The remote **New session prompt** setting
 is stored for compatibility; remote `/new` does not insert it. Selected-task previews
 above the protocol's 20,000-character limit show explicit guidance to read through the
 CLI/service instead of silently truncating.
+
+### Automatic field updates (pi-note 0.44.0+)
+
+Open **Settings → Fields → Worktree / PRs** and turn **Enabled** on.
+Both presets are offered disabled by default; existing configured fields remain
+enabled unless explicitly disabled. Legacy `PR`/`Bar` task display remains readable.
+**Add field** creates a definition, not a task value.
+
+Each field has editable **Agent instructions** describing what to save and when.
+Enabled instructions are injected before untrusted task data on every agent run:
+Worktree records the verified absolute worktree root after choosing/creating it;
+PRs appends a URL after creating each PR. Default guidance also asks agents to
+check missing/changed relevant values before ending implementation or handing off.
+This is model guidance, not a guaranteed filesystem hook. It does not create
+worktrees or PRs, and never authorizes work beyond the user's request.
+
+Disabling stops automatic population guidance and hides the Pi footer field;
+saved values remain visible in Electron's task preview, alongside full Pi session
+IDs. Session recording is integration-managed and independent of field switches.
+Watchers have separate enable switches. Removing a preset definition restores its
+disabled default; other definitions are removed without deleting saved values.
+New definitions/edits require confirmation and affect every connected client.
+Presets remain discoverable at the 64-definition limit; remove an existing
+definition before configuring another. Unedited presets do not consume slots.
+
+### Multiple PRs (pi-note 0.43.0+)
+
+Set `PRs` to GitHub or Forgejo PR URLs or Markdown links, **one per line**. Each PR number
+is its own footer link: green for passing CI, red for failures/conflicts, amber
+for pending checks, and the theme accent (default purple) for merged PRs.
+Closed or unavailable PRs are neutral. Status checks require the corresponding
+enabled watcher and, for Forgejo, an explicitly trusted instance. Unwatched links
+still work but remain neutral; display recognition never authorizes network access.
+
+Existing `PR` values and footer definitions remain readable as `PRs`; task data
+is not rewritten. If both fields exist, their links are combined and deduplicated.
+Custom `<value>` formats retain legacy text and link labels alongside PR URLs.
+Preserve existing entries when adding a PR. Up to 64 distinct URLs are supported;
+invalid lines are ignored. The PRs group consumes one field slot and shares its
+configured field width, so narrow layouts can truncate later links.
+Alerts are acknowledged per PR, including across legacy/plural aliases and list
+edits. Updated clients group alerts without hiding another PR's pending failure.
+Update/restart the existing service and `/reload` Pi after upgrading.
 
 ### Field watchers (pi-note 0.40.0+)
 
@@ -234,13 +283,14 @@ Each watcher handles task-field changes and scheduled checks independently.
 
 The bundled GitHub PR watcher triggers the owning Pi worker to investigate and fix
 failed CI or merge conflicts. Repeated unchanged failures are deduplicated; busy
-workers wait until idle and recheck current state before acting. Merged PRs use
-the theme accent (default purple), retain their links and stop polling; tasks are not
-completed. Requires authenticated `gh`, Node and **note 0.24.0+** on the service.
+workers wait until idle and recheck current state before acting. Merged PRs retain
+their links without strikethrough. Polling stops once all PRs handled by a watcher
+in a field are closed or merged; tasks are not completed. GitHub requires
+authenticated `gh`, Node and **note 0.25.0+** on the service.
 The **Forgejo PR** watcher supports configured HTTPS instances (or numeric
-loopback HTTP) and service-side API tokens without `gh`; it alerts on failed CI and styles merged/closed PRs.
-Forgejo's ambiguous mergeability flag stays pending rather than generating false
-conflict alerts. GitHub and Forgejo links both support `#<number>` footer formats.
+loopback HTTP) and service-side API tokens without `gh`; it alerts on failed CI
+and styles merged/closed PRs. Ambiguous Forgejo mergeability remains pending,
+not a conflict alert. Both providers support multiple independent PRs.
 See [setup, configuration, script contract and safeguards](mcp/FIELD_EVENTS.md).
 
 ## Migration

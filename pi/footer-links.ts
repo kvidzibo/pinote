@@ -212,6 +212,7 @@ export function customFooterChips(
   const seen = new Set(config.fields === null ? ["PR", "Bar"] : ["Bar"]);
   const fields: FooterField[] = config.fields ?? (notes.Bar ?? "").split("\n").map(defaultFooterField);
   for (const field of fields) {
+    if (field.enabled === false) continue;
     if (chips.length >= config.maxFields) break;
     const name = field.name.normalize("NFC").trim();
     if (!name || seen.has(name)) continue;

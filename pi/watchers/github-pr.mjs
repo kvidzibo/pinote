@@ -4,6 +4,8 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { parsePullRequests } from '../pull-requests.ts';
+import { checkPRBatch } from '../pr-batch.ts';
 
 const run = promisify(execFile);
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -41,14 +43,33 @@ export async function handleFieldEvent(event) {
     || !(event.previousValue === null || typeof event.previousValue === 'string')
     || typeof event.eventId !== 'string'
     || (event.previousResult !== undefined && !object(event.previousResult))) throw new Error('Invalid event');
-  if (event.field !== 'PR' || event.event === 'removed') return {};
-  const value = event.value?.trim() ?? '';
-  const url = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
-  try { if (new URL(url).hostname !== 'github.com') return {}; } catch { /* Invalid PR values remain errors. */ }
-  const match = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url);
-  if (!match || ['.', '..'].includes(match[2])) return errorResult();
-  const [, owner, repo, number] = match;
-  const { stdout } = await run('gh', ['pr', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'state,mergeable,statusCheckRollup,headRefOid'], { timeout: 20_000, maxBuffer: 1024 * 1024, encoding: 'utf8' });
+  if (!['PR', 'PRs'].includes(event.field) || event.event === 'removed') return {};
+  const parsed = parsePullRequests(event.value ?? undefined);
+  const requests = parsed.filter((pr) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\//.test(pr.url));
+  if (event.field === 'PR') {
+    const value = event.value?.trim() ?? '';
+    const url = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
+    try { if (new URL(url).hostname !== 'github.com') return {}; } catch { /* Invalid GitHub values remain errors. */ }
+    if (requests.length !== 1) return errorResult();
+    return checkPullRequest(requests[0], AbortSignal.timeout(25_000));
+  }
+  if (!requests.length && event.value?.trim()) return {};
+  return checkPRBatch(event, requests, checkPullRequest, errorResult);
+}
+
+async function checkPullRequest({ url, number }, signal) {
+  const [, owner, repo] = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\//.exec(url);
+  signal.throwIfAborted();
+  const execution = run('gh', ['pr', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'state,mergeable,statusCheckRollup,headRefOid'], { timeout: 20_000, signal, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024, encoding: 'utf8' });
+  // execFile's signal cancellation uses SIGTERM independently of its timeout killSignal.
+  const abort = () => execution.child.kill('SIGKILL');
+  signal.addEventListener('abort', abort, { once: true });
+  let stdout;
+  try {
+    ({ stdout } = await execution);
+  } finally {
+    signal.removeEventListener('abort', abort);
+  }
   const pr = JSON.parse(stdout);
   const checks = validateResponse(pr);
   const summary = `PR #${number}`;
@@ -63,13 +84,13 @@ export async function handleFieldEvent(event) {
       failed.map((check) => JSON.stringify(check.fingerprint)).sort(),
     ])).digest('hex');
     return { state, summary: `${summary} ${conflict ? 'has merge conflicts' : 'checks failed'}`,
-      display: { strikethrough: false, color: 'warning' },
+      display: { strikethrough: false, color: 'error' },
       notification: { key: `pr:${owner}/${repo}:${number}:${fingerprint}`, message: conflict ? 'PR has merge conflicts' : 'PR checks failed' },
       recheckAfterSeconds: 60 };
   }
   const pending = pr.mergeable === 'UNKNOWN' || checks.length === 0 || checks.some((check) => check.pending);
   return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : 'checks passing'}`,
-    display: { strikethrough: false, color: pending ? 'muted' : 'success' }, recheckAfterSeconds: 60 };
+    display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

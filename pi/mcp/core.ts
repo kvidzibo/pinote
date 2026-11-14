@@ -9,11 +9,12 @@ import { getAgentDir } from '../config-path.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { parsePullRequests, pullRequestValues } from '../pull-requests.ts';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
-import { defaultAgentGuidance, defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
+import { defaultAgentGuidance, defaultFooterField, defaultFieldPresets, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
-import type { FieldAutomation, FieldResult } from './field-events.ts';
+import type { FieldAutomation, FieldResult, FieldStatus } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from '../field-watchers.ts';
 import { taskTitle } from '../task-title.ts';
 import { parsePR } from '../pr-url.ts';
@@ -92,10 +93,22 @@ async function selected(state: State, signal: AbortSignal): Promise<Task | null>
 }
 function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?: Record<string, string>) {
   // Legacy Bar values are arbitrary task text, not validated field definitions.
-  return effectiveFooterFields(config, notes).flatMap((field) => {
-    try { return parseFooterConfig({ footer: { fields: [field] } }).fields!; }
-    catch { return []; }
+  // Normalize old PR definitions on read without rewriting settings or task data.
+  const seen = new Set<string>();
+  const configured = config.fields === null
+    ? effectiveFooterFields(config, notes).filter((entry) => entry.name !== 'PR' || Boolean(notes?.PR))
+    : config.fields;
+  const checked = configured.flatMap((entry) => {
+    const field = entry.name === 'PR'
+      ? { ...entry, name: 'PRs', label: entry.label === 'PR' ? 'PRs' : entry.label } : entry;
+    if (seen.has(field.name)) return [];
+    try {
+      const checked = parseFooterConfig({ footer: { fields: [field] } }).fields!;
+      seen.add(field.name);
+      return checked;
+    } catch { return []; }
   }).slice(0, 64);
+  return [...checked, ...defaultFieldPresets().filter((preset) => !checked.some((field) => field.name === preset.name))];
 }
 function settings() {
   const document = readFooterDocument();
@@ -119,7 +132,7 @@ async function selection(state: State, signal: AbortSignal) {
   if (proposal && 'task_id' in proposal && (!proposedTask || !['active', 'in_progress'].includes(proposedTask.state))) proposal = null;
   return { task, proposal, proposedTask };
 }
-async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = []) {
+async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = [], groupReceipts = false) {
   const launchTask: Task | null = state.launch ? JSON.parse(await note(['agent', 'get', String(state.launch.task_id)], signal)) : null;
   const tasks: Task[] = state.launch
     ? launchTask && ['active', 'in_progress'].includes(launchTask.state) ? [launchTask] : []
@@ -131,7 +144,7 @@ async function snapshot(state: State, signal: AbortSignal, automation?: FieldAut
   if (state.screen === 'field' && !fields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
   state = Context.parse({ conversationId: 'canonical', state }).state;
   const fieldStatuses = task ? automation?.statuses(task) ?? [] : [];
-  const fieldNotifications = task && contextId ? automation?.notices(task, contextId, receipts) ?? [] : [];
+  const fieldNotifications = task && contextId ? automation?.notices(task, contextId, receipts, groupReceipts) ?? [] : [];
   const watcherFailures = automation?.failures() ?? [];
   const revision = createHash('sha256').update(JSON.stringify({ state, tasks, task, proposedTask, raw: config.raw, fieldStatuses, fieldNotifications, watcherFailures })).digest('hex');
   return { state, tasks, task, proposedTask, suggestion, config, revision, fieldStatuses, fieldNotifications, watcherFailures };
@@ -147,7 +160,7 @@ function actionRevision(data: Snapshot, control: Control): string {
   else if (id === 'proposal:accept' || id === 'proposal:preview') dependency = data.proposedTask;
   else if (id.startsWith('select:')) dependency = data.tasks.find((task) => task.id === Number(id.slice(7)));
   else if (!['preview', 'continue', 'clear', 'search', 'add', 'proposal:accept', 'proposal:dismiss'].includes(id) && !id.startsWith('screen:') && !id.startsWith('field:')) {
-    dependency = { raw: data.config.raw, ...(['add-field', 'remove-field', 'label', 'format', 'width', 'link'].includes(id) ? { fields: fields(data.config.config, data.task?.agent_notes) } : {}) };
+    dependency = { raw: data.config.raw, ...(['add-field', 'remove-field', 'label', 'format', 'width', 'link', 'enabled', 'instructions'].includes(id) ? { fields: fields(data.config.config, data.task?.agent_notes) } : {}) };
   }
   return createHash('sha256').update(JSON.stringify({ action: id, semantics, state: data.state, dependency })).digest('hex');
 }
@@ -161,6 +174,7 @@ function footerFeatures(meta: Record<string, unknown> | undefined) {
   return {
     footerNativeActions: z.object({ footerNativeActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     footerStyles: z.object({ footerStyles: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
+    fieldReceiptGroups: z.object({ fieldReceiptGroups: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     fieldEvents: z.object({ fieldEvents: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     fieldWatchers: z.object({ fieldWatchers: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
     watcherDiagnostics: z.object({ watcherDiagnostics: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
@@ -175,7 +189,7 @@ function fullPreview(task: { text: string; agent_notes?: Record<string, string> 
   const document = task.text + notes;
   return document.length <= 20_000 ? document : 'Full preview exceeds the 20000-character display limit. Nothing has been truncated here: read the complete task and handoff notes through the Pinote CLI or service (get_task).';
 }
-function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean; watcherDiagnostics?: boolean } = {}, watcherLogPath?: string) {
+function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldReceiptGroups?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean; watcherDiagnostics?: boolean } = {}, watcherLogPath?: string) {
   const { tasks, task, suggestion, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -206,7 +220,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     controls.push({ id: 'taskOfferPolicy', label: 'Task offers', kind: 'select', value: config.policy, options: ['always', 'github-remote', 'never'].map((value) => ({ label: value, value })), confirm: 'Save this global task-offer policy?' });
     for (const [key, label, description] of [['titleWidth', 'Task title width', '3–1000 terminal cells.'], ['fieldWidth', 'Default field width', '3–1000 terminal cells; inherited by fields without a width override.'], ['maxFields', 'Maximum visible fields', '0–64 fields; 0 hides all task fields.']] as const) controls.push({ id: key, label, description, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
     controls.push({ id: 'add-field', label: 'Add field', icon: icons.add, kind: 'text', value: '', description: 'Unique nonblank field name, at most 64 characters; Bar is reserved. Changes display definitions, not task values.', confirm: 'Add this global footer field?' });
-    fields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.label || '(no label)'} · ${field.format}` }));
+    fields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.enabled === false ? 'Disabled' : 'Enabled'} · ${field.label || '(no label)'} · ${field.format}` }));
     controls.push({ id: 'add-watcher', label: 'Add watcher file', icon: icons.add, kind: 'text', value: '',
       description: 'Absolute executable path on the service machine. Added disabled; enable separately after reviewing trusted code.',
       confirm: 'Add this trusted watcher file to shared fieldWatchers (disabled)?' });
@@ -220,7 +234,9 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   } else if (state.screen === 'field') {
     const field = fields(config.config, task?.agent_notes).find((f) => f.name === state.field);
     if (!field) throw new Error('Field no longer exists; open Settings again');
-    title = `Pinote · ${field.name}`; body = 'Shared-service footer display definition; affects all clients using this configuration. Task values are unchanged.';
+    title = `Pinote · ${field.name}`; body = 'Shared field display and agent instructions; affects all connected clients. Saved task values are retained, including in Electron.';
+    controls.push({ id: 'enabled', label: 'Enabled', kind: 'toggle', value: field.enabled !== false, description: 'Show in the Pi footer and ask agents to maintain this field automatically. Disabling retains saved values.', confirm: 'Change this shared field setting?' });
+    controls.push({ id: 'instructions', label: 'Agent instructions', kind: 'text', multiline: true, value: field.instructions ?? defaultFieldInstructions(field.name), description: 'What to save and when; up to 4096 characters. Trusted shared instructions injected for enabled fields, not task data.', confirm: 'Save these shared agent instructions?' });
     controls.push({ id: 'label', label: 'Label', kind: 'text', value: field.label, description: 'Up to 64 characters; blank hides the label.', confirm: 'Save this global field label?' });
     controls.push({ id: 'format', label: 'Format', kind: 'text', value: field.format, description: 'Up to 4096 characters; placeholders: <value>, <url>, <number>. URL/number formats hide fields without matching values.', confirm: 'Save this global field format?' });
     controls.push({ id: 'width', label: 'Width', kind: 'number', value: field.width ?? config.config.fieldWidth, description: `3–1000 terminal cells. ${field.width === undefined ? 'Inherited from Default field width; saving creates an override.' : 'Custom width override; not inherited.'}`, confirm: 'Save this global field width?' });
@@ -259,8 +275,44 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   let fieldCount = 0;
   if (task) {
     for (const field of fields(config.config, task.agent_notes)) {
-      if (fieldCount >= config.config.maxFields) break;
-      const raw = task.agent_notes[field.name];
+      if (field.enabled === false) continue;
+      if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
+      const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
+      const legacy = field.name === 'PRs' ? task.agent_notes.PR : undefined;
+      const legacyRemainder = (legacy ?? '').split(/\r?\n/).filter((line) => !parsePullRequests(line).length).join('\n');
+      const legacyExtra = Boolean(prs.length && legacyRemainder.trim());
+      let room = field.width ?? config.config.fieldWidth;
+      if (prs.length) {
+        for (const [index, pr] of prs.entries()) {
+          if (room <= 0 || footer.length >= 128) break;
+          const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
+            .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url))
+            .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? ''));
+          const observation = (status: FieldStatus) => status.result.items
+            ? status.result.items.find((item) => item.url === pr.url)
+            : parsePullRequests(status.value).length === 1 ? status.result : undefined;
+          const status = candidates.find((item) => !item.stale && observation(item) && observation(item)!.state !== 'error') ?? candidates[0];
+          const result = status && observation(status);
+          const colors = { merged: 'accent', closed: 'muted', error: 'muted', pending: 'warning', failed: 'error', conflict: 'error', passing: 'success' } as const;
+          const color = status?.stale ? 'muted' : colors[result?.state as keyof typeof colors] ?? result?.display?.color ?? 'muted';
+          const substitutions: Record<string, string> = { value: pr.label ?? pr.url, url: pr.url, number: pr.number };
+          const prefix = index === 0 ? ` · ${field.label ? `${field.label}: ` : ''}` : ' ';
+          const rendered = prefix + field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key]);
+          const plain = stripVTControlCharacters(rendered).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+          const text = truncateToWidth(plain.slice(0, 20_000), room);
+          footer.push({ text, width: Math.max(3, room), ...(field.link ? { url: pr.url } : {}),
+            ...(features.fieldEvents ? { style: { color, strikethrough: false } } : {}) });
+          room -= visibleWidth(text);
+          if (text !== plain) break;
+        }
+        fieldCount++;
+        if (!legacyExtra || room < 3) continue;
+      }
+      if (footer.length >= 128) break;
+      // Preserve custom legacy text/links alongside valid plural URLs, using
+      // the same field slot and the group's remaining column budget.
+      let raw: string | undefined = task.agent_notes[field.name];
+      if (field.name === 'PRs') raw = legacyExtra ? legacyRemainder : raw?.trim() ? raw : legacy;
       if (!raw) continue;
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
       const url = link?.[2] ?? (/^https?:\/\/[^\s]+$/.test(raw) ? raw : undefined);
@@ -270,12 +322,10 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       const substitutions: Record<string, string> = { value, url: url ?? '', number: number ?? '' };
       const rendered = ` · ${field.label ? `${field.label}: ` : ''}${field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key])}`;
       const target = field.link && url && url.length <= 2048 ? url : undefined;
-      const width = field.width ?? config.config.fieldWidth;
-      const status = data.fieldStatuses.find((item) => item.field === field.name);
-      // Terminal PR results stop polling: refresh older cached styles on read.
-      const display = field.name === 'PR' && status?.result.state === 'merged'
-        ? { color: 'accent' as const, strikethrough: false } : status?.result.display;
-      const style = features.fieldEvents && status ? { ...(display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
+      const width = room;
+      const status = data.fieldStatuses.find((item) => item.field === (legacyExtra ? 'PR' : field.name))
+        ?? (field.name === 'PRs' ? data.fieldStatuses.find((item) => item.field === 'PR') : undefined);
+      const style = features.fieldEvents && status ? { ...(status.result.display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
       if (features.footerNativeActions) {
         if (footer.length + (target ? 2 : 1) > 128) break;
         // Clip before splitting: each field still consumes one field slot, and
@@ -285,7 +335,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
         footer.push({ text: truncateToWidth(plain.slice(0, 20_000), Math.max(0, width - visibleWidth(icon)), ''), width, ...(style ? { style } : {}) });
         if (target) footer.push({ text: icon, url: target });
       } else footer.push({ text: rendered.slice(0, 20_000), ...(target ? { url: target } : {}), width, ...(style ? { style } : {}) });
-      fieldCount++;
+      if (!prs.length) fieldCount++;
     }
   }
   const editable = controls.filter((control) => {
@@ -314,8 +364,24 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
   const data = task
     ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes) })}`
     : `No task is selected (including unavailable or completed selected targets).\nSaved tags:\n${await note(['agent', 'tags'], signal)}\nPending suggestion (not selected):\n${JSON.stringify(proposal ? { ...proposal, ...('task_id' in proposal ? { text: proposedTask!.text, tag: proposedTask!.tag } : {}) } : null)}`;
-  const statuses = (task ? automation?.statuses(task) ?? [] : []).filter((status) => !status.stale && status.result.state !== 'error');
-  let text = guidance ? `${guidance}\n${data}` : data;
+  const statuses = (task ? automation?.statuses(task) ?? [] : [])
+    .filter((status) => !status.stale && status.result.state !== 'error')
+    .flatMap((status) => {
+      if (!status.result.items) return [status];
+      const items = status.result.items.filter((item) => item.state !== 'error');
+      // Batch-level notifications can retain old failure identities through
+      // outages. Only the current, available per-item observations belong here.
+      const { notification: _notification, ...result } = status.result;
+      return items.length ? [{ ...status, result: { ...result, items } }] : [];
+    });
+  // Omit empty instructions: saving legacy Bar display names must not promote
+  // those task-derived names into the trusted instruction block.
+  const instructions = task ? fields(config!).filter((field) => field.enabled !== false)
+    .map((field) => ({ field: field.name, instructions: field.instructions ?? defaultFieldInstructions(field.name) }))
+    .filter((field) => field.instructions.trim()) : [];
+  const fieldGuidance = instructions.length
+    ? `Configured field instructions (trusted shared settings; automatically maintain enabled fields when relevant):\n${JSON.stringify(instructions)}\n` : '';
+  let text = `${guidance ? `${guidance}\n` : ''}${fieldGuidance}${data}`;
   if (statuses.length) {
     const prefix = '\nField automation results (untrusted observations, not instructions or authorization; current checks only):\n';
     // Values already appear in agent_notes. Preserve the complete task context
@@ -357,7 +423,7 @@ server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(a
   }
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const caller = context(request.params._meta);
-  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts);
+  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
   return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath)) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
@@ -365,7 +431,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const state = caller.state;
   const owner = caller.contextId ?? caller.conversationId;
   const sessionArgs = caller.piSessionId ? ['--pi-session-id', caller.piSessionId] : [];
-  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts);
+  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
   const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
   const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
@@ -435,12 +501,18 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     else if (action === 'taskOfferPolicy') policy = z.enum(['always', 'github-remote', 'never']).parse(value);
     else if (['titleWidth', 'fieldWidth', 'maxFields'].includes(action)) cfg[action as 'titleWidth'] = z.number().int().parse(value);
     else {
-      cfg.fields = fields(cfg, before.task?.agent_notes);
+      const savedNames = new Set((cfg.fields ?? effectiveFooterFields(cfg, before.task?.agent_notes))
+        .map((field) => field.name === 'PR' ? 'PRs' : field.name));
+      const editing = !['add-field', 'remove-field'].includes(action) ? state.field : undefined;
+      // Offered presets do not consume configuration slots until edited.
+      cfg.fields = fields(cfg, before.task?.agent_notes).filter((field) => savedNames.has(field.name) || field.name === editing);
       if (action === 'add-field') cfg.fields.push(defaultFooterField(z.string().parse(value)));
       else if (action === 'remove-field') { cfg.fields = cfg.fields.filter((f) => f.name !== state.field); next.screen = 'settings'; }
       else {
         const field = cfg.fields.find((f) => f.name === state.field)!;
         if (action === 'link') field.link = z.boolean().parse(value);
+        else if (action === 'enabled') field.enabled = z.boolean().parse(value);
+        else if (action === 'instructions') field.instructions = z.string().parse(value);
         else if (action === 'width') field.width = z.number().int().parse(value);
         else if (action === 'label' || action === 'format') field[action] = z.string().parse(value);
         else throw new Error('Unknown action');
@@ -450,7 +522,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers);
   }
   if (next.selectedId && (action.startsWith('select:') || action === 'proposal:accept' || action === 'add')) options.fieldAutomation?.claim(next.selectedId, owner, true);
-  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await notifyChanged();
   return result;
 }));
@@ -535,12 +607,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'update_current',
-      description: 'Merge Markdown handoff fields on the selected task using its expected_updated_at revision. Does not replace task text or tag.',
+      description: 'Merge Markdown handoff fields on the selected task using its expected_updated_at revision. set replaces named values; append adds unique newline-separated entries without losing existing values. A field may occur in only one of set, append, remove. Does not replace task text or tag.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           expected_updated_at: { type: 'string' },
           set: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+          },
+          append: {
             type: 'object',
             additionalProperties: { type: 'string' },
           },
@@ -581,12 +657,29 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
       const args = ExistingProposal.parse(request.params.arguments);
       result = JSON.parse(await note(['agent', 'get', String(args.task_id)], extra.signal));
     } else if (request.params.name === 'get_current') result = await selected(state, extra.signal);
-    else if (request.params.name === 'fields') result = settings().config;
-    else if (request.params.name === 'tags') result = JSON.parse(await note(['agent', 'tags'], extra.signal));
+    else if (request.params.name === 'fields') {
+      const config = settings().config;
+      result = { ...config, fields: fields(config) };
+    } else if (request.params.name === 'tags') result = JSON.parse(await note(['agent', 'tags'], extra.signal));
     else if (request.params.name === 'update_current') {
-      const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string(), z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
+      const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string(), z.string()).default({}), append: z.record(z.string(), z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
       const task = await selected(state, extra.signal);
       if (!task) throw new Error('No task is selected');
+      const normalized = (key: string) => key.normalize('NFC').replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+      const touched = new Set([...Object.keys(args.set), ...args.remove].map(normalized));
+      for (const rawKey of Object.keys(args.append)) {
+        if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(rawKey)) throw new Error('Field names must be a single line without control characters');
+        const key = normalized(rawKey);
+        if (touched.has(key)) throw new Error('A field cannot have multiple operations after normalization');
+        touched.add(key);
+        const current = Object.hasOwn(task.agent_notes, key) ? task.agent_notes[key] : '';
+        const seen = new Set(current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+        const additions = args.append[rawKey].split(/\r?\n/).map((line) => line.trim()).filter((line) => {
+          if (!line || seen.has(line)) return false;
+          seen.add(line); return true;
+        });
+        args.set = { ...args.set, [key]: additions.length ? [current, ...additions].filter(Boolean).join('\n') : current };
+      }
       result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal));
       const caller = context(request.params._meta);
       options.fieldAutomation?.claim(task.id, caller.contextId ?? caller.conversationId, true);

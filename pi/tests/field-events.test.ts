@@ -14,7 +14,9 @@ import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../remote/protocol.ts';
 
 const exec = promisify(execFile);
-test('durable field lifecycle: checks, restart, scoped notices, styles, stale results and bounded scripts', { timeout: 30_000 }, async () => {
+// This end-to-end case runs many real CLI subprocesses; allow slower CI runners.
+// Watcher execution deadlines are asserted separately and remain unchanged.
+test('durable field lifecycle: checks, restart, scoped notices, styles, stale results and bounded scripts', { timeout: 90_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-fields-'));
   const names = ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'PI_CODING_AGENT_DIR', 'PINOTE_NOTE_COMMAND'];
   const previous = names.map((n) => process.env[n]);
@@ -26,6 +28,10 @@ import {readFileSync,appendFileSync,existsSync} from 'node:fs';
 const input=JSON.parse(readFileSync(0,'utf8'));
 appendFileSync(${JSON.stringify(calls)},JSON.stringify(input)+'\\n');
 const result=JSON.parse(readFileSync(${JSON.stringify(mode)},'utf8'));
+if(input.field==='PR' && Array.isArray(result.items)) {
+ const item=result.items.find(item=>input.value?.includes(item.url));
+ if(item) {const {url,...single}=item;if(single.notification)single.state='failed';single.recheckAfterSeconds=result.recheckAfterSeconds;console.log(JSON.stringify(single));process.exit(0);}
+}
 if(result.wait) { while(!existsSync(${JSON.stringify(join(dir, 'release'))})) await new Promise(r=>setTimeout(r,10)); }
 if(result.invalid) console.log('not json');
 else if(result.large) console.log('x'.repeat(100000));
@@ -37,10 +43,14 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   let automation: FieldAutomation | undefined, client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
   let changes = 0, errors = 0;
   const diagnostics: WatcherFailureLog[] = [];
-  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] }), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
-  const forceDue = () => {
+  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] })
+    .map((watcher) => watcher.path === handler ? { ...watcher, bundled: true, name: 'GitHub PR' } : watcher), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
+  const forceDue = (field?: string) => {
     const db = new DatabaseSync(path);
-    try { db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)"); } finally { db.close(); }
+    try {
+      if (field) db.prepare("UPDATE fw_jobs SET job=json_set(job, '$.due', 0) WHERE field=?").run(field);
+      else db.exec("UPDATE fw_jobs SET job=json_set(job, '$.due', 0)");
+    } finally { db.close(); }
   };
   try {
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers: [{ path: handler, enabled: true }], footer: { fields: [{ name: 'PR', format: '#<number>' }] } }));
@@ -154,8 +164,151 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick();
     assert.ok(changes > 0);
 
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 1, fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
+    for (const value of ['Needs review', '[Review](https://forgejo.example/repo/pulls/42)', `Needs review\n${pr}`]) {
+      await update({ PR: value });
+      const legacyValue = await view();
+      assert.ok(legacyValue.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value.split('\n')[0])), 'Legacy non-GitHub <value> content stays visible');
+      if (value.startsWith('[')) assert.ok(legacyValue.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
+      await update({ PRs: pr });
+      const combined = await view();
+      assert.ok(combined.footer!.some((item) => item.url === pr), 'Plural PR links remain visible');
+      assert.ok(combined.footer!.some((item) => item.text.includes(value.startsWith('[') ? 'Review' : value.split('\n')[0])), 'Legacy custom values coexist in the same field slot');
+      if (value.startsWith('[')) assert.ok(combined.footer!.some((item) => item.url === 'https://forgejo.example/repo/pulls/42'));
+      await update({}, ['PRs']);
+    }
+    await update({ PR: pr });
+    await setMode({ state: 'failed', notification: { key: 'early-failure', message: 'Legacy CI failed' }, recheckAfterSeconds: 10 });
+    await automation.tick(); forceDue();
+    for (let index = 0; index < 4 && !automation.statuses(task).some((status) => status.field === 'PR' && status.result.state === 'failed'); index++) await automation.tick();
+    assert.ok(automation.statuses(task).some((status) => status.field === 'PR' && status.result.state === 'failed'));
+
+    // Multiple PRs share one field slot but keep separate links and current statuses.
+    const urls = Array.from({ length: 6 }, (_, index) => `https://github.com/example/repo/pull/${42 + index}`);
+    urls[3] = 'https://forgejo.example/git/example/repo/pulls/45';
+    await update({ PRs: urls.map((url) => `[Review](${url})`).join('\n'), Next: 'Review all' });
+    assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR'), 'Fresh bundled legacy alerts are not hidden before the plural job finishes');
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
+    const batchResult = { state: 'multiple', items: urls.map((url, index) => ({ url,
+      state: ['passing', 'failed', 'pending', 'merged', 'closed', 'error'][index],
+      ...(index === 1 ? { notification: { key: 'pr-43-failed', message: 'CI failed' } } : {}),
+    })), notification: { key: 'batch-failure', message: 'PR #43 failed' }, recheckAfterSeconds: 10 };
+    await setMode(batchResult);
+    await automation.tick(); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    for (const native of [false, true]) {
+      const resource = await client.readResource({ uri: 'pinote://ui', _meta: {
+        ...meta(), 'native-ui/features': { fieldEvents: true, footerNativeActions: native },
+      } });
+      const multiple = ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
+      const links = multiple.footer!.filter((item) => item.url);
+      assert.deepEqual(links.map((item) => item.url), urls, 'Legacy duplicate is displayed once');
+      assert.deepEqual(links.map((item) => item.style?.color), ['success', 'error', 'warning', 'accent', 'muted', 'muted']);
+      assert.ok(links.every((item, index) => item.text.includes(`#${42 + index}`) && !item.style?.strikethrough));
+      assert.ok(multiple.footer!.some((item) => item.text.includes('Next: Review all')), 'PRs consume only one field slot');
+    }
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
+    const labeled = (await view()).footer!.filter((item) => item.url);
+    assert.deepEqual(labeled.map((item) => item.url), urls);
+    assert.ok(labeled.every((item) => item.text.includes('Review') && !item.text.includes('https://')), 'Legacy <value> formats preserve Markdown labels');
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
+    assert.ok((await view()).watcherDiagnostics?.failures.some((failure) => failure.fields.includes('PRs')), 'Partial errors remain visible in terminal-only diagnostics');
+    const partialContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
+    assert.doesNotMatch(JSON.parse((partialContext.contents[0] as { text: string }).text).text, /"state":"error"/, 'Unavailable entries do not enter model observations');
+    assert.equal(task.agent_notes.PR, pr, 'Legacy values are preserved without migrating task data');
+    await update({ PR: urls[1] }); // Both fields now contain the same failing PR.
+    await automation.tick(); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    forceDue('PRs'); await automation.tick();
+    const currentNotices = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
+    assert.equal(currentNotices.length, 1, 'Overlapping legacy/new fields deliver only the plural alert');
+    assert.equal(currentNotices[0].field, 'PRs');
+    const outage = { ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'error' } : item) };
+    await setMode(outage); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    const fallback = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
+    assert.equal(fallback.length, 1, 'Fresh legacy failures remain visible while the plural check is unavailable');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'error', 'Fresh legacy observations also supply the fallback colour');
+    assert.equal(fallback[0].id, currentNotices[0].id, 'Fallback never retriggers an acknowledged failure');
+    assert.deepEqual(automation.notices(task, 'session-a', [currentNotices[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), []);
+    await setMode({ state: 'error' }); forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    assert.ok(!automation.notices(task, 'session-a').some((notice) => ['PR', 'PRs'].includes(notice.field)), 'Unavailable failures never trigger workers');
+    await setMode({ ...batchResult, notification: { ...batchResult.notification, message: 'PR #43 checks still failing' } });
+    forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    const recoveredNotices = automation.notices(task, 'session-a').filter((notice) => ['PR', 'PRs'].includes(notice.field));
+    assert.equal(recoveredNotices.length, 1);
+    assert.equal(recoveredNotices[0].id, currentNotices[0].id, 'Recovery and message changes preserve the failure receipt');
+    assert.deepEqual(automation.notices(task, 'session-a', [currentNotices[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), []);
+    await setMode({ ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'passing', notification: undefined } : item), notification: undefined });
+    forceDue('PRs'); await automation.tick();
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
+    await setMode({ state: 'failed', notification: { key: 'new-legacy-head', message: 'Fresh legacy CI failure' }, recheckAfterSeconds: 10 });
+    forceDue('PR'); await automation.tick();
+    assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR' && notice.message === 'Fresh legacy CI failure'), 'An older plural passing result never suppresses a newer legacy failure');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'error', 'Footer colours use the latest available observation');
+    await setMode(batchResult); forceDue('PRs'); await automation.tick();
+    await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
+    assert.ok(!automation.notices(task, 'session-a').some((notice) => ['PR', 'PRs'].includes(notice.field)), 'An older plural failure never alerts after a newer legacy recovery');
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
+    const twoFailures = { ...batchResult, items: batchResult.items.map((item, index) => index === 0
+      ? { ...item, state: 'failed', notification: { key: 'other-pr', message: 'Other PR CI failed' } } : item),
+      notification: { key: 'two-failures', message: `${urls[0]} failed\n${urls[1]} failed` } };
+    await setMode(twoFailures); forceDue('PRs'); await automation.tick();
+    const oldClientNotices = (await view()).fieldNotifications!.filter((notice) => notice.field === 'PRs');
+    assert.equal(oldClientNotices.length, 2);
+    assert.ok(oldClientNotices.every((notice) => !notice.receiptIds), 'Older clients receive individual compatible notices');
+    const groupedResource = await client.readResource({ uri: 'pinote://ui', _meta: { ...meta(), 'native-ui/features': { ...meta()['native-ui/features'], fieldReceiptGroups: true } } });
+    const groupedNotices = ViewSchema.parse(JSON.parse((groupedResource.contents[0] as { text: string }).text)).fieldNotifications!.filter((notice) => notice.field === 'PRs');
+    assert.equal(groupedNotices.length, 1);
+    assert.deepEqual(new Set(groupedNotices[0].receiptIds), new Set(oldClientNotices.map((notice) => notice.id)), 'Opted-in clients get one group with every independent receipt');
+    await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
+    const remaining = automation.notices(task, 'session-a').filter((notice) => notice.field === 'PRs');
+    assert.equal(remaining.length, 1);
+    assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success', 'The newer legacy recovery remains the displayed observation');
+    assert.ok(remaining[0].message.includes(urls[0]) && !remaining[0].message.includes(urls[1]), 'A remaining plural alert excludes the newer legacy recovery');
+    const partialOutage = { ...twoFailures, items: twoFailures.items.map((item, index) => index === 0 ? { ...item, state: 'error' }
+      : index === 1 ? { ...item, state: 'passing', notification: undefined } : item),
+      notification: { key: 'remaining-failure', message: `${urls[0]} failed` } };
+    await setMode(partialOutage); forceDue('PRs'); await automation.tick();
+    assert.ok(!automation.notices(task, 'session-a').some((notice) => notice.field === 'PRs'));
+    await setMode({ ...partialOutage, items: partialOutage.items.map((item, index) => index === 0 ? { ...item, state: 'failed' } : item) });
+    forceDue('PRs'); await automation.tick();
+    assert.deepEqual(automation.notices(task, 'session-a', [remaining[0].id]).filter((notice) => ['PR', 'PRs'].includes(notice.field)), [], 'A shrinking known failure set preserves its acknowledged receipt through partial outage and recovery');
+    const latestFailure = { key: 'multi', message: 'Latest legacy CI failed' };
+    await setMode({ state: 'failed', notification: latestFailure, recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
+    const latestLegacy = automation.notices(task, 'session-a').find((notice) => notice.field === 'PR')!;
+    assert.ok(latestLegacy);
+    const caughtUp = { ...twoFailures, items: twoFailures.items.map((item, index) => index === 1 ? { ...item, notification: latestFailure } : item),
+      notification: { key: 'caught-up', message: 'Both PRs failed' } };
+    await setMode(caughtUp); forceDue('PRs'); await automation.tick();
+    const receipts = [remaining[0].id, latestLegacy.id];
+    assert.deepEqual(automation.notices(task, 'session-a', receipts).filter((notice) => ['PR', 'PRs'].includes(notice.field)), [], 'Plural catch-up inherits the receipt of a failure already reported by the legacy alias');
+    const newOther = { ...caughtUp, items: caughtUp.items.map((item, index) => index === 0 ? { ...item, notification: { key: 'new-other-head', message: 'New other PR failure' } } : item), notification: { key: 'new-other', message: 'New other PR failure' } };
+    await setMode(newOther); forceDue('PRs'); await automation.tick();
+    const newNotice = automation.notices(task, 'session-a', receipts).find((notice) => notice.field === 'PRs');
+    assert.ok(newNotice, 'A genuinely new failure still gets a new receipt');
+    receipts.push(newNotice.id);
+    const added = { url: 'https://github.com/example/repo/pull/99', state: 'passing' };
+    await update({ PRs: `${urls[0]}\n${urls[1]}\n${added.url}` }); await automation.tick();
+    assert.ok(!automation.statuses(task).some((status) => status.field === 'PRs' && !status.stale), 'Edited fields still require a fresh observation');
+    await setMode({ ...newOther, items: [...newOther.items.slice(0, 2), added], notification: { key: 'edited-list', message: 'Same failures after list edit' } });
+    forceDue('PRs'); await automation.tick();
+    assert.deepEqual(automation.notices(task, 'session-a', receipts).filter((notice) => ['PR', 'PRs'].includes(notice.field)), [], 'Adding a passing PR and removing other URLs preserves acknowledged failures for unchanged links');
+    await setMode({ state: 'failed', notification: { key: 'custom-legacy', message: 'Custom PR alert' }, recheckAfterSeconds: 10 });
+    forceDue();
+    for (let index = 0; index < 3; index++) await automation.tick();
+    assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR'), 'Custom non-batch watchers keep their independent legacy alerts');
+    const fieldDefs = await client.callTool({ name: 'fields', arguments: {}, _meta: meta() });
+    assert.match(JSON.stringify(fieldDefs.content), /PRs/);
+    await update({ PR: pr, PRs: urls[1] });
+    const edited = await view();
+    assert.deepEqual(edited.footer!.filter((item) => item.url).map((item) => item.url), [urls[1], pr]);
+    assert.equal(edited.footer!.find((item) => item.url === urls[1])?.style?.color, 'muted', 'Edited values never inherit stale statuses');
+
     // Valid large fields/results must not break otherwise-readable task context.
-    await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR']);
+    await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR', 'PRs', 'Next']);
     await setMode({ state: 'passing', summary: 's'.repeat(1000), notification: { key: 'large', message: 'n'.repeat(1000) } });
     await automation.tick();
     for (let index = 0; index < 33; index++) await automation.tick();

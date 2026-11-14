@@ -1,6 +1,6 @@
 {
   "name": "pinote-electron",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "description": "Isolated desktop frontend with Pinote's bundled Node backend",

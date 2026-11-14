@@ -10,7 +10,7 @@ import { getKeybindings, visibleWidth } from '@earendil-works/pi-tui';
 import { createEventBus, initTheme } from '@earendil-works/pi-coding-agent';
 import { remoteConfig, RemoteFailure, type Peer, type PeerFactory } from '../remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, restoreState, type SavedState } from '../remote/session.ts';
-import { UI_CONTEXT, UI_FEATURES, UI_STATE, type NativeView } from '../remote/protocol.ts';
+import { UI_CONTEXT, UI_FEATURES, UI_STATE, ViewSchema, type NativeView } from '../remote/protocol.ts';
 import { toolDefinitions } from '../remote/tools.ts';
 
 const token = 'private-token-never-log-01234567890123456789';
@@ -108,6 +108,45 @@ test('field alerts are task-scoped and deduplicated across refresh and reload wi
   await h.session.refresh();
   assert.deepEqual(delivered, [notice.id]);
   await h.session.stop();
+});
+
+test('grouped field alerts acknowledge every PR atomically and retain partial pending receipts across reload', async () => {
+  const ids = ['12345678-1234-4234-8234-123456789012', '12345678-1234-4234-8234-123456789013'];
+  const parse = (receiptIds?: string[]) => ViewSchema.safeParse({ ...view(), fieldNotifications: [{ id: ids[0], taskId: 7, field: 'PR', message: 'Checks failed', ...(receiptIds === undefined ? {} : { receiptIds }) }] }).success;
+  assert.equal(parse(), true, 'Older services need not send receipt groups');
+  assert.equal(parse([ids[0]]), true);
+  for (const invalid of [[], [ids[0], ids[0]], ['invalid'], [ids[1]], Array.from({ length: 65 }, (_, i) => `12345678-1234-4234-8234-${String(i).padStart(12, '0')}`)]) {
+    assert.equal(parse(invalid), false);
+  }
+  const notice = { id: ids[0], receiptIds: ids, taskId: 7, field: 'PR', message: 'Checks failed', triggerWorker: true as const };
+  const selected = { ...view({ selectedId: 7 }), fieldNotifications: [notice] };
+  const h = harness({ read: async (_uri, meta) => {
+    assert.equal((meta[UI_FEATURES] as any).fieldReceiptGroups, true);
+    return resource(selected);
+  } });
+  const prior = { ...restoreState([], config.scope), state: { selectedId: 7 }, fieldReceipts: [ids[0]] };
+  let ready = false, attempts = 0, delivered = 0;
+  h.session.onFieldNotification = () => {
+    attempts++;
+    if (!ready) return false;
+    delivered++;
+    return true;
+  };
+  try {
+    await h.session.start([{ type: 'custom', customType: ENTRY_TYPE, data: prior }], 'groups');
+    assert.equal(attempts, 1, 'An acknowledged group ID must not hide an unacknowledged member');
+    assert.equal(h.session.hasPendingFieldNotifications, true);
+    assert.deepEqual(h.session.snapshot()!.fieldReceipts, [ids[0]], 'Busy callbacks acknowledge no additional IDs');
+    ready = true;
+    await h.session.refresh();
+    assert.equal(delivered, 1, 'One group delivers one worker turn');
+    assert.equal(h.session.hasPendingFieldNotifications, false);
+    assert.deepEqual(h.session.snapshot()!.fieldReceipts, ids);
+    assert.deepEqual(h.saved.at(-1)!.fieldReceipts, ids, 'All IDs are persisted together');
+    await h.session.refresh();
+    await h.session.start([{ type: 'custom', customType: ENTRY_TYPE, data: h.session.snapshot()! }], 'groups');
+    assert.equal(delivered, 1, 'Fully acknowledged groups do not replay after restart');
+  } finally { await h.session.stop(); }
 });
 
 test('enabled watcher alerts trigger once, defer busy workers, and revalidate after settling', async (t) => {
