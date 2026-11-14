@@ -83,6 +83,8 @@ if recovery cannot finish, preserve `pending.json` and the private backups for r
 Original configuration inodes are also kept beside their paths as hidden
 `.NAME.pinote-switch-*.previous` files; interrupted rollback can retain matching
 `.rollback` files. Do not delete these while reconciling a concurrent editor's changes.
+A deleted target after publication intent is preserved, not recreated: if an
+interruption makes that intent ambiguous, recovery stops for manual repair.
 A busy updater, unsafe paths, a stopped/transitioning service, a different service
 database, or an unsupported/nonlocal listener blocks the switch rather than guessing.
 

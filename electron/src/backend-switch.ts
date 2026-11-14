@@ -13,7 +13,7 @@ import { backendEnvironment } from './backend-command.ts';
 export type SwitchOptions = { env: NodeJS.ProcessEnv; node: string; bundles: string; database: string };
 type Run = (executable: string, args: string[], env: NodeJS.ProcessEnv, input?: string) => Promise<string>;
 type Service = { present: boolean; active: boolean; pid: number };
-type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string; mode: number; replacement: string; replacementMode: number; stash?: string };
+type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string; mode: number; replacement: string; replacementMode: number; stash?: string; publishIntent?: boolean };
 type Journal = { version: 1; complete: boolean; backup: string; service: Service; files: SavedFile[] };
 export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; processArguments?: (pid: number) => Promise<string[]>; updateLock?: string; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
 const limit = 1024 * 1024;
@@ -72,7 +72,7 @@ async function originalMatches(file: SavedFile): Promise<boolean> {
 }
 function sameFile(a: SavedFile, b: SavedFile): boolean { return a.kind === b.kind && a.data === b.data && a.mode === b.mode; }
 const conflict = () => new Error('Configuration changed concurrently; its contents were preserved for recovery.');
-async function install(file: SavedFile): Promise<void> {
+async function install(file: SavedFile, persistIntent: () => Promise<void>): Promise<void> {
   const temp = `${file.path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temp, file.replacement, { mode: file.replacementMode, flag: 'wx' });
@@ -85,14 +85,22 @@ async function install(file: SavedFile): Promise<void> {
         throw conflict();
       }
     }
+    // Persist intent before publishing. A subsequently missing target is then
+    // an owner deletion or an ambiguous interruption, never permission to recreate it.
+    file.publishIntent = true;
+    try { await persistIntent(); } catch (error) { file.publishIntent = false; throw error; }
     // Atomic create-if-absent: never rename over a concurrent writer's file.
-    await link(temp, file.path);
+    try { await link(temp, file.path); }
+    catch (error) { file.publishIntent = false; await persistIntent(); throw error; }
   } finally { await rm(temp, { force: true }); }
 }
 async function restore(file: SavedFile): Promise<void> {
   if (await originalMatches(file)) return;
   const now = await snapshot(file.path, '', 0, true);
-  if (now.kind === 'missing' && file.kind !== 'missing') { await link(file.stash!, file.path); return; }
+  if (now.kind === 'missing' && file.kind !== 'missing') {
+    if (file.publishIntent) throw conflict();
+    await link(file.stash!, file.path); return;
+  }
   const ours = (value: SavedFile) => value.kind === 'file' && value.data === Buffer.from(file.replacement).toString('base64') && value.mode === file.replacementMode;
   if (!ours(now)) throw conflict();
   const captured = join(dirname(file.path), `.${basename(file.path)}.pinote-switch-${randomUUID()}.rollback`);
@@ -149,11 +157,6 @@ async function listening(env: NodeJS.ProcessEnv): Promise<void> {
     socket.once('error', () => { socket.destroy(); fail(new Error('Pinote service is not listening after restart.')); });
     socket.once('timeout', () => { socket.destroy(); fail(new Error('Pinote service readiness timed out.')); });
   });
-}
-function serviceProbeEnvironment(env: NodeJS.ProcessEnv, serviceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const clean = { ...env };
-  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME']) delete clean[key];
-  return { ...clean, ...serviceEnv };
 }
 async function probe(options: SwitchOptions, run: Run, env = options.env): Promise<string> {
   const raw = await run(options.node, [join(options.bundles, 'bridge.mjs')], env, JSON.stringify({ protocol: 1, operation: 'handshake', params: {} }));
@@ -225,7 +228,7 @@ async function loadJournal(env: NodeJS.ProcessEnv): Promise<Journal | undefined>
     if (!stat.isFile() || stat.uid !== process.getuid!() || stat.size > 6 * limit || (stat.mode & 0o077)) throw new Error('Unsafe switch recovery journal.');
     const journal = JSON.parse(await readFile(path, 'utf8')) as Journal;
     const expected = [paths.cli, paths.dropin, paths.preference];
-    if (journal.version !== 1 || typeof journal.complete !== 'boolean' || !journal.service || typeof journal.service.active !== 'boolean' || typeof journal.service.present !== 'boolean' || !Array.isArray(journal.files) || ![2, 3].includes(journal.files.length) || new Set(journal.files.map(f => f.path)).size !== journal.files.length || !journal.files.every(f => expected.includes(f.path) && ['missing', 'file', 'link'].includes(f.kind) && (f.kind !== 'link' || f.path === paths.cli) && typeof f.data === 'string' && f.data.length <= 2 * limit && typeof f.replacement === 'string' && f.replacement.length < 16384 && typeof f.stash === 'string' && dirname(f.stash) === dirname(f.path) && basename(f.stash).startsWith('.' + basename(f.path) + '.pinote-switch-') && Number.isInteger(f.mode) && f.mode >= 0 && f.mode <= 0o777 && [0o600, 0o700].includes(f.replacementMode)) || typeof journal.backup !== 'string' || dirname(journal.backup) !== join(paths.state, 'backups')) throw new Error('Invalid switch recovery journal; preserve it for manual recovery.');
+    if (journal.version !== 1 || typeof journal.complete !== 'boolean' || !journal.service || typeof journal.service.active !== 'boolean' || typeof journal.service.present !== 'boolean' || !Array.isArray(journal.files) || ![2, 3].includes(journal.files.length) || new Set(journal.files.map(f => f.path)).size !== journal.files.length || !journal.files.every(f => expected.includes(f.path) && ['missing', 'file', 'link'].includes(f.kind) && (f.kind !== 'link' || f.path === paths.cli) && typeof f.data === 'string' && f.data.length <= 2 * limit && typeof f.replacement === 'string' && f.replacement.length < 16384 && typeof f.publishIntent === 'boolean' && typeof f.stash === 'string' && dirname(f.stash) === dirname(f.path) && basename(f.stash).startsWith('.' + basename(f.path) + '.pinote-switch-') && Number.isInteger(f.mode) && f.mode >= 0 && f.mode <= 0o777 && [0o600, 0o700].includes(f.replacementMode)) || typeof journal.backup !== 'string' || dirname(journal.backup) !== join(paths.state, 'backups')) throw new Error('Invalid switch recovery journal; preserve it for manual recovery.');
     return journal;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
 }
@@ -271,7 +274,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       serviceArguments = await (dependencies.processArguments || (async pid => (await readFile(`/proc/${pid}/cmdline`)).toString().split('\0').filter(Boolean)))(before.pid);
       if (serviceArguments.length !== 2 || !isAbsolute(serviceArguments[0]) || !isAbsolute(serviceArguments[1]) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
       const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(before.pid);
-      await verifyExistingCLI(options, run, serviceProbeEnvironment(env, serviceEnv));
+      await verifyExistingCLI(options, run, serviceEnv);
       await (dependencies.listening || listening)(serviceEnv);
     }
     const files: SavedFile[] = [];
@@ -280,7 +283,10 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       files.push(await snapshot(target.path, target.text, target.mode, target.link));
     }
     const backup = join(paths.state, 'backups', randomUUID()); await safeDirectory(backup, true);
-    for (const file of files) file.stash = join(dirname(file.path), `.${basename(file.path)}.pinote-switch-${randomUUID()}.previous`);
+    for (const file of files) {
+      file.stash = join(dirname(file.path), `.${basename(file.path)}.pinote-switch-${randomUUID()}.previous`);
+      file.publishIntent = false;
+    }
     journal = { version: 1, complete: false, backup, service: before, files };
     await atomic(join(paths.state, 'pending.json'), JSON.stringify(journal));
     await atomic(join(backup, 'manifest.json'), JSON.stringify(journal));
@@ -297,7 +303,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     progress('Installing the CLI and selecting the Node backend…');
     for (const file of files) {
       if (!await originalMatches(file)) throw new Error('Configuration changed during preparation; nothing will be overwritten.');
-      await install(file);
+      await install(file, () => atomic(join(paths.state, 'pending.json'), JSON.stringify(journal)));
     }
     if ((await run(paths.cli, ['--version'], env)).trim() !== version) throw new Error('Installed CLI verification failed.');
     await probe(options, run, await preferredBackendEnvironment(env));
@@ -311,7 +317,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
         if (!after.active || !after.pid) throw new Error('Pinote service did not restart; restoring the previous installation.');
         const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(after.pid);
         if (serviceEnv.PINOTE_NOTE_COMMAND !== paths.cli) throw new Error('The service environment overrides the new CLI; restoring the previous installation.');
-        await probe(options, run, serviceProbeEnvironment(env, serviceEnv));
+        await probe(options, run, serviceEnv);
         await (dependencies.listening || listening)(serviceEnv);
       }
     }
