@@ -48,7 +48,8 @@ a light hover highlight follows the whole row without moving it or replacing
 progress, deletion-mark, or keyboard-focus styling. Row action order is unchanged.
 
 - Add with **Enter**; **Shift+Enter** inserts a newline. The composer grows
-  and shrinks with its text. Ordinary tasks use the available window height;
+  and shrinks with its text, with a roomier minimum input height. Ordinary tasks
+  use the available window height;
   in-progress tasks size to their contents above the composer (up to half the
   list when ordinary tasks are present) and scroll separately when needed.
   Window size, position, collapsed state, and list scroll positions survive restarts.
@@ -61,6 +62,9 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   top level it removes the bullet prefix. Elsewhere Backspace deletes normally.
   **Shift+Tab**, or Tab on a non-bullet line, moves focus between controls.
   Compact row/archive titles omit a leading heading marker, not stored text.
+- **Menu → Add task input… → Start as Markdown** starts new drafts with `# `
+  and live heading formatting. It defaults off, preserving the current behavior.
+  Existing draft text is not rewritten; the preference survives restarts.
 - Click a task's play icon to start it, then its checkmark to complete it.
   Right-click task text, use its actions button, or focus task text and press
   **Shift+F10** or the **Menu** key to open an inline icon toolbar in the same
@@ -149,6 +153,10 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   The eye is a configurable Preview action. These are deliberate differences,
   not a promise of pixel-for-pixel GTK parity.
 
+**Start in Kitty…** saves the task as in progress and updates its row/actions
+before launching, after a folder is confirmed. Cancelling folder selection changes
+nothing. If launching fails, the task stays in progress; check for a tab before retrying.
+
 Kitty launching uses the existing backend integration and its prerequisites;
 see [GTK controls](gui.md). With Python backend 0.25.2+, tab titles omit leading
 Markdown heading markers (`# ` through `###### `) before the 30-character limit;
@@ -164,8 +172,8 @@ GTK; task data needs no conversion.
 
 Restarting restores the new-task tag (including Untagged), tag filters, composer
 and private edit drafts, collapsed state, list scroll positions, saved task-action
-preferences, and agent read cursors. A deleted or externally renamed new-task tag
-falls back to Untagged; renaming it inside Electron updates the selection.
+preferences, the add-task input preference, and agent read cursors. A deleted or
+externally renamed new-task tag falls back to Untagged; renaming it inside Electron updates the selection.
 Dialogs, search text within menus, unsaved settings, and pending deletion marks
 are temporary. Private edit drafts remain available through draft recovery.
 Window position and size are restored within the available display area.

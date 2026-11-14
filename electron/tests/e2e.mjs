@@ -417,7 +417,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','task-actions','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','task-actions','composer-settings','drafts','close']);
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
     assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
@@ -675,6 +675,116 @@ try {
     });
     await preview.screenshot({path:join(root,'preview.png')});
     await dismissPreview(preview);
+  }
+  // Composer preference: native settings, new-draft lifecycle, source styling and recovery.
+  {
+    const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
+    const settings = page.getByRole('dialog',{name:'Add task input',exact:true});
+    const open = () => selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'composer-settings');
+    const save = async () => { await settings.getByRole('button',{name:'Save add task input settings',exact:true}).click(); await settings.waitFor({state:'detached'}); };
+    const waitSavedDraft = async text => {
+      for(let i=0;i<200;i++) {
+        if((await page.evaluate(()=>window.pinote.loadState())).draft===text) return;
+        await page.waitForTimeout(10);
+      }
+      assert.fail('Composer draft did not reach the saved state');
+    };
+    const geometry = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+    await composer.fill('Existing plain draft');
+    await open(); assert.equal(await settings.getByRole('checkbox',{name:'Start as Markdown',exact:true}).isChecked(),false);
+    await settings.getByRole('checkbox').check(); await page.keyboard.press('Escape');
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).composerStartAsMarkdown,undefined,'Closing settings discards unsaved changes');
+    await open(); await settings.getByRole('checkbox').check(); await save();
+    assert.equal(await sourceValue(composer),'Existing plain draft','Enabling must preserve unfinished text');
+    await composer.fill(''); await open(); await save();
+    assert.equal(await sourceValue(composer),'# ');
+    await composer.press('Enter');
+    assert.equal(await sourceValue(composer),'# ','A starter-only draft must not submit');
+    await page.keyboard.type('Markdown from the first character');
+    assert.equal(await sourceValue(composer),'# Markdown from the first character','Typing starts after the marker');
+    await composer.locator('.source-heading').first().waitFor();
+    await composer.press('Shift+Enter'); await page.keyboard.type('A first bullet');
+    assert.equal(await sourceValue(composer),'# Markdown from the first character\n- A first bullet');
+    await page.screenshot({path:join(root,'composer-markdown.png')});
+    await composer.press('Enter');
+    await page.locator('.task-title').filter({hasText:/^Markdown from the first character$/}).waitFor();
+    await page.waitForFunction(()=>document.querySelector('#draft')?.textContent==='# ');
+    const created = call('snapshot',{view:'active'}).notes.find(n=>n.text.startsWith('# Markdown from the first character'));
+    assert.equal(created.text,'# Markdown from the first character\n- A first bullet');
+    await waitSavedDraft('# ');
+    await page.reload(); await composer.waitFor();
+    assert.equal(await sourceValue(composer),'# ','The setting and fresh starter survive reload');
+    await open(); assert.equal(await settings.getByRole('checkbox').isChecked(),true);
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:20,y:20,width:280,height:300}));
+    assert.ok(await settings.evaluate(n=>n.scrollWidth<=n.clientWidth),'Input settings must fit narrow windows');
+    await page.screenshot({path:join(root,'composer-settings-narrow.png')});
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:20,y:20,width:520,height:400}));
+    await page.screenshot({path:join(root,'composer-settings.png')});
+    await settings.getByRole('checkbox').uncheck(); await save();
+    assert.equal(await sourceValue(composer),'','Disabling clears only the untouched starter');
+    await waitSavedDraft('');
+    await page.reload(); await composer.waitFor();
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).composerStartAsMarkdown,false);
+    assert.equal(await sourceValue(composer),'');
+    await composer.fill('Current plain behavior'); await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# Current plain behavior\n- ','Off preserves the existing first-newline behavior');
+    await composer.fill(''); await waitSavedDraft('');
+    call('transition',{id:created.id,revision:created.updated_at,state:created.state,action:'rm'});
+    await page.locator(`[data-id="${created.id}"]`).waitFor({state:'detached'});
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
+    // Keep this preference workflow's draft history out of the existing undo regression.
+    await page.reload(); await page.locator('.task-row').first().waitFor();
+  }
+  // A real persisted start precedes a deliberately held Kitty launch.
+  {
+    const id = call('add',{text:'Immediate Kitty progress',tag:null}).id;
+    const row = page.locator(`[data-id="${id}"]`); await row.waitFor();
+    const before = call('snapshot',{view:'active'}).notes.find(n=>n.id===id);
+    await app.evaluate(({ipcMain,dialog},directory)=>{
+      const original = ipcMain._invokeHandlers.get('backend'), folder = dialog.showOpenDialog;
+      const probe = globalThis.__kittyStartProbe = {original,folder,requests:[],blockStart:true};
+      dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});
+      ipcMain.removeHandler('backend');
+      ipcMain.handle('backend',(event,operation,params)=>{
+        if(operation==='transition' && probe.blockStart) return {protocol:1,ok:false,error:{code:'busy',message:'Injected start rejection'}};
+        if(operation==='kitty') {
+          probe.requests.push(params);
+          return new Promise(resolve=>{probe.resolve=resolve;});
+        }
+        return original(event,operation,params);
+      });
+    },root);
+    await selectTaskAction(page,id,'Start in Kitty…');
+    await page.getByText('busy: Injected start rejection',{exact:true}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===id).updated_at,before.updated_at);
+    assert.equal(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length),0,'A failed start must not launch Kitty');
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await app.evaluate(()=>{globalThis.__kittyStartProbe.blockStart=false;});
+    await selectTaskAction(page,id,'Start in Kitty…');
+    for(let i=0;i<100;i++) { if(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length)===1) break; await page.waitForTimeout(20); }
+    const started = call('snapshot',{view:'active'}).notes.find(n=>n.id===id);
+    assert.equal(started.state,'in_progress'); assert.notEqual(started.updated_at,before.updated_at);
+    assert.equal(await app.evaluate(()=>globalThis.__kittyStartProbe.requests[0].revision),started.updated_at,'Launch uses the committed revision');
+    assert.ok(await row.evaluate(n=>n.classList.contains('progress')),'Progress styling must precede launch completion');
+    assert.equal(await row.locator('[data-row-element="done"]').count(),1,'In-progress actions must precede launch completion');
+    assert.equal(await row.locator('[data-row-element="start"]').count(),0);
+    await row.scrollIntoViewIfNeeded();
+    await page.screenshot({path:join(root,'kitty-started-before-launch.png')});
+    await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:true,result:{changed:true}}));
+    await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] [data-row-element="done"]`)?.disabled,id);
+    await selectTaskAction(page,id,'Start in Kitty…');
+    for(let i=0;i<100;i++) { if(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length)===2) break; await page.waitForTimeout(20); }
+    assert.equal(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length),2);
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===id).updated_at,started.updated_at,'An already-started task is not started again');
+    await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:false,error:{code:'busy',message:'Injected launch failure'}}));
+    await page.getByText('busy: Injected launch failure',{exact:true}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===id).state,'in_progress','Launch failure must not roll back progress');
+    await app.evaluate(({ipcMain,dialog})=>{
+      const probe=globalThis.__kittyStartProbe; ipcMain.removeHandler('backend'); ipcMain.handle('backend',probe.original); dialog.showOpenDialog=probe.folder;
+    });
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    call('transition',{id,revision:started.updated_at,state:'in_progress',action:'rm'});
+    await row.waitFor({state:'detached'});
   }
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Electron lifecycle ☘\nsecond line');
   await page.keyboard.press('Enter');
@@ -1187,6 +1297,7 @@ try {
   await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await selectTaskAction(page, added.id, 'Start in Kitty…');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).state,'in_progress','A real failed Kitty launch retains the saved start');
   await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
@@ -1317,7 +1428,7 @@ try {
   const readonlyActions=reopened.getByRole('button',{name:`Actions for task ${added.id}`,exact:true});
   await readonlyActions.click();
   const readonlyBar=reopened.getByRole('toolbar');
-  for(const name of ['Start in Kitty…','Start','Complete','Remove to archive','Change tag…','Set reminder…']) {
+  for(const name of ['Start in Kitty…','Reset progress','Complete','Remove to archive','Change tag…','Set reminder…']) {
     assert.equal(await readonlyBar.getByRole('button',{name,exact:true}).isDisabled(),true,`${name} must be disabled during recovery`);
   }
   for(const name of ['Copy note','Edit text…']) assert.equal(await readonlyBar.getByRole('button',{name,exact:true}).isEnabled(),true);

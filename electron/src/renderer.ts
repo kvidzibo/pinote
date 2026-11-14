@@ -171,18 +171,24 @@ function showSaved(id?: number): void {
 function resizeComposer(): void {
   fitWindow();
 }
+function newComposerDraft(): string { return state.composerStartAsMarkdown ? '# ' : ''; }
+function setComposerDraft(text: string): void {
+  state.draft = text; composerEditor.setText(text);
+  composerEditor.view.dispatch({ selection: { anchor: text.length } });
+  draftVersion++; resizeComposer(); saveSoon();
+}
 async function addTask(): Promise<void> {
-  if (!composerEditor.value.trim() || adding || readonly || closing) return;
+  if (!composerEditor.value.trim() || (state.composerStartAsMarkdown && /^#\s*$/.test(composerEditor.value)) || adding || readonly || closing) return;
   const text = composerEditor.value, tag = creationTag, version = draftVersion;
   adding = true; renderToolbar();
   try {
     const result = await call('add', { text, tag });
     if (!result) return;
-    if (version === draftVersion) { state.draft = ''; composerEditor.setText(''); draftVersion++; resizeComposer(); saveSoon(); }
+    if (version === draftVersion) setComposerDraft(newComposerDraft());
     // Commit success is independent of the following read/cache operations.
     scrollToId = result.id;
     await refresh(); showSaved(result.id);
-  } finally { adding = false; renderToolbar(); if (!layers.length && !closing) composer.focus(); }
+  } finally { adding = false; renderToolbar(); if (!layers.length && !closing) composerEditor.view.focus(); }
 }
 let adding = false;
 let nativeMenuOpen = false;
@@ -279,9 +285,30 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'archive': auxiliary('archive'); break;
     case 'manage-tags': manageTags(); break;
     case 'task-actions': configureTaskActions(); break;
+    case 'composer-settings': configureComposer(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
   }
+}
+function configureComposer(): void {
+  const modal = layer('Add task input');
+  const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = state.composerStartAsMarkdown === true; toggle.disabled = readonly;
+  const label = el('label', undefined, 'setting-toggle'); label.append(toggle, el('span', 'Start as Markdown'));
+  modal.panel.append(label, el('p', 'Start new drafts with # and heading formatting. Off keeps the current plain-text start. Existing text is kept.'));
+  let saving = false;
+  const save = button('save', 'Save add task input settings', async () => {
+    if (readonly || closing || saving || !stateLoaded) return;
+    saving = true; save.disabled = toggle.disabled = true;
+    const previous = state.composerStartAsMarkdown;
+    state.composerStartAsMarkdown = toggle.checked;
+    try {
+      await persist();
+      if (!composerEditor.value || (previous && composerEditor.value === '# ')) setComposerDraft(newComposerDraft());
+      modal.close(); composerEditor.view.focus();
+    } catch (error) { state.composerStartAsMarkdown = previous; throw error; }
+    finally { saving = false; save.disabled = toggle.disabled = readonly; }
+  }, readonly);
+  controls(modal.panel).append(save);
 }
 function dueLabel(task: Task): string {
   const date = task.reminder_due_at ?? task.remind_at;
@@ -690,9 +717,23 @@ async function startKitty(task: Task): Promise<void> {
     const available = active?.tags.find(t => t.name === task.tag)?.available;
     const directory = folder && available !== false ? folder : await chooseFolder();
     if (!directory) return;
-    // call() owns uncertain-outcome recovery; do not replace its acknowledgement action.
-    await call('kitty', { ...target(task), directory });
-  } finally { busyTasks.delete(task.id); renderTasks(); }
+    let launchTask = task;
+    if (!isProgress(task)) {
+      const started = await call('transition', { ...target(task), action: 'start', state: task.state });
+      if (!started || readonly) return;
+      // Read explicitly: refresh() may skip while another poll is running.
+      const next = await call('snapshot', { view: 'active' });
+      if (!next) return;
+      active = next; marked.delete(task.id); stayOrdinary.delete(task.id);
+      renderTasks(); renderToolbar();
+      const current = next.notes.find(t => t.id === task.id);
+      if (!current || !isProgress(current)) { report('Task changed before Kitty could start. Check its current state before retrying.'); return; }
+      launchTask = current;
+    }
+    // Progress is already saved and visible, even if launching fails.
+    // call() owns uncertain-outcome recovery; never replay a launch automatically.
+    await call('kitty', { ...target(launchTask), directory });
+  } finally { busyTasks.delete(task.id); renderTasks(); await refresh(); }
 }
 
 let previewToken = 0;
@@ -1215,13 +1256,15 @@ async function init(): Promise<void> {
   try { state = await api.loadState(); stateLoaded = true; if (state.warning) { readonly = true; report(`Read-only draft recovery: ${state.warning}`); } }
   catch (e) { readonly = true; report(`Read-only: local drafts could not be loaded: ${message(e)}. Existing state will not be overwritten.`); }
   creationTag = state.creationTag ?? null; collapsed = state.collapsed ?? false; checklist.hidden = collapsed;
-  composerEditor.setText(state.draft); composerEditor.readOnly = readonly;
+  if (!readonly && !state.draft && state.composerStartAsMarkdown) setComposerDraft(newComposerDraft());
+  else { composerEditor.setText(state.draft); composerEditor.view.dispatch({ selection: { anchor: state.draft.length } }); }
+  composerEditor.readOnly = readonly;
   if (readonly) {
     composer.title = 'Read-only draft recovery: copy your text; existing state will not be overwritten.'; composer.setAttribute('aria-description', composer.title);
     recoveryWarning(state.warning);
   }
   resizeComposer(); renderToolbar();
-  await refresh(); composer.focus();
+  await refresh(); composerEditor.view.focus();
   setInterval(() => { if (!document.hidden && !closing) void track(refresh()); }, 1000);
 }
 void track(init()).catch(e => report(message(e)));
