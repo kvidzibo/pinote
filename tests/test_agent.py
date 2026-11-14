@@ -309,3 +309,18 @@ def test_bounded_field_events_updates_lifecycle_and_pagination(cli, monkeypatch)
         assert cli("field-events", "--after", cursor, check=False).returncode != 0
     for limit in ("0", "1001"):
         assert cli("field-events", "--limit", limit, check=False).returncode != 0
+
+    # History reads must not activate due reminders or append events.
+    with Store(cli.database) as store:
+        due = store.add("Due reminder")
+        store.schedule(due, datetime.now(UTC) + timedelta(days=1))
+        with store.connection:
+            store.connection.execute(
+                "UPDATE notes SET remind_at = ? WHERE id = ?",
+                ((datetime.now(UTC) - timedelta(days=1)).isoformat(), due),
+            )
+        before = len(store.history())
+    cli("field-events", "--after", "0")
+    with Store(cli.database) as store:
+        assert store.get(due).state == "scheduled"
+        assert len(store.history()) == before

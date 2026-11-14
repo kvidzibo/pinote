@@ -138,6 +138,17 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick();
     assert.ok(changes > 0);
 
+    // Valid large fields/results must not break otherwise-readable task context.
+    await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR']);
+    await setMode({ state: 'passing', summary: 's'.repeat(1000), notification: { key: 'large', message: 'n'.repeat(1000) } });
+    await automation.tick();
+    for (let index = 0; index < 33; index++) await automation.tick();
+    const largeResource = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
+    const largeContext = JSON.parse((largeResource.contents[0] as { text: string }).text).text;
+    assert.ok(largeContext.length <= 64_000);
+    assert.match(largeContext, /"omitted":[1-9]/);
+    assert.ok(largeContext.includes('v'.repeat(900)), 'complete field values remain in task context');
+
     await setMode({ large: true });
     await assert.rejects(runFieldHandler(handler, {}, new AbortController().signal));
     const sleeper = join(dir, 'sleep.mjs');

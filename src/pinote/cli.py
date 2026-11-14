@@ -251,7 +251,7 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         # No nested lock, and ordinary reads stay lock-free unless a timer is due.
         if needs_lock:
             store.activate_due()
-        elif args.command != "events" and store.has_due():
+        elif args.command not in {"events", "field-events"} and store.has_due():
             with display_lock(paths):
                 store.activate_due()
         if args.command == "agent":

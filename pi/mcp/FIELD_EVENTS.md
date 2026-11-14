@@ -116,7 +116,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   ownership. No alert is delivered while that conversation has another task selected.
 - Pi shows an alert once and persists receipts across reload/resume (latest 4,096
   IDs per branch). Current results reach the next agent run through fresh,
-  task-scoped context. **No prompt submission, model wake-up, task selection or
+  task-scoped context. Duplicate field values are not repeated; results exceeding
+  the context budget are omitted with a count, preserving the complete task first.
+  **No prompt submission, model wake-up, task selection or
   completion is authorized by a handler result.**
 - Only the latest current alert per field is retained, not an offline alert log.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
