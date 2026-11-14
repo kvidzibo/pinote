@@ -1,7 +1,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { dirname, isAbsolute } from 'node:path';
 import { privateDirectory, privateFile, resolvePath, checkCancelled } from './runtime.ts';
-import { NoteError, validate_text, validate_tag, validate_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch, validatePiSession } from './compat.ts';
+import { NoteError, validate_text, validate_tag, validate_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch, validatePiSession, validateImportEntries } from './compat.ts';
 import * as schema from './schema.ts';
 export { NoteError, markdown } from './compat.ts';
 export type Id = bigint;
@@ -231,8 +231,7 @@ export class Store {
     return note_id===null?this.query('SELECT * FROM events ORDER BY id'):this.query('SELECT * FROM events WHERE note_id=? ORDER BY id',note_id);
   }
   import_notes(source:string,entries:[string,string,string|null][]):ImportSummary|null {
-    const clean=entries.map(([text,state,tag])=>{ const saved=validate_tag(tag); if(tag!==null&&saved===null) throw new NoteError('Tag name cannot be empty.'); return [validate_text(text),state,saved] as const; });
-    if(clean.some(([,state])=>!['active','in_progress','done'].includes(state))) throw new NoteError('Imported notes must be active, in progress, or done.');
+    const clean=validateImportEntries(entries);
     return this.transaction(()=>{
       if(this.row('SELECT 1 FROM imports WHERE source=?',source)) return null;
       if(!clean.length) return {notes:0,tags:0};

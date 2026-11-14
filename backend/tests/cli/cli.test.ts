@@ -38,6 +38,8 @@ test('help/version/invalid input are side effect free',t=>{
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);
+  const malformed=join(f.root,'malformed.md'); writeFileSync(malformed,'- [ ] \n');
+  assert.equal(f.cli('--no-notify','import',malformed).status,1);
   for(const session of ['', 'bad/id', '-bad', 'a'.repeat(257)]) assert.equal(f.cli('agent','start','1','--expected-updated-at','x','--pi-session-id',session).status,1);
   assert.ok(!existsSync(f.database)); assert.ok(!existsSync(join(f.root,'state/pinote/app.log'))); assert.ok(!existsSync(join(f.root,'data/pinote/display.lock')));
   f.ok('--no-notify','due reminder');
@@ -46,6 +48,7 @@ test('help/version/invalid input are side effect free',t=>{
     db.exec("UPDATE notes SET state='scheduled',remind_at='2000-01-01T00:00:00.000000+00:00' WHERE id=1");
     const before=db.prepare('SELECT count(*) AS n FROM events').get()!.n;
     assert.equal(f.cli('agent','start','1','--expected-updated-at','x','--pi-session-id','bad/id').status,1);
+    assert.equal(f.cli('--no-notify','import',malformed).status,1);
     assert.equal(db.prepare('SELECT state FROM notes WHERE id=1').get()!.state,'scheduled');
     assert.equal(db.prepare('SELECT count(*) AS n FROM events').get()!.n,before);
   } finally {db.close();}

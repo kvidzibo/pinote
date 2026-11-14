@@ -28,6 +28,14 @@ export function validate_text(value: string): string {
   if(/[\p{Cc}\p{Cs}]/u.test(value.replaceAll('\n','').replaceAll('\t',''))) throw new NoteError('Note text contains unsupported control characters.');
   return value;
 }
+export function validateImportEntries(entries: [string,string,string|null][]): [string,string,string|null][] {
+  return entries.map(([text,state,tag]) => {
+    const saved=validate_tag(tag);
+    if(tag!==null && saved===null) throw new NoteError('Tag name cannot be empty.');
+    if(!['active','in_progress','done'].includes(state)) throw new NoteError('Imported notes must be active, in progress, or done.');
+    return [validate_text(text),state,saved];
+  });
+}
 export function validatePiSession(value: unknown): string|null {
   if(value == null) return null;
   if(typeof value !== 'string' || value.length > 256 || !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(value)) throw new NoteError('--pi-session-id must be a valid Pi session ID (at most 256 characters).');

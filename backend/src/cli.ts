@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
-import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, timestamp, pythonStrip } from './compat.ts';
+import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
@@ -180,7 +180,8 @@ function repr(value: string): string {
   }
   return result + quote;
 }
-export async function execute(args: Arguments, paths: Paths): Promise<number> {
+type PreparedImport = { source: string; entries: markdown.Entry[] };
+async function execute(args: Arguments, paths: Paths, imported: PreparedImport | undefined): Promise<number> {
   const scheduled = args.command === 'schedule' ? parse_reminder_time(args.when!) : undefined;
   const needsLock = MUTATIONS.has(args.command) || args.command === 'show' || args.command === 'agent' && ['select', 'start', 'update', 'done', 'add', 'tag'].includes(args.agent_action!);
   const run = async () => {
@@ -226,10 +227,7 @@ export async function execute(args: Arguments, paths: Paths): Promise<number> {
           if (!events.length) print('No history.'); break;
         }
         case 'import': {
-          const path = args.path === '~' ? homedir() : args.path!.startsWith('~/') ? join(homedir(), args.path!.slice(2)) : args.path!;
-          const source = realpathSync(path);
-          const entries = markdown.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(source)).replace(/\r\n?/g, '\n'));
-          const summary = store.import_notes(source, entries);
+          const summary = store.import_notes(imported!.source, imported!.entries);
           print(summary === null ? 'Source already imported; nothing added.' : `Imported ${summary.notes} notes. Tags created: ${summary.tags}.`); break;
         }
         case 'export': process.stdout.write(markdown.export(store.notes({ all_states: args.all }))); break;
@@ -273,10 +271,22 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   catch (error) { process.stderr.write(`usage: note [--version] [--no-notify] COMMAND ...\nnote: error: ${(error as Error).message}\n`); return 2; }
   if (args.version) { print(`pinote ${VERSION}`); return 0; }
   if (args.help) { print(help(args)); return 0; }
-  try { validateCommand(args); }
-  catch (error) { print(`ERROR: ${(error as Error).message}`); return 1; }
+  let imported: PreparedImport | undefined;
+  try {
+    validateCommand(args);
+    if (args.command === 'import') {
+      const path = args.path === '~' ? homedir() : args.path!.startsWith('~/') ? join(homedir(), args.path!.slice(2)) : args.path!;
+      const source = realpathSync(path);
+      const entries = validateImportEntries(markdown.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(source)).replace(/\r\n?/g, '\n')));
+      imported = { source, entries };
+    }
+    checkCancelled();
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return process.exitCode === 143 ? 143 : 130;
+    print(`ERROR: ${(error as Error).message}`); return 1;
+  }
   const paths = discoverPaths();
-  try { checkCancelled(); configureLogging(paths); return await execute(args, paths); }
+  try { checkCancelled(); configureLogging(paths); return await execute(args, paths, imported); }
   catch (error) {
     if ((error as Error).name === 'AbortError') return process.exitCode === 143 ? 143 : 130;
     const message = error instanceof Error ? error.message : String(error);
