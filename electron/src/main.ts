@@ -81,7 +81,7 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
     const menu = Menu.buildFromTemplate([
       item('filter', 'Filter by tag'), item('scheduled', 'Scheduled reminders'), item('archive', 'Archive'),
-      item('manage-tags', 'Manage tags'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
+      item('manage-tags', 'Manage tags'), item('task-actions', 'Task actions…'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
     ]);
     const content = owner.getContentBounds();
     activeMenu = menu;
