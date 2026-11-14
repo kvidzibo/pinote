@@ -78,6 +78,8 @@ export async function withDisplayLock<T>(paths: Paths, blocking: boolean, action
       if (!blocking) throw new BusyError('Pinote is busy. Please try again.');
       await delay(25, undefined, { signal: cancellation.signal });
     }
+    // Drain any signal queued while the synchronous nonblocking flock helper ran.
+    await delay(0, undefined, { signal: cancellation.signal });
     checkCancelled();
     return await action();
   } finally { closeSync(fd); }

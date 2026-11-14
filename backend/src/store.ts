@@ -17,13 +17,14 @@ function noteFromRow(row:Row):Note { return {tag:null,remind_at:null,reminder_du
 
 export class Store {
   public connection:DatabaseSync;
-  constructor(path:string, options:{timeout?:number}={}) {
+  constructor(path:string) {
     privateDirectory(dirname(path)); privateFile(path);
     this.connection=new DatabaseSync(path);
     try {
-      const timeout=options.timeout??10;
-      if(!Number.isFinite(timeout)||timeout<0) throw new RangeError('timeout must be nonnegative');
-      this.connection.exec(`PRAGMA busy_timeout = ${Math.min(2147483647,Math.floor(timeout*1000))}`);
+      // DatabaseSync cannot process cancellation while waiting inside SQLite.
+      // Compliant writers serialize through display.lock; other contention must
+      // fail before the mutation, never unblock and commit after a caller stops.
+      this.connection.exec('PRAGMA busy_timeout = 0');
       this.connection.exec('PRAGMA foreign_keys = ON');
       if(this.row('PRAGMA user_version')!.user_version!==8n) this.transaction(()=>{
         const version=Number(this.row('PRAGMA user_version')!.user_version);

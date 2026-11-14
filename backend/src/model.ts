@@ -18,10 +18,10 @@ export interface TransitionResult { notes: Note[]; changed: boolean; completed_i
 export class ReminderModel {
   readonly paths: Paths;
   constructor(paths: Paths) { this.paths = paths; }
-  private read<T>(action: (store: Store) => T): T { const store = new Store(this.paths.database, { timeout: 0.1 }); try { return action(store); } finally { store.close(); } }
+  private read<T>(action: (store: Store) => T): T { const store = new Store(this.paths.database); try { return action(store); } finally { store.close(); } }
   private write<T>(action: (store: Store) => T): Promise<T> { return withDisplayLock(this.paths, false, () => this.read(action)); }
   async notes(): Promise<Note[]> {
-    const store = new Store(this.paths.database, { timeout: 0.1 });
+    const store = new Store(this.paths.database);
     try { if (store.has_due()) await withDisplayLock(this.paths, false, () => store.activate_due()); return store.notes(); }
     finally { store.close(); }
   }

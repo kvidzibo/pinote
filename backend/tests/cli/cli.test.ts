@@ -109,6 +109,18 @@ test('parallel saves and desktop renders are serialized, with literal escaping',
     assert.equal(db.prepare('PRAGMA integrity_check').get()!.integrity_check,'ok');
   } finally { db.close(); }
 });
+test('SQLite contention cannot unblock and commit a terminated mutation', async t=>{
+  const f=fixture(t); f.ok('--no-notify','seed');
+  const holder=new DatabaseSync(f.database); holder.exec('BEGIN IMMEDIATE');
+  const child=spawn(process.execPath,['--experimental-strip-types',entry,'--no-notify','must not save after cancellation'],{env:f.env,stdio:'ignore'});
+  const closed=new Promise<number|null>((resolve,reject)=>{child.once('close',resolve);child.once('error',reject);});
+  try {
+    await new Promise(resolve=>setTimeout(resolve,200)); child.kill('SIGTERM');
+    await new Promise(resolve=>setTimeout(resolve,200)); holder.exec('ROLLBACK');
+    assert.notEqual(await closed,0);
+    assert.equal(holder.prepare('SELECT count(*) AS count FROM notes').get()!.count,1);
+  } finally { child.kill('SIGKILL'); holder.close(); }
+});
 test('termination during desktop delivery does not write a late warning', async t=>{
   const f=fixture(t);
   writeFileSync(join(f.bin,'dunstify'),'#!/bin/sh\nprintf started > "$CAPTURE"\nsleep 0.3\nprintf unavailable >&2\nexit 1\n',{mode:0o700});

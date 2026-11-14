@@ -75,7 +75,7 @@ export function validate(request: any): [string, Record<string, any>] {
   // logging, the display lock, or SQLite, even on a fresh profile.
   if (op === 'add' || op === 'edit') validate_text(p.text);
   if (Object.hasOwn(p, 'tag')) validate_tag(p.tag);
-  if (['create_tag', 'rename_tag', 'delete_tag'].includes(op)) {
+  if (['create_tag', 'rename_tag', 'delete_tag', 'tag_folder'].includes(op)) {
     if (validate_tag(p.name) === null) throw new NoteError('Tag name cannot be empty.');
     if (op === 'rename_tag' && validate_tag(p.newName) === null) throw new NoteError('Tag name cannot be empty.');
   }
@@ -96,7 +96,7 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
   }
   if (op === 'completions') return [...model.completed_ids(new Set(p.ids.map((id: number) => BigInt(id))))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   return withDisplayLock(paths, false, async () => {
-    const store = new Store(paths.database, { timeout: 0.1 });
+    const store = new Store(paths.database);
     try {
       const id = Object.hasOwn(p, 'id') ? BigInt(p.id) : undefined;
       const target = id === undefined ? {} : { id }; const options = { expected_updated_at: p.revision };
