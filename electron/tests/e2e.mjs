@@ -792,6 +792,90 @@ try {
   await page.getByRole('dialog').getByRole('button',{name:/^Untagged \(/}).click();
   await page.getByRole('dialog').waitFor({state:'detached'});
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===tagged.id).tag,null);
+  // Manage tags: one searchable list/editor workflow, with real shared-backend refreshes.
+  {
+    const geometry = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+    const manage = page.getByRole('dialog',{name:'Manage tags',exact:true});
+    await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'manage-tags');
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    const create = page.getByRole('dialog',{name:'New tag',exact:true});
+    await create.getByRole('textbox',{name:'Name',exact:true}).fill('pinote');
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await create.waitFor({state:'detached'});
+    await manage.getByRole('heading',{name:'pinote',exact:true}).waitFor();
+    const search = manage.getByRole('searchbox',{name:'Find saved tag',exact:true});
+    const list = manage.getByRole('group',{name:'Saved tags',exact:true});
+    await search.fill('PiNoTe');
+    assert.deepEqual(await list.getByRole('button').allTextContents(),['pinote']);
+    await search.press('ArrowDown');
+    assert.equal(await list.getByRole('button',{name:'pinote',exact:true}).evaluate(n=>n===document.activeElement),true);
+    await page.keyboard.press('Enter');
+    assert.equal(await list.getByRole('button',{name:'pinote',exact:true}).getAttribute('aria-pressed'),'true');
+    const current = call('snapshot',{view:'active'}).notes.find(n=>n.id===tagged.id);
+    call('tag',{id:current.id,revision:current.updated_at,tag:'pinote'});
+    const name = manage.getByRole('textbox',{name:'Tag name',exact:true});
+    await name.fill('pinote-app');
+    call('tag_folder',{name:'pinote',folder:root});
+    call('create_tag',{name:'docs',folder:null});
+    await page.waitForFunction(folder=>document.querySelector('.tag-editor .folder-path')?.textContent===folder,root);
+    assert.equal(await name.inputValue(),'pinote-app','External folder updates must preserve the unfinished name');
+    assert.equal(await name.evaluate(n=>n===document.activeElement),true,'Polling must preserve editor focus');
+    await manage.getByRole('button',{name:'Rename tag',exact:true}).click();
+    await manage.getByRole('heading',{name:'pinote-app',exact:true}).waitFor();
+    assert.equal(await search.inputValue(),'','The renamed selection must remain visible');
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===tagged.id).tag,'pinote-app');
+    await manage.getByRole('button',{name:'Clear default Kitty folder',exact:true}).click();
+    await manage.locator('.folder-path').filter({hasText:'No default folder'}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='pinote-app').folder,null);
+    await app.evaluate(({dialog},folder)=>{
+      globalThis.__manageFolderDialog=dialog.showOpenDialog;
+      dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});
+    },root);
+    try {
+      await manage.getByRole('button',{name:'Set default Kitty folder',exact:true}).click();
+      await page.waitForFunction(folder=>document.querySelector('.tag-editor .folder-path')?.textContent===folder,root);
+    } finally { await app.evaluate(({dialog})=>{dialog.showOpenDialog=globalThis.__manageFolderDialog;}); }
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='pinote-app').folder,root);
+    for (const [width,height] of [[760,560],[420,560],[280,360]]) {
+      await app.evaluate(({BrowserWindow},{width,height})=>BrowserWindow.getAllWindows()[0].setSize(width,height),{width,height});
+      await page.waitForFunction(width=>innerWidth===width,width);
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      assert.equal(await manage.evaluate(n=>n.scrollWidth<=n.clientWidth),true,`No horizontal overflow at ${width}px`);
+      assert.equal(await list.evaluate(n=>{
+        const row=n.querySelector('.chosen').getBoundingClientRect(), box=n.getBoundingClientRect();
+        return row.top>=box.top-1 && row.bottom<=box.bottom+1;
+      }),true,'The selected tag stays visible when the list becomes shorter');
+      await manage.evaluate(n=>{n.scrollTop=0;});
+      await page.screenshot({path:join(root,`manage-tags-${width}.png`)});
+      const remove = manage.getByRole('button',{name:'Delete saved tag…',exact:true});
+      await remove.scrollIntoViewIfNeeded();
+      const box=await remove.boundingBox(), viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}));
+      assert.ok(box.x>=0 && box.x+box.width<=viewport.width && box.y>=0 && box.y+box.height<=viewport.height,'Delete remains reachable after resizing');
+      if(width===280) await page.screenshot({path:join(root,'manage-tags-narrow-editor.png')});
+    }
+    await search.fill('no-such-saved-tag');
+    await list.getByText('No matching tags.',{exact:true}).waitFor();
+    assert.equal(await list.getByRole('button').count(),0);
+    assert.equal(await name.inputValue(),'pinote-app','Search must not discard the selected editor');
+    await search.fill('');
+    await manage.getByRole('button',{name:'Delete saved tag…',exact:true}).click();
+    const confirm = page.getByRole('dialog',{name:'Delete tag?',exact:true});
+    await confirm.getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.ok(call('snapshot',{view:'active'}).tags.some(t=>t.name==='pinote-app'));
+    await manage.getByRole('button',{name:'Delete saved tag…',exact:true}).click();
+    await confirm.getByRole('button',{name:'Confirm',exact:true}).click();
+    await confirm.waitFor({state:'detached'});
+    await list.getByRole('button',{name:'pinote-app',exact:true}).waitFor({state:'detached'});
+    const after = call('snapshot',{view:'active'});
+    assert.equal(after.tags.some(t=>t.name==='pinote-app'),false);
+    assert.equal(after.notes.find(n=>n.id===tagged.id).tag,null,'Deleting a tag keeps its tasks');
+    await list.getByRole('button',{name:'docs',exact:true}).click();
+    await manage.getByRole('heading',{name:'docs',exact:true}).waitFor();
+    call('delete_tag',{name:'docs'});
+    await manage.getByRole('textbox',{name:'Tag name',exact:true}).waitFor({state:'detached'});
+    await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
+  }
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
   Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../.venv/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
   const piRequire=createRequire(resolve('../pi/package.json'));
