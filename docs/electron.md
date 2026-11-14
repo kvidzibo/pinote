@@ -2,44 +2,96 @@
 
 [Quickstart](../README.md) · [Development and tests](development.md#electron-frontend) · [GTK fallback](gui.md)
 
-Electron is an **optional trial frontend**, not a replacement for GTK. GTK remains
-the default and fallback; removing Python, deprecating GTK, or changing defaults
-would require a later explicit decision. Only Linux/X11/i3 is a validation target.
+Electron uses the Node backend; Python is not required. GTK remains available
+as a separate legacy frontend, sharing the same database. This does not change
+your installed desktop startup. Only Linux/X11/i3 is a validation target.
 Resource use is substantially higher than GTK. Trial it before considering a
 default switch; local validation measurements are not performance guarantees.
 
 ## Install and launch from a checkout
 
-Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
-for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.12.0. Editor autosave requires the matching
-Python backend (0.25.1+); update both from this checkout.
+Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), and desktop
+libraries for Electron (including GTK 3, not Python GTK bindings).
+The private `electron/` package (0.13.0) bundles the matching Node backend;
+editor autosave does not require Python.
 Run from the repository root:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
 npm --prefix electron run check
 npm --prefix electron test
 npm --prefix electron run build
-PINOTE_ELECTRON_BACKEND="$PWD/.venv/bin/pinote-electron-backend" npm --prefix electron start
+npm --prefix electron start
 ```
 
-`setup` explicitly downloads the locked Electron 45 binary; there is no Electron
+`setup` installs the locked backend build dependencies, builds its bundles, and
+explicitly downloads the locked Electron 45 binary; there is no Electron
 postinstall download in this version. Dependencies have their own
 `electron/package-lock.json`. `start` rebuilds before launching.
-The dependency-free `pinote-electron-backend` console entrypoint comes from the
-Python installation. Use a **trusted absolute executable path** for
-`PINOTE_ELECTRON_BACKEND`, or install that entrypoint in an absolute `PATH`
-directory; relative PATH entries are not searched. No service or network listener
-is started. Installation does not alter GTK startup, i3 rules, or user configuration.
+The build includes the backend bundle. At runtime it uses external `node` from
+absolute PATH directories, or a **trusted absolute Node executable** in `PINOTE_NODE`.
+Relative PATH entries are ignored; unsupported Node versions fail at startup.
+Node/Electron injection environment flags are cleared in backend children.
+`PINOTE_ELECTRON_BACKEND` remains an explicit trusted absolute executable override
+for compatibility and diagnostics; there is no automatic Python fallback.
+No service or network listener is started. Installation does not alter GTK startup,
+i3 rules, or user configuration.
 
 The window is a compact, always-on-top utility window. Its utility type is the
 intended automatic-floating mechanism in i3, without additional rules. Although
 `start` requests `--class=pinote-electron`, native development `WM_CLASS` can be
 `electron`; do not rely on that requested class as an observed window identity.
 Icons are bundled rather than taken from the host icon theme.
+
+## Switch an existing installation
+
+After updating/building this Electron version, open **Menu → Backend settings…**
+and use **Switch to Node backend** (play icon). A native confirmation defaults to
+Cancel. The operation saves pending edits and drafts, verifies external Node and
+the bundled CLI/bridge against the same database, then:
+
+- Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
+- Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
+- Adds a user override for the **existing** `pinote.service`; no service is created
+  or enabled. A present service must be running with the documented direct Node
+  HTTP command from its project working directory and the same trusted Node
+  executable used by Electron; the actual process executable is checked, not
+  just its command line. Custom service launchers/scripts are unsupported. Its original CLI's database is verified before changing anything;
+  custom CLI wrappers or runtime injection require manual verification. The
+  drop-in preserves service arguments/environment files and overrides the CLI
+  at execution, including an old command supplied by `EnvironmentFile`.
+- Saves an explicit Node preference, restarts the previously running service,
+  verifies its CLI/listener, and relaunches Electron.
+
+No downloads, administrator access, model requests or database conversion occur
+when clicking Switch. Normal desktop updates must first install this app version;
+its `setup` now also prepares the backend for the existing desktop updater.
+Keep the installed application's directory stable: the CLI launcher follows its
+bundled resources, so subsequent updates replace both runtimes together.
+
+The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
+`~/.config/pinote/backend.json`). It overrides only the exact backend override
+replaced during confirmation, including the old Python-forcing desktop launcher;
+a different explicit diagnostic override still works. GTK and its Python
+environments remain available, but are not used by the selected Node runtime.
+
+Backups and interrupted-switch recovery are under
+`$XDG_STATE_HOME/pinote/backend-switch` (default `~/.local/state/pinote/backend-switch`).
+On failure, configuration is restored and the prior active service is restarted;
+task data is **never** automatically restored or converted. Interrupted rollback
+is recovered on the next launch. Concurrent configuration edits are not overwritten:
+if recovery cannot finish, preserve `pending.json` and the private backups for repair.
+Original configuration inodes are also kept beside their paths as hidden
+`.NAME.pinote-switch-*.previous` files; interrupted rollback can retain matching
+`.rollback` files. Do not delete these while reconciling a concurrent editor's changes.
+Deleted targets are not recreated. If a previously existing target disappears
+after publication intent, recovery stops for manual repair rather than guessing.
+An originally absent target that is absent again already matches its backup;
+rollback leaves it absent without requiring repair.
+A busy updater, unsafe paths, a stopped/transitioning service, a different service
+database, or an unsupported/nonlocal listener blocks the switch rather than guessing.
 
 ## Controls and deliberate differences
 
@@ -165,7 +217,7 @@ before launching, after a folder is confirmed. Cancelling folder selection chang
 nothing. If launching fails, the task stays in progress; check for a tab before retrying.
 
 Kitty launching uses the existing backend integration and its prerequisites;
-see [GTK controls](gui.md). With Python backend 0.25.2+, tab titles omit leading
+see [GTK controls](gui.md). Tab titles omit leading
 Markdown heading markers (`# ` through `###### `) before the 30-character limit;
 tags and saved task text stay unchanged. The frontend does not send Dunst notifications.
 Due reminders activate on backend refresh, not through a new alarm service.
@@ -211,15 +263,14 @@ state; quitting without saving requires an explicit choice.
 
 ```sh
 npm --prefix electron run package
-PINOTE_ELECTRON_BACKEND="$PWD/.venv/bin/pinote-electron-backend" \
-  electron/out/pinote-electron-linux-x64/pinote-electron
+electron/out/pinote-electron-linux-x64/pinote-electron
 ```
 
 On x64 Linux this creates `electron/out/pinote-electron-linux-x64/`, an unpacked
-application, not an installer. Packaging follows the host architecture. Python
-is **not bundled**: the target machine still needs a separately installed
-compatible backend, found via the trusted absolute override or absolute PATH
-entries. There is no auto-updater or public publishing flow.
+application, not an installer. Packaging follows the host architecture. The
+backend and its dependency notices are bundled outside ASAR; source files and
+checkout dependencies are not needed on the target. External Node.js 22.19+ and
+`flock` are required; Python is not. There is no auto-updater or public publishing flow.
 
 The renderer uses a custom secure protocol, restrictive CSP, sandboxing,
 context isolation, and a narrow isolated preload API. Packaged native fuses

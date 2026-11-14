@@ -33,7 +33,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
   const connect = async () => {
     const client = new Client({ name: 'native-ui-test', version: '1' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'dist-mcp/mcp/server.js')],
-      env: { PINOTE_NOTE_COMMAND: join(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir }, stderr: 'pipe' });
+      env: { PINOTE_NOTE_COMMAND: join(root, '../backend/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir }, stderr: 'pipe' });
     transport.stderr?.on('data', () => {});
     await client.connect(transport);
     return client;
@@ -274,7 +274,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(view.state.selectedId, null);
     view = (await act(view, 'add', '--help')).view;
     view = (await act(view, 'done')).view;
-    await promisify(execFile)(join(root, '../.venv/bin/python'), ['-c', 'from pathlib import Path; from pinote.store import Store; import sys\nwith Store(Path(sys.argv[1])) as store:\n for i in range(201): store.add(f"Task {i} " + "x" * 2000)', join(dir, 'pinote/notes.db')]);
+    await promisify(execFile)(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import { Store } from ${JSON.stringify(pathToFileURL(join(root, '../backend/src/store.ts')).href)}; const store = new Store(process.argv[1]); try { for(let i=0;i<201;i++) store.add('Task '+i+' '+'x'.repeat(2000)); } finally { store.close(); }`, join(dir, 'pinote/notes.db')]);
     view = await read(); state = view.state;
     const rows = view.controls.filter((c) => c.id.startsWith('select:'));
     assert.ok(rows.length < 200);
@@ -287,7 +287,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.ok(Number(matches[0].id.slice(7)) > Number(matches[1].id.slice(7)), 'Search keeps newest first');
     view = (await act(view, 'search', '')).view;
     await t.test('search terms span text, tag and ID; preview is complete or explicitly limited', async () => {
-      const created = JSON.parse((await promisify(execFile)(join(root, '../.venv/bin/note'), ['--no-notify', 'agent', 'add', '--text=Search title\n\nNeedle in details', '--tag=MixedTag'], { env: { ...process.env, XDG_DATA_HOME: dir } })).stdout);
+      const created = JSON.parse((await promisify(execFile)(join(root, '../backend/bin/note'), ['--no-notify', 'agent', 'add', '--text=Search title\n\nNeedle in details', '--tag=MixedTag'], { env: { ...process.env, XDG_DATA_HOME: dir } })).stdout);
       view = (await act(await read(), 'search', `needle  MIXEDTAG #${created.id}`)).view;
       const row = view.controls.find((control) => control.id === `select:${created.id}`)!;
       assert.equal(row.label, 'Search title');
@@ -436,7 +436,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     view = (await act(view, 'search', 'External')).view;
     view = (await act(view, 'add', 'Scoped task')).view;
     const displayed = view;
-    const external = async (...args: string[]) => (await promisify(execFile)(join(root, '../.venv/bin/note'), ['--no-notify', ...args], {
+    const external = async (...args: string[]) => (await promisify(execFile)(join(root, '../backend/bin/note'), ['--no-notify', ...args], {
       env: { ...process.env, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir },
     })).stdout;
     const observer = await connect();
@@ -506,7 +506,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
 test('agent context is complete, read-only, consent-validated and fails closed', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-mcp-context-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const env = { PINOTE_NOTE_COMMAND: join(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
+  const env = { PINOTE_NOTE_COMMAND: join(root, '../backend/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
   const cli = async (...args: string[]) => JSON.parse((await promisify(execFile)(env.PINOTE_NOTE_COMMAND, ['--no-notify', ...args], { env: { ...process.env, ...env } })).stdout);
   const client = new Client({ name: 'agent-context-test', version: '1' });
   const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'dist-mcp/mcp/server.js')], env, stderr: 'pipe' });
@@ -594,7 +594,7 @@ test('agent context is complete, read-only, consent-validated and fails closed',
     await assert.rejects(client.readResource({ uri: 'pinote://agent-context' }), /./, 'Missing host context is an error');
     // Simulate oversized legacy/imported data in the same database (normal writes are bounded).
     const large = await cli('agent', 'add', '--text=Oversized legacy task');
-    await promisify(execFile)(join(root, '../.venv/bin/python'), ['-c', 'import sqlite3, sys\nwith sqlite3.connect(sys.argv[1]) as db:\n db.execute("UPDATE notes SET text = ? WHERE id = ?", ("x" * 65000, int(sys.argv[2])))', join(dir, 'pinote/notes.db'), String(large.id)]);
+    await promisify(execFile)(process.execPath, ['-e', `const {DatabaseSync}=require('node:sqlite'); const db=new DatabaseSync(process.argv[1]); db.prepare('UPDATE notes SET text = ? WHERE id = ?').run('x'.repeat(65000),BigInt(process.argv[2])); db.close();`, join(dir, 'pinote/notes.db'), String(large.id)]);
     state = { selectedId: large.id };
     await assert.rejects(read(), /exceeds 64000/);
     await rename(join(dir, 'pinote/notes.db'), join(dir, 'pinote/backup.db'));

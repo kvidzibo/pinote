@@ -14,7 +14,7 @@ test("Pi loader and real CLI preserve handoff fields across new sessions", async
   const temp = mkdtempSync(join(tmpdir(), "pi-note-load-"));
   const saved = { ...process.env };
   Object.assign(process.env, {
-    PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
+    PATH: `${resolve(root, "../backend/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pi-note-test-bus",
@@ -241,7 +241,7 @@ test("personal task-offer policies reach the native prompt without disabling exp
   const temp = mkdtempSync(join(tmpdir(), "pi-note-offers-"));
   const overrides = {
     PI_CODING_AGENT_DIR: join(temp, "pi"),
-    PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
+    PATH: `${resolve(root, "../backend/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pi-note-test-bus",
   };

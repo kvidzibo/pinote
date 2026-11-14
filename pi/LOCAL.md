@@ -5,7 +5,7 @@
 Persistent [pinote](https://github.com/kvidzibo/pinote) tasks and Markdown handoffs
 in Pi: selected-task footer status, `/pinote`, and agent current-task read/update,
 add, and tag-listing tools.
-The extension and Python app share a repository but install separately.
+The extension and shared CLI share a repository but install separately.
 
 The package now defaults to the [standalone HTTP extension](README.md).
 This existing local-only extension remains available explicitly for machines using
@@ -14,7 +14,8 @@ be loaded alongside `remote.ts`. Neither mode needs the MCP gateway.
 
 ## Install
 
-Requires Pi 0.99.1+, Node.js 22.19+ and **pinote 0.3.0+** (`note` on PATH). Add and tag listing need **pinote 0.4.0+**.
+Requires Pi 0.99.1+, Node.js 22.19+ and the Node **note 0.26.0+** CLI on PATH
+for the current schema-8 database.
 From a checkout, load this mode explicitly:
 
 ```sh
@@ -26,38 +27,15 @@ Loading this file does not run Python installers.
 
 ### CLI setup and upgrades
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first and
-restart Pi with `uv` on PATH. At startup the extension checks `note --version`
-against its bundled CLI version (currently 0.4.0), without network requests:
+Install and build the Node CLI using the [CLI guide](../docs/usage.md#install),
+then ensure that executable is the first `note` on PATH and restart Pi or `/reload`.
+This mode also accepts the current Python CLI for legacy GTK compatibility.
 
-- Missing/unrecognized CLI: `/pinote` opens Settings directly, where **Install CLI** is available.
-- Older CLI: `/pinote` opens Settings directly, where **Upgrade CLI** is available.
-- Equal/newer CLI: neither installation action is shown; no upgrade notification.
-
-Install and upgrade recheck the CLI version and ask before installing into uv's
-isolated tool environment. Restart Pi or `/reload` after external CLI changes;
-installation actions never reinstall an equal/newer CLI or intentionally downgrade it.
-Python 3.11+ is required; uv can download a suitable interpreter when missing.
-Installation downloads a pinned GitHub source archive and build dependencies,
-not a similarly named PyPI package. It does not install GTK dependencies, edit
-shell configuration, or change tasks. This checks the Python CLI bundled with
-the installed extension, not the latest npm/GitHub release. Update the extension
-first to receive a newer bundled CLI.
-
-Back up your database before upgrading and update an optional GUI separately.
-For checkout development, use `uv tool install --reinstall .` at the repo root
-instead, so local Python changes are installed.
-
-If setup reports a PATH problem, run `uv tool dir --bin` in your terminal,
-put that directory before older `note` executables on PATH, and restart Pi.
-Check `note --version`, then restart Pi or `/reload`. Network/build failures and
-conflicting executables are reported without forcibly overwriting another
-installer's commands. Fix the reported cause and retry; installs time out after
-three minutes. Installation actions are unavailable while installation runs.
-Setup hints direct users to `/pinote` → Settings.
-Missing uv is reported with its installation link, not installed
-automatically. The [GTK desktop app](../README.md#optional-gtk-checklist) is optional
-and still requires separate system dependencies.
+**Legacy installer limitation:** Settings → Install CLI / Upgrade CLI still uses
+the pre-existing pinned Python 0.4.0 installer. It is not part of this migration
+and cannot open a schema-8 database. Do not use those actions for current data;
+install the Node CLI manually instead. No installer runs just by loading this
+extension, and no automatic Python fallback is used by Electron or the HTTP service.
 
 The extension probes `note --version` before task commands: older CLIs interpret
 unknown commands as note text and must be rejected before use. Remove the old

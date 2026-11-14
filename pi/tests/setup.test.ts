@@ -15,18 +15,25 @@ const settingsUI = (action: string) => ({
   custom: async (factory: any) => new Promise((resolve) => {
     const component = factory({ requestRender() {} }, { fg: (_color: string, value: string) => value },
       { matches: (data: string, binding: string) => getKeybindings().matches(data, binding as any) }, resolve);
-    const rows = component.render(100).join("\n");
-    assert.ok(rows.includes(action), `settings offers ${action}`);
-    assert.ok(!rows.includes(action === "Install CLI" ? "Upgrade CLI" : "Install CLI"));
-    const row = component.render(100).findIndex((line: string) => line.includes(action)) - 2;
-    assert.ok(row >= 0);
-    for (let i = 0; i < row; i++) component.handleInput("\x1b[B");
+    const selected = () => component.render(100).some((line: string) => line.trimStart().startsWith("> ") && line.includes(action));
+    // Native settings scroll: an action below the viewport is still available.
+    for (let i = 0; i < 32 && !selected(); i++) component.handleInput("\x1b[B");
+    assert.ok(selected(), `settings offers ${action}`);
+    assert.ok(!component.render(100).join("\n").includes(action === "Install CLI" ? "Upgrade CLI" : "Install CLI"));
     component.handleInput("\r");
   }),
 });
 let notices: Array<{ message: string; level: string }> = [];
 
 test("setup CLI gates installation and uses the immutable uv source", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-note-setup-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = directory;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    rmSync(directory, { recursive: true, force: true });
+  });
   const calls: Array<{ command: string; args: string[] }> = [];
   notices = [];
   let results: any[] = [];

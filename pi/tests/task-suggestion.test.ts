@@ -17,7 +17,7 @@ const { preview: click } = createRequire(import.meta.url)("../preview-click.cjs"
 test("native suggestion and completion controls require consent and reject stale clicks without submitting", async () => {
   const temp = mkdtempSync(join(tmpdir(), "pinote-suggestion-test-"));
   const overrides = {
-    PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
+    PATH: `${resolve(root, "../backend/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-suggestion-bus",
@@ -232,7 +232,7 @@ test("native suggestion and completion controls require consent and reject stale
     writeFileSync(join(shimDir, "note"), `#!${process.execPath}\nconst {execFileSync}=require("node:child_process");
 const args=process.argv.slice(2);
 if(args[0]==="--no-notify"&&args[1]==="start"){process.stderr.write("forced start failure");process.exit(1);}
-process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../.venv/bin/note"))},args));\n`, { mode: 0o755 });
+process.stdout.write(execFileSync(${JSON.stringify(resolve(root, "../backend/bin/note"))},args));\n`, { mode: 0o755 });
     const fastPath = process.env.PATH;
     process.env.PATH = `${shimDir}:${fastPath}`;
     const accepting = assert.rejects(extension.tools.get("pinote_add").definition.execute(

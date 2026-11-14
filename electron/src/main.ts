@@ -1,10 +1,12 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
-import { appendFileSync, constants, mkdirSync, readdirSync } from 'node:fs';
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
+import { backendCommand } from './backend-command.ts';
+import { hasBackendPreference, preferredBackendEnvironment, recoverBackendSwitch, runCommand, switchToNode } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -50,15 +52,6 @@ function persist() {
 function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.origin !== origin) throw new Error('Untrusted IPC sender');
 }
-async function executable() {
-  const override = process.env.PINOTE_ELECTRON_BACKEND;
-  const candidates = override ? [override] : (process.env.PATH || '').split(delimiter).filter(isAbsolute).map(p => join(p, 'pinote-electron-backend'));
-  for (const path of candidates) {
-    if (!isAbsolute(path)) continue;
-    try { await access(path, constants.X_OK); return path; } catch { /* Try next trusted PATH entry. */ }
-  }
-  throw new Error('Install Pinote 0.23.0+ or set PINOTE_ELECTRON_BACKEND to its absolute pinote-electron-backend executable.');
-}
 function bounds() {
   return screen.getDisplayNearestPoint(window ? { x: window.getBounds().x, y: window.getBounds().y } : { x: 25, y: 1300 }).workArea;
 }
@@ -93,7 +86,7 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
     const menu = Menu.buildFromTemplate([
       item('filter', 'Filter by tag'), item('scheduled', 'Scheduled reminders'), item('archive', 'Archive'),
-      item('manage-tags', 'Manage tags'), item('task-actions', 'Task actions…'), item('composer-settings', 'Add task input…'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
+      item('manage-tags', 'Manage tags'), item('task-actions', 'Task actions…'), item('composer-settings', 'Add task input…'), item('backend-settings', 'Backend settings…'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
     ]);
     const content = owner.getContentBounds();
     activeMenu = menu;
@@ -107,11 +100,19 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
 }
 
 async function boot() {
-  const backend = new Backend(await executable());
+  await recoverBackendSwitch(process.env);
+  const bundles = join(app.isPackaged ? process.resourcesPath : __dirname, 'pinote-backend');
+  const bundle = join(bundles, 'bridge.mjs');
+  const environment = await preferredBackendEnvironment(process.env);
+  const command = backendCommand(bundle, environment);
+  const backend = new Backend(command.executable, environment, command.args);
   const hello = await backend.call('handshake', {});
   if (!hello.ok) throw new Error(hello.error.message);
   const identity = hello.result as { protocol?: unknown; database?: unknown; version?: unknown };
   if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(2[3-9]|[3-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.23.0+ with protocol 1.');
+  const database = identity.database;
+  let switchRequested = false, switchConfirming = false;
+  const switchOptions = () => ({ env: process.env, node: backendCommand(bundle, { ...process.env, PINOTE_ELECTRON_BACKEND: undefined }).executable, bundles, database });
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
   dataDir = join(dirname(identity.database), 'electron');
   const profile = join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', hash);
@@ -217,6 +218,30 @@ async function boot() {
     'update-preview': (_event, token: unknown, data: unknown) => preview.update(token, data),
     'popup-menu': (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request); },
     'load-state': () => structuredClone(state),
+    'backend-settings': async () => {
+      try {
+        const options = switchOptions();
+        const version = (await runCommand(options.node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
+        const switched = await hasBackendPreference(process.env);
+        return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
+          detail: switched ? 'Node is selected for the desktop, user CLI and existing service.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
+      } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
+    },
+    'switch-backend': async () => {
+      if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
+      switchConfirming = true;
+      try {
+        switchOptions();
+        const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
+          detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, replaces your ~/.local/bin/note command, and configures the existing pinote.service to use it. The service must be running to verify its database; no new service is installed or enabled.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. The existing service and Electron restart after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',
+          buttons: ['Cancel', 'Switch to Node backend'], defaultId: 0, cancelId: 0 });
+        if (result.response !== 1 || closing) return false;
+        switchRequested = true;
+        // Let the IPC caller finish before the existing close/drain protocol.
+        setTimeout(() => window?.close(), 0);
+        return true;
+      } finally { switchConfirming = false; }
+    },
     'acknowledge-warning': async () => {
       if (readonly) return false;
       const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Have you checked saved tasks and any new Kitty tab?', detail: 'Continue only after reconciling the uncertain operation. No task or launch will be retried.', buttons: ['Cancel', 'I checked; enable writes'], defaultId: 0, cancelId: 0 });
@@ -246,8 +271,19 @@ async function boot() {
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height); },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
-    'cancel-close': () => { if (!exiting) closing = false; },
-    'finish-close': async () => { await tasks; await stateWrites; await saveGeometry(); exiting = true; window?.destroy(); app.quit(); },
+    'cancel-close': () => { if (!exiting) { closing = false; switchRequested = false; } },
+    'finish-close': async () => {
+      if (!closing) throw new Error('Close was not requested.');
+      await tasks; await stateWrites; await saveGeometry();
+      if (switchRequested) {
+        try {
+          if (readonly || state.warning) throw new Error('Resolve the saved-state warning before switching backends.');
+          await switchToNode(switchOptions(), text => window?.webContents.send('backend-switch-progress', text));
+          app.relaunch();
+        } catch (error) { switchRequested = false; throw error; }
+      }
+      exiting = true; window?.destroy(); app.quit();
+    },
   };
   for (const [name, handler] of Object.entries(handlers)) ipcMain.handle(name, (event,...args) => { trusted(event); return handler(event,...args); });
   await window.loadURL(`${origin}/index.html`);

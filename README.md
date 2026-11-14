@@ -3,8 +3,8 @@
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first, with Dunst notifications, a GTK checklist, and an optional
 Electron frontend for editing, tags, progress, scheduled reminders, and archived
-tasks. The CLI has no Python runtime dependencies; desktop frontends run as
-separate processes, not services.
+tasks. Electron and the shared CLI/backend use Node.js; Python remains only for
+legacy GTK compatibility. Desktop frontends run as separate processes, not services.
 
 ## See it in action
 
@@ -41,19 +41,22 @@ recoverable from Archive.
 
 ## Install
 
-Requires **Python 3.11+**. From a checkout:
+Requires **Node.js 22.19+**, npm, and Linux `flock` (util-linux). From a checkout:
 
 ```sh
-uv tool install .              # or: pipx install .
-note --help
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run build
+./backend/bin/note --help
+# Optional: install the built CLI on PATH:
+npm install -g ./backend
 ```
 
-Keep your installer's tool bin directory (usually `~/.local/bin`) on `PATH`.
+Keep npm's global bin directory on `PATH`, or use `./backend/bin/note` directly.
 Dunst (`dunstify`), a graphical session, and session D-Bus are needed only for
 notifications; terminal commands work without Dunst. Installation never changes
 your shell, desktop configuration, or existing reminders.
 
-For installation without uv/pipx and local upgrades, see the [CLI guide](docs/usage.md#install).
+For upgrades and legacy Python compatibility, see the [CLI guide](docs/usage.md#install).
 
 ### Optional GTK checklist
 
@@ -74,10 +77,12 @@ running instance's workspace and leaves a stopped GUI stopped.
 
 ### Experimental Electron frontend
 
-GTK remains the default desktop frontend and fallback. An optional Electron
-trial frontend shares the Python backend and task database; it does not replace
-GTK or change desktop startup/configuration. Requires Node.js 22.12+ in addition
-to Python 3.11+. See [Electron installation, use, packaging, and limitations](docs/electron.md).
+Electron uses the Node backend and the existing task database, with no Python
+requirement or data conversion. GTK remains available separately; installing or
+building Electron does not change desktop startup/configuration. Requires Node.js
+22.19+. **Menu → Backend settings… → Switch to Node backend** can explicitly
+switch an existing CLI/service/desktop installation, with backups and rollback.
+See [Electron installation, switching, and limitations](docs/electron.md).
 Its add-task input and task editor style Markdown source and assist title/bullet
 newlines. Only Linux/X11/i3 is a validation target; pixel-for-pixel GTK parity is not promised.
 
@@ -143,7 +148,7 @@ launched task in a dedicated **Start in Kitty…** session exits Pi and closes i
 tab. Completion never runs Git commands. A service restart preserves notes;
 clients reconnect without replaying writes.
 
-Requires Pi 1.4.0+ and Node.js 22.19+; the service also needs Python 3.11+.
+Requires Pi 1.4.0+ and Node.js 22.19+; the service uses the Node `note` CLI.
 Use HTTPS or a trusted private VPN, never a public unauthenticated listener.
 The existing [local-only CLI extension](pi/LOCAL.md) remains available explicitly;
 load only one Pinote extension. Existing gateway users should follow the
@@ -181,7 +186,10 @@ Versions before 0.25.0 cannot read schema 8. See the
 From the repository root:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run check && npm --prefix backend run build
+uv sync --locked                  # legacy reference and compatibility tests
+npm --prefix backend test
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
 xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui

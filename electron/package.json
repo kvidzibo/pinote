@@ -1,21 +1,21 @@
 {
   "name": "pinote-electron",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
-  "description": "Optional isolated desktop frontend for Pinote's Python backend",
+  "description": "Isolated desktop frontend with Pinote's bundled Node backend",
   "license": "MIT",
   "main": "dist/main.cjs",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
-    "setup": "install-electron",
+    "setup": "npm --prefix ../backend ci --ignore-scripts --no-audit --no-fund && npm --prefix ../backend run build && install-electron",
     "build": "node build.mjs",
     "check": "tsc --noEmit",
     "start": "npm run build && electron --class=pinote-electron dist/main.cjs",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
-    "test:e2e": "npm run build && node tests/e2e.mjs",
+    "test:e2e": "npm run build && node tests/backend-switch-e2e.mjs && node tests/e2e.mjs",
     "test:package": "node tests/package-smoke.mjs",
     "package": "npm run build && node package.mjs"
   },

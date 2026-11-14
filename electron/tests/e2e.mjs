@@ -12,7 +12,7 @@ assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a pr
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const handoffOnly = process.argv.includes('--handoff-only');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
-const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../.venv/bin/pinote-electron-backend');
+const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
@@ -35,7 +35,7 @@ const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK**
 const sessions = ['a1234567-89ab-4cde-8fab-0123456789ab', 'session_' + '0123456789abcdef'.repeat(15)];
 const handoffFields = { Summary: 'Saved **summary**', Next: 'Run the focused checks', Risks: '<script>window.compromised=true</script>' };
 if (handoffOnly) {
-  const note = resolve('../.venv/bin/note');
+  const note = resolve('../backend/bin/note');
   const cli = args => {
     const result = spawnSync(note, ['--no-notify', ...args], { env, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
@@ -502,7 +502,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','task-actions','composer-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','task-actions','composer-settings','backend-settings','drafts','close']);
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
     assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
@@ -1297,7 +1297,7 @@ try {
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
-  Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../.venv/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
+  Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../backend/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
   const piRequire=createRequire(resolve('../pi/package.json'));
   const { Client }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/index.js'));
   const { StreamableHTTPClientTransport }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
@@ -1373,15 +1373,22 @@ try {
     // Keep this popup open for the existing CLI disappearance below.
     disappearingPreview = preview;
   }
-  const cli=spawnSync(resolve('../.venv/bin/note'),['--no-notify','done',String(first)],{env,encoding:'utf8'}); assert.equal(cli.status,0,cli.stderr);
+  const cli=spawnSync(resolve('../backend/bin/note'),['--no-notify','done',String(first)],{env,encoding:'utf8'}); assert.equal(cli.status,0,cli.stderr);
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
   if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
   await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);
   assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
-  // Failed Kitty launch must keep the acknowledgement action, not offer a blocked retry.
-  await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
+  // Reach a real failed launch: nonexistent folders are now rejected before effects.
+  const kittyBin=join(root,'failed-kitty-bin'), kittyMarker=join(root,'kitty-launch-attempted');
+  await mkdir(kittyBin);
+  await writeFile(join(kittyBin,'kitty'),`#!/bin/sh\nprintf attempted > '${kittyMarker}'\nexit 1\n`,{mode:0o700});
+  await writeFile(join(kittyBin,'pi'),'#!/bin/sh\nexit 0\n',{mode:0o700});
+  const originalPath=await app.evaluate(()=>process.env.PATH);
+  await app.evaluate(({dialog},{directory,path})=>{process.env.PATH=path;dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});},{directory:root,path:`${kittyBin}:${originalPath}`});
   await selectTaskAction(page, added.id, 'Start in Kitty…');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  assert.equal(await readFile(kittyMarker,'utf8'),'attempted','The failure must follow an actual external launch');
+  await app.evaluate((_,path)=>{process.env.PATH=path;},originalPath);
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).state,'in_progress','A real failed Kitty launch retains the saved start');
   await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');

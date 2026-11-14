@@ -1,0 +1,7 @@
+#!/usr/bin/env -S node --disable-warning=ExperimentalWarning
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || major === 22 && minor < 19) {
+  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;
+} else {
+  await import('../dist/bridge.mjs');
+}

@@ -23,8 +23,8 @@ Other tools continue running wherever Pi and their services run.
 
 ## Install
 
-Requires **Pi 1.4.0+** and **Node.js 22.19+**. The service additionally needs
-**Python 3.11+** and **note 0.12.0+**. Install and start the
+Requires **Pi 1.4.0+** and **Node.js 22.19+**. The service uses the Node
+**note 0.26.0+** CLI; Python is not needed. Install and start the
 [Pinote service](mcp/README.md) first, then on each client:
 
 ```sh
@@ -353,13 +353,14 @@ use, but must not be loaded alongside the HTTP extension.
 From the repository root:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run build
 npm --prefix pi ci --ignore-scripts
 npm --prefix pi test
 (cd pi && npm pack --dry-run)
 ```
 
-Tests use the checkout's own `.venv/bin/note`, real HTTP/stdio servers and temporary
+Tests use the checkout's own `backend/bin/note`, real HTTP/stdio servers and temporary
 storage. UI validation must use Xvfb, a private D-Bus session and temporary app data.
 
 The npm and Python packages are versioned independently. Bump npm with

@@ -68,7 +68,8 @@ export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'backend-settings' | 'drafts' | 'close';
+export type BackendSettings = { switched: boolean; canSwitch: boolean; detail: string; version: string };
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
 export type PreviewApi = {
@@ -77,6 +78,9 @@ export type PreviewApi = {
   onUpdate(callback: (data: PreviewData) => void): void;
 };
 export type PinoteApi = BackendApi & {
+  backendSettings(): Promise<BackendSettings>;
+  switchBackend(): Promise<boolean>;
+  onBackendSwitchProgress(callback: (text: string) => void): void;
   openPreview(request: PreviewRequest): Promise<boolean>;
   updatePreview(token: number, data: PreviewData | null): Promise<void>;
   onPreviewClosed(callback: (token: number, edit: boolean) => void): void;
