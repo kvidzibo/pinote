@@ -203,11 +203,17 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.equal(view.state.selectedId, null);
     view = (await act(view, 'add', '--help')).view;
     view = (await act(view, 'done')).view;
-    await promisify(execFile)(join(root, '../.venv/bin/python'), ['-c', 'from pathlib import Path; from pinote.store import Store; import sys\nwith Store(Path(sys.argv[1])) as store:\n for i in range(200): store.add(f"Task {i} " + "x" * 2000)', join(dir, 'pinote/notes.db')]);
+    await promisify(execFile)(join(root, '../.venv/bin/python'), ['-c', 'from pathlib import Path; from pinote.store import Store; import sys\nwith Store(Path(sys.argv[1])) as store:\n for i in range(201): store.add(f"Task {i} " + "x" * 2000)', join(dir, 'pinote/notes.db')]);
     view = await read(); state = view.state;
-    assert.ok(view.controls.filter((c) => c.id.startsWith('select:')).length < 200);
+    const rows = view.controls.filter((c) => c.id.startsWith('select:'));
+    assert.ok(rows.length < 200);
+    assert.match(rows[0].label, /^Task 200 /, 'Newest task survives both result and payload caps');
+    const ids = rows.map((row) => Number(row.id.slice(7)));
+    assert.deepEqual(ids, [...ids].sort((a, b) => b - a), 'Creation order is newest first');
     view = (await act(view, 'search', 'Task 199')).view;
-    assert.equal(view.controls.filter((c) => c.id.startsWith('select:')).length, 2, 'Terms also match numeric IDs, not only titles');
+    const matches = view.controls.filter((c) => c.id.startsWith('select:'));
+    assert.equal(matches.length, 2, 'Terms also match numeric IDs, not only titles');
+    assert.ok(Number(matches[0].id.slice(7)) > Number(matches[1].id.slice(7)), 'Search keeps newest first');
     view = (await act(view, 'search', '')).view;
     await t.test('search terms span text, tag and ID; preview is complete or explicitly limited', async () => {
       const created = JSON.parse((await promisify(execFile)(join(root, '../.venv/bin/note'), ['--no-notify', 'agent', 'add', '--text=Search title\n\nNeedle in details', '--tag=MixedTag'], { env: { ...process.env, XDG_DATA_HOME: dir } })).stdout);

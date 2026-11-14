@@ -153,7 +153,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
 
     const next = cli('agent', 'add', '--text=Normal Pi completion stays open');
     const normal = await open(undefined);
-    await normal.choose('Choose a task', 'Normal Pi completion stays open');
+    await normal.choose('Normal Pi completion stays open');
     await normal.choose('Complete');
     assert.equal(normal.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(next.id)).state, 'done');
@@ -162,7 +162,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const switched = await open({ task_id: originalTask.id, updated_at: originalTask.updated_at });
     const replacement = cli('agent', 'add', '--text=Replacement task');
     await switched.choose('Clear');
-    await switched.choose('Choose a task', 'Replacement task');
+    await switched.choose('Replacement task');
     await switched.choose('Complete');
     assert.equal(switched.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(originalTask.id)).state, 'in_progress');

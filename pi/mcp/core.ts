@@ -234,6 +234,8 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     const matches = tasks.filter((t) => state.launch
       ? t.id === state.launch.task_id && t.updated_at === state.launch.updated_at
       : terms.every((term) => `${t.text} ${t.tag ?? ''} #${t.id}`.toLowerCase().includes(term)));
+    // IDs are assigned by SQLite AUTOINCREMENT at creation and retained on edits/restores.
+    matches.sort((a, b) => b.id - a.id);
     for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, taskTitle(candidate.text), { description: `#${candidate.id} · ${candidate.tag || 'No tag'} · ${humanStatus(candidate.state)}${candidate.id === task?.id ? ' · CURRENT' : ''} · Select and start this task for this conversation` });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
