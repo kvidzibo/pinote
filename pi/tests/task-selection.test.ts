@@ -30,33 +30,50 @@ test('selecting a task starts it with one menu activation and returns to the unc
     session = new RemoteSession(remoteConfig({ ...process.env, PINOTE_URL: service.url }), () => {});
     await session.start([], 'task-selection-test');
     initTheme('dark', false);
-    let menus = 0;
+    let homes = 0, selections = 0, searches = 0;
     const draft = 'Keep my unfinished prompt';
     const ctx = { mode: 'tui', isIdle: () => true, ui: {
       getEditorText: () => draft,
       setEditorText: () => assert.fail('Selection must not change the draft'),
       select: () => assert.fail('Selection must not ask for confirmation'),
       notify: (message: string) => assert.fail(message),
-      custom: async (factory: any) => new Promise((resolve) => {
-        assert.equal(++menus, 1, 'Selection must close the menu without another screen');
-        const tui = { terminal: { rows: 36, columns: 100 }, requestRender() {} };
-        const theme = { fg: (_color: string, text: string) => text };
-        const component = factory(tui, theme, getKeybindings(), resolve);
-        try {
-          component.render(100);
-          component.handleInput('Task selection target');
-          component.render(100);
-          component.handleInput('\r');
-        } finally { component.dispose(); }
-      }),
+      custom: async (factory: any) => {
+        let component: any;
+        try { return await new Promise((resolve) => {
+          const tui = { terminal: { rows: 36, columns: 100 }, requestRender() {} };
+          const theme = { fg: (_color: string, text: string) => text };
+          component = factory(tui, theme, getKeybindings(), resolve);
+          if (!component.handleInput) { component.render(100); return; } // asynchronous native loader
+          const rows = component.render(100).join(' ');
+          if (!rows.includes('Search tasks ·')) {
+            assert.equal(++homes, 1, 'Selection must not return to the home screen');
+            assert.ok(!rows.includes('Type to filter'), 'Home has no filter');
+            while (!component.render(100).some((row: string) => row.includes('→') && /Choose a task|Switch task/.test(row))) {
+              component.handleInput('\x1b[B');
+            }
+            component.handleInput('\r');
+          } else if (searches++ === 0) {
+            component.handleInput('\x15');
+            component.handleInput('Task selection target');
+            component.render(100);
+            component.handleInput('\r'); // Pending server search cannot activate old results.
+          } else {
+            assert.match(rows, /Task selection target/);
+            selections++;
+            component.handleInput('\r'); // One activation at the task row, never a confirmation.
+          }
+        }); } finally { component?.dispose(); }
+      },
     } } as any;
     const ui = new RemoteUI({} as any, session);
     const task = cli('agent', 'add', '--text=Task selection target');
     for (const expectedState of ['active', 'in_progress']) {
       assert.equal(cli('agent', 'get', String(task.id)).state, expectedState);
-      menus = 0;
+      homes = selections = 0;
+      searches = session.snapshot()?.state.search === 'Task selection target' ? 1 : 0;
       await ui.open(ctx);
-      assert.equal(menus, 1);
+      assert.equal(homes, 1);
+      assert.equal(selections, 1);
       assert.equal(session.snapshot()?.state.selectedId, task.id);
       assert.equal(cli('agent', 'get', String(task.id)).state, 'in_progress');
       assert.equal(ctx.ui.getEditorText(), draft);
