@@ -80,16 +80,24 @@ import {readFileSync} from 'node:fs';const event=JSON.parse(readFileSync(0,'utf8
     // Upgrade a released single-PR scheduler without losing its client receipt.
     await setMode(failureA, {}); due('PR'); await automation.tick();
     const oldId = automation.notices(task, 'owner').find((notice) => notice.field === 'PR')!.id;
+    const canonicalKey = `pr:example/repo:1:${'a'.repeat(64)}`;
+    task.agent_notes.PR = a.replace('/example/repo/', '/Example/Repo/'); task.updated_at = '4'; await save();
     await automation.close(); automation = undefined;
     const db = new DatabaseSync(path);
     try {
       db.prepare('INSERT OR REPLACE INTO fw_notices(watcher_id,task_id,field,id,message) VALUES (?,?,?,?,?)').run('github-test', 1, 'PR', oldId, failureA.notification.message);
+      db.prepare("UPDATE fw_jobs SET job=json_set(job,'$.event.value',?,'$.result.notification.key',?) WHERE field='PR'")
+        .run(task.agent_notes.PR, canonicalKey.replace('example/repo', 'Example/Repo'));
       db.exec("DROP TABLE fw_pr_notices; UPDATE fw_jobs SET job=json_set(job,'$.result',json('{}')) WHERE field='PRs'; DELETE FROM fw_notices WHERE field='PRs'");
     } finally { db.close(); }
     automation = await open();
     assert.ok(oldId);
     assert.equal(automation.notices(task, 'owner')[0].id, oldId);
     assert.deepEqual(automation.notices(task, 'owner', [oldId, bId, recurrence[0].id]), [], 'Historical legacy IDs remain valid after the additive migration');
+    await setMode({ ...failureA, notification: { ...failureA.notification, key: canonicalKey } }, {});
+    due('PR'); await automation.tick();
+    assert.equal(automation.notices(task, 'owner')[0].id, oldId, 'Canonicalized GitHub owner/repo casing does not replace a migrated receipt');
+    assert.deepEqual(automation.notices(task, 'owner', [oldId]), []);
   } finally {
     await automation?.close(); await rm(dir, { recursive: true, force: true });
   }

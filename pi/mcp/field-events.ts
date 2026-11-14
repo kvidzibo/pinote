@@ -47,6 +47,9 @@ function prResults(watcher: FieldWatcher, field: string, value: string, result: 
     if (urls.length === 1) return [{ url: urls[0].url, ...result }];
   }
 }
+// Released GitHub keys preserved owner/repository casing; GitHub treats it as insignificant.
+const prKey = (watcher: FieldWatcher, key: string) => watcher.bundled && watcher.name === 'GitHub PR'
+  ? key.replace(/^pr:([^:]+):/, (_, repository: string) => `pr:${repository.toLowerCase()}:`) : key;
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
 
 /** One bounded invocation, no shell. Kill the process group on cancellation/overflow. */
@@ -112,15 +115,16 @@ export class FieldAutomation {
       CREATE TABLE IF NOT EXISTS fw_pr_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, url TEXT NOT NULL, notification_key TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,url));
       INSERT OR IGNORE INTO fw_scheduler(id) VALUES (1);`);
       if (migrate) {
-        const builtins = new Set(watchers().filter(builtinPR).map((watcher) => watcher.id));
+        const builtins = new Map(watchers().filter(builtinPR).map((watcher) => [watcher.id, watcher]));
         for (const row of db.prepare("SELECT job FROM fw_jobs WHERE field='PR'").all() as Row[]) {
           const job = JSON.parse(row.job) as Job, notification = job.result?.notification;
           const urls = parsePullRequests(job.event.value ?? undefined);
           const receipt = db.prepare("SELECT id FROM fw_notices WHERE watcher_id=? AND task_id=? AND field='PR'")
             .get(job.watcherId, job.event.taskId) as { id: string } | undefined;
-          if (builtins.has(job.watcherId) && !job.result?.items && notification && urls.length === 1 && receipt) {
+          const watcher = builtins.get(job.watcherId);
+          if (watcher && !job.result?.items && notification && urls.length === 1 && receipt) {
             db.prepare('INSERT OR IGNORE INTO fw_pr_notices(watcher_id,task_id,url,notification_key,id,message) VALUES (?,?,?,?,?,?)')
-              .run(job.watcherId, job.event.taskId, urls[0].url, notification.key, receipt.id, notification.message);
+              .run(job.watcherId, job.event.taskId, urls[0].url, prKey(watcher, notification.key), receipt.id, notification.message);
           }
         }
       }
@@ -193,11 +197,12 @@ export class FieldAutomation {
     for (const item of items) {
       if (item.state === 'error') continue;
       if (item.notification) {
+        const key = prKey(watcher, item.notification.key);
         const existing = this.db.prepare('SELECT notification_key,id FROM fw_pr_notices WHERE watcher_id=? AND task_id=? AND url=?')
           .get(watcher.id, task.id, item.url) as { notification_key: string; id: string } | undefined;
-        const id = existing?.notification_key === item.notification.key ? existing.id : randomUUID();
+        const id = existing?.notification_key === key ? existing.id : randomUUID();
         this.db.prepare('INSERT INTO fw_pr_notices(watcher_id,task_id,url,notification_key,id,message) VALUES (?,?,?,?,?,?) ON CONFLICT(watcher_id,task_id,url) DO UPDATE SET notification_key=excluded.notification_key,id=excluded.id,message=excluded.message')
-          .run(watcher.id, task.id, item.url, item.notification.key, id, item.notification.message);
+          .run(watcher.id, task.id, item.url, key, id, item.notification.message);
       } else if (['passing', 'pending', 'merged', 'closed'].includes(item.state ?? '')) {
         this.db.prepare('DELETE FROM fw_pr_notices WHERE watcher_id=? AND task_id=? AND url=?').run(watcher.id, task.id, item.url);
       }
@@ -252,7 +257,7 @@ export class FieldAutomation {
       const active = (this.db.prepare('SELECT url,notification_key,id,message FROM fw_pr_notices WHERE watcher_id=? AND task_id=? ORDER BY rowid')
         .all(watcher.id, task.id) as PRNoticeRow[]).flatMap((row) => {
         const observation = observations.get(row.url);
-        if (received.has(row.id) || observation?.item.notification?.key !== row.notification_key) return [];
+        if (received.has(row.id) || !observation?.item.notification || prKey(watcher, observation.item.notification.key) !== row.notification_key) return [];
         return [{ ...row, field: observation.field }];
       }).slice(0, 64);
       let group: typeof active = [], length = 0;
