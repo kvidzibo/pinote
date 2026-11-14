@@ -8,7 +8,7 @@ export type Task = {
 export type Tag = { name: string; folder: string | null; available?: boolean };
 export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean; kittyStartPrompt: string } };
 export type Target = { id: number; revision: string };
-export type Mutation = { changed: boolean; id?: number; tag?: string };
+export type Mutation = { changed: boolean; id?: number; tag?: string; revision?: string };
 export type Operations = {
   handshake: { params: Record<string, never>; result: { version: string; protocol: number; database: string } };
   snapshot: { params: { view: View }; result: Snapshot };
@@ -58,7 +58,7 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
   });
   return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
 }
-export type EditDraft = { text: string; revision: string };
+export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
   creationTag?: string | null; collapsed?: boolean; scroll?: { ordinary: number; pinned: number };

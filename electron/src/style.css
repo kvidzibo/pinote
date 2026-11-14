@@ -114,7 +114,33 @@ textarea { resize: none; line-height: 1.5; }
   .tag-editor h3 { margin-bottom: 12px; }
   .tag-folder { margin: 16px 0; }
 }
-.edit-text { flex: 1 1 auto; width: 100%; min-height: 80px; height: 40vh; overflow: auto; }
+.task-editor { max-width: 800px; height: 100%; padding: 14px; gap: 14px; }
+.task-editor > header { padding-bottom: 10px; border-bottom: 1px solid #414b5b; }
+.task-editor h2 { white-space: nowrap; font-size: 13px; }
+.task-editor > header > button:last-child { margin-left: auto; }
+.task-editor .edit-tag { min-width: 32px; max-width: 45%; gap: 7px; padding: 6px 8px; background: #35445b; border-color: #66758b; }
+.edit-tag > span:first-of-type { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tag-chevron { color: #b6bfce; }
+.edit-text { flex: 1 1 auto; width: 100%; min-height: 80px; overflow: auto; }
+.task-editor > .warning { flex-shrink: 0; font-size: 11px; }
+.edit-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.edit-feedback { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.edit-status { font-size: 12px; }
+.edit-status.saved::before { content: '●'; color: #a6e3a1; font-size: 9px; margin-right: 7px; }
+.edit-hint { color: #b6bfce; font-size: 10px; }
+.edit-footer .controls { margin-left: auto; }
+.edit-footer button { min-width: 32px; min-height: 32px; }
+@media (max-width: 360px) {
+  .task-editor { padding: 9px; gap: 10px; }
+  .task-editor > header { flex-wrap: wrap; }
+  .task-editor h2 { font-size: 12px; }
+  .task-editor .edit-tag { gap: 4px; padding: 5px; }
+}
+@media (max-height: 350px) {
+  .task-editor { gap: 6px; padding: 7px; }
+  .task-editor > header { padding-bottom: 5px; }
+  .edit-hint { display: none; }
+}
 .warning { color: #e8bc78; }
 .preview-window > .panel { border: 0; border-radius: 0; }
 .preview { overflow-wrap: anywhere; line-height: 1.55; user-select: text; }

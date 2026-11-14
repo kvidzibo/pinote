@@ -483,11 +483,25 @@ class Store:
             )
 
     def edit(self, note_id: int, text: str, *, expected_updated_at: str) -> bool:
+        return self.edit_with_revision(note_id, text, expected_updated_at=expected_updated_at)[0]
+
+    def edit_with_revision(
+        self, note_id: int, text: str, *, expected_updated_at: str
+    ) -> tuple[bool, str]:
+        """Return the change flag and revision captured in the write transaction."""
         return self._update(note_id, "edit", validate_text(text), expected_updated_at)
 
     def set_tag(
         self, note_id: int, tag: str | None, *, expected_updated_at: str, folder: str | None = None
     ) -> bool:
+        return self.set_tag_with_revision(
+            note_id, tag, expected_updated_at=expected_updated_at, folder=folder
+        )[0]
+
+    def set_tag_with_revision(
+        self, note_id: int, tag: str | None, *, expected_updated_at: str, folder: str | None = None
+    ) -> tuple[bool, str]:
+        """Return the change flag and revision captured in the write transaction."""
         return self._update(
             note_id, "tag", validate_tag(tag), expected_updated_at, folder=validate_folder(folder)
         )
@@ -500,7 +514,7 @@ class Store:
         expected: str,
         *,
         folder: str | None = None,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         with self.connection:
             self.connection.execute("BEGIN IMMEDIATE")
             row = self.connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -522,7 +536,7 @@ class Store:
                         "UPDATE tags SET default_folder=? WHERE name=?", (folder, new_tag)
                     )
             if new_text == row["text"] and new_tag == row["tag"]:
-                return False
+                return False, row["updated_at"]
             when = timestamp()
             self.connection.execute(
                 "UPDATE notes SET text = ?, tag = ?, updated_at = ? WHERE id = ?",
@@ -546,7 +560,7 @@ class Store:
                     row["agent_notes"],
                 ),
             )
-        return True
+        return True, when
 
     def _change_state(
         self, note_id: int, action: str, previous: str, target: str, *, remind_at: str | None = None

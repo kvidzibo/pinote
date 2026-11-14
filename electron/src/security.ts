@@ -67,7 +67,7 @@ export function validState(value: unknown): value is UIState {
   if (!str(value.draft, 65536) || !str(value.warning, 4096)) return false;
   if (value.filters !== null && (!Array.isArray(value.filters) || value.filters.length > 10000 || !value.filters.every(v => str(v, 256)))) return false;
   if (!record(value.read) || !Object.entries(value.read).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)) return false;
-  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision'].includes(x)) && str(v.text,65536) && str(v.revision,128)) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
+  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision','pendingTag','pendingTagFolder'].includes(x)) && str(v.text,65536) && str(v.revision,128) && (!Object.hasOwn(v, 'pendingTag') || v.pendingTag === null || str(v.pendingTag,256)) && (!Object.hasOwn(v, 'pendingTagFolder') || typeof v.pendingTag === 'string' && (v.pendingTagFolder === null || str(v.pendingTagFolder)))) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function safeLink(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x20\x7f]/.test(value)) return false;
@@ -90,6 +90,7 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
     return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean' && str(result.config.kittyStartPrompt);
   }
   if (typeof result.changed !== 'boolean' || (result.id !== undefined && !id(result.id)) || (result.tag !== undefined && !str(result.tag,256))) return false;
+  if (Object.hasOwn(result, 'revision') && (typeof result.revision !== 'string' || !str(result.revision,128) || !result.revision || /[\p{C}\p{Z}]/u.test(result.revision.replaceAll(' ', '')))) return false;
   if (operation === 'add') return result.changed && id(result.id);
   return operation !== 'create_tag' || (typeof result.tag === 'string' && result.tag.length > 0);
 }

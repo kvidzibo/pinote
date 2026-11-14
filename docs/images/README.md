@@ -1,7 +1,7 @@
 # README images
 
 These are real Linux/X11 captures with synthetic tasks. The Electron screenshots
-use pinote-electron 0.9.2 and Pinote 0.25.0. The original GTK/Pi captures use
+use pinote-electron 0.10.1 and Pinote 0.25.1. The original GTK/Pi captures use
 Pinote 0.7.0 and pi-note 0.11.0. `pi-integration.png` combines separate Pi and GTK captures;
 the example PR is fictitious. Pi used an offline demo model configuration,
 and no prompt was submitted to a provider.

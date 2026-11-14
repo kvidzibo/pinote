@@ -12,7 +12,8 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.9.2.
+package is private, version 0.10.1. Editor autosave requires the matching
+Python backend (0.25.1+); update both from this checkout.
 Run from the repository root:
 
 ```sh
@@ -96,9 +97,27 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   per-state settings migrate their button choices, menu order, and visibility;
   shared Start→Complete behavior and safe marked-task undo are preserved.
   These preferences affect Electron only.
-- Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
-  menu includes draft recovery; stale drafts must be copied/reconciled rather
-  than silently overwriting a changed task.
+- The task editor fills the available window with one Markdown source area.
+  Text **autosaves after a 650 ms typing pause**; the footer shows unsaved,
+  saving, saved, or paused status. **Ctrl+Enter** saves immediately and closes
+  after success. **Escape/Close** dismisses the editor while its pending save
+  finishes; closing the app also drains pending edits before exiting.
+- The editor's header **tag button** opens the searchable tag picker. Choose,
+  create, or clear a tag without leaving the editor; selection saves immediately,
+  serialized with pending text edits. Creating a tag commits its folder and task
+  assignment together, even when closing during the save. **Undo** (or **Ctrl+Z**)
+  reverts text edits within the open editor and autosaves the result; it does not
+  undo tag changes.
+  Copy remains available when saving is paused.
+- Local text and pending tag selections (including new-tag folders and tag
+  clears) are cached before each write. Failed saves pause autosave and offer
+  an explicit retry; unknown outcomes require the recovery acknowledgement first.
+  External revision changes make the editor read-only rather than overwriting
+  another client's work. Close and use **Menu → Recover private edit drafts**
+  to copy/discard stale text, then reopen the latest task to reconcile it.
+  Recovered drafts show any pending tag and never autosave merely because they
+  are opened: review and explicitly retry both text and tag changes. Opening an
+  editor does not create a write or history entry.
 - Search tag selectors and filters; create/manage saved tags and optional default
   Kitty folders. Tags with the newest associated tasks appear first, followed by
   unused tags and Untagged. Use arrow keys to move through tags and **Space** to

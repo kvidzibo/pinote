@@ -18,8 +18,10 @@ for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','X
 const faultFile=join(root,'backend-fault');
 const slowAddMarker=join(root,'slow-add-dispatched');
 const completeMarker=join(root,'completion-committed');
+const editMarker=join(root,'edit-committed');
+const createTagMarker=join(root,'create-tag-committed');
 const frontendBackend=join(root,'backend.mjs');
-await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
+await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(fault==='slow-busy-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected delayed edit failure'}})),1500);return;}if((fault==='busy-tag'&&op==='tag')||(fault==='busy-create-tag'&&op==='create_tag')){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected edit failure'}}));return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-create-tag'&&op==='create_tag'){writeFileSync(${JSON.stringify(createTagMarker)},'committed');setTimeout(reply,1200);return;}if(fault==='slow-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(reply,1200);return;}if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
 env.PINOTE_ELECTRON_BACKEND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
@@ -784,9 +786,9 @@ try {
     assert.equal(await sourceValue(editor),source,'Styling must retain all Markdown markers');
     await editor.press('Control+Home');
     await editor.press('Tab');
-    const closeEditor = page.getByRole('button',{name:`Close Edit task ${added.id}`,exact:true});
-    assert.equal(await closeEditor.evaluate(node=>node===document.activeElement),true,'Tab from the final textbox wraps inside the modal');
-    await closeEditor.press('Shift+Tab');
+    const undoEditor = page.getByRole('button',{name:'Undo text edit (Ctrl+Z)',exact:true});
+    assert.equal(await undoEditor.evaluate(node=>node===document.activeElement),true,'Tab from the editor reaches footer actions');
+    await undoEditor.press('Shift+Tab');
     assert.equal(await editor.evaluate(node=>node===document.activeElement),true,'Shift+Tab returns to the source editor');
     const editorBounds = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
     await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:25,y:25,width:520,height:400}));
@@ -812,6 +814,153 @@ try {
   await page.keyboard.press('Control+Enter');
   await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
+  // Autosave owns a revision chain across typing, tag changes and detached editors.
+  {
+    const original='Edited from Electron ☘\nkeeps ID and history';
+    const snapshot=()=>call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id);
+    const editDialog=page.getByRole('dialog',{name:`Edit task ${added.id}`,exact:true});
+    const text=editDialog.getByRole('textbox',{name:'Task text',exact:true});
+    const saved=async()=>editDialog.getByText('All changes saved',{exact:true}).waitFor();
+    await selectTaskAction(page, added.id, 'Edit text…');
+    await text.fill('Autosaved without a shortcut\n- Keep Markdown');
+    assert.equal(snapshot().text,original,'Typing debounce must not dispatch immediately');
+    await saved();
+    assert.equal(snapshot().text,'Autosaved without a shortcut\n- Keep Markdown');
+    assert.ok(await editDialog.isVisible(),'Autosave keeps the editor open');
+    await editDialog.getByRole('button',{name:'Undo text edit (Ctrl+Z)',exact:true}).click();
+    await saved(); assert.equal(snapshot().text,original,'Undo after autosave writes the reverted source');
+    const delayedEditReady=async value=>{
+      for(let i=0;i<200;i++) {
+        if(await readFile(editMarker,'utf8').catch(()=>null)===value) return;
+        await new Promise(r=>setTimeout(r,20));
+      }
+      assert.fail('Delayed edit must reach its injected wait');
+    };
+    await writeFile(faultFile,'slow-edit');
+    await text.fill('First delayed autosave');
+    await delayedEditReady('First delayed autosave');
+    await text.fill('Newer typing during save');
+    await writeFile(faultFile,'');
+    await saved(); assert.equal(snapshot().text,'Newer typing during save','In-flight typing must chain from the exact acknowledged revision');
+    await writeFile(faultFile,'slow-busy-edit');
+    await text.fill('Retry only when asked');
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await delayedEditReady('Retry only when asked');
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Work \(/}).click();
+    await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.keyboard.press('Escape');
+    await writeFile(faultFile,'');
+    await page.waitForTimeout(900);
+    assert.equal(snapshot().text,'Newer typing during save','Failed edits must never replay on a later poll');
+    assert.equal(snapshot().tag,null);
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].pendingTag,'Work','The tag accepted during an in-flight failed write must be retained');
+    await page.keyboard.press('Escape'); await editDialog.waitFor({state:'detached'});
+    await selectTaskAction(page, added.id, 'Edit text…');
+    await editDialog.getByRole('button',{name:'Change tag: Work (not saved)',exact:true}).waitFor();
+    await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+    await saved(); assert.equal(snapshot().text,'Retry only when asked');
+    assert.equal(snapshot().tag,'Work','Explicit retry must save text and its pending tag');
+    // Tag-only failure, including clearing a tag, survives closing and reopening.
+    for(const pendingTag of [null,'Work']) {
+      await writeFile(faultFile,'busy-tag');
+      await editDialog.getByRole('button',{name:`Change tag: ${snapshot().tag ?? 'Untagged'}`,exact:true}).click();
+      await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:new RegExp(`^${pendingTag ?? 'Untagged'} \\(`)}).click();
+      await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(async({id,tag})=>(await window.pinote.loadState()).edits[String(id)]?.pendingTag===tag,{id:added.id,tag:pendingTag});
+      const disk=JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8'));
+      assert.equal(disk.edits[String(added.id)].pendingTag,pendingTag,'Pending tag must reach durable recovery storage');
+      await page.keyboard.press('Escape');
+      await editDialog.waitFor({state:'detached'});
+      await writeFile(faultFile,'');
+      // The saved tag may hide this row under the current filter; recovery must still open it.
+      if (!await page.getByRole('dialog',{name:'Private edit drafts',exact:true}).count()) await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
+      await page.getByRole('button',{name:'Open revision-bound editor',exact:true}).click();
+      await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+      await page.waitForTimeout(900);
+      assert.notEqual(snapshot().tag,pendingTag,'Reopening must not replay the failed tag selection');
+      await editDialog.getByRole('button',{name:`Change tag: ${pendingTag ?? 'Untagged'} (not saved)`,exact:true}).waitFor();
+      await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+      await saved(); assert.equal(snapshot().tag,pendingTag);
+    }
+    await editDialog.getByRole('button',{name:'Change tag: Work',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await saved();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await selectTaskAction(page, added.id, 'Edit text…');
+    await writeFile(faultFile,'slow-edit');
+    await text.fill('Own pending acknowledgement');
+    await delayedEditReady('Own pending acknowledgement');
+    await text.fill('Local text after external race');
+    const beforeExternal=snapshot();
+    call('edit',{id:added.id,revision:beforeExternal.updated_at,text:'External client wins'});
+    await writeFile(faultFile,'');
+    await page.waitForFunction(()=>document.querySelector('.cm-content[aria-label="Task text"]')?.getAttribute('aria-readonly')==='true');
+    assert.equal(snapshot().text,'External client wins','A late acknowledgement must never adopt an external revision');
+    assert.equal(await sourceValue(text),'Local text after external race');
+    await editDialog.getByRole('button',{name:'Copy edit draft',exact:true}).click();
+    assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),'Local text after external race');
+    await page.keyboard.press('Escape');
+    await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
+    await page.getByRole('button',{name:'Discard private draft',exact:true}).click();
+    await page.getByRole('button',{name:'Confirm',exact:true}).click();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await selectTaskAction(page, added.id, 'Edit text…');
+    await text.fill('Text and tag saved together');
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Work \(/}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Work',exact:true}).waitFor();
+    await saved(); assert.equal(snapshot().tag,'Work'); assert.equal(snapshot().text,'Text and tag saved together');
+    assert.equal(await text.getAttribute('aria-readonly'),'false','Own tag updates must not stale the editor');
+    await editDialog.getByRole('button',{name:'Change tag: Work',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Editor tag');
+    await page.getByRole('button',{name:'Create tag “Editor tag”…',exact:true}).click();
+    await app.evaluate(({dialog},folder)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},root);
+    await page.getByRole('button',{name:'Choose default Kitty folder',exact:true}).click();
+    await writeFile(faultFile,'busy-create-tag');
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const pendingCreate=(await page.evaluate(()=>window.pinote.loadState())).edits[String(added.id)];
+    assert.equal(pendingCreate.pendingTag,'Editor tag'); assert.equal(pendingCreate.pendingTagFolder,root,'Failed creation must retain its chosen folder');
+    await writeFile(faultFile,'');
+    await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Editor tag',exact:true}).waitFor();
+    assert.equal(snapshot().tag,'Editor tag');
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Editor tag').folder,root);
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Editor tag',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
+    assert.equal(snapshot().tag,null);
+    call('delete_tag',{name:'Editor tag'});
+    await text.fill('# Redesign the task editor\n\nKeep writing focused.\n\n- Save after a typing pause\n- Change tags in the header\n- Keep local text on failure');
+    await saved();
+    const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+    for(const [width,height] of [[720,540],[320,480],[280,260]]) {
+      await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setBounds({x:20,y:20,...size}),{width,height});
+      await text.press('Control+Home');
+      assert.equal(await editDialog.evaluate(panel=>panel.scrollWidth<=panel.clientWidth),true,'Editor must not clip horizontally');
+      for(const name of ['Change tag: Untagged','Undo text edit (Ctrl+Z)','Copy edit draft',`Close Edit task ${added.id}`]) {
+        const control=editDialog.getByRole('button',{name,exact:true});
+        await control.scrollIntoViewIfNeeded();
+        assert.equal(await control.evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}),true,`${name} remains reachable at ${width}x${height}`);
+      }
+      await page.screenshot({path:join(root,`editor-autosave-${width}.png`)});
+    }
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),bounds);
+    await text.fill('Close flushes the debounce');
+    await page.keyboard.press('Escape');
+    await editDialog.waitFor({state:'detached'});
+    await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Close flushes the debounce$/}).waitFor();
+    await selectTaskAction(page, added.id, 'Edit text…');
+    await saved(); assert.equal(await sourceValue(text),'Close flushes the debounce');
+    assert.equal(snapshot().text,'Close flushes the debounce');
+    await text.fill(original); await saved();
+    await page.keyboard.press('Escape');
+  }
   await selectTaskAction(page, added.id, 'Start');
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'), added.id);
   // Queue a refresh behind completion so clearing busy renders the old snapshot.
@@ -1056,11 +1205,32 @@ try {
   await page.keyboard.type(' — still writable');
   assert.equal(await sourceValue(failedCloseEditor),'Private draft before failed close — still writable');
   await chmod(stateDir,0o700);
+  await page.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+  await page.getByText('All changes saved',{exact:true}).waitFor();
+  await failedCloseEditor.fill('Private draft before failed close — still writable; app close flushes');
+  await page.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+  await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Created at app close');
+  await page.getByRole('button',{name:'Create tag “Created at app close”…',exact:true}).click();
+  await app.evaluate(({dialog},folder)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},root);
+  await page.getByRole('button',{name:'Choose default Kitty folder',exact:true}).click();
+  await writeFile(faultFile,'slow-create-tag');
+  await page.getByRole('button',{name:'Create tag',exact:true}).click();
+  let creationCommitted=false;
+  for(let i=0;i<200;i++) { if(await readFile(createTagMarker,'utf8').catch(()=>null)==='committed') {creationCommitted=true;break;} await new Promise(r=>setTimeout(r,10)); }
+  assert.ok(creationCommitted,'Tag creation must commit while its acknowledgement is delayed');
   const closed = app.waitForEvent('close');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
   await closed; app=undefined;
   const saved = JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8'));
   assert.equal(saved.draft,'Unfinished draft preserved');
+  const afterClose=call('snapshot',{view:'active'});
+  const savedAtClose=afterClose.notes.find(n=>n.id===added.id);
+  assert.equal(savedAtClose.text,'Private draft before failed close — still writable; app close flushes','App close must drain a fresh edit before quitting');
+  assert.equal(savedAtClose.tag,'Created at app close','App close must retain the accepted tag assignment, not just create a registry tag');
+  assert.equal(afterClose.tags.find(t=>t.name==='Created at app close').folder,root);
+  assert.equal(saved.edits[String(added.id)],undefined);
+  await writeFile(faultFile,'');
+  call('tag',{id:added.id,revision:savedAtClose.updated_at,tag:null}); call('delete_tag',{name:'Created at app close'});
   assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
   assert.deepEqual(pageErrors,[]);
   // Submit in the same event-loop turn as paste: no debounce may be required for safety.
@@ -1169,7 +1339,7 @@ try {
   const submitted=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
   assert.equal(submitted.edits[String(added.id)].text,'Rapid uncertain edit draft');
   assert.ok(!call('snapshot',{view:'active'}).notes.some(n=>n.text==='Rapid uncertain add draft'));
-  assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
+  assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Private draft before failed close — still writable; app close flushes');
   await writeFile(faultFile,''); reopened=await reopen();
   // A renderer crash cannot wait forever for a reply from the dead renderer or replay its draft.
   const crashed=app.waitForEvent('close');
@@ -1212,7 +1382,7 @@ try {
   await frozenClose; app=undefined;
   assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).edits[String(added.id)].text,closingText);
   reopened=await reopen();
-  assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].text,closingText,'Reopen must retain the exact frozen draft');
+  assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].text,closingText,'Recovered drafts stay paused on reopen and close, without automatic replay');
 
   // Warning metadata has its own budget: a valid near-capacity cache must survive crash recovery.
   const contentLimit=1024*1024, warningExpansionLimit=6*4096;
