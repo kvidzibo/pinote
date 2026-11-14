@@ -2,7 +2,7 @@ import { DynamicBorder, getSelectListTheme, keyText, type ExtensionContext } fro
 import { Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Container, type TUI } from '@earendil-works/pi-tui';
 import { clean, editorText, type NativeView } from './protocol.ts';
 
-export interface MenuState { search: string; selected?: string; input?: Input }
+export interface MenuState { search: string; selected?: string; input?: Input; pendingSearch?: Promise<void> }
 export interface MenuChoice { id: string }
 export interface MenuOptions {
   search?: 'none' | 'local' | 'tasks';
@@ -56,16 +56,23 @@ export function remoteMenu(ctx: ExtensionContext, view: NativeView, state: MenuS
     const fresh = () => !tasks || state.search === String(view.state.search ?? '');
     const schedule = () => {
       clearTimeout(timer);
-      if (fresh() || !options.onSearch || searching || disposed) return;
+      if (fresh() || !options.onSearch || state.pendingSearch || disposed) return;
       timer = setTimeout(() => {
         if (disposed || signal.aborted) return;
         searching = true;
-        void options.onSearch!(state.search).catch(() => { error = 'Search unavailable · Ctrl+R refresh'; }).finally(() => {
+        const query = state.search;
+        const pending = options.onSearch!(query).catch(() => { error = 'Search unavailable · Ctrl+R refresh'; });
+        state.pendingSearch = pending;
+        void pending.then(() => {
+          if (state.pendingSearch === pending) state.pendingSearch = undefined;
           searching = false;
-          if (!disposed) tui.requestRender();
+          if (!disposed) { if (!error && state.search !== query) schedule(); tui.requestRender(); }
         });
       }, 250);
     };
+    // A notification can replace this component before its search action settles.
+    // Share the in-flight read so replacements never queue stale duplicate searches.
+    if (state.pendingSearch) void state.pendingSearch.then(() => { if (!disposed) { schedule(); tui.requestRender(); } });
     schedule();
     const activate = (preview = false) => {
       if (signal.aborted || !usable || !layout || !fresh() || searching || geometry !== `${tui.terminal.columns}:${tui.terminal.rows}:${inlineHeight(tui, tui.terminal.columns, component)}`) return;

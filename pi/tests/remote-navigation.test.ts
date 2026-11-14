@@ -16,14 +16,14 @@ const view = (): NativeView => ({ version: 1, title: 'Pinote', revision: 'server
 ] });
 
 // Run the real custom factory; loaders resolve asynchronously and are disposed only afterwards.
-function native(script: (component: any, rows: string[]) => void) {
+function native(script: (component: any, rows: string[]) => void | Promise<void>) {
   return async (factory: any) => {
     let component: any;
-    try { return await new Promise((resolve) => {
+    try { return await new Promise((resolve, reject) => {
       component = factory({ terminal: { rows: 48, columns: 100 }, requestRender() {} },
         { fg: (_color: string, text: string) => text }, getKeybindings(), resolve);
       const rows = component.render(100);
-      if (component.handleInput) script(component, rows);
+      if (component.handleInput) Promise.resolve(script(component, rows)).catch(reject);
     }); } finally { component?.dispose(); }
   };
 }
@@ -165,6 +165,49 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
     assert.equal(step, 5);
     assert.equal(parentScreen('tasks'), undefined);
     assert.equal(parentScreen('settings'), 'tasks');
+  });
+  await t.test('Tab waits for an in-flight search before acquiring navigation revisions', async () => {
+    let started!: () => void, release!: () => void, steps = 0, active = true;
+    const searching = new Promise<void>((resolve) => { started = resolve; });
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const current: NativeView = { version: 1, title: 'Pinote', revision: 'before', state: { screen: 'tasks', search: '' }, controls: [
+      { id: 'search', kind: 'text', label: 'Search' },
+      { id: 'screen:settings', kind: 'action', label: 'Settings', revision: 'before' },
+      { id: 'select:7', kind: 'action', label: 'Sample task' },
+    ] };
+    const session: any = { signal: new AbortController().signal, current: () => () => active, view: current,
+      refresh: async () => {}, action: async (_view: NativeView, control: { id: string; revision?: string }, query: string) => {
+        if (control.id === 'search') {
+          started(); await waiting;
+          current.state.search = query;
+          current.controls = [{ id: 'screen:settings', kind: 'action', label: 'Settings', revision: 'after-search' }];
+        } else {
+          assert.equal(control.revision, 'after-search', 'Navigation must use the revision returned by search');
+          current.state.screen = 'settings';
+          current.controls = view().controls;
+        }
+        session.onChange();
+        return {};
+      },
+    };
+    const ctx: any = { mode: 'tui', ui: { notify: (message: string) => assert.fail(message),
+      select: () => assert.fail('Search/navigation must not enter stale-state recovery'),
+      custom: native(async (component, rows) => {
+        if (steps++ === 0) {
+          component.handleInput('Sample'); component.render(100);
+          await searching;
+          component.handleInput('\t');
+          // Let navigation queue before the search response arrives.
+          await new Promise((resolve) => setImmediate(resolve)); release();
+        } else {
+          assert.match(rows.join(' '), /Pinote \/ Settings/);
+          active = false;
+          component.handleInput('\x1b');
+        }
+      }),
+    } };
+    try { await new RemoteUI({} as any, session).open(ctx); assert.equal(steps, 2); }
+    finally { release(); }
   });
   await t.test('server search suppresses keyboard and mouse activation until results arrive', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });

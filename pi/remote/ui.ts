@@ -150,6 +150,9 @@ export class RemoteUI {
     const menus = new Map<string, MenuState>(), drafts = new Map<string, Draft>();
     let screen = 'tasks' as Screen, notice = '';
     const go = async (next: Screen): Promise<boolean> => {
+      // Search changes view revisions. Navigate only after it settles, using fresh controls.
+      await menus.get('tasks')?.pendingSearch;
+      if (!current()) return false;
       const view = this.session.view;
       if (!view) return false;
       const target = serverScreen(next);
