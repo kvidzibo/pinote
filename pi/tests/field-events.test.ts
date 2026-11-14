@@ -14,7 +14,9 @@ import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../remote/protocol.ts';
 
 const exec = promisify(execFile);
-test('durable field lifecycle: checks, restart, scoped notices, styles, stale results and bounded scripts', { timeout: 30_000 }, async () => {
+// This end-to-end case runs many real CLI subprocesses; allow slower CI runners.
+// Watcher execution deadlines are asserted separately and remain unchanged.
+test('durable field lifecycle: checks, restart, scoped notices, styles, stale results and bounded scripts', { timeout: 90_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-fields-'));
   const names = ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'PI_CODING_AGENT_DIR', 'PINOTE_NOTE_COMMAND'];
   const previous = names.map((n) => process.env[n]);
