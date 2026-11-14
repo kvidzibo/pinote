@@ -6,7 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
-import { getKeybindings } from '@earendil-works/pi-tui';
+import { getKeybindings, visibleWidth } from '@earendil-works/pi-tui';
 import { createEventBus, initTheme } from '@earendil-works/pi-coding-agent';
 import { remoteConfig, RemoteFailure, type Peer, type PeerFactory } from '../remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, restoreState, type SavedState } from '../remote/session.ts';
@@ -199,17 +199,45 @@ test('seven explicit direct schemas; tool state is applied before next serialize
   await h.session.stop();
 });
 
-test('mutations never replay; transport errors are secret-free, reconnect is explicit and lazy', async () => {
-  let calls = 0;
-  const h = harness({ tool: async () => { calls++; throw new Error(`Authorization Bearer ${token}`); } });
+test('mutations never replay; read-only recovery preserves selection and shows disconnected status', async (t) => {
+  const { RemoteUI } = await import('../remote/ui.ts');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0, failRead = false;
+  const h = harness({
+    tool: async () => { calls++; throw new Error(`Authorization Bearer ${token}`); },
+    read: async () => { if (failRead) throw new Error(token); return resource(view({ selectedId: 7 })); },
+  });
   await h.session.start([], 'conversation');
+  const components: any[] = [], statuses: Array<string | undefined> = [];
+  for (const mode of ['fullscreen', 'regular']) {
+    new RemoteUI({} as any, h.session).attach({ mode: 'tui', ui: {
+      theme: { fg: (_color: string, text: string) => text },
+      setWidget: (_key: string, factory: any) => components.push(factory({ mode, requestRender() {} }, { fg: (_color: string, text: string) => text })),
+      setStatus: (_key: string, value: string | undefined) => statuses.push(value),
+    } } as any);
+  }
+  // Both attachments share one session; repaint the fullscreen component directly.
+  assert.match(components[0].render(80).join(''), /Task/);
   await assert.rejects(h.session.tool('update_current', { expected_updated_at: 'old' }), (e: Error) => e.message.includes('may have committed') && !e.message.includes(token));
   assert.equal(calls, 1); assert.equal(h.connections(), 1); assert.equal(h.session.view, undefined);
-  h.changed(); await sleep(100);
-  assert.equal(h.connections(), 1);
-  await h.session.refresh(true);
-  assert.equal(h.connections(), 2); assert.equal(calls, 1);
+  assert.equal(h.session.snapshot()?.state.selectedId, 7);
+  assert.match(components[0].render(80).join(''), /disconnected · reconnecting/);
+  assert.match(statuses.at(-1)!, /disconnected · reconnecting/);
+  assert.ok(visibleWidth(components[0].render(20)[0]) <= 20);
+  assert.equal(components[0].handleMouse({ type: 'click', button: 'left', x: 0, y: 0 }), undefined);
+  const advance = async (ms: number) => { t.mock.timers.tick(ms); await new Promise<void>((resolve) => setImmediate(resolve)); };
+  failRead = true;
+  await advance(1000); assert.equal(h.connections(), 2);
+  await advance(1999); assert.equal(h.connections(), 2);
+  failRead = false;
+  await advance(1); assert.equal(h.connections(), 3);
+  assert.equal(calls, 1); assert.equal((h.session.view as NativeView | undefined)?.state.selectedId, 7);
+  assert.match(components[0].render(80).join(''), /Task/);
+  assert.doesNotMatch(statuses.at(-1)!, /disconnected/);
+  await assert.rejects(h.session.tool('update_current', {}), RemoteFailure);
   await h.session.stop();
+  await advance(60_000);
+  assert.equal(h.connections(), 3, 'Stopping cancels pending recovery');
 });
 
 test('menu/footer completion refuses busy agents and rechecks immediately before queued writes', async () => {

@@ -204,10 +204,14 @@ task is selected. Tool results and injected context can reach your configured
 model: do not put secrets in tasks.
 
 External CLI/GTK/client edits refresh connected views through notifications.
-After a network failure, use `/pinote` or a tool call to reconnect. Mutations are
-**never automatically replayed**: a failed write may already have committed, so
-read fresh state before retrying. Server restart loses HTTP sessions, not notes.
-There is no offline write queue or database replication.
+After a network failure or service restart, the footer shows **Pinote disconnected ·
+reconnecting…** until a fresh view is available. Read-only recovery retries after
+1 second, doubling to a maximum 30-second delay, preserving each conversation's
+saved selection. `/pinote` can refresh immediately. Task actions are unavailable
+until fresh state returns; session shutdown/reload cancels recovery.
+Mutations are **never automatically replayed**: a failed write may already have
+committed, so read fresh state before retrying. Server restart loses HTTP sessions,
+not notes. There is no offline write queue or database replication.
 
 ### Shared settings
 

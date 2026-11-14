@@ -24,7 +24,7 @@ export class RemoteFailure extends Error {
   readonly stale: boolean;
   constructor(uncertain = false, stale = false) {
     super(stale ? 'Action not applied: state changed. Refresh and review before retrying.' :
-      `Pinote request failed.${uncertain ? ' The write may have committed; refresh before retrying.' : ' Context unavailable; retry an explicit call to reconnect.'}`);
+      `Pinote request failed.${uncertain ? ' The write may have committed; refresh before retrying.' : ' Context unavailable; reconnecting in the background.'}`);
     this.uncertain = uncertain && !stale; this.stale = stale;
   }
 }
@@ -39,7 +39,7 @@ export const connectPeer: PeerFactory = async (config, signal, changed, disconne
   const client = new Client({ name: 'pinote-pi', version: '1' }, { capabilities: {} });
   const transport = new StreamableHTTPClientTransport(config.url, {
     requestInit: { headers: { Authorization: `Bearer ${config.token}` }, redirect: 'error' },
-    // Never replay POSTs, resume streams, or reconnect behind the caller's epoch.
+    // No SDK replay or stream resumption; RemoteSession owns read-only recovery.
     reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1000, maxReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 },
     fetch: (url, init) => fetch(url, { ...init, redirect: 'error', signal: init?.method === 'DELETE'
       ? AbortSignal.timeout(1000) // Bounded session cleanup remains possible after operation cancellation.
