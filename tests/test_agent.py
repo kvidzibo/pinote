@@ -294,9 +294,7 @@ def test_bounded_field_events_updates_lifecycle_and_pagination(cli, monkeypatch)
     # Limit bounds scanned rows, not emitted fields; irrelevant rows still advance.
     cursor, events = 0, []
     while cursor < tail:
-        page = json.loads(
-            cli("field-events", "--after", str(cursor), "--limit", "1").stdout
-        )
+        page = json.loads(cli("field-events", "--after", str(cursor), "--limit", "1").stdout)
         assert page["cursor"] == cursor + 1
         events.extend(page["events"])
         cursor = page["cursor"]

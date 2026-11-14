@@ -866,7 +866,16 @@ class Store:
         ).fetchall()
         events = []
         snapshot_actions = {
-            "agent", "edit", "tag", "start", "reset", "done", "rm", "restore", "schedule", "remind"
+            "agent",
+            "edit",
+            "tag",
+            "start",
+            "reset",
+            "done",
+            "rm",
+            "restore",
+            "schedule",
+            "remind",
         }
         for row in rows:
             if row["action"] not in snapshot_actions:
@@ -877,9 +886,7 @@ class Store:
                 else {}
             )
             after_fields = (
-                json.loads(row["agent_notes"])
-                if row["state"] in {"active", "in_progress"}
-                else {}
+                json.loads(row["agent_notes"]) if row["state"] in {"active", "in_progress"} else {}
             )
             for key in sorted(before.keys() | after_fields.keys()):
                 previous, value = before.get(key), after_fields.get(key)
@@ -892,9 +899,9 @@ class Store:
                         "id": row["id"],
                         "taskId": row["note_id"],
                         "field": key,
-                        "event": "added" if key not in before else (
-                            "removed" if key not in after_fields else "changed"
-                        ),
+                        "event": "added"
+                        if key not in before
+                        else ("removed" if key not in after_fields else "changed"),
                         "value": value,
                         "previousValue": previous,
                     }
