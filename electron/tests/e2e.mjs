@@ -655,6 +655,46 @@ try {
   // One integrated Markdown source regression: real textbox keys, undo, paste,
   // storage, compact title, reload and explicit draft copy.
   {
+    const checkBulletIndent = async (textbox, name) => {
+      const source = '# Indentation\n- Parent\n- Child';
+      await textbox.fill(source); await textbox.press('Control+End');
+      await textbox.press('Tab'); await textbox.press('Tab');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\n    - Child');
+      assert.equal(await textbox.evaluate(node=>node===document.activeElement),true,'Indenting must retain editor focus');
+      await textbox.press('Control+z');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\n  - Child','Each indentation level is independently undoable');
+      await textbox.press('Control+y');
+      await textbox.press('Backspace');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\n    - Chil','Backspace inside text deletes normally');
+      for(let i=0;i<4;i++) await textbox.press('ArrowLeft');
+      await textbox.press('Backspace');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\n  - Chil');
+      await textbox.press('Backspace');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\n- Chil','Outdenting must preserve the bullet');
+      await textbox.press('Backspace');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\nChil','Only the top-level Backspace removes the marker');
+      await textbox.press('Control+z');
+      assert.equal(await sourceValue(textbox),'# Indentation\n- Parent\n- Chil','Marker removal is undoable');
+      await textbox.fill('  - '); await textbox.press('Control+End');
+      await textbox.press('Backspace'); assert.equal(await sourceValue(textbox),'- ');
+      await textbox.press('Backspace'); assert.equal(await sourceValue(textbox),'');
+      await textbox.fill('\t- Imported');
+      assert.equal(await sourceValue(textbox),'\t- Imported','Loading preserves existing tabs');
+      await textbox.press('Control+End'); await textbox.press('Tab');
+      assert.equal(await sourceValue(textbox),'    - Imported','Indent commands use two spaces, never tabs');
+      await textbox.press('Shift+Tab');
+      assert.equal(await textbox.evaluate(node=>node===document.activeElement),false,'Shift+Tab remains available for focus navigation');
+      await textbox.fill('# Bullet indentation\n- Parent\n- Child');
+      await textbox.press('Control+End'); await textbox.press('Tab');
+      await textbox.press('Shift+Enter'); await page.keyboard.type('Grandchild');
+      await textbox.press('Tab');
+      assert.equal(await sourceValue(textbox),'# Bullet indentation\n- Parent\n  - Child\n    - Grandchild');
+      const bounds = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+      await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:25,y:25,width:520,height:400}));
+      await textbox.press('Control+Home');
+      await page.screenshot({path:join(root,`bullet-indent-${name}.png`)});
+      await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),bounds);
+    };
     const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
     await composer.press('Control+z');
     assert.equal(await sourceValue(composer),'','Undo must not resurrect a submitted task');
@@ -682,9 +722,10 @@ try {
     for (let i=0;i<4;i++) await composer.press('ArrowLeft');
     await composer.press('Shift+Enter');
     assert.equal(await sourceValue(composer),'# Title\n  - first \n  - tail','Splitting an indented bullet retains its marker and tail');
+    await checkBulletIndent(composer,'add');
     const composerSource = await sourceValue(composer);
     await composer.press('Enter');
-    await page.locator('.task-title').filter({hasText:/^Title$/}).waitFor();
+    await page.locator('.task-title').filter({hasText:/^Bullet indentation$/}).waitFor();
     assert.ok(call('snapshot',{view:'active'}).notes.some(note=>note.text===composerSource),'Enter submits Markdown bullets instead of continuing them');
     await composer.fill('Selected text'); await composer.press('Control+a');
     await app.evaluate(({clipboard})=>clipboard.writeText('https://example.org/source'));
@@ -695,11 +736,17 @@ try {
     const source='# Markdown source **bold** *italic* `code`\n- saved bullet';
     await selectTaskAction(page, added.id, 'Edit text…');
     const editor=page.getByRole('textbox',{name:'Task text',exact:true});
+    await checkBulletIndent(editor,'edit');
+    await editor.press('Control+Enter');
+    await page.getByRole('dialog').waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'active'}).notes.find(note=>note.id===added.id).text,composerSource,'Saving preserves two-space nesting');
+    await selectTaskAction(page, added.id, 'Edit text…');
+    assert.equal(await sourceValue(editor),composerSource,'Reload preserves nesting');
     await editor.fill(source);
     await editor.press('Control+End');
     await editor.press('Enter');
     assert.equal(await sourceValue(editor),source+'\n- ');
-    await editor.press('Backspace'); await editor.press('Backspace');
+    await editor.press('Backspace');
     await page.keyboard.type('plain'); await editor.press('Enter');
     assert.equal(await sourceValue(editor),source+'\nplain\n','Deleting a bullet must allow plain following lines');
     await editor.fill(source);
@@ -707,6 +754,7 @@ try {
       await editor.locator(selector).first().waitFor();
     }
     assert.equal(await sourceValue(editor),source,'Styling must retain all Markdown markers');
+    await editor.press('Control+Home');
     await editor.press('Tab');
     const closeEditor = page.getByRole('button',{name:`Close Edit task ${added.id}`,exact:true});
     assert.equal(await closeEditor.evaluate(node=>node===document.activeElement),true,'Tab from the final textbox wraps inside the modal');

@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.8.0.
+package is private, version 0.9.0.
 Run from the repository root:
 
 ```sh
@@ -51,7 +51,10 @@ Icons are bundled rather than taken from the host icon theme.
   bold, italic and code. Markers stay visible; load, paste, save and copy preserve
   source. On the first explicit newline after a plain single-line task, it becomes
   `# Task` followed by `- `. Newlines after headings and bullets continue `- `;
-  an empty bullet ends the list. Delete a bullet prefix to write ordinary lines.
+  an empty bullet ends the list. **Tab** on a `-` bullet indents it by two spaces.
+  **Backspace** at the start of its text removes one indentation level; at the
+  top level it removes the bullet prefix. Elsewhere Backspace deletes normally.
+  **Shift+Tab**, or Tab on a non-bullet line, moves focus between controls.
   Compact row/archive titles omit a leading heading marker, not stored text.
 - Click a task's play icon to start it, then its checkmark to complete it.
   Right-click task text, use its actions button, or focus task text and press
