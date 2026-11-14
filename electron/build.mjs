@@ -1,7 +1,11 @@
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });
+execFileSync(process.execPath, ['build.mjs'], { cwd: fileURLToPath(new URL('../backend/', import.meta.url)), stdio: 'inherit' });
+await cp('../backend/dist', 'dist/pinote-backend', { recursive: true });
 await Promise.all([
   build({ entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),

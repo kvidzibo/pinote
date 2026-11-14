@@ -1,13 +1,13 @@
 {
   "name": "pinote-electron",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
-  "description": "Optional isolated desktop frontend for Pinote's Python backend",
+  "description": "Isolated desktop frontend with Pinote's bundled Node backend",
   "license": "MIT",
   "main": "dist/main.cjs",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "setup": "install-electron",

@@ -21,7 +21,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
   let service: Awaited<ReturnType<typeof startPinoteHttpServer>> | undefined;
   Object.assign(process.env, {
     PINOTE_TOKEN: 'isolated-kitty-launch-token-0123456789',
-    PINOTE_NOTE_COMMAND: join(root, '.venv/bin/note'), PI_CODING_AGENT_DIR: join(temp, 'agent'),
+    PINOTE_NOTE_COMMAND: join(root, 'backend/bin/note'), PI_CODING_AGENT_DIR: join(temp, 'agent'),
     XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state'),
   });
   mkdirSync(join(temp, 'agent'));

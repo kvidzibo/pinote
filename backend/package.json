@@ -1,0 +1,26 @@
+{
+  "name": "pinote-backend",
+  "version": "0.26.0",
+  "private": true,
+  "description": "Pinote's shared SQLite backend and note CLI",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "bin": { "note": "bin/note", "pinote-electron-backend": "bin/pinote-electron-backend" },
+  "files": ["bin", "dist", "LICENSE", "README.md"],
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts tests/*/*.test.ts",
+    "test:package": "npm run build && node tests/package.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@js-temporal/polyfill": "0.5.1",
+    "smol-toml": "1.9.1",
+    "unicode-case-folding": "1.1.2",
+    "@types/node": "22.20.3",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

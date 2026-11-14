@@ -11,7 +11,7 @@ const sourceValue = locator => locator.evaluate(node => node.querySelector('.cm-
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
-const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../.venv/bin/pinote-electron-backend');
+const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
@@ -1212,7 +1212,7 @@ try {
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
-  Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../.venv/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
+  Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../backend/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
   const piRequire=createRequire(resolve('../pi/package.json'));
   const { Client }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/index.js'));
   const { StreamableHTTPClientTransport }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
@@ -1288,7 +1288,7 @@ try {
     // Keep this popup open for the existing CLI disappearance below.
     disappearingPreview = preview;
   }
-  const cli=spawnSync(resolve('../.venv/bin/note'),['--no-notify','done',String(first)],{env,encoding:'utf8'}); assert.equal(cli.status,0,cli.stderr);
+  const cli=spawnSync(resolve('../backend/bin/note'),['--no-notify','done',String(first)],{env,encoding:'utf8'}); assert.equal(cli.status,0,cli.stderr);
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
   if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
   await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);

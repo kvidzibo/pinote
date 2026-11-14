@@ -18,7 +18,7 @@ test('durable field lifecycle: checks, restart, scoped notices, styles, stale re
   const dir = await mkdtemp(join(tmpdir(), 'pinote-fields-'));
   const names = ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'PI_CODING_AGENT_DIR', 'PINOTE_NOTE_COMMAND'];
   const previous = names.map((n) => process.env[n]);
-  const command = fileURLToPath(new URL('../../.venv/bin/note', import.meta.url));
+  const command = fileURLToPath(new URL('../../backend/bin/note', import.meta.url));
   Object.assign(process.env, { XDG_DATA_HOME: dir, XDG_STATE_HOME: dir, PI_CODING_AGENT_DIR: pathToFileURL(dir).href, PINOTE_NOTE_COMMAND: command });
   const path = join(dir, 'state.db'), handler = join(dir, 'handler.mjs'), mode = join(dir, 'mode.json'), calls = join(dir, 'calls.jsonl');
   await writeFile(handler, `#!/usr/bin/env node

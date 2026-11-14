@@ -17,7 +17,7 @@ test("real /new runtime replacement retains an unsaved selection and rereads its
   const agentDir = join(temp, "agent");
   mkdirSync(cwd); mkdirSync(agentDir);
   Object.assign(process.env, {
-    PI_CODING_AGENT_DIR: agentDir, PATH: `${resolve(root, ".venv/bin")}:${process.env.PATH}`,
+    PI_CODING_AGENT_DIR: agentDir, PATH: `${resolve(root, "backend/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-pinote-test-bus",
   });

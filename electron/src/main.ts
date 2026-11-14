@@ -1,10 +1,11 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
-import { appendFileSync, constants, mkdirSync, readdirSync } from 'node:fs';
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
+import { backendCommand } from './backend-command.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -49,15 +50,6 @@ function persist() {
 }
 function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.origin !== origin) throw new Error('Untrusted IPC sender');
-}
-async function executable() {
-  const override = process.env.PINOTE_ELECTRON_BACKEND;
-  const candidates = override ? [override] : (process.env.PATH || '').split(delimiter).filter(isAbsolute).map(p => join(p, 'pinote-electron-backend'));
-  for (const path of candidates) {
-    if (!isAbsolute(path)) continue;
-    try { await access(path, constants.X_OK); return path; } catch { /* Try next trusted PATH entry. */ }
-  }
-  throw new Error('Install Pinote 0.23.0+ or set PINOTE_ELECTRON_BACKEND to its absolute pinote-electron-backend executable.');
 }
 function bounds() {
   return screen.getDisplayNearestPoint(window ? { x: window.getBounds().x, y: window.getBounds().y } : { x: 25, y: 1300 }).workArea;
@@ -107,7 +99,8 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
 }
 
 async function boot() {
-  const backend = new Backend(await executable());
+  const command = backendCommand(join(app.isPackaged ? process.resourcesPath : __dirname, 'pinote-backend', 'bridge.mjs'));
+  const backend = new Backend(command.executable, process.env, command.args);
   const hello = await backend.call('handshake', {});
   if (!hello.ok) throw new Error(hello.error.message);
   const identity = hello.result as { protocol?: unknown; database?: unknown; version?: unknown };

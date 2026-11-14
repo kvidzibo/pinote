@@ -20,7 +20,7 @@ test('selecting a task starts it with one menu activation and returns to the unc
   let session: RemoteSession | undefined;
   Object.assign(process.env, {
     PINOTE_TOKEN: 'isolated-task-selection-token-0123456789',
-    PINOTE_NOTE_COMMAND: fileURLToPath(new URL('../../.venv/bin/note', import.meta.url)),
+    PINOTE_NOTE_COMMAND: fileURLToPath(new URL('../../backend/bin/note', import.meta.url)),
     PI_CODING_AGENT_DIR: join(temp, 'agent'), XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state'),
   });
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));

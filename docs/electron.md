@@ -2,38 +2,40 @@
 
 [Quickstart](../README.md) · [Development and tests](development.md#electron-frontend) · [GTK fallback](gui.md)
 
-Electron is an **optional trial frontend**, not a replacement for GTK. GTK remains
-the default and fallback; removing Python, deprecating GTK, or changing defaults
-would require a later explicit decision. Only Linux/X11/i3 is a validation target.
+Electron uses the Node backend; Python is not required. GTK remains available
+as a separate legacy frontend, sharing the same database. This does not change
+your installed desktop startup. Only Linux/X11/i3 is a validation target.
 Resource use is substantially higher than GTK. Trial it before considering a
 default switch; local validation measurements are not performance guarantees.
 
 ## Install and launch from a checkout
 
-Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
-for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.10.1. Editor autosave requires the matching
-Python backend (0.25.1+); update both from this checkout.
+Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), and desktop
+libraries for Electron (including GTK 3, not Python GTK bindings).
+The private `electron/` package bundles the matching Node backend.
 Run from the repository root:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
 npm --prefix electron run check
 npm --prefix electron test
 npm --prefix electron run build
-PINOTE_ELECTRON_BACKEND="$PWD/.venv/bin/pinote-electron-backend" npm --prefix electron start
+npm --prefix electron start
 ```
 
 `setup` explicitly downloads the locked Electron 45 binary; there is no Electron
 postinstall download in this version. Dependencies have their own
 `electron/package-lock.json`. `start` rebuilds before launching.
-The dependency-free `pinote-electron-backend` console entrypoint comes from the
-Python installation. Use a **trusted absolute executable path** for
-`PINOTE_ELECTRON_BACKEND`, or install that entrypoint in an absolute `PATH`
-directory; relative PATH entries are not searched. No service or network listener
-is started. Installation does not alter GTK startup, i3 rules, or user configuration.
+The build includes the backend bundle. At runtime it uses external `node` from
+absolute PATH directories, or a **trusted absolute Node executable** in `PINOTE_NODE`.
+Relative PATH entries are ignored; unsupported Node versions fail at startup.
+Node/Electron injection environment flags are cleared in backend children.
+`PINOTE_ELECTRON_BACKEND` remains an explicit trusted absolute executable override
+for compatibility and diagnostics; there is no automatic Python fallback.
+No service or network listener is started. Installation does not alter GTK startup,
+i3 rules, or user configuration.
 
 The window is a compact, always-on-top utility window. Its utility type is the
 intended automatic-floating mechanism in i3, without additional rules. Although
@@ -158,7 +160,7 @@ before launching, after a folder is confirmed. Cancelling folder selection chang
 nothing. If launching fails, the task stays in progress; check for a tab before retrying.
 
 Kitty launching uses the existing backend integration and its prerequisites;
-see [GTK controls](gui.md). With Python backend 0.25.2+, tab titles omit leading
+see [GTK controls](gui.md). Tab titles omit leading
 Markdown heading markers (`# ` through `###### `) before the 30-character limit;
 tags and saved task text stay unchanged. The frontend does not send Dunst notifications.
 Due reminders activate on backend refresh, not through a new alarm service.
@@ -204,15 +206,14 @@ state; quitting without saving requires an explicit choice.
 
 ```sh
 npm --prefix electron run package
-PINOTE_ELECTRON_BACKEND="$PWD/.venv/bin/pinote-electron-backend" \
-  electron/out/pinote-electron-linux-x64/pinote-electron
+electron/out/pinote-electron-linux-x64/pinote-electron
 ```
 
 On x64 Linux this creates `electron/out/pinote-electron-linux-x64/`, an unpacked
-application, not an installer. Packaging follows the host architecture. Python
-is **not bundled**: the target machine still needs a separately installed
-compatible backend, found via the trusted absolute override or absolute PATH
-entries. There is no auto-updater or public publishing flow.
+application, not an installer. Packaging follows the host architecture. The
+backend and its dependency notices are bundled outside ASAR; source files and
+checkout dependencies are not needed on the target. External Node.js 22.19+ and
+`flock` are required; Python is not. There is no auto-updater or public publishing flow.
 
 The renderer uses a custom secure protocol, restrictive CSP, sandboxing,
 context isolation, and a narrow isolated preload API. Packaged native fuses
