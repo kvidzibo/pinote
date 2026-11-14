@@ -36,14 +36,14 @@ const ProposalInput = z.union([
   ExistingProposal,
 ]);
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
-const Context = z.object({ conversationId: z.string().min(1).max(256), contextId: z.string().min(1).max(256).optional(), fieldReceipts: z.array(z.string().uuid()).max(4096).optional(), state: z.object({
+const Context = z.object({ conversationId: z.string().min(1).max(256), piSessionId: z.string().max(256).regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/).optional(), contextId: z.string().min(1).max(256).optional(), fieldReceipts: z.array(z.string().uuid()).max(4096).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
   launch: z.object({ task_id: TaskId, updated_at: z.string().min(1).max(128) }).strict().optional(),
   selectedId: z.number().int().positive().safe().nullable().optional(), screen: z.enum(['tasks', 'settings', 'field']).optional(),
   field: z.string().refine((value) => [...value].length <= 64, 'Field name exceeds 64 code points').optional(), search: z.string().max(256).optional(),
 }).default({}) });
 type State = z.infer<typeof Context>['state'];
-type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, string> };
+type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, string>; 'pi-sessions': string[] };
 type Scalar = string | number | boolean | null;
 type Control = { id: string; label: string; revision?: string; kind: 'action' | 'text' | 'number' | 'toggle' | 'select'; value?: Scalar; icon?: string; description?: string; multiline?: boolean; confirm?: string; options?: { label: string; value: Scalar }[] };
 const Action = z.object({ method: z.literal('native-ui/action'), params: z.object({
@@ -81,7 +81,7 @@ async function note(args: string[], signal: AbortSignal): Promise<string> {
   const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
   const version = (await exec(noteCommand, ['--version'], options)).stdout.trim();
   const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match || Number(match[1]) === 0 && Number(match[2]) < 12) throw new Error('Pinote MCP requires note 0.12.0+');
+  if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote service requires note 0.25.0+');
   return (await exec(noteCommand, ['--no-notify', ...args], options)).stdout;
 }
 async function selected(state: State, signal: AbortSignal): Promise<Task | null> {
@@ -306,7 +306,7 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
   const guidance = agentGuidance();
   const config = task ? settings().config : null;
   const data = task
-    ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes) })}`
+    ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes) })}`
     : `No task is selected (including unavailable or completed selected targets).\nSaved tags:\n${await note(['agent', 'tags'], signal)}\nPending suggestion (not selected):\n${JSON.stringify(proposal ? { ...proposal, ...('task_id' in proposal ? { text: proposedTask!.text, tag: proposedTask!.tag } : {}) } : null)}`;
   const statuses = task ? automation?.statuses(task) ?? [] : [];
   let text = guidance ? `${guidance}\n${data}` : data;
@@ -358,6 +358,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const caller = context(request.params._meta);
   const state = caller.state;
   const owner = caller.contextId ?? caller.conversationId;
+  const sessionArgs = caller.piSessionId ? ['--pi-session-id', caller.piSessionId] : [];
   const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts);
   const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
@@ -374,7 +375,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     next.proposal = null;
     if (action === 'proposal:accept') {
       const task: Task = 'task_id' in proposal ? before.proposedTask! : JSON.parse(await note(['agent', 'add', `--text=${proposal.text}`, ...(proposal.tag ? [`--tag=${proposal.tag}`] : [])], extra.signal));
-      await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at], extra.signal); next.selectedId = task.id;
+      await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at, ...sessionArgs], extra.signal); next.selectedId = task.id;
     }
   } else if (action.startsWith('screen:')) next.screen = action.slice(7) as State['screen'];
   else if (action.startsWith('field:')) { next.screen = 'field'; next.field = action.slice(6); }
@@ -390,12 +391,12 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     const target: Task = JSON.parse(await note(['agent', 'get', String(id)], extra.signal));
     if (target.text !== candidate.text || target.state !== candidate.state || target.tag !== candidate.tag || state.launch && target.updated_at !== state.launch.updated_at) staleAction();
     if (next.proposal) await consume(next.proposal.id);
-    await note(['agent', 'start', String(id), '--expected-updated-at', target.updated_at], extra.signal); next.selectedId = id; next.proposal = null;
+    await note(['agent', 'start', String(id), '--expected-updated-at', target.updated_at, ...sessionArgs], extra.signal); next.selectedId = id; next.proposal = null;
   } else if (action === 'add') {
     if (next.proposal) await consume(next.proposal.id);
     next.proposal = null;
     const task: Task = JSON.parse(await note(['agent', 'add', `--text=${z.string().min(1).parse(value)}`], extra.signal));
-    await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at], extra.signal); next.selectedId = task.id;
+    await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at, ...sessionArgs], extra.signal); next.selectedId = task.id;
   } else if (action === 'done') {
     await note(['agent', 'done', String(before.task!.id), '--expected-updated-at', before.task!.updated_at], extra.signal);
     next.selectedId = null;

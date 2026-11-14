@@ -31,6 +31,7 @@ export class RemoteSession {
   private refreshing = false;
   private active = false;
   private conversationId = '';
+  private piSessionId?: string;
   private saved?: SavedState;
   view?: NativeView;
   fullscreen = false;
@@ -46,10 +47,11 @@ export class RemoteSession {
   get signal(): AbortSignal { return this.lifetime.signal; }
   snapshot(): SavedState | undefined { return this.saved && structuredClone(this.saved); }
   current(): () => boolean { const epoch = this.epoch; return () => this.active && epoch === this.epoch; }
-  async start(branch: readonly BranchEntry[], conversationId: string, carried?: SavedState): Promise<void> {
+  async start(branch: readonly BranchEntry[], conversationId: string, carried?: SavedState, piSessionId?: string): Promise<void> {
     await this.stop();
     this.lifetime = new AbortController(); this.active = true;
     this.conversationId = conversationId;
+    this.piSessionId = piSessionId;
     this.saved = carried?.scope === this.config.scope ? structuredClone(carried) : restoreState(branch, this.config.scope);
     this.persist(this.saved);
     await this.refresh(true);
@@ -64,7 +66,7 @@ export class RemoteSession {
   private meta(): Record<string, unknown> {
     if (!this.saved) throw new RemoteFailure();
     return {
-      [UI_CONTEXT]: { conversationId: this.conversationId, contextId: this.saved.contextId, state: this.saved.state, fieldReceipts: this.saved.fieldReceipts ?? [] },
+      [UI_CONTEXT]: { conversationId: this.conversationId, piSessionId: this.piSessionId, contextId: this.saved.contextId, state: this.saved.state, fieldReceipts: this.saved.fieldReceipts ?? [] },
       [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, fieldWatchers: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
     };
   }
