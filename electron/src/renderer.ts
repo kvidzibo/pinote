@@ -208,7 +208,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     const index = layers.indexOf(item); if (index < 0) return;
     for (const child of layers.slice(index + 1).reverse()) child.close();
     layers.splice(index, 1); overlay.remove();
-    if (prior?.isConnected && prior !== composer) prior.focus(); else composerEditor.view.focus();
+    if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
     if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'edit') fitWindow();
   } };
@@ -272,10 +272,7 @@ async function chooseMenu(request: MenuRequest, returnTo: HTMLElement): Promise<
   try { return await api.popupMenu(request); }
   finally {
     nativeMenuOpen = false; returnTo.setAttribute('aria-expanded', 'false');
-    if (!closing) {
-      if (returnTo.isConnected && returnTo !== composer) returnTo.focus({ preventScroll: true });
-      else composerEditor.view.focus();
-    }
+    if (!closing) (returnTo.isConnected ? returnTo : composer).focus({ preventScroll: true });
   }
 }
 async function openMenu(event: MouseEvent): Promise<void> {
@@ -307,7 +304,7 @@ function configureComposer(): void {
     try {
       await persist();
       if (!composerEditor.value || (previous && composerEditor.value === '# ')) setComposerDraft(newComposerDraft());
-      modal.close();
+      modal.close(); composerEditor.view.focus();
     } catch (error) { state.composerStartAsMarkdown = previous; throw error; }
     finally { saving = false; save.disabled = toggle.disabled = readonly; }
   }, readonly);

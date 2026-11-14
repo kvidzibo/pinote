@@ -682,6 +682,13 @@ try {
     const settings = page.getByRole('dialog',{name:'Add task input',exact:true});
     const open = () => selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'composer-settings');
     const save = async () => { await settings.getByRole('button',{name:'Save add task input settings',exact:true}).click(); await settings.waitFor({state:'detached'}); };
+    const waitSavedDraft = async text => {
+      for(let i=0;i<200;i++) {
+        if((await page.evaluate(()=>window.pinote.loadState())).draft===text) return;
+        await page.waitForTimeout(10);
+      }
+      assert.fail('Composer draft did not reach the saved state');
+    };
     const geometry = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
     await composer.fill('Existing plain draft');
     await open(); assert.equal(await settings.getByRole('checkbox',{name:'Start as Markdown',exact:true}).isChecked(),false);
@@ -704,6 +711,7 @@ try {
     await page.waitForFunction(()=>document.querySelector('#draft')?.textContent==='# ');
     const created = call('snapshot',{view:'active'}).notes.find(n=>n.text.startsWith('# Markdown from the first character'));
     assert.equal(created.text,'# Markdown from the first character\n- A first bullet');
+    await waitSavedDraft('# ');
     await page.reload(); await composer.waitFor();
     assert.equal(await sourceValue(composer),'# ','The setting and fresh starter survive reload');
     await open(); assert.equal(await settings.getByRole('checkbox').isChecked(),true);
@@ -714,15 +722,18 @@ try {
     await page.screenshot({path:join(root,'composer-settings.png')});
     await settings.getByRole('checkbox').uncheck(); await save();
     assert.equal(await sourceValue(composer),'','Disabling clears only the untouched starter');
+    await waitSavedDraft('');
     await page.reload(); await composer.waitFor();
     assert.equal((await page.evaluate(()=>window.pinote.loadState())).composerStartAsMarkdown,false);
     assert.equal(await sourceValue(composer),'');
     await composer.fill('Current plain behavior'); await composer.press('Shift+Enter');
     assert.equal(await sourceValue(composer),'# Current plain behavior\n- ','Off preserves the existing first-newline behavior');
-    await composer.fill('');
+    await composer.fill(''); await waitSavedDraft('');
     call('transition',{id:created.id,revision:created.updated_at,state:created.state,action:'rm'});
     await page.locator(`[data-id="${created.id}"]`).waitFor({state:'detached'});
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
+    // Keep this preference workflow's draft history out of the existing undo regression.
+    await page.reload(); await page.locator('.task-row').first().waitFor();
   }
   // A real persisted start precedes a deliberately held Kitty launch.
   {
@@ -757,6 +768,7 @@ try {
     assert.ok(await row.evaluate(n=>n.classList.contains('progress')),'Progress styling must precede launch completion');
     assert.equal(await row.locator('[data-row-element="done"]').count(),1,'In-progress actions must precede launch completion');
     assert.equal(await row.locator('[data-row-element="start"]').count(),0);
+    await row.scrollIntoViewIfNeeded();
     await page.screenshot({path:join(root,'kitty-started-before-launch.png')});
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:true,result:{changed:true}}));
     await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] [data-row-element="done"]`)?.disabled,id);
