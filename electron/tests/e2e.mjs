@@ -387,11 +387,105 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','task-actions','drafts','close']);
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
     assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
     await dismissNativeMenu(); await focusReturns(bottom);
+  }
+  // Task 404: configurable actions, pointer/keyboard reordering, and an independent row button.
+  {
+    const settings = page.getByRole('dialog',{name:'Task actions',exact:true});
+    const openSettings = async () => {
+      await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'task-actions');
+      await settings.waitFor();
+    };
+    const order = () => settings.locator('[data-action]').evaluateAll(rows=>rows.map(row=>row.dataset.action));
+    const original = ['kitty','copy','start','done','archive','edit','schedule','tag'];
+    const actions = page.getByRole('button',{name:`Actions for task ${first}`,exact:true});
+    const bar = page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${first}:`)});
+    const save = async () => { await settings.getByRole('button',{name:'Save task actions',exact:true}).click(); await settings.waitFor({state:'detached'}); };
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(420,580));
+    await openSettings();
+    assert.deepEqual(await order(),original);
+    await settings.getByRole('button',{name:'Reorder Copy note',exact:true}).dragTo(settings.locator('[data-action="kitty"]'),{targetPosition:{x:50,y:2}});
+    assert.deepEqual(await order(),['copy','kitty','start','done','archive','edit','schedule','tag']);
+    await settings.getByRole('button',{name:'Reorder Change tag…',exact:true}).focus();
+    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp');
+    assert.deepEqual(await order(),['copy','kitty','start','done','archive','tag','edit','schedule']);
+    assert.ok(await settings.getByRole('button',{name:'Reorder Change tag…',exact:true}).evaluate(n=>n===document.activeElement));
+    assert.equal(await settings.getByRole('radio',{name:'Use Start / Reset as row button',exact:true}).isChecked(),true,'Reordering must not change the primary action');
+    await settings.getByRole('checkbox',{name:'Show Start / Reset in menu',exact:true}).uncheck();
+    await settings.getByRole('checkbox',{name:'Show Remove to archive in menu',exact:true}).uncheck();
+    await settings.getByRole('radio',{name:'Use Copy note as row button',exact:true}).check();
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===first).state,'active','Selecting preferences must not run actions');
+    await app.evaluate(({ipcMain})=>{
+      const original=ipcMain._invokeHandlers.get('save-state');
+      ipcMain.removeHandler('save-state');
+      ipcMain.handle('save-state',(...args)=>{
+        ipcMain.removeHandler('save-state'); ipcMain.handle('save-state',original);
+        throw new Error('Injected task-action save failure');
+      });
+    });
+    await settings.getByRole('button',{name:'Save task actions',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('Injected task-action save failure'));
+    assert.equal(await settings.isVisible(),true);
+    assert.match(await page.locator(`[data-id="${first}"] .checkbox`).getAttribute('aria-label'),/: Start;/);
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await page.screenshot({path:join(root,'task-actions-settings.png')});
+    await save();
+    await page.reload(); await page.locator(`[data-id="${first}"]`).waitFor();
+    const persisted=(await page.evaluate(()=>window.pinote.loadState())).taskActions;
+    assert.deepEqual(persisted,{order:['copy','kitty','start','done','archive','tag','edit','schedule'],hidden:['start','archive'],primary:'copy'});
+    assert.deepEqual(JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote','electron','state.json'),'utf8')).taskActions,persisted);
+    await actions.click();
+    assert.deepEqual(await bar.getByRole('button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Copy note','Start in Kitty…','Complete','Change tag…','Edit text…','Set reminder…','Close task actions']);
+    await page.screenshot({path:join(root,'task-actions-custom-order.png')});
+    await page.keyboard.press('Escape');
+    const expected=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+    await page.locator(`[data-id="${first}"]`).getByRole('button',{name:new RegExp(`^Task ${first}: Copy note;`)}).click();
+    for(let i=0;i<100;i++) {
+      if(await app.evaluate(({clipboard})=>clipboard.readText())===expected.text) break;
+      await page.waitForTimeout(10);
+    }
+    assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),expected.text);
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===first).updated_at,expected.updated_at);
+    await openSettings();
+    await settings.getByRole('radio',{name:'Use Start in Kitty… as row button',exact:true}).check(); await save();
+    await app.evaluate(({dialog})=>{
+      globalThis.__originalFolderDialog=dialog.showOpenDialog; globalThis.__folderCalls=0;
+      dialog.showOpenDialog=()=>{globalThis.__folderCalls++; return new Promise(resolve=>{globalThis.__cancelFolder=()=>resolve({canceled:true,filePaths:[]});});};
+    });
+    const kittyButton=page.locator(`[data-id="${first}"] .checkbox`);
+    await kittyButton.click({clickCount:2});
+    await page.waitForFunction(id=>document.querySelector(`[data-id="${id}"] .checkbox`)?.disabled,first);
+    assert.equal(await app.evaluate(()=>globalThis.__folderCalls),1,'Kitty row button must not dispatch duplicate launches');
+    await app.evaluate(({dialog})=>{globalThis.__cancelFolder(); dialog.showOpenDialog=globalThis.__originalFolderDialog;});
+    await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] .checkbox`)?.disabled,first);
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===first).updated_at,expected.updated_at,'Cancelling the Kitty chooser must leave the task unchanged');
+    await openSettings();
+    await settings.getByRole('radio',{name:'Use Copy note as row button',exact:true}).check();
+    for(const checkbox of await settings.getByRole('checkbox').all()) await checkbox.uncheck();
+    await save(); await actions.click();
+    assert.deepEqual(await bar.getByRole('button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['Close task actions']);
+    await page.keyboard.press('Escape');
+    assert.match(await page.locator(`[data-id="${first}"] .checkbox`).getAttribute('aria-label'),/: Copy note;/);
+    await openSettings();
+    await settings.getByRole('button',{name:'Restore default task actions',exact:true}).click();
+    await page.keyboard.press('Escape');
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).taskActions.hidden.length,8,'Escape discards unsaved defaults');
+    await openSettings();
+    await settings.getByRole('button',{name:'Restore default task actions',exact:true}).click();
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(280,240));
+    await page.waitForFunction(()=>innerWidth===280);
+    assert.ok(await settings.evaluate(panel=>panel.scrollWidth<=panel.clientWidth),'Settings must not clip horizontally');
+    await settings.getByRole('button',{name:'Reorder Change tag…',exact:true}).focus();
+    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowDown');
+    await settings.evaluate(panel=>{panel.scrollTop=0;});
+    await page.screenshot({path:join(root,'task-actions-settings-narrow.png')});
+    await save();
+    assert.deepEqual((await page.evaluate(()=>window.pinote.loadState())).taskActions,{order:original,hidden:[],primary:'start'});
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
   await page.locator(`[data-id="${first}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
   await page.getByRole('dialog').waitFor();

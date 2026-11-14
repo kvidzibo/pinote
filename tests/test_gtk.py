@@ -2486,6 +2486,41 @@ def test_entry_selection_and_scrollbar_keep_native_behavior(gtk, monkeypatch):
     assert clipboard.wait_for_text() == "Keep clipboard"
 
 
+def test_growth_moves_above_bottom_anchor_before_requesting_resize(gtk, monkeypatch):
+    window = gtk.open()
+    anchor = (window.anchor_x, window.anchor_bottom)
+    resize = window.resize
+    requests = []
+
+    def clamp_like_wm(width, height):
+        # i3 may clamp an overflowing resize before GTK can process its ack.
+        # Record and apply that move as a configure event, not a user drag.
+        window.get_display().sync()
+        x, y = window.get_position()
+        area = window.get_display().get_monitor_at_window(window.get_window()).get_workarea()
+        requests.append((y, height))
+        if y + height > area.y + area.height:
+            y = area.y + area.height - height
+            window.move(x, y)
+            window.get_display().sync()
+            window._on_configure(window, SimpleNamespace(x=x, y=y, width=width, height=height))
+        resize(width, height)
+
+    monkeypatch.setattr(window, "resize", clamp_like_wm)
+    with Store(gtk.paths.database) as store:
+        for index in range(5):
+            store.add(f"Reminder {index}")
+    window._poll()
+    wait_until(
+        gtk.glib,
+        lambda: len(window.rows) == 5 and not window.pending and not window.geometry_source,
+    )
+    wait_until(gtk.glib, lambda: window.get_position()[1] + window.get_size().height == anchor[1])
+    assert requests
+    assert all(y + height <= anchor[1] for y, height in requests)
+    assert (window.anchor_x, window.anchor_bottom) == anchor
+
+
 @pytest.mark.parametrize("concurrent_resize", [False, True])
 def test_manual_move_becomes_new_bottom_anchor_for_growth(gtk, concurrent_resize):
     window = gtk.open()

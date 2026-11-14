@@ -26,16 +26,20 @@ export type Operations = {
 };
 export type Operation = keyof Operations;
 export type Result<T> = { protocol: 1; ok: true; result: T; warning?: string } | { protocol: 1; ok: false; error: { code: 'invalid' | 'conflict' | 'busy' | 'internal' | 'unknown'; message: string } };
+export const TASK_ACTION_IDS = ['kitty','copy','start','done','archive','edit','schedule','tag'] as const;
+export type TaskActionId = typeof TASK_ACTION_IDS[number];
+export type TaskActionSettings = { order: TaskActionId[]; hidden: TaskActionId[]; primary: TaskActionId };
+export const defaultTaskActions = (): TaskActionSettings => ({ order: [...TASK_ACTION_IDS], hidden: [], primary: 'start' });
 export type EditDraft = { text: string; revision: string };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  edits: Record<string, EditDraft>; warning: string;
+  edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'task-actions' | 'drafts' | 'close';
 export type PinoteApi = BackendApi & {
   popupMenu(request: MenuRequest): Promise<MenuAction | null>;
   loadState(): Promise<UIState>; saveState(state: UIState): Promise<void>; acknowledgeWarning(): Promise<boolean>;

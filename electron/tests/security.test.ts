@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState } from '../src/protocol.ts';
+import { defaultTaskActions, initialState, TASK_ACTION_IDS } from '../src/protocol.ts';
 import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validState } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
@@ -23,6 +23,45 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   for (const result of [null, {}, {changed:true}, {changed:false,id:1}]) assert.ok(!validEnvelope('add', {protocol:1,ok:true,result}));
   assert.ok(validEnvelope('add', {protocol:1,ok:true,result:{changed:true,id:1}}));
   assert.ok(!validEnvelope('snapshot', {protocol:1,ok:true,result:{notes:[],tags:[]}}));
+});
+
+test('task action preferences are bounded, optional and independently defaulted', () => {
+  const legacy = initialState();
+  const serialized = JSON.stringify(legacy);
+  assert.ok(!Object.hasOwn(legacy, 'taskActions'));
+  assert.ok(validState(legacy));
+  assert.equal(JSON.stringify(legacy), serialized);
+  const defaults = defaultTaskActions();
+  assert.deepEqual(defaults, { order: [...TASK_ACTION_IDS], hidden: [], primary: 'start' });
+  assert.ok(validState({ ...legacy, taskActions: defaults }));
+  assert.ok(validState({ ...legacy, taskActions: { order: [...TASK_ACTION_IDS].reverse(), hidden: ['kitty', 'done'], primary: 'done' } }));
+  assert.ok(validState({ ...legacy, taskActions: { ...defaults, hidden: [...TASK_ACTION_IDS] } }));
+  for (const taskActions of [
+    null, undefined, [], 'start', {},
+    { order: defaults.order, hidden: [] },
+    { order: defaults.order, primary: 'start' },
+    { hidden: [], primary: 'start' },
+    { ...defaults, extra: true },
+    { ...defaults, order: defaults.order.slice(1) },
+    { ...defaults, order: [...defaults.order, 'kitty'] },
+    { ...defaults, order: defaults.order.map(() => 'kitty') },
+    { ...defaults, order: [...defaults.order.slice(1), 'unknown'] },
+    { ...defaults, order: Array(8) },
+    { ...defaults, hidden: ['copy', 'copy'] },
+    { ...defaults, hidden: ['unknown'] },
+    { ...defaults, hidden: Array(1) },
+    { ...defaults, hidden: null },
+    { ...defaults, hidden: 'copy' },
+    { ...defaults, primary: 'unknown' },
+    { ...defaults, primary: null },
+  ]) assert.ok(!validState({ ...legacy, taskActions }), JSON.stringify(taskActions));
+  const other = defaultTaskActions();
+  defaults.order.reverse();
+  defaults.hidden.push('start');
+  defaults.primary = 'done';
+  assert.deepEqual(other, { order: [...TASK_ACTION_IDS], hidden: [], primary: 'start' });
+  assert.deepEqual(defaultTaskActions(), other);
+  assert.deepEqual(initialState(), legacy);
 });
 
 test('a full draft payload reserves space for the largest escaped recovery warning', () => {

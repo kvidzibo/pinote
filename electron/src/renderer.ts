@@ -1,5 +1,6 @@
 import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
-import { initialState } from './protocol';
+import { defaultTaskActions, initialState } from './protocol';
+import type { TaskActionId, TaskActionSettings } from './protocol';
 // The optional frontend bundles markdown-it; raw HTML and resource loading are disabled.
 import MarkdownIt from 'markdown-it';
 
@@ -35,7 +36,7 @@ const icons = {
   filter: 'view-filter', clear: 'view-filter-clear', all: 'edit-select-all',
   preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu',
   close: 'window-close', kitty: 'utilities-terminal', schedule: 'preferences-system-notifications',
-  collapse: 'view-collapse', expand: 'view-expand', move: 'move',
+  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle',
 } as const;
 type Icon = keyof typeof icons;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
@@ -53,7 +54,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions') ? Math.max(480, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -194,6 +195,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
+    if (kind === 'task-actions') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, item.close)); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
@@ -265,6 +267,7 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'scheduled': auxiliary('scheduled'); break;
     case 'archive': auxiliary('archive'); break;
     case 'manage-tags': manageTags(); break;
+    case 'task-actions': configureTaskActions(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
   }
@@ -280,12 +283,16 @@ function makeRow(task: Task): HTMLElement {
   const row = el('article', undefined, `task-row${isProgress(task) ? ' progress' : ''}${marked.has(task.id) ? ' marked' : ''}`);
   row.dataset.id = String(task.id);
   const mark = marked.has(task.id);
-  const checkbox = button(mark ? 'trash' : isProgress(task) ? 'done' : 'start', `Task ${task.id}: ${mark ? 'Cancel deletion mark' : isProgress(task) ? 'Complete' : 'Start'}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
-    if (mark) { marked.delete(task.id); renderTasks(); } else void track(transition(task, isProgress(task) ? 'done' : 'start'));
-  }, readonly || busyTasks.has(task.id));
+  const primary = (state.taskActions ?? defaultTaskActions()).primary;
+  const action = taskAction(task, primary === 'start' && isProgress(task) ? 'done' : primary);
+  const checkbox = button(mark ? 'trash' : action.icon, `Task ${task.id}: ${mark ? 'Cancel deletion mark' : action.label}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`, () => {
+    if (mark) { marked.delete(task.id); renderTasks(); } else return runTaskAction(task, action.id);
+  }, mark ? readonly || busyTasks.has(task.id) : actionBlocked(task, action.id));
   checkbox.classList.add('checkbox');
   if (!mark) checkbox.classList.add(isProgress(task) ? 'in-progress-check' : 'empty-check');
-  checkbox.setAttribute('role', 'checkbox'); checkbox.setAttribute('aria-checked', isProgress(task) ? 'mixed' : 'false');
+  if (primary === 'start' && !mark) {
+    checkbox.setAttribute('role', 'checkbox'); checkbox.setAttribute('aria-checked', isProgress(task) ? 'mixed' : 'false');
+  }
   checkbox.addEventListener('contextmenu', e => {
     e.preventDefault();
     if (readonly || busyTasks.has(task.id)) return;
@@ -318,7 +325,7 @@ function renderTasks(): void {
   let restoreActionFocus: number | undefined;
   if (opened) {
     const task = active.notes.find(t => t.id === opened.task.id && visible(t));
-    const key = task && JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly]);
+    const key = task && JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly, state.taskActions]);
     if (!task || rowKeys.get(task.id) !== key || exiting.has(task.id)) {
       if (rowNodes.get(opened.task.id)?.contains(document.activeElement)) restoreActionFocus = opened.task.id;
       closeTaskActions(false);
@@ -329,7 +336,7 @@ function renderTasks(): void {
   for (const task of active.notes) {
     if (!visible(task)) continue;
     wanted.add(task.id);
-    const key = JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly]);
+    const key = JSON.stringify([task, state.read[String(task.id)], marked.get(task.id), busyTasks.has(task.id), readonly, state.taskActions]);
     let row = rowNodes.get(task.id);
     // Keep the exit node until its timer finishes, even if busy clears before refresh.
     if (!row || (!exiting.has(task.id) && rowKeys.get(task.id) !== key)) { const next = makeRow(task); row?.replaceWith(next); row = next; rowNodes.set(task.id, row); rowKeys.set(task.id, key); }
@@ -402,15 +409,12 @@ function openTaskActions(task: Task, source: HTMLElement): void {
   taskActions = { task, source };
   const bar = el('div', undefined, 'task-actions');
   bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for task ${task.id}: ${task.text.split('\n')[0]}`);
-  const disabled = readonly || busyTasks.has(task.id);
-  const action = (icon: Icon, label: string, id: TaskAction, blocked = disabled) => button(icon, label, () => runTaskAction(task, id), blocked);
-  const separator = () => { const node = el('span', undefined, 'action-separator'); node.setAttribute('aria-hidden', 'true'); return node; };
-  bar.append(
-    action('kitty', 'Start in Kitty…', 'kitty'), action('copy', 'Copy note', 'copy', false), separator(),
-    action(isProgress(task) ? 'reset' : 'start', isProgress(task) ? 'Reset progress' : 'Start', isProgress(task) ? 'reset' : 'start'),
-    action('done', 'Complete', 'done'), action('remove', 'Remove to archive', 'archive'), separator(),
-    action('edit', 'Edit text…', 'edit', false), action('schedule', 'Set reminder…', 'schedule'), action('tag', 'Change tag…', 'tag'),
-  );
+  const settings = state.taskActions ?? defaultTaskActions();
+  for (const id of settings.order) {
+    if (settings.hidden.includes(id)) continue;
+    const action = taskAction(task, id);
+    bar.append(button(action.icon, action.label, () => runTaskAction(task, action.id), actionBlocked(task, action.id)));
+  }
   bar.append(button('close', 'Close task actions', () => closeTaskActions()));
   const enabled = Array.from(bar.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
   for (const b of bar.querySelectorAll('button')) b.tabIndex = -1;
@@ -425,7 +429,114 @@ function openTaskActions(task: Task, source: HTMLElement): void {
   row.querySelector<HTMLElement>('.task-content')!.hidden = true;
   row.append(bar); renderSelected(); enabled[0].focus({ preventScroll: true });
 }
-type TaskAction = 'kitty' | 'copy' | 'start' | 'reset' | 'done' | 'archive' | 'edit' | 'tag' | 'schedule';
+type TaskAction = TaskActionId | 'reset';
+const actionChoices: Record<TaskActionId, { icon: Icon; label: string }> = {
+  kitty: { icon: 'kitty', label: 'Start in Kitty…' }, copy: { icon: 'copy', label: 'Copy note' },
+  start: { icon: 'start', label: 'Start / Reset' }, done: { icon: 'done', label: 'Complete' },
+  archive: { icon: 'remove', label: 'Remove to archive' }, edit: { icon: 'edit', label: 'Edit text…' },
+  schedule: { icon: 'schedule', label: 'Set reminder…' }, tag: { icon: 'tag', label: 'Change tag…' },
+};
+function taskAction(task: Task, id: TaskActionId): { id: TaskAction; icon: Icon; label: string } {
+  if (id === 'start') return isProgress(task)
+    ? { id: 'reset', icon: 'reset', label: 'Reset progress' }
+    : { id: 'start', icon: 'start', label: 'Start' };
+  return { id, ...actionChoices[id] };
+}
+function actionBlocked(task: Task, id: TaskAction): boolean {
+  return id !== 'copy' && id !== 'edit' && (readonly || busyTasks.has(task.id));
+}
+function configureTaskActions(): void {
+  const existing = layers.find(l => l.kind === 'task-actions');
+  if (existing) { existing.panel.focus(); return; }
+  const modal = layer('Task actions', 'task-actions');
+  modal.panel.classList.add('action-settings');
+  let draft: TaskActionSettings = structuredClone(state.taskActions ?? defaultTaskActions());
+  let dragging: TaskActionId | undefined, saving = false;
+  modal.panel.append(el('p', 'Drag to reorder, or focus a handle and use ↑ / ↓. Choose visible actions and one row button.', 'settings-hint'));
+  const list = el('div', undefined, 'action-settings-list');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Task action preferences');
+  const heading = el('div', undefined, 'action-setting headings');
+  heading.append(el('span'), el('span', 'Action'), el('span', 'In menu'), el('span', 'Button'));
+  modal.panel.append(heading, list);
+  const status = el('span', undefined, 'sr-only'); status.setAttribute('aria-live', 'polite'); modal.panel.append(status);
+  const clearDrop = () => { for (const row of list.children) row.classList.remove('drop-before', 'drop-after'); };
+  const move = (id: TaskActionId, to: number) => {
+    const from = draft.order.indexOf(id);
+    if (from === to || to < 0 || to >= draft.order.length) return;
+    draft.order.splice(from, 1); draft.order.splice(to, 0, id);
+    draw(id);
+    status.textContent = `${actionChoices[id].label}, position ${to + 1} of ${draft.order.length}`;
+  };
+  const draw = (focus?: TaskActionId) => {
+    const top = modal.panel.scrollTop;
+    list.replaceChildren();
+    for (const id of draft.order) {
+      const choice = actionChoices[id];
+      const row = el('div', undefined, 'action-setting'); row.dataset.action = id;
+      const handle = button('grip', `Reorder ${choice.label}`, () => undefined, readonly || saving);
+      handle.className = 'action-drag'; handle.draggable = !readonly && !saving;
+      handle.title = `Drag to reorder ${choice.label}; ↑ / ↓ to move`;
+      handle.setAttribute('aria-description', 'Drag, or press Arrow Up or Arrow Down to reorder.');
+      handle.addEventListener('keydown', event => {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+        event.preventDefault(); move(id, draft.order.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1));
+      });
+      handle.addEventListener('dragstart', event => {
+        if (readonly || saving || !event.dataTransfer) { event.preventDefault(); return; }
+        dragging = id; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', id);
+      });
+      handle.addEventListener('dragend', () => { dragging = undefined; clearDrop(); });
+      row.addEventListener('dragover', event => {
+        if (!dragging || readonly || saving) return;
+        event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        clearDrop();
+        const rect = row.getBoundingClientRect();
+        row.classList.add(event.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after');
+      });
+      row.addEventListener('dragleave', event => { if (!row.contains(event.relatedTarget as Node | null)) row.classList.remove('drop-before', 'drop-after'); });
+      row.addEventListener('drop', event => {
+        if (!dragging || readonly || saving) return;
+        event.preventDefault();
+        const from = draft.order.indexOf(dragging), rect = row.getBoundingClientRect();
+        const at = draft.order.indexOf(id) + (event.clientY < rect.top + rect.height / 2 ? 0 : 1);
+        const moved = dragging; dragging = undefined; clearDrop(); move(moved, at > from ? at - 1 : at);
+      });
+      const label = el('span', undefined, 'action-name'), icon = el('img');
+      icon.src = `icons/${icons[choice.icon]}-symbolic.svg`; icon.alt = '';
+      label.append(icon, el('span', choice.label));
+      const shown = el('input'); shown.type = 'checkbox'; shown.checked = !draft.hidden.includes(id);
+      shown.setAttribute('aria-label', `Show ${choice.label} in menu`); shown.title = `Show ${choice.label} in menu`;
+      shown.disabled = readonly || saving;
+      shown.addEventListener('change', () => { draft.hidden = shown.checked ? draft.hidden.filter(value => value !== id) : [...draft.hidden, id]; });
+      const primary = el('input'); primary.type = 'radio'; primary.name = 'task-row-action'; primary.checked = draft.primary === id;
+      primary.setAttribute('aria-label', `Use ${choice.label} as row button`); primary.title = `Use ${choice.label} as row button`;
+      primary.disabled = readonly || saving;
+      primary.addEventListener('change', () => { if (primary.checked) draft.primary = id; });
+      row.append(handle, label, shown, primary); list.append(row);
+    }
+    modal.panel.scrollTop = top;
+    if (focus) {
+      const handle = list.querySelector<HTMLButtonElement>(`[data-action="${focus}"] .action-drag`);
+      handle?.focus({ preventScroll: true }); handle?.scrollIntoView({ block: 'nearest' });
+    }
+  };
+  modal.panel.append(el('p', 'Applies to all task rows. Default Start becomes Complete in progress. The row button works even if hidden from the menu.', 'settings-hint'));
+  const bar = controls(modal.panel);
+  const reset = button('reset', 'Restore default task actions', () => { if (readonly || saving) return; draft = defaultTaskActions(); draw(); }, readonly);
+  const save = button('save', 'Save task actions', async () => {
+    if (readonly || closing || saving || !stateLoaded) return;
+    saving = true; reset.disabled = save.disabled = true; draw();
+    const previous = state.taskActions;
+    state.taskActions = structuredClone(draft);
+    try {
+      await persist(); closeTaskActions(false); renderTasks(); modal.close();
+    } catch (error) {
+      state.taskActions = previous; renderTasks();
+      throw error;
+    } finally { saving = false; reset.disabled = save.disabled = readonly; if (layers.includes(modal)) draw(); }
+  }, readonly);
+  bar.append(reset, save); draw(); fitWindow();
+}
 async function runTaskAction(task: Task, action: TaskAction): Promise<void> {
   closeTaskActions();
   if (closing) return;
@@ -441,12 +552,16 @@ async function runTaskAction(task: Task, action: TaskAction): Promise<void> {
   }
 }
 async function startKitty(task: Task): Promise<void> {
-  const folder = active?.tags.find(t => t.name === task.tag)?.folder;
-  const available = active?.tags.find(t => t.name === task.tag)?.available;
-  const directory = folder && available !== false ? folder : await chooseFolder();
-  if (!directory) return;
-  // call() owns uncertain-outcome recovery; do not replace its acknowledgement action.
-  await call('kitty', { ...target(task), directory });
+  if (readonly || busyTasks.has(task.id)) return;
+  busyTasks.add(task.id); renderTasks();
+  try {
+    const folder = active?.tags.find(t => t.name === task.tag)?.folder;
+    const available = active?.tags.find(t => t.name === task.tag)?.available;
+    const directory = folder && available !== false ? folder : await chooseFolder();
+    if (!directory) return;
+    // call() owns uncertain-outcome recovery; do not replace its acknowledgement action.
+    await call('kitty', { ...target(task), directory });
+  } finally { busyTasks.delete(task.id); renderTasks(); }
 }
 
 // Markdown tokens become only known DOM elements. No HTML, style, or event attributes are copied.

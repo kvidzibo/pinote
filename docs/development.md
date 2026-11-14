@@ -38,6 +38,12 @@ on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK 
 against the built wheel (including its bundled stylesheet and isolated i3 placement).
 GTK regressions also exercise manual window moves during geometry synchronization.
 
+On PRs, the standalone GTK job runs when the complete PR diff changes Python
+source (`src/`), Python tests (`tests/`), scripts, `pyproject.toml`, `uv.lock`, or
+GitHub configuration (`.github/`). Electron-, Pi-, and docs-only changes skip
+that job. Deleted and renamed paths count. Release runs keep the full suite,
+and Electron's GTK coexistence checks remain enabled.
+
 ## Electron frontend
 
 The [experimental Electron guide](electron.md) covers installation, state,

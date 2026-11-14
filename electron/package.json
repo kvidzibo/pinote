@@ -1,6 +1,6 @@
 {
   "name": "pinote-electron",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Optional isolated desktop frontend for Pinote's Python backend",

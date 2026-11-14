@@ -56,6 +56,15 @@ Icons are bundled rather than taken from the host icon theme.
   activate. **Close**, **Escape**, or clicking outside restores the task text;
   **Tab** out also dismisses the toolbar without closing Pinote.
   Right-click an in-progress task's checkmark to reset progress.
+- **Menu → Task actions…** configures the inline right-click actions. Toggle
+  **In menu** to show/hide items; drag a handle to reorder them, or focus the
+  handle and use **↑/↓**. Choose one **Button** action to replace Start on task
+  rows. The default Start button still becomes Complete in progress; other
+  choices remain the selected action for all rows, even when hidden from the
+  menu. Right-click row-button shortcuts remain unchanged.
+  **Save** applies the settings to all rows; **Escape/Close** discards unsaved
+  changes. **Restore defaults** resets the form; save to apply it. Selecting or
+  reordering an action does not run it. These preferences affect Electron only.
 - Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
   menu includes draft recovery; stale drafts must be copied/reconciled rather
   than silently overwriting a changed task.
@@ -66,8 +75,8 @@ Icons are bundled rather than taken from the host icon theme.
   count includes all visible tasks, including in-progress tasks that remain
   visible regardless of tag filters.
 - The bottom menu opens beside its button and provides scheduled reminders,
-  Archive (including restore), tag management, and draft recovery. It remains a
-  native popup menu, which can adjust its placement at screen edges and extend
+  Archive (including restore), tag management, task-action settings, and draft
+  recovery. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
 - The task row's eye opens a safe Markdown preview, including agent fields
   and unread updates. Raw HTML and remote images are not loaded. Supported links
@@ -90,9 +99,10 @@ alongside each other. Electron does not copy tasks into a separate frontend
 database. Each frontend refreshes external changes; stale saves are refused. Roll back by closing Electron and reopening
 GTK; task data needs no conversion.
 
-With the default database location, Electron stores drafts, tag filters, and
-agent read cursors in `<data>/pinote/electron/state.json`, and window geometry
-in `<data>/pinote/electron/window.json`. These live in an `electron/` directory beside the discovered database; there
+With the default database location, Electron stores drafts, tag filters,
+task-action preferences, and agent read cursors in
+`<data>/pinote/electron/state.json`, and window geometry in
+`<data>/pinote/electron/window.json`. These live in an `electron/` directory beside the discovered database; there
 is no renderer-selected database path. Electron's runtime profile/single-instance lock lives in `<data>/pinote/electron/profile/`.
 Session data and `app.log` live under `<state>/pinote/electron/<databasehash>/`;
 early startup errors use `<state>/pinote/electron/app.log`. `<data>` and `<state>` use
