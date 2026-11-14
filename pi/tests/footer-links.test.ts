@@ -74,7 +74,7 @@ test("PR number displays recognize Forgejo without granting host trust or normal
   const github = "https://github.com/org/repo/pull/42";
   const forgejo = "https://forgejo.example/instance/org/repo/pulls/42";
   for (const url of [github, forgejo, "https://evil.test/org/repo/pulls/42", "https://code.example:8443/a/b/org/repo/pulls/42"]) {
-    for (const PR of [url, `[Review](${url})`, `${url}/`]) {
+    for (const PR of [url, `[Review](${url})`, `${url}/`, ` ${url} `, `${url}\n`]) {
       assert.deepEqual(taskPR({ id: 1, state: "active", updated_at: "r1", agent_notes: { PR } }), { url, number: "42" });
       const rendered = renderFooterLinks(customFooterChips({ PR }, config), color)!;
       assert.equal(stripVTControlCharacters(rendered), "#42");
@@ -86,7 +86,7 @@ test("PR number displays recognize Forgejo without granting host trust or normal
     "http://forgejo.example/org/repo/pulls/42", "https://user:pass@forgejo.example/org/repo/pulls/42",
     "https://@forgejo.example/org/repo/pulls/42", "https://forgejo.example:bad/org/repo/pulls/42",
     `${forgejo}?x=1`, `${forgejo}#x`, `${forgejo}/files`, `${forgejo}extra`,
-    `${forgejo} `, ` ${forgejo}`, `${forgejo}\n`, `${forgejo}\x1b[31m`, `${forgejo}\u009d`,
+    `${forgejo}\x1b[31m`, `${forgejo}\u009d`,
     forgejo.replace("instance", "."), forgejo.replace("instance", ".."),
     forgejo.replace("instance", "%2e%2e"), forgejo.replace("/org", "\\org"),
     forgejo.replace("42", "9007199254740992"), forgejo.replace("42", "0"), forgejo.replace("42", "042"),

@@ -1,5 +1,6 @@
 // Display recognition only: this does not authorize network access to any host.
 export function parsePR(value: string): { url: string; number: string } | undefined {
+  value = value.trim();
   if (!value || value.length > 2048 || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) return;
   const url = /^\[[^\[\]\r\n]*\]\(([^\s]+)\)$/u.exec(value)?.[1] ?? value;
   if (/[\s\\?#]/u.test(url)) return;

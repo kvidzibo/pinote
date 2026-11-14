@@ -230,8 +230,8 @@ Each watcher handles task-field changes and scheduled checks independently.
 
 The bundled GitHub PR watcher triggers the owning Pi worker to investigate and fix
 failed CI or merge conflicts. Repeated unchanged failures are deduplicated; busy
-workers wait until idle and recheck current state before acting. Merged PRs are
-struck through in the footer, retain their links and stop polling; tasks are not
+workers wait until idle and recheck current state before acting. Merged PRs use
+the theme accent (default purple), retain their links and stop polling; tasks are not
 completed. Requires authenticated `gh`, Node and **note 0.24.0+** on the service.
 The **Forgejo PR** watcher supports configured HTTPS instances and service-side
 API tokens without `gh`; it alerts on failed CI and styles merged/closed PRs.
