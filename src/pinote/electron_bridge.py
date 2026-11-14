@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from contextlib import redirect_stdout
@@ -234,7 +235,7 @@ def dispatch(op: str, p: dict, paths: Paths) -> object:
             note = store.get(p["id"])
             if note.updated_at != p["revision"] or note.state not in {"active", "in_progress"}:
                 conflict()
-            summary = note.text.splitlines()[0][:30]
+            summary = re.sub(r"^ {0,3}#{1,6}[ \t]+", "", note.text.splitlines()[0])[:30]
             title = (f"[{note.tag}] {summary}" if note.tag else summary).strip()
             try:
                 start_in_kitty(p["directory"], note, title, config.kitty_start_prompt)
