@@ -1037,7 +1037,7 @@ try {
   assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
   assert.deepEqual(pageErrors,[]);
   // Submit in the same event-loop turn as paste: no debounce may be required for safety.
-  const reopen=async()=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator('.task-row').first().waitFor();await installNativeMenuProbe();return p;};
+  const reopen=async(collapsed=false)=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator(collapsed?'#draft':'.task-row').first().waitFor();await installNativeMenuProbe();return p;};
   const close=async()=>{const done=app.waitForEvent('close');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await done;app=undefined;};
   let reopened=await reopen();
   // Restore working state together, not just text: the draft must retain its tag.
@@ -1062,8 +1062,7 @@ try {
     await reopened.getByRole('button',{name:'Collapse checklist',exact:true}).click();
     await close(); // Flushes even changes made inside the debounce period.
     // A collapsed restart intentionally has no visible task rows.
-    app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});
-    reopened=await app.firstWindow(); await installNativeMenuProbe();
+    reopened=await reopen(true);
     await reopened.getByRole('button',{name:'Expand checklist',exact:true}).waitFor();
     await reopened.waitForTimeout(350);
     assert.equal(await reopened.locator('#checklist').isVisible(),false);
@@ -1082,6 +1081,15 @@ try {
     await reopened.waitForFunction(()=>document.querySelector('#draft .cm-placeholder'));
     const addedAfterRestart=call('snapshot',{view:'active'}).notes.find(n=>n.text==='Restart keeps the draft and its tag');
     assert.equal(addedAfterRestart?.tag,'Work');
+    // Moving the collapsed window to the top must not clamp its hidden expanded rectangle.
+    await reopened.getByRole('button',{name:'Collapse checklist',exact:true}).click();
+    await reopened.waitForTimeout(200);
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setPosition(110,0));
+    await close(); reopened=await reopen(true);
+    await reopened.getByRole('button',{name:'Expand checklist',exact:true}).waitFor();
+    await reopened.waitForTimeout(350);
+    assert.equal((await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds())).y,0);
+    await reopened.getByRole('button',{name:'Expand checklist',exact:true}).click();
     // Clearing the creation tag and selecting All must survive another restart too.
     await reopened.getByRole('button',{name:'New-task tag: Work',exact:true}).click({button:'right'});
     await reopened.getByRole('button',{name:/^Filter by tag:/}).click();
@@ -1321,6 +1329,16 @@ try {
   assert.equal(loadedRecovery.warning,retriedRecovery.warning);
   assert.doesNotMatch(loadedRecovery.warning,/cannot be read safely/);
   await close();
+  // Unreadable drafts are protected, but best-effort geometry must not trap recovery on close.
+  await writeFile(join(stateDir,'state.json'),'corrupt draft JSON — preserve me');
+  await chmod(stateDir,0o500);
+  try {
+    reopened=await reopen();
+    await reopened.getByText(/Electron state\/drafts cannot be read safely/).first().waitFor();
+    await reopened.waitForTimeout(350);
+    await close();
+    assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
+  } finally { await chmod(stateDir,0o700); }
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally {

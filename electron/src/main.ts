@@ -21,7 +21,7 @@ let activeMenu: Menu | undefined;
 let state = initialState();
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
-let stateWrites = Promise.resolve(); let tasks = Promise.resolve();
+let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
 const log = (message: string) => {
@@ -77,9 +77,11 @@ function saveGeometry() {
   if (!window || !geometryReady) return;
   const current = window.getBounds();
   fullSize = { width: current.width, height: collapsed ? fullSize.height : current.height };
-  const geometry = { ...fullSize, x: current.x, y: current.y + current.height - fullSize.height, manualSize };
-  stateWrites = stateWrites.catch(() => {}).then(() => atomic(join(dataDir, 'window.json'), geometry));
-  return stateWrites;
+  const geometry = { ...fullSize, x: current.x, y: current.y, manualSize };
+  // Geometry is best-effort; it must not poison draft writes or trap a read-only window.
+  geometryWrites = geometryWrites.then(() => atomic(join(dataDir, 'window.json'), geometry))
+    .catch(() => log('Cannot save Electron window geometry.'));
+  return geometryWrites;
 }
 
 function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
@@ -155,11 +157,11 @@ async function boot() {
     if (Number.isFinite(size.width) && Number.isFinite(size.height)) { fullSize = { width: Math.max(280, Math.min(size.width,area.width)), height: Math.max(120,Math.min(size.height,area.height)) }; manualSize = size.manualSize !== false; }
   } catch { /* Missing/invalid geometry never damages drafts or task data. */ }
   const x = Math.max(area.x, Math.min(position?.x ?? area.x + 25, area.x + area.width - fullSize.width));
-  const y = Math.max(area.y, Math.min(position?.y ?? area.y + area.height - fullSize.height - 25, area.y + area.height - fullSize.height));
   collapsed = state.collapsed ?? false;
   const height = collapsed ? 132 : fullSize.height;
-  const bottom = y + fullSize.height;
-  window = new BrowserWindow({ width: fullSize.width, height, x, y: bottom - height,
+  const y = Math.max(area.y, Math.min(position?.y ?? area.y + area.height - height - 25, area.y + area.height - height));
+  const bottom = y + height;
+  window = new BrowserWindow({ width: fullSize.width, height, x, y,
     minWidth: 280, minHeight: 120, type: 'utility', frame: false, show: false, title: 'Pinote Electron', backgroundColor: '#232832', alwaysOnTop: true,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
   });
@@ -199,11 +201,11 @@ async function boot() {
   window.on('resize', () => {
     if (!window || !geometryReady || changingSize || collapsed) return;
     manualSize = true;
-    void saveGeometry()?.catch(() => log('Cannot save Electron window geometry.'));
+    void saveGeometry();
   });
   window.on('move', () => {
     if (changingSize) return;
-    void saveGeometry()?.catch(() => log('Cannot save Electron window geometry.'));
+    void saveGeometry();
   });
   window.on('close', event => {
     if (exiting) return;
@@ -245,7 +247,7 @@ async function boot() {
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height); },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
     'cancel-close': () => { if (!exiting) closing = false; },
-    'finish-close': async () => { await tasks; await saveGeometry(); await stateWrites; exiting = true; window?.destroy(); app.quit(); },
+    'finish-close': async () => { await tasks; await stateWrites; await saveGeometry(); exiting = true; window?.destroy(); app.quit(); },
   };
   for (const [name, handler] of Object.entries(handlers)) ipcMain.handle(name, (event,...args) => { trusted(event); return handler(event,...args); });
   await window.loadURL(`${origin}/index.html`);
