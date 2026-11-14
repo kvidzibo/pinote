@@ -1,7 +1,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { dirname, isAbsolute } from 'node:path';
-import { privateDirectory, privateFile, resolvePath } from './runtime.ts';
-import { NoteError, validate_text, validate_tag, validate_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON } from './compat.ts';
+import { privateDirectory, privateFile, resolvePath, checkCancelled } from './runtime.ts';
+import { NoteError, validate_text, validate_tag, validate_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch } from './compat.ts';
 import * as schema from './schema.ts';
 export { NoteError, markdown } from './compat.ts';
 export type Id = bigint;
@@ -17,14 +17,13 @@ function noteFromRow(row:Row):Note { return {tag:null,remind_at:null,reminder_du
 
 export class Store {
   public connection:DatabaseSync;
-  constructor(path:string) {
+  constructor(path:string, options:{timeout?:number}={}) {
     privateDirectory(dirname(path)); privateFile(path);
     this.connection=new DatabaseSync(path);
     try {
-      // DatabaseSync cannot process cancellation while waiting inside SQLite.
-      // Compliant writers serialize through display.lock; other contention must
-      // fail before the mutation, never unblock and commit after a caller stops.
-      this.connection.exec('PRAGMA busy_timeout = 0');
+      const timeout=options.timeout??10;
+      if(!Number.isFinite(timeout)||timeout<0) throw new RangeError('timeout must be nonnegative');
+      this.connection.exec(`PRAGMA busy_timeout = ${Math.min(2147483647,Math.floor(timeout*1000))}`);
       this.connection.exec('PRAGMA foreign_keys = ON');
       if(this.row('PRAGMA user_version')!.user_version!==8n) this.transaction(()=>{
         const version=Number(this.row('PRAGMA user_version')!.user_version);
@@ -42,8 +41,17 @@ export class Store {
   row(sql:string,...params:SQLInputValue[]):Row|undefined { const s=this.connection.prepare(sql); s.setReadBigInts(true); return s.get(...params); }
   private run(sql:string,...params:SQLInputValue[]) { const s=this.connection.prepare(sql); s.setReadBigInts(true); return s.run(...params); }
   private transaction<T>(action:()=>T):T {
-    this.connection.exec('BEGIN IMMEDIATE');
-    try { const result=action(); this.connection.exec('COMMIT'); return result; }
+    checkCancelled();
+    // Acquire reader exclusion before work, so COMMIT cannot wait on another
+    // reader and then succeed after cancellation. Journal mode stays unchanged.
+    this.connection.exec('BEGIN EXCLUSIVE');
+    try {
+      checkCancelled();
+      const result=action();
+      // The main thread records signals even during synchronous SQLite/import work.
+      checkCancelled();
+      this.connection.exec('COMMIT'); return result;
+    }
     catch(e) { this.connection.exec('ROLLBACK'); throw e; }
   }
   private insert(text:string,state:string,action:string,when:string,tag:string|null):Id {
@@ -96,6 +104,7 @@ export class Store {
   }
   private retagAll(old:string,value:string|null):void {
     for(const r of this.query('SELECT * FROM notes WHERE tag=?',old)) {
+      checkCancelled();
       const when=timestamp(r.updated_at); this.run('UPDATE notes SET tag=?,updated_at=? WHERE id=?',value,when,r.id);
       this.run("INSERT INTO events(note_id,action,previous_state,state,occurred_at,text,previous_text,tag,previous_tag,remind_at,previous_remind_at,agent_notes,previous_agent_notes) VALUES (?,'tag',?,?,?,?,?,?,?,?,?,?,?)",r.id,r.state,r.state,when,r.text,r.text,value,old,r.remind_at,r.remind_at,r.agent_notes,r.agent_notes);
     }
@@ -173,15 +182,7 @@ export class Store {
     return this.transaction(()=>{ const note=this.get(note_id); if(!live(note.state)) throw new NoteError(`Note ${note_id} is ${note.state}; restore it first.`); if(note.state==='active') this.changeState(note_id,'start',note.state,'in_progress'); this.saveSelection(note_id,cwd); return this.get(note_id); });
   }
   update_agent(note_id:Id,fields:Record<string,string>,remove:string[],options:Revision):Note {
-    if(fields===null||typeof fields!=='object'||Array.isArray(fields)||![Object.prototype,null].includes(Object.getPrototypeOf(fields))) throw new NoteError('Agent fields must be a JSON object of label: Markdown string pairs.');
-    const label=(value:string)=>{ if(typeof value!=='string') throw new NoteError('Agent field labels must be strings.'); const result=validate_tag(value); if(result===null) throw new NoteError('Agent field labels cannot be empty.'); return result; };
-    const patch=new Map<string,string>();
-    for(const [k,v] of Object.entries(fields)) {
-      const key=label(k); if(patch.has(key)) throw new NoteError('Agent field labels must be unique after normalization.');
-      if(typeof v!=='string') throw new NoteError('Agent field values must be Markdown strings.');
-      validate_text(v); const value=v.replaceAll('\r\n','\n'); if(codepointLength(value)>4096) throw new NoteError('Agent field values cannot exceed 4096 characters.'); patch.set(key,value);
-    }
-    const deleted=new Set(remove.map(label)); if([...deleted].some(k=>patch.has(k))) throw new NoteError('Cannot set and remove the same agent field in one update.');
+    const {patch,deleted}=validateAgentPatch(fields,remove);
     return this.transaction(()=>{
       const note=this.get(note_id); if(!live(note.state)||note.updated_at!==options.expected_updated_at) throw new NoteError('This task changed elsewhere. Read it again before updating.');
       const updated=Object.fromEntries([...Object.entries(note.agent_notes).filter(([k])=>!deleted.has(k)),...patch]);
@@ -237,7 +238,7 @@ export class Store {
       if(this.row('SELECT 1 FROM imports WHERE source=?',source)) return null;
       if(!clean.length) return {notes:0,tags:0};
       const count=this.tags().length,when=timestamp();
-      for(const [text,state,tag] of clean) this.insert(text,state,'import',when,this.registerTag(tag));
+      for(const [text,state,tag] of clean) { checkCancelled(); this.insert(text,state,'import',when,this.registerTag(tag)); }
       this.run('INSERT INTO imports(source,imported_at,note_count) VALUES (?,?,?)',source,when,clean.length);
       return {notes:clean.length,tags:this.tags().length-count};
     });

@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
-import { markdown as noteMarkdown, validate_tag, pythonStrip } from './compat.ts';
+import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, timestamp, pythonStrip } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
@@ -132,6 +132,18 @@ function explicitTag(value: string): string {
   return tag;
 }
 const print = (value: string) => process.stdout.write(value + '\n');
+function parseAgentFields(value: string): unknown {
+  try { return JSON.parse(value); } catch { throw new NoteError('--set-json must contain a JSON object of label: Markdown pairs.'); }
+}
+function validateCommand(args: Arguments): void {
+  if (args.command === 'add') validate_text(args.text!.join(' '));
+  if (args.command === 'schedule' && parse_reminder_time(args.when!) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
+  if (args.command !== 'agent') return;
+  if (args.cwd !== undefined && !isAbsolute(args.cwd)) throw new NoteError('--cwd must be an absolute project directory.');
+  if (args.tag !== undefined) explicitTag(args.tag);
+  if (args.agent_action === 'add') validate_text(args.agent_text!);
+  if (args.agent_action === 'update') validateAgentPatch(parseAgentFields(args.set_json), args.remove);
+}
 export function execute_agent(args: Arguments, store: Store): void {
   const action = args.agent_action!;
   if (['select', 'selected'].includes(action) && !isAbsolute(args.cwd!)) throw new NoteError('--cwd must be an absolute project directory.');
@@ -140,8 +152,7 @@ export function execute_agent(args: Arguments, store: Store): void {
   if (action === 'selected') note = store.selected(args.cwd!);
   else if (action === 'select') note = store.select(args.id!, args.cwd!);
   else if (action === 'update') {
-    let fields: unknown;
-    try { fields = JSON.parse(args.set_json); } catch { throw new NoteError('--set-json must contain a JSON object of label: Markdown pairs.'); }
+    const fields = parseAgentFields(args.set_json);
     note = store.update_agent(args.id!, fields as Record<string, string>, args.remove, { expected_updated_at: args.expected_updated_at! });
   } else if (action === 'start' || action === 'done') {
     if (!store.transition(args.id!, action, { expected_states: new Set(['active', 'in_progress']), expected_updated_at: args.expected_updated_at!, allow_unchanged: action === 'start', pi_session_id: action === 'start' ? args.pi_session_id : undefined })) throw new NoteError('This task changed elsewhere. Read it again before acting.');
@@ -261,6 +272,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   catch (error) { process.stderr.write(`usage: note [--version] [--no-notify] COMMAND ...\nnote: error: ${(error as Error).message}\n`); return 2; }
   if (args.version) { print(`pinote ${VERSION}`); return 0; }
   if (args.help) { print(help(args)); return 0; }
+  try { validateCommand(args); }
+  catch (error) { print(`ERROR: ${(error as Error).message}`); return 1; }
   const paths = discoverPaths();
   try { checkCancelled(); configureLogging(paths); return await execute(args, paths); }
   catch (error) {

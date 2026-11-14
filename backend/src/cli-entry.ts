@@ -1,4 +1,3 @@
 import { main } from './cli.ts';
-import { installCancellation } from './runtime.ts';
-installCancellation();
-process.exitCode = await main();
+import { launch } from './launcher.ts';
+process.exitCode = await launch(() => main(), import.meta.url);

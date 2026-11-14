@@ -102,7 +102,7 @@ test('reminder parsing UTC6, invalid calendars, DST rejection, activation and du
 
 test('schema8 opens and ordinary polls without acquiring a SQLite write lock',t=>{
  const {store:s,path}=fixture(t); const holder=new DatabaseSync(path); t.after(()=>holder.close()); holder.exec('BEGIN IMMEDIATE');
- const reader=new Store(path); try { assert.deepEqual(reader.notes(),[]); assert.equal(reader.activate_due(),0); assert.deepEqual(reader.history(),[]); assert.throws(()=>reader.add('blocked'),/locked/); } finally {reader.close();holder.exec('ROLLBACK');}
+ const reader=new Store(path,{timeout:0}); try { assert.deepEqual(reader.notes(),[]); assert.equal(reader.activate_due(),0); assert.deepEqual(reader.history(),[]); assert.throws(()=>reader.add('blocked'),/locked/); } finally {reader.close();holder.exec('ROLLBACK');}
  assert.equal(s.notes().length,0);
 });
 

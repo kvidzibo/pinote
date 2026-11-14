@@ -1,5 +1,5 @@
 import { Store, NoteError } from './store.ts';
-import { validate_tag, validate_text, validate_folder, pythonStrip } from './compat.ts';
+import { validate_tag, validate_text, validate_folder, pythonStrip, timestamp } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, type Paths } from './runtime.ts';
@@ -80,7 +80,7 @@ export function validate(request: any): [string, Record<string, any>] {
     if (op === 'rename_tag' && validate_tag(p.newName) === null) throw new NoteError('Tag name cannot be empty.');
   }
   if (Object.hasOwn(p, 'folder')) validate_folder(p.folder);
-  if (op === 'schedule') parse_reminder_time(p.when);
+  if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   return [op, p];
 }
 export async function dispatch(op: string, p: Record<string, any>, paths: Paths): Promise<any> {
@@ -96,7 +96,7 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
   }
   if (op === 'completions') return [...model.completed_ids(new Set(p.ids.map((id: number) => BigInt(id))))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   return withDisplayLock(paths, false, async () => {
-    const store = new Store(paths.database);
+    const store = new Store(paths.database, { timeout: 0.1 });
     try {
       const id = Object.hasOwn(p, 'id') ? BigInt(p.id) : undefined;
       const target = id === undefined ? {} : { id }; const options = { expected_updated_at: p.revision };
@@ -141,17 +141,20 @@ export async function respond(request: unknown, paths?: Paths): Promise<any> {
   try { const [op, params] = validate(request); return { protocol: PROTOCOL, ok: true, result: await dispatch(op, params, paths ?? discoverPaths()) }; }
   catch (error) { return failure(error); }
 }
-export async function main(argv = process.argv.slice(2)): Promise<number> {
+export async function main(argv = process.argv.slice(2), input?: Uint8Array): Promise<number> {
   if (argv.length) {
     if (argv.length === 1 && ['--help', '-h', '--version'].includes(argv[0])) { process.stdout.write(argv[0] === '--version' ? VERSION + '\n' : 'Usage: pinote-electron-backend [--help] [--version]\n\nOne-request JSON boundary for Electron.\n'); return 0; }
     process.stderr.write('Unrecognized bridge arguments.\n'); return 2;
   }
   let response: any;
   try {
-    const chunks: Buffer[] = []; let size = 0;
-    for await (const chunk of process.stdin) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > MAX_REQUEST) invalid(); chunks.push(bytes); }
+    if (input === undefined) {
+      const chunks: Buffer[] = []; let size = 0;
+      for await (const chunk of process.stdin) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > MAX_REQUEST) invalid(); chunks.push(bytes); }
+      input = Buffer.concat(chunks);
+    }
     checkCancelled();
-    const request = decode(Buffer.concat(chunks)); const [op] = validate(request); const paths = discoverPaths();
+    const request = decode(input); const [op] = validate(request); const paths = discoverPaths();
     if (op !== 'handshake') configureLogging(paths, { stderr: true });
     response = await respond(request, paths);
     checkCancelled();

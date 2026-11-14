@@ -1,5 +1,6 @@
 import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readlinkSync, renameSync, statSync, unlinkSync, accessSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { delimiter, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -53,12 +54,19 @@ export function jsonStringify(value: unknown): string {
 }
 export class BusyError extends Error {}
 const cancellation = new AbortController();
+const sharedCancellation = !isMainThread && workerData?.pinoteCancellation instanceof SharedArrayBuffer
+  ? new Int32Array(workerData.pinoteCancellation) : undefined;
+const abort = (code: number) => { cancellation.abort(); process.exitCode = code; };
 export function installCancellation(): void {
-  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => {
-    cancellation.abort(); process.exitCode = signal === 'SIGINT' ? 130 : 143;
-  });
+  if (sharedCancellation) {
+    parentPort!.on('message', message => { if (message === 'cancel') abort(Atomics.load(sharedCancellation, 0)); });
+    parentPort!.unref();
+  } else for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => abort(signal === 'SIGINT' ? 130 : 143));
 }
-export function checkCancelled(): void { cancellation.signal.throwIfAborted(); }
+export function checkCancelled(): void {
+  if (sharedCancellation) { const code = Atomics.load(sharedCancellation, 0); if (code) abort(code); }
+  cancellation.signal.throwIfAborted();
+}
 export async function withDisplayLock<T>(paths: Paths, blocking: boolean, action: () => Promise<T> | T): Promise<T> {
   checkCancelled();
   const flock = findExecutable('flock');

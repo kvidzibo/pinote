@@ -53,6 +53,19 @@ export function timestamp(previous?: string): string {
 export function agentJSON(fields: Record<string,string>): string {
   return '{'+Object.keys(fields).sort(codepointCompare).map(k=>JSON.stringify(k)+': '+JSON.stringify(fields[k])).join(', ')+'}';
 }
+export function validateAgentPatch(fields: unknown, remove: string[]): {patch: Map<string,string>; deleted: Set<string>} {
+    if(fields===null||typeof fields!=='object'||Array.isArray(fields)||![Object.prototype,null].includes(Object.getPrototypeOf(fields))) throw new NoteError('Agent fields must be a JSON object of label: Markdown string pairs.');
+    const label=(value:string)=>{ if(typeof value!=='string') throw new NoteError('Agent field labels must be strings.'); const result=validate_tag(value); if(result===null) throw new NoteError('Agent field labels cannot be empty.'); return result; };
+    const patch=new Map<string,string>();
+    for(const [k,v] of Object.entries(fields)) {
+      const key=label(k); if(patch.has(key)) throw new NoteError('Agent field labels must be unique after normalization.');
+      if(typeof v!=='string') throw new NoteError('Agent field values must be Markdown strings.');
+      validate_text(v); const value=v.replaceAll('\r\n','\n'); if(codepointLength(value)>4096) throw new NoteError('Agent field values cannot exceed 4096 characters.'); patch.set(key,value);
+    }
+    const deleted=new Set(remove.map(label)); if([...deleted].some(k=>patch.has(k))) throw new NoteError('Cannot set and remove the same agent field in one update.');
+  if(patch.size>64||Buffer.byteLength(agentJSON(Object.fromEntries(patch)),'utf8')>32768) throw new NoteError('Agent notes cannot exceed 64 fields or 32 KiB of JSON.');
+  return {patch,deleted};
+}
 // Preserve Python dict insertion order even for integer-looking labels.
 export function parseAgentJSON(encoded: string): Record<string,string> {
   const value=JSON.parse(encoded) as Record<string,string>;

@@ -115,8 +115,11 @@ machine configuration as a test workaround.
 `node:sqlite` against the existing schema-8 database. Build-time dependencies are
 bundled into self-contained ES modules. Linux util-linux `flock` acquires the same
 retained file-description lock as Python; no writer supervisor or Python fallback
-is used. CLI display-lock waits yield for cancellation; SQLite contention fails
-promptly rather than blocking JavaScript signal handling and committing later. Tests compare schema migrations 0–8, durable snapshots and alternating
+is used. CLI/bridge work runs in a worker thread in that same process, keeping
+signal handling responsive during SQLite waits and large imports. A shared
+cancellation flag is checked before work and commit; exclusive write transactions
+acquire reader exclusion up front, avoiding a cancellable wait inside commit.
+No uncertain mutation is replayed. Tests compare schema migrations 0–8, durable snapshots and alternating
 Python/Node writes using only temporary databases and this checkout's `.venv`.
 
 `src/pinote/` remains the unchanged legacy Python/GTK implementation and reference.

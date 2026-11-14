@@ -37,6 +37,7 @@ test('help/version/invalid input are side effect free',t=>{
   assert.equal(f.ok('--version'),'pinote 0.26.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
+  for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);
   assert.ok(!existsSync(f.database)); assert.ok(!existsSync(join(f.root,'state/pinote/app.log')));
 });
 test('lifecycle, scheduling, import/export and bounded event scans',t=>{
@@ -120,6 +121,19 @@ test('SQLite contention cannot unblock and commit a terminated mutation', async 
     assert.notEqual(await closed,0);
     assert.equal(holder.prepare('SELECT count(*) AS count FROM notes').get()!.count,1);
   } finally { child.kill('SIGKILL'); holder.close(); }
+});
+test('cancellation during a large synchronous import rolls back every imported note', async t=>{
+  const f=fixture(t); f.ok('--no-notify','seed');
+  const source=join(f.root,'large.md'); writeFileSync(source,Array.from({length:30000},(_,i)=>`- [ ] imported ${i}\n`).join(''));
+  const child=spawn(process.execPath,['--experimental-strip-types',entry,'--no-notify','import',source],{env:f.env,stdio:'ignore'});
+  const closed=new Promise<number|null>((resolve,reject)=>{child.once('close',resolve);child.once('error',reject);});
+  try {
+    const deadline=Date.now()+10000;
+    while(!existsSync(f.database+'-journal')&&child.exitCode===null&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,5));
+    assert.ok(existsSync(f.database+'-journal'),'import transaction has started');
+    child.kill('SIGTERM'); assert.equal(await closed,143);
+    const db=new DatabaseSync(f.database); try { assert.equal(db.prepare('SELECT count(*) AS count FROM notes').get()!.count,1); assert.equal(db.prepare('SELECT count(*) AS count FROM imports').get()!.count,0); } finally {db.close();}
+  } finally {child.kill('SIGKILL');}
 });
 test('termination during desktop delivery does not write a late warning', async t=>{
   const f=fixture(t);
