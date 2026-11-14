@@ -58,9 +58,10 @@ confirmation. **Clear selection** leaves its progress unchanged.
 
 **Preview** opens a scrollable, read-only document. **Insert task prompt…** reviews
 and inserts into an empty editor only; it never submits or replaces a draft.
-Creation, suggestion acceptance and shared changes require complete review, then
-a separate Cancel-first confirmation. Menu completion also asks explicitly;
-footer double-click is sufficient approval. Both require idle Pi. Failed or uncertain
+Creation, menu suggestion acceptance and shared changes require complete review,
+then a separate Cancel-first confirmation. Menu completion also asks explicitly.
+Footer double-click directly approves suggestion acceptance or completion;
+completion requires idle Pi. Failed or uncertain
 writes offer refresh/verification, never automatic replay.
 
 **Settings** groups prompts/guidance, task-offer policy, footer layout and field
@@ -73,7 +74,8 @@ Menus use Pi's native inline components, themes and configured selection keys.
 Small terminals show compact menus or ask you to enlarge the window before acting.
 Fullscreen has a clickable footer: **▤** opens Pinote; single-click a task title
 to preview, or double-click to complete immediately without another confirmation
-(requires idle Pi). Suggestion titles only preview; double-click never accepts.
+(requires idle Pi). Single-click a suggestion title to preview it; double-click
+to accept, start and select it immediately without another confirmation.
 Regular mode shows status; `/pinote` provides all actions. No Kitty action handler
 is needed.
 
@@ -215,10 +217,14 @@ See [setup, script contract and safeguards](mcp/FIELD_EVENTS.md). Disabled by de
 
 ## Migration
 
+Since pi-note 0.39.3, fullscreen suggestion-title double-click accepts immediately;
+single-click still previews and menu acceptance still requires review/confirmation.
+Update both client and service, then `/reload` Pi.
+
 Since pi-note 0.39.2, fullscreen task-title double-click completes without another
 confirmation; single-click still previews and menu completion still confirms.
 Update the client and `/reload` Pi. The service must support footer double-click
-(pi-note 0.39.1+). Suggestion acceptance remains menu-only.
+(pi-note 0.39.1+).
 
 Since pi-note 0.38.0, the default HTTP extension uses task-first navigation and
 explicit completion/suggestion approval. Update the client and service together,

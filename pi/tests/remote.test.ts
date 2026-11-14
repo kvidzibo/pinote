@@ -220,6 +220,57 @@ test('footer double-click approves completion once without changing menu approva
   }
 });
 
+test('footer double-click accepts suggestions once while preserving menu review and stale/failure guards', async () => {
+  const { RemoteUI } = await import('../remote/ui.ts');
+  for (const scenario of ['ordinary', 'busy', 'stale', 'failed']) {
+    const current = view({ selectedId: null });
+    current.controls = [
+      { id: 'proposal:accept', kind: 'action', label: 'Accept suggestion', revision: 'proposal-1', confirm: 'Create, start and select this suggestion?' },
+      { id: 'proposal:preview', kind: 'action', label: 'Preview suggestion', revision: 'proposal-1' },
+    ];
+    current.footer = [{ text: '? Suggested task', action: 'proposal:preview', doubleAction: 'proposal:accept' }];
+    const actions: string[] = [];
+    const h = harness({ read: async () => resource(current), action: async (params) => {
+      actions.push(params.action as string);
+      if (scenario === 'failed' && params.action === 'proposal:accept') throw new Error('Unavailable');
+      return { view: params.action === 'proposal:accept' ? view({ selectedId: 7 }) : structuredClone(current) };
+    } });
+    await h.session.start([], 'conversation');
+    let footer: any, reviews = 0;
+    const theme = { fg: (_color: string, text: string) => text, italic: (text: string) => text } as any;
+    const ctx = { mode: 'tui', isIdle: () => scenario !== 'busy', ui: {
+      theme, setStatus() {}, notify() {}, custom: async () => { reviews++; return false; },
+      setWidget: (_key: string, factory: any) => {
+        footer = factory({ mode: 'fullscreen', requestRender() {} }, theme);
+      },
+      select: () => assert.fail('Footer acceptance must not ask again'),
+      setEditorText: () => assert.fail('Acceptance must preserve the editor'),
+    } } as any;
+    const ui = new RemoteUI({} as any, h.session);
+    ui.attach(ctx);
+    try {
+      assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), false);
+      assert.equal(reviews, 1, 'Menu acceptance still requires review');
+      assert.deepEqual(actions, []);
+      ctx.ui.custom = loader;
+      footer.render(80);
+      const click = (clickCount: number) => footer.handleMouse({ type: 'click', button: 'left', x: 1, y: 0, clickCount });
+      click(1); await sleep(520);
+      assert.deepEqual(actions, ['proposal:preview'], 'Single-click only previews');
+      footer.render(80);
+      if (scenario === 'stale') {
+        current.controls[0].revision = 'proposal-2';
+        await h.session.refresh(); // Leave the old rendered hit region until repaint.
+      }
+      click(1); click(2); click(3); await sleep(30);
+      assert.deepEqual(actions, scenario === 'stale' ? ['proposal:preview'] : ['proposal:preview', 'proposal:accept'], scenario);
+      assert.equal(reviews, 1);
+      if (scenario === 'ordinary' || scenario === 'busy') assert.equal(h.session.view?.state.selectedId, 7);
+      if (scenario === 'failed') assert.equal(h.session.view, undefined, 'Uncertain acceptance is not replayed');
+    } finally { footer.dispose(); await h.session.stop(); }
+  }
+});
+
 test('server isError throws, failed fresh context is unavailable rather than cached/no-task', async () => {
   let fail = false;
   const h = harness({

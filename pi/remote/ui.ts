@@ -43,8 +43,9 @@ export class RemoteUI {
           if (this.opening || this.acting) return false;
           if (item.openApp) { await this.open(ctx); return true; }
           const control = view.controls.find((c) => c.id === action && c.kind === 'action');
-          // The footer's deliberate double-click is already completion approval.
-          return control ? this.dispatch(ctx, view, control, undefined, action === 'done' && item.doubleAction === action) : false;
+          // Deliberate footer double-click approves completion or suggestion acceptance.
+          const approved = (action === 'done' || action === 'proposal:accept') && item.doubleAction === action;
+          return control ? this.dispatch(ctx, view, control, undefined, approved) : false;
         }, this.repaint);
     }, { placement: 'belowEditor' });
     this.render();
@@ -66,7 +67,7 @@ export class RemoteUI {
     }) : 'Pinote · unavailable (/pinote to reconnect)');
     this.repaint();
   }
-  async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value'], completionConfirmed = false): Promise<boolean> {
+  async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value'], footerConfirmed = false): Promise<boolean> {
     if (ctx.mode !== 'tui') throw new Error('Pinote UI actions require TUI mode');
     if (this.acting) return false;
     if (control.id === 'done' && !ctx.isIdle()) {
@@ -76,14 +77,14 @@ export class RemoteUI {
     const current = this.session.current(), signal = this.session.signal;
     try {
       if (typeof value === 'string') editorText(value);
-      if (control.id === 'done' && !completionConfirmed) {
+      if (control.id === 'done' && !footerConfirmed) {
         const exits = typeof view.state.selectedId === 'number' && this.exitOnComplete(view.state.selectedId);
         const accept = exits ? 'Complete task and exit' : 'Complete task';
         const summary = truncateToWidth(line(view.body ?? ''), 100);
         if (await ctx.ui.select(`Pinote / ${accept} #${view.state.selectedId}\n${summary}\n${exits ? 'Closes this dedicated Pi session.' : 'Clears selection; keeps this conversation and editor.'}`,
           ['Cancel', accept], { signal }) !== accept) return false;
       }
-      if (control.confirm) {
+      if (control.confirm && !(footerConfirmed && control.id === 'proposal:accept')) {
         const details = control.kind === 'action' ? control.confirm : `${control.confirm}\n\n${control.id === 'add' || control.id === 'add-field' ? '' : `Before:\n${disclosure(control.value)}\n\n`}After:\n${disclosure(value)}`;
         const accept = control.id === 'add' ? 'Create, start and select' : control.id === 'proposal:accept' ? 'Accept suggestion' :
           control.id === 'remove-field' ? 'Remove display field' : control.id === 'add-field' ? 'Add field' : 'Save change';
