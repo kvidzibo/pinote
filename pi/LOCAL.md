@@ -311,6 +311,10 @@ Names are case-sensitive, trimmed and NFC-normalized, at most 64 characters;
 `Bar` is reserved and duplicate names are rejected. Up to 64 definitions are
 accepted. Missing/blank values do not display and do not consume the field limit.
 `[]` or `maxFields: 0` hides configured fields, including PR.
+`bar` chooses bottom-bar fields in order. Omit it to keep enabled fields in
+definition order. `[]` hides every handoff field. Names follow field-name rules;
+`PR` is stored as `PRs`, and unknown names are ignored. **Footer layout** edits
+this list: the first selected field is 1, and selecting again hides it.
 
 In `/pinote → Settings`, **Add field** adds a global display definition, not a
 task value. Select any field to edit **Link**, **Label**, **Format**, and **Width**.

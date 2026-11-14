@@ -1,7 +1,7 @@
 import { parsePR } from "./pr-url.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
-import { defaultFooterConfig, defaultFooterField, type FooterConfig, type FooterField } from "./footer-config.ts";
+import { defaultFooterConfig, defaultFooterField, footerCatalog, footerDisplayFields, type FooterConfig, type FooterField } from "./footer-config.ts";
 
 export const footerStatusKey = "pinote-links";
 export const legacyFooterStatusKey = "pinote-pr";
@@ -209,6 +209,16 @@ export function customFooterChips(
 ): FooterChip[] {
   if (!notes) return [];
   const chips: FooterChip[] = [];
+  if (config.bar != null) {
+    for (const field of footerDisplayFields(config, footerCatalog(config, notes))) {
+      if (chips.length >= config.maxFields) break;
+      const value = field.name === "PRs" ? notes.PRs ?? notes.PR : ownText(notes, field.name);
+      const segments = fieldSegments(field, value);
+      if (!segments.length) continue;
+      chips.push({ segments: truncateSegments(segments, field.width ?? config.fieldWidth) });
+    }
+    return chips;
+  }
   const seen = new Set(config.fields === null ? ["PR", "Bar"] : ["Bar"]);
   const fields: FooterField[] = config.fields ?? (notes.Bar ?? "").split("\n").map(defaultFooterField);
   for (const field of fields) {
@@ -231,7 +241,7 @@ export function footerChips(
 ): FooterChip[] {
   if (!task || !["active", "in_progress"].includes(task.state)) return [];
   return [
-    ...(config.fields === null && pr ? [{ segments: [{ text: `PR #${pr.number}`, url: pr.url }] }] : []),
+    ...(config.fields === null && config.bar == null && pr ? [{ segments: [{ text: `PR #${pr.number}`, url: pr.url }] }] : []),
     ...customFooterChips(task.agent_notes, config),
   ];
 }

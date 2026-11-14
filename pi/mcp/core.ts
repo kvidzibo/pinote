@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { parsePullRequests, pullRequestValues } from '../pull-requests.ts';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
-import { defaultAgentGuidance, defaultFooterField, defaultFieldPresets, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
+import { defaultAgentGuidance, defaultFooterField, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, footerBarNames, footerCatalog, footerDisplayFields, parseAgentGuidance, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
 import type { FieldAutomation, FieldResult, FieldStatus } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from '../field-watchers.ts';
@@ -92,23 +92,7 @@ async function selected(state: State, signal: AbortSignal): Promise<Task | null>
   return task && ['active', 'in_progress'].includes(task.state) ? task : null;
 }
 function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?: Record<string, string>) {
-  // Legacy Bar values are arbitrary task text, not validated field definitions.
-  // Normalize old PR definitions on read without rewriting settings or task data.
-  const seen = new Set<string>();
-  const configured = config.fields === null
-    ? effectiveFooterFields(config, notes).filter((entry) => entry.name !== 'PR' || Boolean(notes?.PR))
-    : config.fields;
-  const checked = configured.flatMap((entry) => {
-    const field = entry.name === 'PR'
-      ? { ...entry, name: 'PRs', label: entry.label === 'PR' ? 'PRs' : entry.label } : entry;
-    if (seen.has(field.name)) return [];
-    try {
-      const checked = parseFooterConfig({ footer: { fields: [field] } }).fields!;
-      seen.add(field.name);
-      return checked;
-    } catch { return []; }
-  }).slice(0, 64);
-  return [...checked, ...defaultFieldPresets().filter((preset) => !checked.some((field) => field.name === preset.name))];
+  return footerCatalog(config, notes);
 }
 function settings() {
   const document = readFooterDocument();
@@ -219,6 +203,30 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     if (config.guidanceOverridden) action('reset-agent-guidance', 'Reset to default', { icon: icons.cross, description: 'Remove the agent guidance override; retain task data and other settings.', confirm: 'Reset agent guidance to the built-in default?' });
     controls.push({ id: 'taskOfferPolicy', label: 'Task offers', kind: 'select', value: config.policy, options: ['always', 'github-remote', 'never'].map((value) => ({ label: value, value })), confirm: 'Save this global task-offer policy?' });
     for (const [key, label, description] of [['titleWidth', 'Task title width', '3–1000 terminal cells.'], ['fieldWidth', 'Default field width', '3–1000 terminal cells; inherited by fields without a width override.'], ['maxFields', 'Maximum visible fields', '0–64 fields; 0 hides all task fields.']] as const) controls.push({ id: key, label, description, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
+    const catalog = fields(config.config, task?.agent_notes);
+    const selected = footerBarNames(config.config, catalog);
+    const rank = new Map(selected.map((name, index) => [name, index]));
+    const ordered = [...catalog].sort((a, b) => {
+      const left = rank.get(a.name), right = rank.get(b.name);
+      if (left === undefined && right === undefined) return 0;
+      if (left === undefined) return 1;
+      if (right === undefined) return -1;
+      return left - right;
+    });
+    for (const field of ordered) {
+      const index = rank.get(field.name);
+      controls.push({
+        id: `bar:${field.name}`,
+        label: index === undefined ? field.name : `${index + 1} ${field.name}`,
+        kind: 'action',
+        description: index === undefined
+          ? 'Hidden. Select to show it after the numbered bottom-bar fields. Empty values stay hidden.'
+          : `Shown as bottom-bar field ${index + 1}. Select to hide it and renumber the rest.`,
+        confirm: index === undefined
+          ? `Show ${field.name} in the bottom bar after the numbered fields?`
+          : `Hide ${field.name} from the bottom bar and renumber the remaining fields?`,
+      });
+    }
     controls.push({ id: 'add-field', label: 'Add field', icon: icons.add, kind: 'text', value: '', description: 'Unique nonblank field name, at most 64 characters; Bar is reserved. Changes display definitions, not task values.', confirm: 'Add this global footer field?' });
     fields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.enabled === false ? 'Disabled' : 'Enabled'} · ${field.label || '(no label)'} · ${field.format}` }));
     controls.push({ id: 'add-watcher', label: 'Add watcher file', icon: icons.add, kind: 'text', value: '',
@@ -235,7 +243,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     const field = fields(config.config, task?.agent_notes).find((f) => f.name === state.field);
     if (!field) throw new Error('Field no longer exists; open Settings again');
     title = `Pinote · ${field.name}`; body = 'Shared field display and agent instructions; affects all connected clients. Saved task values are retained, including in Electron.';
-    controls.push({ id: 'enabled', label: 'Enabled', kind: 'toggle', value: field.enabled !== false, description: 'Show in the Pi footer and ask agents to maintain this field automatically. Disabling retains saved values.', confirm: 'Change this shared field setting?' });
+    controls.push({ id: 'enabled', label: 'Enabled', kind: 'toggle', value: field.enabled !== false, description: 'Ask agents to maintain this field automatically. Bottom-bar display is chosen in Footer layout; until an order is saved, enabled fields appear in definition order. Disabling retains saved values.', confirm: 'Change this shared field setting?' });
     controls.push({ id: 'instructions', label: 'Agent instructions', kind: 'text', multiline: true, value: field.instructions ?? defaultFieldInstructions(field.name), description: 'What to save and when; up to 4096 characters. Trusted shared instructions injected for enabled fields, not task data.', confirm: 'Save these shared agent instructions?' });
     controls.push({ id: 'label', label: 'Label', kind: 'text', value: field.label, description: 'Up to 64 characters; blank hides the label.', confirm: 'Save this global field label?' });
     controls.push({ id: 'format', label: 'Format', kind: 'text', value: field.format, description: 'Up to 4096 characters; placeholders: <value>, <url>, <number>. URL/number formats hide fields without matching values.', confirm: 'Save this global field format?' });
@@ -274,8 +282,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
   let fieldCount = 0;
   if (task) {
-    for (const field of fields(config.config, task.agent_notes)) {
-      if (field.enabled === false) continue;
+    for (const field of footerDisplayFields(config.config, fields(config.config, task.agent_notes))) {
       if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
       const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
       const legacy = field.name === 'PRs' ? task.agent_notes.PR : undefined;
@@ -500,14 +507,24 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     else if (action === 'newSessionPrompt') newSession = z.string().parse(value);
     else if (action === 'taskOfferPolicy') policy = z.enum(['always', 'github-remote', 'never']).parse(value);
     else if (['titleWidth', 'fieldWidth', 'maxFields'].includes(action)) cfg[action as 'titleWidth'] = z.number().int().parse(value);
-    else {
+    else if (action.startsWith('bar:')) {
+      const name = action.slice(4);
+      const catalog = fields(before.config.config, before.task?.agent_notes);
+      if (!catalog.some((field) => field.name === name)) staleAction();
+      const order = footerBarNames(before.config.config, catalog);
+      cfg.bar = order.includes(name) ? order.filter((entry) => entry !== name) : [...order, name];
+    } else {
       const savedNames = new Set((cfg.fields ?? effectiveFooterFields(cfg, before.task?.agent_notes))
         .map((field) => field.name === 'PR' ? 'PRs' : field.name));
       const editing = !['add-field', 'remove-field'].includes(action) ? state.field : undefined;
       // Offered presets do not consume configuration slots until edited.
       cfg.fields = fields(cfg, before.task?.agent_notes).filter((field) => savedNames.has(field.name) || field.name === editing);
       if (action === 'add-field') cfg.fields.push(defaultFooterField(z.string().parse(value)));
-      else if (action === 'remove-field') { cfg.fields = cfg.fields.filter((f) => f.name !== state.field); next.screen = 'settings'; }
+      else if (action === 'remove-field') {
+        cfg.fields = cfg.fields.filter((f) => f.name !== state.field);
+        if (cfg.bar) cfg.bar = cfg.bar.filter((entry) => entry !== state.field && !(state.field === 'PRs' && entry === 'PR'));
+        next.screen = 'settings';
+      }
       else {
         const field = cfg.fields.find((f) => f.name === state.field)!;
         if (action === 'link') field.link = z.boolean().parse(value);
