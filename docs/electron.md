@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.10.1. Editor autosave requires the matching
+package is private, version 0.11.1. Editor autosave requires the matching
 Python backend (0.25.1+); update both from this checkout.
 Run from the repository root:
 
@@ -74,6 +74,10 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   activate. **Close**, **Escape**, or clicking outside restores the task text;
   **Tab** out also dismisses the toolbar without closing Pinote.
   Right-click an in-progress task's checkmark to reset progress.
+  State styling and controls update immediately, but existing rows keep their
+  order and section while the pointer is inside the window. Moving to another
+  row or losing keyboard focus does not release them; leaving the window does.
+  Completed, archived, and filtered-out tasks still disappear normally.
 - **Menu → Task actions…** configures the entire task row, separately for
   **Not started**, **In progress**, and **Marked for deletion** tasks.
   Drag row elements or focus a handle and use **↑/↓**; the list's top-to-bottom
