@@ -83,6 +83,34 @@ textarea { resize: none; line-height: 1.5; }
 .tag-choice span { overflow-wrap: anywhere; }
 .tag-choice.chosen { background: #35445b; }
 .folder-path { color: #b6bfce; overflow-wrap: anywhere; }
+.manage-tags { max-width: 840px; padding: 12px; gap: 14px; }
+.manage-tags > header { border-bottom: 1px solid #414b5b; padding-bottom: 8px; }
+.tag-layout { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 18px; flex-shrink: 0; }
+.tag-sidebar { display: flex; flex-direction: column; gap: 8px; min-width: 0; border-right: 1px solid #414b5b; padding-right: 16px; }
+.tag-search, .tag-name-row, .tag-folder-row, .tag-danger { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tag-search input, .tag-name-row label, .tag-folder-row .folder-path, .tag-danger > div { flex: 1; min-width: 0; }
+.tag-name-row { align-items: flex-end; }
+.manage-tags button:not(.tag-choice) { border-color: #4b5563; background: #303845; min-height: 32px; min-width: 32px; }
+.manage-tags button:hover { background: #374151; border-color: #66758b; }
+.manage-tags .tag-list { max-height: 280px; }
+.manage-tags .tag-choice { min-height: 34px; padding: 7px; gap: 8px; }
+.manage-tags .tag-choice.chosen { box-shadow: inset 3px 0 #89b4fa; }
+.tag-hint { color: #b6bfce; font-size: 11px; }
+.tag-editor { min-width: 0; }
+.tag-editor h3 { margin: 0 0 18px; font-size: 14px; overflow-wrap: anywhere; }
+.tag-editor-label { font-weight: bold; }
+.tag-folder { margin: 22px 0; }
+.tag-folder-row { margin: 7px 0; align-items: flex-start; }
+.tag-folder-row .folder-path { background: #1c212a; border: 1px solid #4b5563; border-radius: 4px; padding: 7px; margin: 0; user-select: text; }
+.tag-danger { border-top: 1px solid #414b5b; padding-top: 14px; }
+.manage-tags .tag-danger button { background: #3d2d35; border-color: #80545e; }
+@media (max-width: 600px) {
+  .tag-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .tag-sidebar { border-right: 0; border-bottom: 1px solid #414b5b; padding: 0 0 10px; }
+  .manage-tags .tag-list { max-height: 108px; }
+  .tag-editor h3 { margin-bottom: 12px; }
+  .tag-folder { margin: 16px 0; }
+}
 .edit-text { flex: 1 1 auto; width: 100%; min-height: 80px; height: 40vh; overflow: auto; }
 .warning { color: #e8bc78; }
 .preview-window > .panel { border: 0; border-radius: 0; }

@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.6.0.
+package is private, version 0.8.0.
 Run from the repository root:
 
 ```sh
@@ -98,6 +98,12 @@ Icons are bundled rather than taken from the host icon theme.
   toggle a focused filter. The highlighted funnel indicates a tag filter is active; its
   count includes all visible tasks, including in-progress tasks that remain
   visible regardless of tag filters.
+- **Menu → Manage tags** opens a searchable saved-tag list beside a separate
+  editor (stacked in narrow windows). Select a tag, edit its name, and use the
+  save icon to rename it across tasks. Folder icons choose or clear its default
+  Kitty folder immediately. The **+** creates a tag; the separated delete icon
+  asks for confirmation and keeps tasks and history. Polling preserves an
+  unfinished name edit while updating the selected tag's folder.
 - The bottom menu opens beside its button and provides scheduled reminders,
   Archive (including restore), tag management, task-action settings, and draft
   recovery. It remains a native popup menu, which can adjust its placement at screen edges and extend

@@ -56,7 +56,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -190,7 +190,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
-    if (kind === 'task-actions') fitWindow();
+    if (kind === 'task-actions' || kind === 'manage-tags') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
@@ -877,39 +877,109 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
   name.input.focus();
 }
 function manageTags(selected?: string): void {
-  const modal = layer('Manage tags');
-  const list = el('div', undefined, 'tag-list scroll'), editor = el('div'); modal.panel.append(list, editor);
-  let lastDraw = '';
-  const draw = () => {
-    const key = JSON.stringify([active?.tags, selected]); if (lastDraw === key) return; lastDraw = key;
-    list.replaceChildren();
-    for (const tag of active?.tags ?? []) {
-      const b = button('tag', tag.name, () => { selected = tag.name; draw(); drawEditor(tag); }); b.append(el('span', tag.name)); b.className = `tag-choice${selected === tag.name ? ' chosen' : ''}`; list.append(b);
-    }
+  const modal = layer('Manage tags', 'manage-tags'); modal.panel.classList.add('manage-tags');
+  const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar');
+  const searchBar = el('div', undefined, 'tag-search'), search = el('input');
+  search.type = 'search'; search.placeholder = 'Find tag…'; search.setAttribute('aria-label', 'Find saved tag');
+  const create = button('add', 'Create saved tag', () => newTag('', name => { selected = name; search.value = ''; draw(); }));
+  searchBar.append(search, create);
+  const count = el('p', undefined, 'tag-hint'), list = el('div', undefined, 'tag-list scroll');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Saved tags');
+  sidebar.append(searchBar, count, list, el('p', 'Tags stay saved without tasks.', 'tag-hint'));
+  const editor = el('div', undefined, 'tag-editor'); layout.append(sidebar, editor); modal.panel.append(layout);
+  selected ??= active?.tags[0]?.name;
+  let lastDraw = '', listSelection: string | undefined, editorTag: string | undefined, folderPath: HTMLElement | undefined, saving = false;
+  const showSelection = () => {
+    const chosen = list.querySelector<HTMLElement>('.chosen'); if (!chosen) return;
+    const row = chosen.getBoundingClientRect(), viewport = list.getBoundingClientRect();
+    if (row.top < viewport.top) list.scrollTop -= viewport.top - row.top;
+    else if (row.bottom > viewport.bottom) list.scrollTop += row.bottom - viewport.bottom;
   };
-  const drawEditor = (tag: Tag) => {
-    editor.replaceChildren(); const name = field('Rename tag', tag.name); editor.append(name.wrapper, el('p', tag.folder ?? 'No default folder', 'folder-path'));
-    const bar = controls(editor);
-    bar.append(button('save', 'Rename tag', async () => {
+  window.addEventListener('resize', showSelection);
+  const close = modal.close;
+  modal.close = () => { window.removeEventListener('resize', showSelection); close(); };
+  const save = async (action: () => Promise<void>) => {
+    if (saving || readonly) return;
+    saving = true; draw();
+    try { await action(); } finally { saving = false; draw(); }
+  };
+  const drawEditor = (tag?: Tag) => {
+    editor.replaceChildren(); folderPath = undefined;
+    if (!tag) { editor.append(el('p', 'Select a tag to edit its name and default Kitty folder.', 'empty')); return; }
+    editor.append(el('h3', tag.name));
+    const name = field('Tag name', tag.name), nameRow = el('div', undefined, 'tag-name-row');
+    nameRow.append(name.wrapper, button('save', 'Rename tag', () => save(async () => {
       const result = await call('rename_tag', { name: tag.name, newName: name.input.value });
       if (result) {
         const next = result.tag ?? name.input.value.trim();
         if (creationTag === tag.name) creationTag = next;
         if (state.filters) state.filters = state.filters.map(t => t === tag.name ? next : t);
-        saveSoon(); selected = next; await refresh(); draw(); const updated = active?.tags.find(t => t.name === next); if (updated) drawEditor(updated);
+        saveSoon(); selected = next; search.value = ''; await refresh();
       }
-    }, readonly), button('folder', 'Set default Kitty folder', async () => {
-      const folder = await chooseFolder(); if (folder === null) return;
-      const result = await call('tag_folder', { name: tag.name, folder }); if (result) { await refresh(); drawEditor(active?.tags.find(t => t.name === tag.name) ?? { ...tag, folder }); }
-    }, readonly), button('clear', 'Clear default Kitty folder', async () => {
-      const result = await call('tag_folder', { name: tag.name, folder: null }); if (result) { await refresh(); drawEditor({ ...tag, folder: null }); }
-    }, readonly), button('trash', 'Delete saved tag…', () => confirmAction('Delete tag?', `Delete “${tag.name}” and clear it from every task? Tasks and history are kept.`, async () => {
+    })));
+    editor.append(nameRow, el('p', 'Renaming updates this tag on every task.', 'tag-hint'));
+    const folder = el('section', undefined, 'tag-folder'), folderRow = el('div', undefined, 'tag-folder-row');
+    folderPath = el('p', undefined, 'folder-path');
+    folderRow.append(folderPath, button('folder', 'Set default Kitty folder', () => save(async () => {
+      const chosen = await chooseFolder(); if (chosen === null) return;
+      if (await call('tag_folder', { name: tag.name, folder: chosen })) await refresh();
+    })), button('clear', 'Clear default Kitty folder', () => save(async () => {
+      if (await call('tag_folder', { name: tag.name, folder: null })) await refresh();
+    })));
+    folder.append(el('p', 'Default Kitty folder', 'tag-editor-label'), folderRow,
+      el('p', 'Used by “Start in Kitty…”. Folder changes apply immediately.', 'tag-hint'));
+    const danger = el('div', undefined, 'tag-danger'), explanation = el('div');
+    explanation.append(el('p', 'Delete saved tag', 'tag-editor-label'), el('p', 'Clears it from tasks. Tasks and history stay.', 'tag-hint'));
+    danger.append(explanation, button('trash', 'Delete saved tag…', () => confirmAction('Delete tag?', `Delete “${tag.name}” and clear it from every task? Tasks and history are kept.`, () => save(async () => {
       const result = await call('delete_tag', { name: tag.name });
-      if (result) { if (creationTag === tag.name) creationTag = null; if (state.filters) { state.filters = state.filters.filter(t => t !== tag.name); if (!state.filters.length) state.filters = null; } saveSoon(); selected = undefined; editor.replaceChildren(); await refresh(); draw(); }
-    }), readonly));
+      if (result) {
+        if (creationTag === tag.name) creationTag = null;
+        if (state.filters) { state.filters = state.filters.filter(t => t !== tag.name); if (!state.filters.length) state.filters = null; }
+        saveSoon(); selected = undefined; await refresh();
+      }
+    }))));
+    editor.append(folder, danger);
   };
-  controls(modal.panel).append(button('add', 'Create saved tag', () => newTag('', name => { selected = name; draw(); const tag = active?.tags.find(t => t.name === name); if (tag) drawEditor(tag); }), readonly));
-  modal.update = draw; draw(); const tag = active?.tags.find(t => t.name === selected); if (tag) drawEditor(tag);
+  const draw = () => {
+    const tags = active?.tags ?? [], query = search.value.trim().toLocaleLowerCase();
+    const matches = tags.filter(tag => tag.name.toLocaleLowerCase().includes(query));
+    count.textContent = query ? `${matches.length} of ${tags.length} saved tags` : `Saved tags · ${tags.length}`;
+    const key = JSON.stringify([tags.map(tag => tag.name), selected, query]);
+    if (key !== lastDraw) {
+      lastDraw = key;
+      const focused = list.contains(document.activeElement) ? document.activeElement?.getAttribute('aria-label') : null;
+      const top = list.scrollTop; list.replaceChildren();
+      for (const tag of matches) {
+        const b = button('tag', tag.name, () => { selected = tag.name; draw(); });
+        b.append(el('span', tag.name)); b.className = `tag-choice${selected === tag.name ? ' chosen' : ''}`;
+        b.setAttribute('aria-pressed', String(selected === tag.name)); list.append(b);
+        if (focused === tag.name) b.focus();
+      }
+      if (!matches.length) list.append(el('p', tags.length ? 'No matching tags.' : 'No saved tags. Use + to create one.', 'empty'));
+      list.scrollTop = top;
+      if (listSelection !== selected) { listSelection = selected; showSelection(); }
+    }
+    const tag = tags.find(tag => tag.name === selected);
+    // Polling updates folder metadata, but never replaces a name being edited.
+    if (editorTag !== tag?.name || !editor.childElementCount) { editorTag = tag?.name; drawEditor(tag); }
+    if (folderPath) { folderPath.textContent = tag?.folder ?? 'No default folder'; folderPath.title = tag?.folder ?? ''; }
+    create.disabled = readonly || saving; search.disabled = saving;
+    for (const b of list.querySelectorAll('button')) b.disabled = saving;
+    for (const b of editor.querySelectorAll('button')) b.disabled = readonly || saving;
+    const input = editor.querySelector('input'); if (input) input.readOnly = readonly || saving;
+  };
+  search.addEventListener('input', draw);
+  search.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); list.querySelector<HTMLButtonElement>('button')?.focus(); }
+  });
+  list.addEventListener('keydown', e => {
+    const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); buttons[(index + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+    }
+  });
+  modal.update = draw; draw(); search.focus(); fitWindow();
 }
 function auxiliary(view: 'archive' | 'scheduled'): void {
   const existing = layers.find(l => l.kind === view); if (existing) { existing.panel.focus(); return; }
