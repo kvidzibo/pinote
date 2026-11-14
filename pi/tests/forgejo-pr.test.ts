@@ -87,12 +87,15 @@ globalThis.fetch = async (url, options) => {
   assert.equal(unmergeable.notification, undefined, 'False mergeability is not definitive conflict evidence');
   for (const merged of [false, true]) {
     const terminal = { ...pr, state: 'closed', merged };
-    for (const pulls of [[terminal], [pr, terminal]]) {
-      const { output } = run({ pulls });
-      assert.equal(output.state, merged ? 'merged' : 'closed');
-      assert.equal(output.display?.strikethrough, merged);
-      assert.equal(output.recheckAfterSeconds, undefined);
-      assert.equal(output.notification, undefined);
+    for (const response of [terminal, { state: 'closed', merged, head: { sha: '' } }, { state: 'closed', merged, head: null }]) {
+      for (const pulls of [[response], [pr, response]]) {
+        const { output, requests } = run({ pulls });
+        assert.equal(output.state, merged ? 'merged' : 'closed');
+        assert.equal(output.display?.strikethrough, merged);
+        assert.equal(output.recheckAfterSeconds, undefined);
+        assert.equal(output.notification, undefined);
+        if (pulls.length === 1) assert.equal(requests.length, 1, 'Terminal PRs need no commit-status request');
+      }
     }
   }
   for (const scenario of [{ fail: true }, { httpStatus: 401 }, { httpStatus: 302 }, { raw: 'SECRET not JSON' },
