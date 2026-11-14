@@ -37,7 +37,9 @@ notifications, not automatic worker actions. Saving watchers removes the old key
 The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PR`
 and ignores other fields. Copy it to a user-owned location before customization,
 make it executable (`chmod u+x`), and ensure authenticated `gh` and Node are on the
-**service's** PATH. It accepts a GitHub PR URL or Markdown link, checks once, and
+**service's** PATH. For systemd, follow the [service PATH setup](README.md#run-continuously);
+using an absolute Node path in `ExecStart` alone is insufficient for the watcher's
+`#!/usr/bin/env node` interpreter. It accepts a GitHub PR URL or Markdown link, checks once, and
 requests another check in 60 seconds. It warns on failing checks/conflicts and
 strikes through merged PRs while keeping their links. Closed/merged PRs stop
 polling; merging never completes the Pinote task. Passing means reported checks
@@ -115,6 +117,15 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   execution. This is a **current-field automation API**, not a lossless audit hook:
   intermediate values may never reach the script. Old migrated history without
   field snapshots cannot be reconstructed.
+- In Pi's interactive terminal, execution failures produce one grouped notice:
+  `Pinote watchers failing: GitHub PR [PR], Deploy [Build, URL].`
+  It points to the actual service log on the **service machine**. Health is
+  service-wide, grouped by watcher and affected field across tasks; long field
+  lists show an additional count. Notices appear on connection and when the
+  failure set changes, not on every retry. A final notice clears the failure set
+  after recovery, disabling a watcher or removing its failing fields. Disconnects
+  and older services are not treated as recovery. These notices use native Pi
+  notifications only: no model turn, transcript entry, or model-context diagnostics.
 - One handler runs at a time. Each invocation has a 30-second deadline and a
   combined 64 KiB stdout/stderr limit. On Unix, cancellation kills its process
   group. Scripts must not detach child processes. Invalid JSON/schema, nonzero
@@ -141,7 +152,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   the worker must verify fresh task context and obey existing scope and approvals.
   Enabling never authorizes task selection/completion, PR merging or bypassing
   approvals. Current results reach each agent run through fresh task-scoped
-  context; oversized results are omitted with a count, preserving the task first.
+  context; stale/unavailable checks are excluded. Oversized current results are
+  omitted with a count, preserving the task first. Actionable results such as PR
+  CI failures still use the separately enabled worker-alert behavior above.
 - Only the latest current alert per field is retained, not an offline alert log.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
   failure. Network recovery remains explicit through `/pinote` or a tool call.
@@ -153,8 +166,13 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 
 Handlers run with the service user's permissions and inherited environment,
 including available credentials. They are trusted code, **not sandboxed**. The
-human-confirmed Watchers UI can configure executable paths; agent tools cannot. Service logs report
-failures generically; script output and stderr are not copied into logs. Run the
+human-confirmed Watchers UI can configure executable paths; agent tools cannot.
+The existing service log records each failed invocation with timestamp, watcher
+name/ID, task ID, field name, a fixed safe reason, last successful check and next
+retry. Reasons distinguish missing executables/interpreters, permissions, exit
+failures (including interpreter/PATH exit 127), timeouts, output limits, invalid
+results and reported unavailable data. No field values, raw exceptions, script
+stdout/stderr or credentials are copied into diagnostics. Run the
 script manually with synthetic input when debugging; don't put secrets in results,
 which may be displayed and sent to the configured model.
 

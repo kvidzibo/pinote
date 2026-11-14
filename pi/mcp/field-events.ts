@@ -25,6 +25,8 @@ export const FieldResult = z.object({
 export type FieldResult = z.infer<typeof FieldResult>;
 type FieldEvent = z.infer<typeof Event>;
 type Job = { watcherId: string; event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean };
+export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: number; field: string; reason: string; lastSuccess: string | null; retryAt: string };
+class FieldHandlerFailure extends Error {}
 export type FieldStatus = { watcherId: string; field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
 export type FieldNotice = { id: string; taskId: number; field: string; message: string };
 type Task = { id: number; state: string; updated_at: string; agent_notes: Record<string, string> };
@@ -35,23 +37,29 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawn(handler, [], { cwd: dirname(handler), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
-    let output = '', bytes = 0, failed = false;
-    const kill = () => {
-      failed = true;
+    let output = '', bytes = 0, failure: string | undefined;
+    const kill = (reason = 'Watcher cancelled') => {
+      failure ??= reason;
       try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
     };
-    const timer = setTimeout(kill, timeoutMs);
-    signal.addEventListener('abort', kill, { once: true });
-    const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', kill); };
+    const timer = setTimeout(() => kill('Watcher timed out'), timeoutMs);
+    const abort = () => kill();
+    signal.addEventListener('abort', abort, { once: true });
+    const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); };
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { bytes += Buffer.byteLength(chunk); if (bytes > 64 * 1024) kill(); else output += chunk; });
-    child.stderr.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > 64 * 1024) kill(); });
-    child.stdin.on('error', kill);
-    child.on('error', () => { cleanup(); reject(new Error('Field handler failed')); });
+    child.stdout.on('data', (chunk: string) => { bytes += Buffer.byteLength(chunk); if (bytes > 64 * 1024) kill('Watcher output exceeded 64 KiB'); else output += chunk; });
+    child.stderr.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > 64 * 1024) kill('Watcher output exceeded 64 KiB'); });
+    child.stdin.on('error', () => kill('Watcher input could not be delivered'));
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      cleanup();
+      reject(new FieldHandlerFailure(error.code === 'ENOENT' ? 'Watcher executable or interpreter not found; check service PATH' :
+        error.code === 'EACCES' ? 'Watcher execution denied; check permissions' : 'Watcher could not be started'));
+    });
     child.on('close', (code) => {
       cleanup();
-      if (failed || code !== 0 || signal.aborted) return reject(new Error('Field handler failed'));
-      try { resolve(FieldResult.parse(JSON.parse(output))); } catch { reject(new Error('Invalid field handler result')); }
+      if (failure || code !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
+        (code === 127 ? 'Watcher exited with code 127; check interpreter and service PATH' : 'Watcher exited unsuccessfully')));
+      try { resolve(FieldResult.parse(JSON.parse(output))); } catch { reject(new FieldHandlerFailure('Invalid watcher JSON or result schema')); }
     });
     child.stdin.end(JSON.stringify(input));
   });
@@ -72,8 +80,8 @@ export class FieldAutomation {
   private ticking = false;
   private noteCommand: string;
   private changed: () => void;
-  private log: () => void;
-  private constructor(db: DatabaseSync, watchers: () => FieldWatcher[], noteCommand: string, changed: () => void, log: () => void) {
+  private log: (failure?: WatcherFailureLog) => void;
+  private constructor(db: DatabaseSync, watchers: () => FieldWatcher[], noteCommand: string, changed: () => void, log: (failure?: WatcherFailureLog) => void) {
     this.db = db; this.watchers = watchers; this.noteCommand = noteCommand; this.changed = changed; this.log = log;
     db.exec(`PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS fw_scheduler (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
@@ -83,7 +91,7 @@ export class FieldAutomation {
       CREATE TABLE IF NOT EXISTS fw_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
       INSERT OR IGNORE INTO fw_scheduler(id) VALUES (1);`);
   }
-  static async open(options: { watchers?: () => FieldWatcher[]; path?: string; noteCommand?: string; changed?: () => void; log?: () => void } = {}): Promise<FieldAutomation> {
+  static async open(options: { watchers?: () => FieldWatcher[]; path?: string; noteCommand?: string; changed?: () => void; log?: (failure?: WatcherFailureLog) => void } = {}): Promise<FieldAutomation> {
     const dataHome = process.env.XDG_DATA_HOME;
     const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
     const namespace = createHash('sha256').update(database).digest('hex').slice(0, 16);
@@ -154,6 +162,15 @@ export class FieldAutomation {
       if (job.event.value === null || job.event.value !== task.agent_notes[job.event.field] || !job.result || Object.keys(job.result).length === 0) return [];
       return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: job.stale ?? false }];
     }));
+  }
+  /** Service-wide health, separate from task results and worker alerts. */
+  failures() {
+    this.reconcile();
+    return this.enabled.flatMap((watcher) => {
+      const fields = [...new Set((this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=?').all(watcher.id) as Row[])
+        .map(({ job }) => JSON.parse(job) as Job).filter((job) => job.stale && job.event.value !== null).map((job) => job.event.field))].sort();
+      return fields.length ? [{ watcherId: watcher.id, name: watcher.name.slice(0, 256), fields: fields.slice(0, 8), moreFields: Math.max(0, fields.length - 8) }] : [];
+    });
   }
   notices(task: Task, contextId: string, receipts: readonly string[] = []): FieldNotice[] {
     this.claim(task.id, contextId);
@@ -239,14 +256,18 @@ export class FieldAutomation {
         }, invocation.signal);
         if (result.state === 'error') {
           retryAfterSeconds = result.recheckAfterSeconds ?? 0;
-          throw new Error('Handler reported unavailable data');
+          throw new FieldHandlerFailure('Watcher reported unavailable data; check dependencies, authentication and connectivity');
         }
-      } catch {
+      } catch (error) {
         if (!valid() || invocation.signal.aborted) return;
         job.attempts++; job.stale = true;
         job.result ??= { state: 'error', summary: 'Field handler unavailable', display: { color: 'muted' } };
         job.due = Date.now() + Math.max(retryAfterSeconds, Math.min(3600, 30 * 2 ** Math.min(job.attempts - 1, 7))) * 1000;
-        this.transaction(() => this.save(job)); this.changed(); this.log(); return;
+        this.transaction(() => this.save(job)); this.changed();
+        this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
+          reason: error instanceof FieldHandlerFailure ? error.message : 'Watcher check failed',
+          lastSuccess: job.checkedAt ?? null, retryAt: new Date(job.due).toISOString() });
+        return;
       }
       finally {
         clearInterval(poll); this.lifetime.signal.removeEventListener('abort', abort);

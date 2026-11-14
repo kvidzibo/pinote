@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { RemoteSession } from '../remote/session.ts';
+import { RemoteUI } from '../remote/ui.ts';
+import { ViewSchema, type NativeView } from '../remote/protocol.ts';
 import { remoteConfig } from '../remote/client.ts';
 import test from 'node:test';
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
@@ -9,6 +11,36 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable } from '../field-watchers.ts';
 import { FieldAutomation } from '../mcp/field-events.ts';
+
+test('watcher health is grouped, deduplicated and recovered only through terminal UI', () => {
+  for (const fullscreen of [false, true]) {
+    const notices: { message: string; level: string }[] = [];
+    const base: NativeView = { version: 1, title: 'Pinote', revision: 'v1', state: {}, controls: [], footer: [] };
+    const session: any = { fullscreen, view: base };
+    const ui = new RemoteUI({ sendMessage: () => assert.fail('No model turn'), appendEntry: () => assert.fail('No transcript entry') } as any, session);
+    ui.attach({ mode: 'tui', ui: { theme: {}, setWidget() {}, setStatus() {},
+      notify: (message: string, level: string) => notices.push({ message, level }),
+    } } as any);
+    const diagnostics = { logPath: '/service/app.log', failures: [
+      { watcherId: 'github', name: 'GitHub PR', fields: ['PR'], moreFields: 0 },
+      { watcherId: 'deploy', name: 'Deploy', fields: ['Build', 'URL'], moreFields: 2 },
+    ] };
+    session.view = ViewSchema.parse({ ...base, watcherDiagnostics: diagnostics });
+    session.onChange(); session.onChange();
+    assert.deepEqual(notices, [{ message: 'Pinote watchers failing: GitHub PR [PR], Deploy [Build, URL, +2 fields].\nDetails (service machine): /service/app.log', level: 'warning' }]);
+    session.view = undefined; session.onChange();
+    session.view = base; session.onChange();
+    assert.equal(notices.length, 1, 'Unavailable or legacy views are not recovery');
+    session.view = { ...base, watcherDiagnostics: { ...diagnostics, failures: diagnostics.failures.slice(1) } };
+    session.onChange();
+    assert.equal(notices.length, 2, 'A changed failure set prints once');
+    session.view = { ...base, watcherDiagnostics: { ...diagnostics, failures: [] } };
+    session.onChange(); session.onChange();
+    assert.deepEqual(notices.at(-1), { message: 'Pinote watcher failures cleared.', level: 'info' });
+    assert.equal(notices.length, 3);
+    ui.detach();
+  }
+});
 
 test('bounded configuration, inert fixed discovery and disabled legacy migration', () => {
   const dir = mkdtempSync(join(tmpdir(), 'watcher-config-'));
@@ -84,6 +116,15 @@ test('independent durable watchers, ignored results, immediate disable/removal a
         seed.prepare('INSERT INTO fw_notices VALUES (?,?,?,?,?)').run(watcher.id, 1, field, randomUUID(), 'Still failing');
       }
     } finally { seed.close(); }
+    const failed = new DatabaseSync(path);
+    try { failed.exec("UPDATE fw_jobs SET job=json_set(job, '$.stale', json('true'))"); } finally { failed.close(); }
+    const failures = automation.failures();
+    assert.equal(failures.length, 2);
+    assert.deepEqual(failures.map((f) => f.name), ['first', 'second']);
+    assert.ok(failures.every((f) => f.fields.length === 8 && f.moreFields === 25));
+    const recovered = new DatabaseSync(path);
+    try { recovered.exec("UPDATE fw_jobs SET job=json_set(job, '$.stale', json('false'))"); } finally { recovered.close(); }
+    assert.deepEqual(automation.failures(), []);
     const received: string[] = [];
     const session = new RemoteSession(remoteConfig({ PINOTE_TOKEN: 'x'.repeat(32) }), () => {}, async () => ({
       read: async (_uri, meta) => {

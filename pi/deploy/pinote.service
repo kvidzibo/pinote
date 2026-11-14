@@ -6,6 +6,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/absolute/path/to/pinote
+# Include the directory containing the ExecStart Node binary, plus watcher tools.
+Environment="PATH=/absolute/path/to/node-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=%h/.config/pinote/service.env
 ExecStart=/absolute/path/to/node /absolute/path/to/pinote/pi/dist-mcp/mcp/http.js
 Restart=on-failure

@@ -85,8 +85,12 @@ rotation requires restarting the service and updating client credentials.
 ## Run continuously
 
 A [systemd user-unit template](../deploy/pinote.service) is included. Replace its
-absolute checkout, Node and CLI paths and review it before installation. Store the
-environment file outside the repository with mode `0600`:
+absolute checkout and Node paths. Set its `Environment=PATH=…` Node-bin directory
+to the directory containing that Node executable; also include `gh`'s directory if
+outside the listed system directories. An absolute Node path in `ExecStart` starts
+the service but does not put Node on the PATH inherited by watcher scripts.
+Review the unit before installation. Store the environment file outside the
+repository with mode `0600`:
 
 ```ini
 PINOTE_TOKEN_FILE=/absolute/path/to/private/pinote-token
@@ -96,6 +100,11 @@ PINOTE_LOG_PATH=/absolute/path/to/private/state/pinote/app.log
 # PINOTE_ALLOWED_HOSTS=notes.example.net
 ```
 
+Set `PINOTE_NOTE_COMMAND` to the absolute CLI path. If `service.env` also sets
+`PATH`, it overrides the unit's value: provide the complete list of directories,
+including Node and watcher tools. Systemd does not expand `$PATH` or `~` here and
+does not load shell startup files. The service user must authenticate `gh`.
+
 Install the reviewed unit under your user systemd directory, then:
 
 ```sh
@@ -104,11 +113,17 @@ systemctl --user enable --now pinote.service
 journalctl --user -u pinote.service
 ```
 
+For an existing installation, update the installed unit/environment file, run
+`systemctl --user daemon-reload`, then `systemctl --user restart pinote.service`.
+A restart briefly disconnects clients; it preserves notes and watcher state.
+Pulling the checkout alone does not update an installed unit or running environment.
+
 This starts at login and survives closing Pi. Running before login requires
 administrator-approved user lingering. Your machine must remain awake and reachable.
 Installation never creates the unit, changes lingering, or edits personal config
-automatically. Logs go to stdout/journal and `app.log`; arguments, results, tokens
-and task content are not logged. Arrange external rotation if needed.
+automatically. Logs go to stdout/journal and `app.log`. Watcher failures include
+safe reason categories, watcher/field names, task IDs and retry times, never field
+values, raw script output, arguments or credentials. Arrange external rotation if needed.
 
 ## Sessions and failures
 
@@ -148,7 +163,9 @@ Manage `fieldWatchers` in **Settings → Footer fields → Watchers**. Bundled f
 are discovered disabled; trusted custom executables can be added and enabled.
 Independent checks survive restarts and settings apply live, without another daemon.
 The GitHub PR watcher triggers the owning worker on failed CI/conflicts and strikes
-through merged PRs. Requires note 0.24.0+. Review the
+through merged PRs. With pi-note 0.41.1+ on both sides, failed watcher executions
+produce grouped terminal-only notices pointing to the service log; retries do not
+spam the terminal or trigger model turns. Requires note 0.24.0+. Review the
 [watcher contract and safeguards](FIELD_EVENTS.md) before enabling trusted code.
 
 ## Task-completion events
