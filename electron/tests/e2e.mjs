@@ -1037,9 +1037,77 @@ try {
   assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
   assert.deepEqual(pageErrors,[]);
   // Submit in the same event-loop turn as paste: no debounce may be required for safety.
-  const reopen=async()=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator('.task-row').first().waitFor();await installNativeMenuProbe();return p;};
+  const reopen=async(collapsed=false)=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator(collapsed?'#draft':'.task-row').first().waitFor();await installNativeMenuProbe();return p;};
   const close=async()=>{const done=app.waitForEvent('close');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await done;app=undefined;};
   let reopened=await reopen();
+  // Restore working state together, not just text: the draft must retain its tag.
+  {
+    const composer = () => reopened.getByRole('textbox',{name:'Add a task…',exact:true});
+    await reopened.getByRole('button',{name:/^New-task tag:/}).click();
+    await reopened.getByRole('dialog',{name:'New-task tag',exact:true}).locator('[data-tag="Work"]').click();
+    await composer().fill('Restart keeps the draft and its tag');
+    await reopened.getByRole('button',{name:/^Filter by tag:/}).click();
+    await reopened.getByRole('button',{name:'Clear selection (in-progress only)',exact:true}).click();
+    await reopened.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Work');
+    await reopened.getByRole('dialog',{name:'Filter by tag',exact:true}).locator('[data-tag="Work"]').click();
+    await reopened.keyboard.press('Escape');
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:110,y:90,width:420,height:360}));
+    await reopened.waitForTimeout(350);
+    await reopened.locator('#ordinary').evaluate(node=>{node.scrollTop=420;});
+    await reopened.waitForTimeout(250);
+    const scroll=await reopened.locator('#ordinary').evaluate(node=>node.scrollTop);
+    assert.ok(scroll>0);
+    const expanded=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+    const before=await reopened.evaluate(()=>window.pinote.loadState());
+    await reopened.getByRole('button',{name:'Collapse checklist',exact:true}).click();
+    await close(); // Flushes even changes made inside the debounce period.
+    // A collapsed restart intentionally has no visible task rows.
+    reopened=await reopen(true);
+    await reopened.getByRole('button',{name:'Expand checklist',exact:true}).waitFor();
+    await reopened.waitForTimeout(350);
+    assert.equal(await reopened.locator('#checklist').isVisible(),false);
+    assert.equal(await sourceValue(composer()),'Restart keeps the draft and its tag');
+    assert.equal(await reopened.getByRole('button',{name:'New-task tag: Work',exact:true}).count(),1);
+    const restored=await reopened.evaluate(()=>window.pinote.loadState());
+    assert.deepEqual(restored.filters,['Work']);
+    for(const key of ['edits','read','taskActions']) assert.deepEqual(restored[key],before[key]);
+    await reopened.screenshot({path:join(root,'restart-collapsed.png')});
+    await reopened.getByRole('button',{name:'Expand checklist',exact:true}).click();
+    await reopened.waitForTimeout(350);
+    assert.deepEqual(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds()),expanded);
+    assert.equal(await reopened.locator('#ordinary').evaluate(node=>node.scrollTop),scroll);
+    await reopened.screenshot({path:join(root,'restart-restored.png')});
+    await composer().press('Enter');
+    await reopened.waitForFunction(()=>document.querySelector('#draft .cm-placeholder'));
+    const addedAfterRestart=call('snapshot',{view:'active'}).notes.find(n=>n.text==='Restart keeps the draft and its tag');
+    assert.equal(addedAfterRestart?.tag,'Work');
+    // Moving the collapsed window to the top must not clamp its hidden expanded rectangle.
+    await reopened.getByRole('button',{name:'Collapse checklist',exact:true}).click();
+    await reopened.waitForTimeout(200);
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setPosition(110,0));
+    await close(); reopened=await reopen(true);
+    await reopened.getByRole('button',{name:'Expand checklist',exact:true}).waitFor();
+    await reopened.waitForTimeout(350);
+    assert.equal((await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds())).y,0);
+    await reopened.getByRole('button',{name:'Expand checklist',exact:true}).click();
+    // Clearing the creation tag and selecting All must survive another restart too.
+    await reopened.getByRole('button',{name:'New-task tag: Work',exact:true}).click({button:'right'});
+    await reopened.getByRole('button',{name:/^Filter by tag:/}).click();
+    await reopened.getByRole('button',{name:'Select all tags',exact:true}).click();
+    await reopened.keyboard.press('Escape');
+    await reopened.locator('#ordinary').evaluate(node=>{node.scrollTop=210;});
+    await reopened.waitForTimeout(250);
+    await close(); reopened=await reopen();
+    assert.equal(await reopened.getByRole('button',{name:'New-task tag: Untagged',exact:true}).count(),1);
+    assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).filters,null);
+    assert.equal(await reopened.locator('#ordinary').evaluate(node=>node.scrollTop),210);
+    // A tag removed while closed must not leave a restored draft using a stale tag.
+    call('create_tag',{name:'Restart-only tag',folder:null});
+    await reopened.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
+    await reopened.getByRole('dialog',{name:'New-task tag',exact:true}).locator('[data-tag="Restart-only tag"]').click();
+    await close(); call('delete_tag',{name:'Restart-only tag'}); reopened=await reopen();
+    assert.equal(await reopened.getByRole('button',{name:'New-task tag: Untagged',exact:true}).count(),1);
+  }
   await writeFile(faultFile,'add');
   await reopened.evaluate(()=>{const input=document.querySelector('#draft');input.focus();window.getSelection().selectAllChildren(input);const data=new DataTransfer();data.setData('text/plain','Rapid uncertain add draft');input.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,bubbles:true}));});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
@@ -1261,6 +1329,16 @@ try {
   assert.equal(loadedRecovery.warning,retriedRecovery.warning);
   assert.doesNotMatch(loadedRecovery.warning,/cannot be read safely/);
   await close();
+  // Unreadable drafts are protected, but best-effort geometry must not trap recovery on close.
+  await writeFile(join(stateDir,'state.json'),'corrupt draft JSON — preserve me');
+  await chmod(stateDir,0o500);
+  try {
+    reopened=await reopen();
+    await reopened.getByText(/Electron state\/drafts cannot be read safely/).first().waitFor();
+    await reopened.waitForTimeout(350);
+    await close();
+    assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
+  } finally { await chmod(stateDir,0o700); }
   console.log(`Electron UI validation artifacts: ${root}`);
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally {

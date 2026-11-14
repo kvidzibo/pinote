@@ -21,7 +21,7 @@ let activeMenu: Menu | undefined;
 let state = initialState();
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
-let stateWrites = Promise.resolve(); let tasks = Promise.resolve();
+let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
 const log = (message: string) => {
@@ -71,6 +71,17 @@ function resize(width: number, height: number, anchored = true) {
   const y = Math.max(area.y, Math.min(anchored ? old.y + old.height - h : old.y, area.y + area.height - h));
   changingSize = true; window.setBounds({ x, y, width: w, height: h });
   setTimeout(() => { changingSize = false; }, 150);
+}
+
+function saveGeometry() {
+  if (!window || !geometryReady) return;
+  const current = window.getBounds();
+  fullSize = { width: current.width, height: collapsed ? fullSize.height : current.height };
+  const geometry = { ...fullSize, x: current.x, y: current.y, manualSize };
+  // Geometry is best-effort; it must not poison draft writes or trap a read-only window.
+  geometryWrites = geometryWrites.then(() => atomic(join(dataDir, 'window.json'), geometry))
+    .catch(() => log('Cannot save Electron window geometry.'));
+  return geometryWrites;
 }
 
 function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
@@ -136,12 +147,21 @@ async function boot() {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.on('will-download', event => event.preventDefault());
-  const area = screen.getDisplayNearestPoint({ x:25, y:1300 }).workArea;
+  let area = screen.getDisplayNearestPoint({ x:25, y:1300 }).workArea;
+  let position: { x: number; y: number } | undefined;
   try {
     const size = JSON.parse(await readFile(join(dataDir, 'window.json'), 'utf8'));
-    if (Number.isFinite(size.width) && Number.isFinite(size.height)) { fullSize = { width: Math.max(280, Math.min(size.width,area.width)), height: Math.max(120,Math.min(size.height,area.height)) }; manualSize = true; }
+    if (Number.isSafeInteger(size.x) && Number.isSafeInteger(size.y)) {
+      position = { x: size.x, y: size.y }; area = screen.getDisplayNearestPoint(position).workArea;
+    }
+    if (Number.isFinite(size.width) && Number.isFinite(size.height)) { fullSize = { width: Math.max(280, Math.min(size.width,area.width)), height: Math.max(120,Math.min(size.height,area.height)) }; manualSize = size.manualSize !== false; }
   } catch { /* Missing/invalid geometry never damages drafts or task data. */ }
-  window = new BrowserWindow({ width: fullSize.width, height: fullSize.height, x: area.x + 25, y: area.y + area.height - fullSize.height - 25,
+  const x = Math.max(area.x, Math.min(position?.x ?? area.x + 25, area.x + area.width - fullSize.width));
+  collapsed = state.collapsed ?? false;
+  const height = collapsed ? 132 : fullSize.height;
+  const y = Math.max(area.y, Math.min(position?.y ?? area.y + area.height - height - 25, area.y + area.height - height));
+  const bottom = y + height;
+  window = new BrowserWindow({ width: fullSize.width, height, x, y,
     minWidth: 280, minHeight: 120, type: 'utility', frame: false, show: false, title: 'Pinote Electron', backgroundColor: '#232832', alwaysOnTop: true,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
   });
@@ -171,18 +191,21 @@ async function boot() {
       exiting = true; window?.destroy(); app.quit();
     })().catch(() => log('Cannot show recovery controls; recovered drafts remain in memory. Do not force quit before recovering them.'));
   });
-  window.on('ready-to-show', () => { resize(fullSize.width, fullSize.height, false); window?.show(); window?.focus(); });
+  window.on('ready-to-show', () => { window?.show(); window?.focus(); });
   window.once('show', () => setTimeout(() => {
     if (!window) return;
     const current = window.getBounds(); changingSize = true;
-    window.setBounds({ x: area.x + 25, y: Math.max(area.y, area.y + area.height - current.height - 25), width: current.width, height: current.height });
+    window.setBounds({ x, y: Math.max(area.y, bottom - current.height), width: current.width, height: current.height });
     setTimeout(() => { changingSize = false; geometryReady = true; }, 150);
   }, 100));
   window.on('resize', () => {
     if (!window || !geometryReady || changingSize || collapsed) return;
     manualSize = true;
-    const [width,height] = window.getSize(); fullSize = { width,height };
-    stateWrites = stateWrites.catch(() => {}).then(() => atomic(join(dataDir,'window.json'), fullSize));
+    void saveGeometry();
+  });
+  window.on('move', () => {
+    if (changingSize) return;
+    void saveGeometry();
   });
   window.on('close', event => {
     if (exiting) return;
@@ -224,7 +247,7 @@ async function boot() {
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height); },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
     'cancel-close': () => { if (!exiting) closing = false; },
-    'finish-close': async () => { await tasks; await stateWrites; exiting = true; window?.destroy(); app.quit(); },
+    'finish-close': async () => { await tasks; await stateWrites; await saveGeometry(); exiting = true; window?.destroy(); app.quit(); },
   };
   for (const [name, handler] of Object.entries(handlers)) ipcMain.handle(name, (event,...args) => { trusted(event); return handler(event,...args); });
   await window.loadURL(`${origin}/index.html`);

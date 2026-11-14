@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
 for Electron (including GTK 3). The independently versioned `electron/` npm
-package is private, version 0.9.0.
+package is private, version 0.9.1.
 Run from the repository root:
 
 ```sh
@@ -46,7 +46,7 @@ Icons are bundled rather than taken from the host icon theme.
   and shrinks with its text. Ordinary tasks use the available window height;
   in-progress tasks size to their contents above the composer (up to half the
   list when ordinary tasks are present) and scroll separately when needed.
-  Manual window sizing is preserved.
+  Window size, position, collapsed state, and list scroll positions survive restarts.
 - Composer and task editors show live Markdown **source** styling for headings,
   bold, italic and code. Markers stay visible; load, paste, save and copy preserve
   source. On the first explicit newline after a plain single-line task, it becomes
@@ -137,8 +137,15 @@ alongside each other. Electron does not copy tasks into a separate frontend
 database. Each frontend refreshes external changes; stale saves are refused. Roll back by closing Electron and reopening
 GTK; task data needs no conversion.
 
-With the default database location, Electron stores drafts, tag filters,
-task-action preferences, and agent read cursors in
+Restarting restores the new-task tag (including Untagged), tag filters, composer
+and private edit drafts, collapsed state, list scroll positions, saved task-action
+preferences, and agent read cursors. A deleted or externally renamed new-task tag
+falls back to Untagged; renaming it inside Electron updates the selection.
+Dialogs, search text within menus, unsaved settings, and pending deletion marks
+are temporary. Private edit drafts remain available through draft recovery.
+Window position and size are restored within the available display area.
+
+With the default database location, Electron stores that working state in
 `<data>/pinote/electron/state.json`, and window geometry in
 `<data>/pinote/electron/window.json`. These live in an `electron/` directory beside the discovered database; there
 is no renderer-selected database path. Electron's runtime profile/single-instance lock lives in `<data>/pinote/electron/profile/`.

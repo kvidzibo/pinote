@@ -61,6 +61,7 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 export type EditDraft = { text: string; revision: string };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
+  creationTag?: string | null; collapsed?: boolean; scroll?: { ordinary: number; pinned: number };
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });

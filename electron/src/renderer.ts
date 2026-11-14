@@ -27,7 +27,18 @@ const rowNodes = new Map<number, HTMLElement>();
 const rowKeys = new Map<number, string>();
 const exiting = new Set<number>();
 let scrollToId: number | undefined;
+let scrollReady = false;
 let draftVersion = 0;
+function restoreScroll(): void {
+  ordinary.scrollTop = state.scroll?.ordinary ?? 0;
+  pinned.scrollTop = state.scroll?.pinned ?? 0;
+}
+for (const list of [ordinary, pinned]) list.addEventListener('scroll', () => {
+  if (!scrollReady || collapsed || closing) return;
+  const next = { ordinary: ordinary.scrollTop, pinned: pinned.scrollTop };
+  if (next.ordinary === (state.scroll?.ordinary ?? 0) && next.pinned === (state.scroll?.pinned ?? 0)) return;
+  state.scroll = next; saveSoon();
+});
 const editVersions = new Map<string, number>();
 const busyTasks = new Set<number>();
 const stayOrdinary = new Set<number>();
@@ -110,7 +121,7 @@ function saveSoon(): void {
 function persist(recovery = false): Promise<void> {
   clearTimeout(persistTimer);
   if ((readonly && !recovery) || !stateLoaded) return Promise.resolve();
-  const copy: UIState = JSON.parse(JSON.stringify(state));
+  const copy: UIState = JSON.parse(JSON.stringify({ ...state, creationTag, collapsed }));
   const work = persistChain.then(() => api.saveState(copy));
   persistChain = work.then(() => { draftSaveFailed = false; }, e => { draftSaveFailed = true; report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
   return work;
@@ -218,11 +229,13 @@ function confirmAction(title: string, description: string, action: () => Promise
 const tagControl = button('tag', 'New-task tag', () => tagsMenu('creation'));
 tagControl.className = 'creation-tag';
 const tagLabel = el('span'); tagControl.append(tagLabel);
-tagControl.addEventListener('contextmenu', e => { e.preventDefault(); creationTag = null; renderToolbar(); });
+tagControl.addEventListener('contextmenu', e => { e.preventDefault(); creationTag = null; saveSoon(); renderToolbar(); });
 const filterControl = button('filter', 'Filter by tag', () => tagsMenu('filter'));
 const filterCount = el('span'); filterControl.append(filterCount);
 const collapseControl = button('collapse', 'Collapse checklist', async () => {
-  const next = !collapsed; await api.collapse(next); collapsed = next; baseline = false; checklist.hidden = next; renderToolbar();
+  const next = !collapsed; await api.collapse(next); collapsed = next; baseline = false; checklist.hidden = next;
+  if (!next) restoreScroll();
+  saveSoon(); renderToolbar();
 });
 const moveControl = button('move', 'Drag to move window', () => undefined); moveControl.className = 'move-handle';
 const menuControl = button('menu', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
@@ -805,7 +818,7 @@ function tagsMenu(mode: TagMode, task?: Task): void {
     if (mode === 'filter') {
       if (state.filters === null) state.filters = ['', ...(active?.tags.map(t => t.name) ?? [])];
       state.filters = state.filters.includes(name) ? state.filters.filter(t => t !== name) : [...state.filters, name]; saveSoon(); renderTasks(); renderToolbar(); draw();
-    } else if (mode === 'creation') { creationTag = name || null; renderToolbar(); menu.close(); composer.focus(); }
+    } else if (mode === 'creation') { creationTag = name || null; saveSoon(); renderToolbar(); menu.close(); composer.focus(); }
     else if (task) { const result = await call('tag', { ...target(task), tag: name || null }); if (result) { menu.close(); await refresh(); } }
   };
   let lastDraw = '';
@@ -835,7 +848,7 @@ function tagsMenu(mode: TagMode, task?: Task): void {
     }
     if (query && !active?.tags.some(t => t.name.toLocaleLowerCase() === lower)) {
       list.append(textButton(`Create tag “${query}”…`, () => newTag(query, async name => {
-        if (mode === 'creation') { creationTag = name; renderToolbar(); menu.close(); }
+        if (mode === 'creation') { creationTag = name; saveSoon(); renderToolbar(); menu.close(); }
         else if (mode === 'task') menu.close();
         else draw();
       }, mode === 'task' ? task : undefined)));
@@ -1034,16 +1047,17 @@ async function refresh(): Promise<void> {
         if (deletedSelection && !state.filters.length) state.filters = null;
         if (deletedSelection || next.tags.some(t => !oldTags.has(t.name))) saveSoon();
       }
-      if (creationTag && oldTags.has(creationTag) && !nextTags.has(creationTag)) creationTag = null;
     }
     const missing = baseline && !document.hidden && !collapsed && old ? old.notes.filter(t => visible(t) && !next.notes.some(n => n.id === t.id)).map(t => t.id) : [];
     active = next;
+    if (creationTag && !next.tags.some(t => t.name === creationTag)) { creationTag = null; saveSoon(); }
     for (const [id, revision] of marked) if (next.notes.find(t => t.id === id)?.updated_at !== revision) marked.delete(id);
     if (missing.length) { const done = await call('completions', { ids: missing }); for (const id of done ?? []) animateDone(id); }
     baseline = !document.hidden && !collapsed;
     // A restored row must cancel a still-running exit animation.
     for (const id of exiting) if (next.notes.some(t => t.id === id)) { exiting.delete(id); rowNodes.get(id)?.classList.remove('completed'); rowKeys.delete(id); }
     renderTasks(); renderToolbar();
+    if (!scrollReady) { restoreScroll(); scrollReady = true; }
     for (const modal of [...layers]) modal.update?.();
   } finally { polling = false; }
 }
@@ -1053,7 +1067,7 @@ document.addEventListener('keydown', e => {
   e.preventDefault(); e.stopPropagation();
   if (layers.length) { layers[layers.length - 1].close(); return; }
   if (taskActions) { closeTaskActions(); return; }
-  if (creationTag !== null) { creationTag = null; renderToolbar(); return; }
+  if (creationTag !== null) { creationTag = null; saveSoon(); renderToolbar(); return; }
   window.close();
 });
 function dismissOutsideActions(event: Event): void {
@@ -1090,6 +1104,7 @@ async function init(): Promise<void> {
   composerEditor.readOnly = true;
   try { state = await api.loadState(); stateLoaded = true; if (state.warning) { readonly = true; report(`Read-only draft recovery: ${state.warning}`); } }
   catch (e) { readonly = true; report(`Read-only: local drafts could not be loaded: ${message(e)}. Existing state will not be overwritten.`); }
+  creationTag = state.creationTag ?? null; collapsed = state.collapsed ?? false; checklist.hidden = collapsed;
   composerEditor.setText(state.draft); composerEditor.readOnly = readonly;
   if (readonly) {
     composer.title = 'Read-only draft recovery: copy your text; existing state will not be overwritten.'; composer.setAttribute('aria-description', composer.title);
