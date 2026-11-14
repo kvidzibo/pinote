@@ -43,8 +43,10 @@ jobs:
   pi:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node: ["22.19.0", "24"]
+        shard: [1, 2]
     defaults:
       run:
         working-directory: pi
@@ -61,8 +63,13 @@ jobs:
       - run: uv sync --locked
         working-directory: .
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm test
-      - run: npm pack --dry-run
+      - run: npm run build:mcp && npm run check
+      - name: Test shard ${{ matrix.shard }}/2
+        run: >-
+          node --test --experimental-strip-types --test-shard=${{ matrix.shard }}/2
+          tests/*.test.ts test-load.ts test-remote-load.ts
+      - run: npm pack --dry-run --ignore-scripts
+        if: matrix.shard == 1
 
   cli:
     runs-on: ubuntu-latest
@@ -126,6 +133,10 @@ jobs:
 
   electron:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        screen: ["1280x900x24", "800x600x24"]
     env:
       PINOTE_ELECTRON_BACKEND: ${{ github.workspace }}/.venv/bin/pinote-electron-backend
     steps:
@@ -156,21 +167,22 @@ jobs:
         run: |
           sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 electron/node_modules/electron/dist/chrome-sandbox
-      - name: Type, unit, and isolated desktop checks
+      - name: Type and unit checks
+        if: matrix.screen == '1280x900x24'
+        run: npm --prefix electron run check && npm --prefix electron test
+      - name: Isolated desktop checks
         run: >-
-          xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c
-          'npm --prefix electron run check && npm --prefix electron test && npm --prefix electron run test:e2e'
-      - name: Small-display Electron checks
-        run: >-
-          xvfb-run -a -s '-screen 0 800x600x24' dbus-run-session --
+          xvfb-run -a -s '-screen 0 ${{ matrix.screen }}' dbus-run-session --
           npm --prefix electron run test:e2e
-      - run: npm --prefix electron run build
       - run: npm --prefix electron run package
+        if: matrix.screen == '1280x900x24'
       - name: Provision packaged sandbox on ephemeral runner
+        if: matrix.screen == '1280x900x24'
         run: |
           sudo chown root:root electron/out/pinote-electron-linux-x64/chrome-sandbox
           sudo chmod 4755 electron/out/pinote-electron-linux-x64/chrome-sandbox
       - name: Isolated packaged application smoke test
+        if: matrix.screen == '1280x900x24'
         run: >-
           xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session --
           npm --prefix electron run test:package

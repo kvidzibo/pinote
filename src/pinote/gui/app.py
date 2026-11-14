@@ -327,6 +327,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         self.size_cache = WindowSizeCache(model.paths.data / "gui-window-size.json")
         self.size_error: str | None = None
         self._initial_placement = True
+        self._initial_map_pending = True
         self._placement_requests: set[tuple[int, int]] = set()
         self.rows: dict[int, NoteRow] = {}
         self.closed = False
@@ -376,6 +377,7 @@ class ReminderWindow(Gtk.ApplicationWindow):
         # while later remaps preserve a manually moved bottom anchor.
         def place_once(window, _event):
             window.disconnect(placement_handler)
+            window._initial_map_pending = False
             window._queue_geometry()
 
         placement_handler = self.connect("map-event", place_once)
@@ -725,7 +727,9 @@ class ReminderWindow(Gtk.ApplicationWindow):
 
     def _sync_geometry(self) -> bool:
         self.geometry_source = 0
-        if self.closed or not self.get_mapped():
+        # get_mapped() becomes true before the WM processes the initial map.
+        # Do not treat its later placement offset as a user move.
+        if self.closed or self._initial_map_pending or not self.get_mapped():
             return GLib.SOURCE_REMOVE
         # Coalesce buffer changes: replacing selected text briefly deletes the
         # whole draft before inserting its replacement. Only collapse if it stays empty.
