@@ -1293,10 +1293,17 @@ try {
   if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
   await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);
   assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
-  // Failed Kitty launch must keep the acknowledgement action, not offer a blocked retry.
-  await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
+  // Reach a real failed launch: nonexistent folders are now rejected before effects.
+  const kittyBin=join(root,'failed-kitty-bin'), kittyMarker=join(root,'kitty-launch-attempted');
+  await mkdir(kittyBin);
+  await writeFile(join(kittyBin,'kitty'),`#!/bin/sh\nprintf attempted > '${kittyMarker}'\nexit 1\n`,{mode:0o700});
+  await writeFile(join(kittyBin,'pi'),'#!/bin/sh\nexit 0\n',{mode:0o700});
+  const originalPath=await app.evaluate(()=>process.env.PATH);
+  await app.evaluate(({dialog},{directory,path})=>{process.env.PATH=path;dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});},{directory:root,path:`${kittyBin}:${originalPath}`});
   await selectTaskAction(page, added.id, 'Start in Kitty…');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  assert.equal(await readFile(kittyMarker,'utf8'),'attempted','The failure must follow an actual external launch');
+  await app.evaluate((_,path)=>{process.env.PATH=path;},originalPath);
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).state,'in_progress','A real failed Kitty launch retains the saved start');
   await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
