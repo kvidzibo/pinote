@@ -18,7 +18,7 @@ if (process.env.GH_FAIL) { console.error('SECRET credential'); process.exit(1); 
 process.stdout.write(process.env.GH_RESPONSE);
 `);
   chmodSync(gh, 0o700);
-  const script = fileURLToPath(new URL('../examples/field-events.mjs', import.meta.url));
+  const script = fileURLToPath(new URL('../watchers/github-pr.mjs', import.meta.url));
   const event = { version: 1, event: 'added', taskId: 1, field: 'PR', value: 'https://github.com/owner/repo/pull/42', previousValue: null, eventId: 'event-1' };
   const base = { state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [], headRefOid: 'a'.repeat(40) };
   const run = (response: unknown = base, patch: object = {}, fail = false) => {

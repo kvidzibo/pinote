@@ -1,9 +1,10 @@
 import { defaultFooterField, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt } from '../footer-config.ts';
+import { parseFieldWatchers } from '../field-watchers.ts';
 import { clean, editorText, type NativeControl, type NativeView } from './protocol.ts';
 
-export type Screen = 'home' | 'tasks' | 'settings' | 'prompts' | 'footer' | 'fields' | 'field';
+export type Screen = 'home' | 'tasks' | 'settings' | 'prompts' | 'footer' | 'fields' | 'field' | 'watchers';
 const group = (id: Screen, label: string, description: string): NativeControl => ({ id: `__${id}`, label, description, kind: 'action' });
-export const parentScreen = (screen: Screen): Screen | undefined => ({ tasks: 'home', settings: 'home', prompts: 'settings', footer: 'settings', fields: 'settings', field: 'fields' } as const)[screen as Exclude<Screen, 'home'>];
+export const parentScreen = (screen: Screen): Screen | undefined => ({ tasks: 'home', settings: 'home', prompts: 'settings', footer: 'settings', fields: 'settings', field: 'fields', watchers: 'fields' } as const)[screen as Exclude<Screen, 'home'>];
 export const serverScreen = (screen: Screen) => screen === 'home' || screen === 'tasks' ? 'tasks' : screen === 'field' ? 'field' : 'settings';
 
 /** Local navigation only. Server controls/revisions remain the authority for every action. */
@@ -39,7 +40,13 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       break;
     case 'fields':
       title = 'Pinote / Settings / Footer fields'; body = 'Display definitions only. Populated task values appear in the footer.';
-      controls = [...view.controls.filter((c) => c.id.startsWith('field:')), ...take('add-field')];
+      controls = [group('watchers', 'Watchers…', 'Bundled and custom field watchers; explicitly enable trusted code and automatic worker actions.'),
+        ...view.controls.filter((c) => c.id.startsWith('field:')), ...take('add-field')];
+      break;
+    case 'watchers':
+      title = 'Pinote / Settings / Fields / Watchers';
+      body = 'Shared service watchers · enabling runs trusted code and triggers the owning worker on alerts. New files are disabled.';
+      controls = [...view.controls.filter((c) => c.id.startsWith('watcher:') || c.id.startsWith('remove-watcher:')), ...take('add-watcher')];
       break;
     case 'field':
       title = `Pinote / Settings / Fields / ${clean(String(view.state.field ?? ''))}`;
@@ -68,6 +75,8 @@ export function inputValue(control: NativeControl, text: string, view: NativeVie
     case 'handoffPrompt': parseHandoffPrompt(text); break;
     case 'newSessionPrompt': parseNewSessionPrompt(text); break;
     case 'agentGuidance': parseAgentGuidance(text); break;
+    case 'add-watcher':
+      return parseFieldWatchers({ fieldWatchers: [{ path: text, enabled: false }] })[0].path;
     case 'add-field': {
       const field = parseFooterConfig({ footer: { fields: [defaultFooterField(text)] } }).fields![0];
       const fields = view.controls.filter((c) => c.id.startsWith('field:'));

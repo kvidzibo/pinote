@@ -36,11 +36,16 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
     for (const [screen, id] of [['prompts', 'handoffPrompt'], ['footer', 'titleWidth'], ['fields', 'field:Owner']] as const) {
       const grouped = menuView(current, screen);
       assert.equal(grouped.revision, current.revision);
-      assert.equal(grouped.controls[0], current.controls.find((c) => c.id === id));
+      assert.equal(grouped.controls.find((c) => c.id === id), current.controls.find((c) => c.id === id));
       assert.equal(serverScreen(screen), 'settings');
       assert.equal(parentScreen(screen), 'settings');
     }
     assert.equal(menuView(current, 'settings').controls[1], current.controls[2]);
+    current.controls.push({ id: 'watcher:abc', label: 'GitHub PR', kind: 'toggle', value: false, revision: 'watcher-revision' });
+    assert.equal(menuView(current, 'fields').controls[0].id, '__watchers');
+    assert.equal(menuView(current, 'watchers').controls[0], current.controls.at(-1));
+    assert.equal(parentScreen('watchers'), 'fields');
+    assert.equal(serverScreen('watchers'), 'settings');
   });
   await t.test('plain Input and Editor prefill exact whitespace and reject invalid numbers', async () => {
     const current = view(), signal = new AbortController().signal;

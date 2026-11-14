@@ -85,7 +85,7 @@ export class RemoteUI {
           ['Cancel', accept], { signal }) !== accept) return false;
       }
       if (control.confirm && !(footerConfirmed && control.id === 'proposal:accept')) {
-        const details = control.kind === 'action' ? control.confirm : `${control.confirm}\n\n${control.id === 'add' || control.id === 'add-field' ? '' : `Before:\n${disclosure(control.value)}\n\n`}After:\n${disclosure(value)}`;
+        const details = control.kind === 'action' ? control.confirm : `${control.confirm}\n\n${control.id === 'add' || control.id === 'add-field' || control.id === 'add-watcher' ? '' : `Before:\n${disclosure(control.value)}\n\n`}After:\n${disclosure(value)}`;
         const accept = control.id === 'add' ? 'Create, start and select' : control.id === 'proposal:accept' ? 'Accept suggestion' :
           control.id === 'remove-field' ? 'Remove display field' : control.id === 'add-field' ? 'Add field' : 'Save change';
         if (!await review(ctx, line(control.label), details, signal, accept)) return false;
@@ -215,7 +215,7 @@ export class RemoteUI {
           } catch (error) { if (current()) this.failure = error instanceof RemoteFailure ? error : new RemoteFailure(); }
           continue;
         }
-        if (['__tasks', '__settings', '__prompts', '__footer', '__fields'].includes(choice.id)) { await go(choice.id.slice(2) as Screen); continue; }
+        if (['__tasks', '__settings', '__prompts', '__footer', '__fields', '__watchers'].includes(choice.id)) { await go(choice.id.slice(2) as Screen); continue; }
         const control = view.controls.find((c) => c.id === choice.id);
         if (!control) continue;
         if (control.id.startsWith('field:')) {

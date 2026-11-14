@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { readConfigDocument } from '../footer-config.ts';
+import { discoverFieldWatchers, type FieldWatcher } from '../field-watchers.ts';
 
 const exec = promisify(execFile);
 const integer = z.number().int().nonnegative().safe();
@@ -23,19 +24,11 @@ export const FieldResult = z.object({
 }).strict();
 export type FieldResult = z.infer<typeof FieldResult>;
 type FieldEvent = z.infer<typeof Event>;
-type Job = { event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean };
-export type FieldStatus = { field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
+type Job = { watcherId: string; event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean };
+export type FieldStatus = { watcherId: string; field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
 export type FieldNotice = { id: string; taskId: number; field: string; message: string };
 type Task = { id: number; state: string; updated_at: string; agent_notes: Record<string, string> };
 type Row = { job: string };
-
-export function configuredFieldHandler(): string | undefined {
-  const { value: config } = readConfigDocument();
-  const handler = config.fieldHandler;
-  if (handler === undefined || handler === null) return undefined;
-  if (typeof handler !== 'string' || !isAbsolute(handler) || /[\u0000-\u001f\u007f]/u.test(handler)) throw new Error('fieldHandler must be an absolute executable file path');
-  return handler;
-}
 
 /** One bounded invocation, no shell. Kill the process group on cancellation/overflow. */
 export function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000): Promise<FieldResult> {
@@ -71,20 +64,26 @@ export class FieldAutomation {
   private lifetime = new AbortController();
   private timer?: ReturnType<typeof setTimeout>;
   private work?: Promise<void>;
-  private handler: string;
+  private watchers: () => FieldWatcher[];
+  private enabled: FieldWatcher[] = [];
+  private signature = '';
+  private generation = 0;
+  private invocation?: AbortController;
+  private ticking = false;
   private noteCommand: string;
   private changed: () => void;
   private log: () => void;
-  private constructor(db: DatabaseSync, handler: string, noteCommand: string, changed: () => void, log: () => void) {
-    this.db = db; this.handler = handler; this.noteCommand = noteCommand; this.changed = changed; this.log = log;
+  private constructor(db: DatabaseSync, watchers: () => FieldWatcher[], noteCommand: string, changed: () => void, log: () => void) {
+    this.db = db; this.watchers = watchers; this.noteCommand = noteCommand; this.changed = changed; this.log = log;
     db.exec(`PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS scheduler (id INTEGER PRIMARY KEY CHECK(id=1), cursor INTEGER NOT NULL DEFAULT 0, handler TEXT NOT NULL, owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS jobs (task_id INTEGER NOT NULL, field TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(task_id, field));
+      CREATE TABLE IF NOT EXISTS fw_scheduler (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS fw_watchers (id TEXT PRIMARY KEY, path TEXT NOT NULL, cursor INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS fw_jobs (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
       CREATE TABLE IF NOT EXISTS owners (task_id INTEGER PRIMARY KEY, context_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS notices (task_id INTEGER NOT NULL, field TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(task_id, field));`);
-    db.prepare('INSERT OR IGNORE INTO scheduler(id, handler) VALUES (1, ?)').run(handler);
+      CREATE TABLE IF NOT EXISTS fw_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
+      INSERT OR IGNORE INTO fw_scheduler(id) VALUES (1);`);
   }
-  static async open(options: { handler: string; path?: string; noteCommand?: string; changed?: () => void; log?: () => void }): Promise<FieldAutomation> {
+  static async open(options: { watchers?: () => FieldWatcher[]; path?: string; noteCommand?: string; changed?: () => void; log?: () => void } = {}): Promise<FieldAutomation> {
     const dataHome = process.env.XDG_DATA_HOME;
     const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
     const namespace = createHash('sha256').update(database).digest('hex').slice(0, 16);
@@ -97,7 +96,7 @@ export class FieldAutomation {
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error('Unsafe field automation database');
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(path);
-    try { return new FieldAutomation(db, options.handler, options.noteCommand ?? process.env.PINOTE_NOTE_COMMAND ?? 'note', options.changed ?? (() => {}), options.log ?? (() => {})); }
+    try { return new FieldAutomation(db, options.watchers ?? (() => discoverFieldWatchers(readConfigDocument().value)), options.noteCommand ?? process.env.PINOTE_NOTE_COMMAND ?? 'note', options.changed ?? (() => {}), options.log ?? (() => {})); }
     catch (error) { db.close(); throw error; }
   }
   private async note(args: string[]): Promise<unknown> {
@@ -105,7 +104,7 @@ export class FieldAutomation {
     return JSON.parse(stdout);
   }
   private leased(): boolean {
-    return Boolean(this.db.prepare('SELECT 1 FROM scheduler WHERE id=1 AND owner=? AND lease_until>?').get(this.owner, Date.now()));
+    return Boolean(this.db.prepare('SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?').get(this.owner, Date.now()));
   }
   private transaction(work: () => void): void {
     this.db.exec('BEGIN IMMEDIATE');
@@ -114,13 +113,33 @@ export class FieldAutomation {
       work(); this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  private save(job: Job): void {
-    this.db.prepare('INSERT INTO jobs(task_id,field,job) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET job=excluded.job')
-      .run(job.event.taskId, job.event.field, JSON.stringify(job));
+  private reconcile(): void {
+    const enabled = this.watchers().filter((watcher) => watcher.enabled);
+    if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
+    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path]));
+    if (signature === this.signature) return;
+    this.generation++; this.invocation?.abort();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of this.db.prepare('SELECT id,path FROM fw_watchers').all()) {
+        if (!enabled.some((w) => w.id === row.id && w.path === row.path)) {
+          this.db.prepare('DELETE FROM fw_jobs WHERE watcher_id=?').run(row.id);
+          this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=?').run(row.id);
+          this.db.prepare('DELETE FROM fw_watchers WHERE id=?').run(row.id);
+        }
+      }
+      for (const watcher of enabled) this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    this.enabled = enabled; this.signature = signature; this.changed();
   }
-  private clear(taskId: number, name: string): void {
-    this.db.prepare('DELETE FROM jobs WHERE task_id=? AND field=?').run(taskId, name);
-    this.db.prepare('DELETE FROM notices WHERE task_id=? AND field=?').run(taskId, name);
+  private save(job: Job): void {
+    this.db.prepare('INSERT INTO fw_jobs(watcher_id,task_id,field,job) VALUES (?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET job=excluded.job')
+      .run(job.watcherId, job.event.taskId, job.event.field, JSON.stringify(job));
+  }
+  private clear(watcherId: string, taskId: number, name: string): void {
+    this.db.prepare('DELETE FROM fw_jobs WHERE watcher_id=? AND task_id=? AND field=?').run(watcherId, taskId, name);
+    this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(watcherId, taskId, name);
   }
   /** Explicit selection/write owns alerts; background reads can only claim unowned tasks. */
   claim(taskId: number, contextId: string, replace = false): void {
@@ -129,19 +148,21 @@ export class FieldAutomation {
       : 'INSERT OR IGNORE INTO owners(task_id,context_id) VALUES (?,?)').run(taskId, contextId);
   }
   statuses(task: Task): FieldStatus[] {
-    return (this.db.prepare('SELECT job FROM jobs WHERE task_id=?').all(task.id) as Row[]).flatMap(({ job: raw }) => {
+    this.reconcile();
+    return this.enabled.flatMap((watcher) => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=?').all(watcher.id, task.id) as Row[]).flatMap(({ job: raw }) => {
       const job = JSON.parse(raw) as Job;
-      if (job.event.value === null || job.event.value !== task.agent_notes[job.event.field] || !job.result) return [];
-      return [{ field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: job.stale ?? false }];
-    });
+      if (job.event.value === null || job.event.value !== task.agent_notes[job.event.field] || !job.result || Object.keys(job.result).length === 0) return [];
+      return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: job.stale ?? false }];
+    }));
   }
-  notices(task: Task, contextId: string): FieldNotice[] {
+  notices(task: Task, contextId: string, receipts: readonly string[] = []): FieldNotice[] {
     this.claim(task.id, contextId);
     const owner = this.db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id);
     if (owner?.context_id !== contextId) return [];
-    const fields = new Set(this.statuses(task).filter((s) => !s.stale && s.result.notification).map((s) => s.field));
-    return (this.db.prepare('SELECT id, field, message FROM notices WHERE task_id=?').all(task.id) as { id: string; field: string; message: string }[])
-      .filter((n) => fields.has(n.field)).map((n) => ({ ...n, taskId: task.id }));
+    const received = new Set(receipts);
+    const fields = new Set(this.statuses(task).filter((s) => !s.stale && s.result.notification).map((s) => `${s.watcherId}:${s.field}`));
+    return (this.db.prepare('SELECT watcher_id, id, field, message FROM fw_notices WHERE task_id=?').all(task.id) as { watcher_id: string; id: string; field: string; message: string }[])
+      .filter((n) => !received.has(n.id) && fields.has(`${n.watcher_id}:${n.field}`)).slice(0, 64).map(({ id, field, message }) => ({ id, field, message, taskId: task.id }));
   }
   start(): void {
     const schedule = () => {
@@ -154,80 +175,103 @@ export class FieldAutomation {
     };
     schedule();
   }
-  async tick(): Promise<void> {
+  tick(): Promise<void> {
+    if (this.ticking) return this.work ?? Promise.resolve();
+    this.ticking = true;
+    const work = this.performTick().finally(() => { this.ticking = false; if (this.work === work) this.work = undefined; });
+    this.work = work;
+    return work;
+  }
+  private async performTick(): Promise<void> {
     this.lifetime.signal.throwIfAborted();
-    const acquired = this.db.prepare('UPDATE scheduler SET owner=?, lease_until=? WHERE id=1 AND (lease_until<=? OR owner=?)')
+    const acquired = this.db.prepare('UPDATE fw_scheduler SET owner=?, lease_until=? WHERE id=1 AND (lease_until<=? OR owner=?)')
       .run(this.owner, Date.now() + 90_000, Date.now(), this.owner).changes;
     if (!acquired) return;
     try {
-      let state = this.db.prepare('SELECT cursor, handler FROM scheduler WHERE id=1').get() as { cursor: number; handler: string };
-      if (state.handler !== this.handler) {
-        this.transaction(() => {
-          this.db.exec('DELETE FROM jobs; DELETE FROM notices;');
-          this.db.prepare('UPDATE scheduler SET cursor=0, handler=? WHERE id=1').run(this.handler);
-        });
-        state = { cursor: 0, handler: this.handler }; this.changed();
+      this.reconcile();
+      const generation = this.generation;
+      const valid = () => {
+        this.reconcile();
+        if (!this.leased() || generation !== this.generation || this.lifetime.signal.aborted) return false;
+        // Many watchers can make intake longer than one lease; each bounded operation renews it.
+        this.db.prepare('UPDATE fw_scheduler SET lease_until=? WHERE id=1 AND owner=?').run(Date.now() + 90_000, this.owner);
+        return true;
       }
-      const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));
-      if (!this.leased()) return;
-      if (batch.cursor < state.cursor || batch.events.some((e) => e.id <= state.cursor || e.id > batch.cursor)) throw new Error('Invalid field event cursor');
-      if (batch.cursor !== state.cursor) {
-        this.transaction(() => {
-          for (const event of batch.events) {
-            // New input invalidates both old display and pending alerts immediately.
-            this.clear(event.taskId, event.field);
-            this.save({ event, due: Date.now(), attempts: 0 });
-          }
-          this.db.prepare('UPDATE scheduler SET cursor=? WHERE id=1').run(batch.cursor);
-        });
-        this.changed();
-        return; // Drain durable history before executing; coalesce superseded values.
+      let drained = false;
+      for (const watcher of this.enabled) {
+        const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
+        const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));
+        if (!valid()) return;
+        if (batch.cursor < state.cursor || batch.events.some((e) => e.id <= state.cursor || e.id > batch.cursor)) throw new Error('Invalid field event cursor');
+        if (batch.cursor !== state.cursor) {
+          this.transaction(() => {
+            for (const event of batch.events) {
+              this.clear(watcher.id, event.taskId, event.field);
+              this.save({ watcherId: watcher.id, event, due: Date.now(), attempts: 0 });
+            }
+            this.db.prepare('UPDATE fw_watchers SET cursor=? WHERE id=?').run(batch.cursor, watcher.id);
+          });
+          drained = true;
+        }
       }
-      const jobs = (this.db.prepare('SELECT job FROM jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
+      if (drained) { this.changed(); return; }
+      const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
       if (!job) return;
       const event = job.event;
+      const watcher = this.enabled.find((w) => w.id === job.watcherId);
+      if (!watcher) return;
       const task = await this.note(['agent', 'get', String(event.taskId)]) as Task;
-      if (!this.leased()) return;
+      if (!valid()) return;
       const currentValue = task && ['active', 'in_progress'].includes(task.state) ? task.agent_notes[event.field] ?? null : null;
-      if (event.value !== currentValue) { this.transaction(() => this.clear(event.taskId, event.field)); this.changed(); return; }
+      if (event.value !== currentValue) { this.transaction(() => this.clear(job.watcherId, event.taskId, event.field)); this.changed(); return; }
       let result: FieldResult, retryAfterSeconds = 0;
+      const invocation = new AbortController();
+      this.invocation = invocation;
+      const abort = () => invocation.abort();
+      this.lifetime.signal.addEventListener('abort', abort, { once: true });
+      const poll = setInterval(() => { try { this.reconcile(); } catch { invocation.abort(); } }, 100);
       try {
-        result = await runFieldHandler(this.handler, {
+        result = await runFieldHandler(watcher.path, {
           version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,
           event: job.checkedAt ? 'check' : event.event, value: event.value, previousValue: event.previousValue,
           ...(job.result ? { previousResult: job.result } : {}),
-        }, this.lifetime.signal);
+        }, invocation.signal);
         if (result.state === 'error') {
           retryAfterSeconds = result.recheckAfterSeconds ?? 0;
           throw new Error('Handler reported unavailable data');
         }
       } catch {
-        if (!this.leased() || this.lifetime.signal.aborted) return;
+        if (!valid() || invocation.signal.aborted) return;
         job.attempts++; job.stale = true;
         job.result ??= { state: 'error', summary: 'Field handler unavailable', display: { color: 'muted' } };
         job.due = Date.now() + Math.max(retryAfterSeconds, Math.min(3600, 30 * 2 ** Math.min(job.attempts - 1, 7))) * 1000;
         this.transaction(() => this.save(job)); this.changed(); this.log(); return;
       }
+      finally {
+        clearInterval(poll); this.lifetime.signal.removeEventListener('abort', abort);
+        if (this.invocation === invocation) this.invocation = undefined;
+      }
+      if (!valid() || invocation.signal.aborted) return;
       const latest = await this.note(['agent', 'get', String(event.taskId)]) as Task;
-      if (!this.leased()) return;
+      if (!valid()) return;
       if (latest?.updated_at !== task?.updated_at) return; // Includes remove/re-add (ABA); next tick drains new events.
       this.transaction(() => {
-        if (event.value === null) this.clear(event.taskId, event.field);
+        if (event.value === null) this.clear(job.watcherId, event.taskId, event.field);
         else {
           const notification = result.notification;
-          if (!notification) this.db.prepare('DELETE FROM notices WHERE task_id=? AND field=?').run(event.taskId, event.field);
+          if (!notification) this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(job.watcherId, event.taskId, event.field);
           else if (JSON.stringify(notification) !== JSON.stringify(job.result?.notification)) {
-            this.db.prepare('INSERT INTO notices(task_id,field,id,message) VALUES (?,?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET id=excluded.id,message=excluded.message')
-              .run(event.taskId, event.field, randomUUID(), notification.message);
+            this.db.prepare('INSERT INTO fw_notices(watcher_id,task_id,field,id,message) VALUES (?,?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET id=excluded.id,message=excluded.message')
+              .run(job.watcherId, event.taskId, event.field, randomUUID(), notification.message);
           }
-          this.save({ event, result, due: result.recheckAfterSeconds ? Date.now() + result.recheckAfterSeconds * 1000 : null,
+          this.save({ watcherId: job.watcherId, event, result, due: result.recheckAfterSeconds ? Date.now() + result.recheckAfterSeconds * 1000 : null,
             attempts: 0, checkedAt: new Date().toISOString(), stale: false });
         }
       });
       this.changed();
     } finally {
-      this.db.prepare('UPDATE scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);
+      this.db.prepare('UPDATE fw_scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);
     }
   }
   async close(): Promise<void> {

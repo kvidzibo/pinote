@@ -2,6 +2,7 @@ import { getAgentDir } from "./config-path.ts";
 import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { parseFieldWatchers, type FieldWatcherConfig } from "./field-watchers.ts";
 
 export const defaultHandoffPrompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
 export const defaultNewSessionPrompt = defaultHandoffPrompt;
@@ -117,7 +118,7 @@ export function loadFooterConfig(warn: (message: string) => void): FooterConfig 
 
 // Synchronous compare-and-replace: reject edits made while the settings dialog was open,
 // preserve unrelated keys, and never leave partial JSON behind.
-export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null) {
+export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null, fieldWatchers?: FieldWatcherConfig[]) {
   if (taskOfferPolicy !== undefined && !["always", "github-remote", "never"].includes(taskOfferPolicy)) throw new Error("Invalid taskOfferPolicy");
   const checked = parseFooterConfig({ footer: config });
   const prompts = {
@@ -140,6 +141,10 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
     const root = expectedRaw === null ? {} : JSON.parse(expectedRaw);
     if (!object(root)) throw new Error("Invalid pi-note configuration; expected an object.");
     if (agentGuidance === null) delete root.agentGuidance;
+    if (fieldWatchers !== undefined) {
+      root.fieldWatchers = parseFieldWatchers({ fieldWatchers });
+      delete root.fieldHandler;
+    }
     raw = `${JSON.stringify({ ...root, ...prompts, ...(taskOfferPolicy === undefined ? {} : { taskOfferPolicy }), footer: checked }, null, 2)}\n`;
     writeFileSync(temp, raw, { flag: "wx", mode: 0o600 });
     renameSync(temp, path);

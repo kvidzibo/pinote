@@ -64,8 +64,8 @@ export class RemoteSession {
   private meta(): Record<string, unknown> {
     if (!this.saved) throw new RemoteFailure();
     return {
-      [UI_CONTEXT]: { conversationId: this.conversationId, contextId: this.saved.contextId, state: this.saved.state },
-      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
+      [UI_CONTEXT]: { conversationId: this.conversationId, contextId: this.saved.contextId, state: this.saved.state, fieldReceipts: this.saved.fieldReceipts ?? [] },
+      [UI_FEATURES]: { actionRevisions: true, fieldEvents: true, fieldWatchers: true, footerStyles: true, footerDoubleActions: true, footerSecondaryActions: true, footerNativeActions: this.fullscreen },
     };
   }
   private serial<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -98,18 +98,25 @@ export class RemoteSession {
     void peer?.close().catch(() => {}); this.onChange();
     throw remoteFailure(error, mutation);
   }
+  get hasPendingFieldNotifications(): boolean {
+    const receipts = new Set(this.saved?.fieldReceipts ?? []);
+    return !!this.view?.fieldNotifications?.some((notice) => notice.taskId === this.view?.state.selectedId && !receipts.has(notice.id));
+  }
   private apply(view: NativeView): void {
     let changed = JSON.stringify(this.saved?.state) !== JSON.stringify(view.state) || this.saved?.retainOnNew !== view.retainOnNew;
     this.view = view;
     this.saved = { ...this.saved!, state: view.state, retainOnNew: view.retainOnNew };
     const receipts = new Set(this.saved.fieldReceipts ?? []);
+    let delivered = false;
     for (const notice of view.fieldNotifications ?? []) {
       if (notice.taskId !== view.state.selectedId || receipts.has(notice.id)) continue;
-      if (this.onFieldNotification?.(notice)) { receipts.add(notice.id); changed = true; }
+      if (this.onFieldNotification?.(notice)) { receipts.add(notice.id); changed = delivered = true; }
     }
     if (receipts.size) this.saved.fieldReceipts = [...receipts].slice(-4096);
     if (changed) this.persist(structuredClone(this.saved));
     this.onChange();
+    // Receipt-filtered pages let later alerts progress even when earlier failures persist.
+    if (delivered) this.changed();
   }
   private async readView(peer: Peer, signal: AbortSignal): Promise<void> {
     const current = this.current();
