@@ -11,8 +11,8 @@ default switch; local validation measurements are not performance guarantees.
 ## Install and launch from a checkout
 
 Requires Python 3.11+, uv, Node.js **22.12.0+**, npm, and Linux desktop libraries
-for Electron (including GTK 3). The Python package is 0.23.0; the independently
-versioned `electron/` npm package is private, version 0.2.0.
+for Electron (including GTK 3). The independently versioned `electron/` npm
+package is private, version 0.4.0.
 Run from the repository root:
 
 ```sh
@@ -56,15 +56,20 @@ Icons are bundled rather than taken from the host icon theme.
   activate. **Close**, **Escape**, or clicking outside restores the task text;
   **Tab** out also dismisses the toolbar without closing Pinote.
   Right-click an in-progress task's checkmark to reset progress.
-- **Menu → Task actions…** configures the inline right-click actions. Toggle
-  **In menu** to show/hide items; drag a handle to reorder them, or focus the
-  handle and use **↑/↓**. Choose one **Button** action to replace Start on task
-  rows. The default Start button still becomes Complete in progress; other
-  choices remain the selected action for all rows, even when hidden from the
-  menu. Right-click row-button shortcuts remain unchanged.
-  **Save** applies the settings to all rows; **Escape/Close** discards unsaved
-  changes. **Restore defaults** resets the form; save to apply it. Selecting or
-  reordering an action does not run it. These preferences affect Electron only.
+- **Menu → Task actions…** has **Not started**, **In progress**, and
+  **Marked for deletion** tabs, each with independent menu order, visibility,
+  and a **Button** action. Use **←/→** or **Home/End** to switch focused tabs.
+  Toggle **In menu** to show/hide items; drag a handle to reorder them, or focus
+  the handle and use **↑/↓**. Row icons and tooltips match the chosen action,
+  even when hidden from the menu. Defaults are **Start**, **Complete**, and
+  **Cancel deletion mark** (undo icon), respectively. Right-click shortcuts
+  remain unchanged: mark an unstarted task, reset progress, or delete a marked task.
+  **Save** applies all tabs, including to existing in-progress tasks;
+  **Escape/Close** discards unsaved changes. **Restore defaults** resets only
+  the selected tab; save to apply it. Selecting or reordering never runs an action.
+  Existing shared preferences migrate to separate tabs, retaining menu order,
+  visibility, and button choices; the old Start→Complete behavior and safe undo
+  of deletion marks are preserved. These preferences affect Electron only.
 - Edits are private revision-bound drafts until saved with **Ctrl+Enter**. The
   menu includes draft recovery; stale drafts must be copied/reconciled rather
   than silently overwriting a changed task.
