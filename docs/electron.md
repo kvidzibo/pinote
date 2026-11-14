@@ -47,6 +47,12 @@ Icons are bundled rather than taken from the host icon theme.
   in-progress tasks size to their contents above the composer (up to half the
   list when ordinary tasks are present) and scroll separately when needed.
   Manual window sizing is preserved.
+- Composer and task editors show live Markdown **source** styling for headings,
+  bold, italic and code. Markers stay visible; load, paste, save and copy preserve
+  source. On the first explicit newline after a plain single-line task, it becomes
+  `# Task` followed by `- `. Newlines after headings and bullets continue `- `;
+  an empty bullet ends the list. Delete a bullet prefix to write ordinary lines.
+  Compact row/archive titles omit a leading heading marker, not stored text.
 - Click a task's play icon to start it, then its checkmark to complete it.
   Right-click task text, use its actions button, or focus task text and press
   **Shift+F10** or the **Menu** key to open an inline icon toolbar in the same

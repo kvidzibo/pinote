@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { taskTitle } from "./task-title.ts";
 import { stripVTControlCharacters } from "node:util";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -20,7 +21,7 @@ function renderTask(task: Task, width: number, theme: Colors, prefix: string, pr
   if (remaining < 4) return prefix.trimEnd();
   const clean = (value: string) => stripVTControlCharacters(value).replace(/[\x00-\x1f\x7f-\x9f]/gu, " ").replace(/\s+/gu, " ").trim();
   const tag = `[${clean(task.tag ?? "Untagged")}]`;
-  const title = clean(task.text.split("\n", 1)[0]);
+  const title = clean(taskTitle(task.text));
   const tagWidth = visibleWidth(tag) + 1;
   const label = remaining >= tagWidth + Math.min(12, visibleWidth(title))
     ? `${theme.fg("muted", tag)} ${theme.fg("text", truncateToWidth(title, remaining - tagWidth, "..."))}`

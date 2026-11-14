@@ -6,6 +6,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { _electron } from 'playwright';
 
+const sourceValue = locator => locator.evaluate(node => node.querySelector('.cm-placeholder') ? '' : Array.from(node.querySelectorAll('.cm-line'), line => line.textContent).join('\n'));
+
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
@@ -174,7 +176,7 @@ try {
   const hz=Number(spawnSync('getconf',['CLK_TCK'],{encoding:'utf8'}).stdout.trim()), seconds=(performance.now()-at)/1000;
   const measurement={datasetTasks:103,coldStartToTasksMs:Math.round(taskReadyMs),electronReportedRSSKiB:resources.rssKiB,gtkRSSKiB:gtkRSS,backendSnapshotMeanMs:snapshotMean,electronIdleCPUPercent:+((after.electron-before.electron)/hz/seconds*100).toFixed(2),gtkIdleCPUPercent:+((after.gtk-before.gtk)/hz/seconds*100).toFixed(2)};
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
-  assert.ok(await page.locator('img').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
+  assert.ok(await page.locator('img[src]').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
   await page.screenshot({path:join(root,'checklist.png')});
   assert.equal(await page.getByRole('button',{name:'Add task (Enter)',exact:true}).count(),0);
   await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
@@ -271,7 +273,7 @@ try {
     const grown = await layout();
     await draft.fill('Short');
     const shortened = await layout();
-    assert.ok(shortened.draft.height<grown.draft.height,'Shortening the draft must shrink its textarea');
+    assert.ok(shortened.draft.height<grown.draft.height,'Shortening the draft must shrink its accessible textbox');
     assert.ok(shortened.composer.height<grown.composer.height,'Shortening the draft must shrink the composer');
     assert.ok(shortened.ordinary.height>grown.ordinary.height,'The list must reclaim the released composer space');
     await draft.fill('');
@@ -306,7 +308,7 @@ try {
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
     await page.locator('#ordinary').evaluate(node=>{node.scrollTop=0;});
     await page.locator('#pinned').evaluate(node=>{node.scrollTop=0;});
-    assert.equal(await draft.inputValue(),'');
+    assert.equal(await sourceValue(draft),'');
     assert.equal(await page.locator('#ordinary .task-row').count(),2);
     assert.equal(await page.locator('#pinned .task-row').count(),1);
     assert.match(await filter.getAttribute('aria-label'),/^Filter by tag: Untagged /);
@@ -647,13 +649,92 @@ try {
   }
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Electron lifecycle ☘\nsecond line');
   await page.keyboard.press('Enter');
-  await page.getByText('Electron lifecycle ☘',{exact:true}).waitFor();
+  await page.locator('.task-title').filter({hasText:/^Electron lifecycle ☘$/}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.filter(n=>n.text==='Electron lifecycle ☘\nsecond line').length,1);
   const added = call('snapshot',{view:'active'}).notes.find(n=>n.text.startsWith('Electron lifecycle'));
+  // One integrated Markdown source regression: real textbox keys, undo, paste,
+  // storage, compact title, reload and explicit draft copy.
+  {
+    const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
+    await composer.press('Control+z');
+    assert.equal(await sourceValue(composer),'','Undo must not resurrect a submitted task');
+    await composer.fill('Plain heading');
+    await composer.press('End');
+    await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# Plain heading\n- ');
+    await composer.press('Control+z');
+    assert.equal(await sourceValue(composer),'Plain heading','Auto-prefix must undo with its newline');
+    await composer.press('Control+y');
+    assert.equal(await sourceValue(composer),'# Plain heading\n- ');
+    await page.keyboard.type('first');
+    await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# Plain heading\n- first\n- ');
+    await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# Plain heading\n- first\n');
+    await page.keyboard.type('ordinary');
+    await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# Plain heading\n- first\nordinary\n');
+    await composer.fill('**Bold heading**');
+    await composer.press('End'); await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# **Bold heading**\n- ');
+    await composer.fill('# Title\n  - first tail');
+    await composer.press('Control+End');
+    for (let i=0;i<4;i++) await composer.press('ArrowLeft');
+    await composer.press('Shift+Enter');
+    assert.equal(await sourceValue(composer),'# Title\n  - first \n  - tail','Splitting an indented bullet retains its marker and tail');
+    const composerSource = await sourceValue(composer);
+    await composer.press('Enter');
+    await page.locator('.task-title').filter({hasText:/^Title$/}).waitFor();
+    assert.ok(call('snapshot',{view:'active'}).notes.some(note=>note.text===composerSource),'Enter submits Markdown bullets instead of continuing them');
+    await composer.fill('Selected text'); await composer.press('Control+a');
+    await app.evaluate(({clipboard})=>clipboard.writeText('https://example.org/source'));
+    await composer.press('Control+v');
+    assert.equal(await sourceValue(composer),'https://example.org/source','Pasting a URL replaces selected source without creating a Markdown link');
+    await composer.fill('');
+
+    const source='# Markdown source **bold** *italic* `code`\n- saved bullet';
+    await selectTaskAction(page, added.id, 'Edit text…');
+    const editor=page.getByRole('textbox',{name:'Task text',exact:true});
+    await editor.fill(source);
+    await editor.press('Control+End');
+    await editor.press('Enter');
+    assert.equal(await sourceValue(editor),source+'\n- ');
+    await editor.press('Backspace'); await editor.press('Backspace');
+    await page.keyboard.type('plain'); await editor.press('Enter');
+    assert.equal(await sourceValue(editor),source+'\nplain\n','Deleting a bullet must allow plain following lines');
+    await editor.fill(source);
+    for(const selector of ['.source-heading','.source-strong','.source-emphasis','.source-code']) {
+      await editor.locator(selector).first().waitFor();
+    }
+    assert.equal(await sourceValue(editor),source,'Styling must retain all Markdown markers');
+    await editor.press('Tab');
+    const closeEditor = page.getByRole('button',{name:`Close Edit task ${added.id}`,exact:true});
+    assert.equal(await closeEditor.evaluate(node=>node===document.activeElement),true,'Tab from the final textbox wraps inside the modal');
+    await closeEditor.press('Shift+Tab');
+    assert.equal(await editor.evaluate(node=>node===document.activeElement),true,'Shift+Tab returns to the source editor');
+    const editorBounds = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:25,y:25,width:520,height:400}));
+    await editor.press('Control+Home');
+    await page.screenshot({path:join(root,'markdown-source.png')});
+    await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),editorBounds);
+    await editor.press('Control+Enter');
+    await page.getByRole('dialog').waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,source);
+    await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Markdown source/}).waitFor();
+    assert.equal(await page.locator(`[data-id="${added.id}"] .task-title`).textContent(),'Markdown source **bold** *italic* `code`');
+    await selectTaskAction(page, added.id, 'Edit text…');
+    assert.equal(await sourceValue(editor),source,'Loading source must not normalize it');
+    await page.getByRole('button',{name:'Copy edit draft',exact:true}).click();
+    assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),source);
+    await editor.fill('Electron lifecycle ☘\nsecond line');
+    await editor.press('Control+Enter');
+    await page.getByRole('dialog').waitFor({state:'detached'});
+    await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Electron lifecycle ☘$/}).waitFor();
+  }
   await selectTaskAction(page, added.id, 'Edit text…');
   await page.getByRole('textbox',{name:'Task text',exact:true}).fill('Edited from Electron ☘\nkeeps ID and history');
   await page.keyboard.press('Control+Enter');
-  await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
+  await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
   await selectTaskAction(page, added.id, 'Start');
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'), added.id);
@@ -676,14 +757,14 @@ try {
   await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'archive');
   await page.getByRole('article').filter({hasText:'Edited from Electron ☘'}).getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
-  await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
+  await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   await selectTaskAction(page, added.id, 'Remove to archive');
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
   assert.equal(call('snapshot',{view:'archive'}).notes.find(n=>n.id===added.id).state,'removed');
   await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'archive');
   await page.getByRole('article').filter({hasText:'Edited from Electron ☘'}).getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
-  await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
+  await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   await selectTaskAction(page, added.id, 'Set reminder…');
   await page.getByRole('textbox',{name:'When (local time)',exact:true}).fill('2099-01-01 12:00');
   await page.getByRole('button',{name:'Set reminder',exact:true}).click();
@@ -692,17 +773,17 @@ try {
   await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(), 'scheduled');
   await page.getByRole('button',{name:'Release reminder now',exact:true}).click();
   await page.keyboard.press('Escape');
-  await page.getByText('Edited from Electron ☘',{exact:true}).waitFor();
+  await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
   await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Side project');
   await page.getByRole('button',{name:'Create tag “Side project”…',exact:true}).click();
   await page.getByRole('button',{name:'Create tag',exact:true}).click();
   await page.getByRole('button',{name:'New-task tag: Side project',exact:true}).waitFor();
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Tagged Electron task'); await page.keyboard.press('Enter');
-  await page.getByText('Tagged Electron task',{exact:true}).waitFor();
+  await page.locator('.task-title').filter({hasText:/^Tagged Electron task$/}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.text==='Tagged Electron task').tag,'Side project');
   await page.getByRole('button',{name:'New-task tag: Side project',exact:true}).click();
-  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Side project (1)','Work (101) ▶ 1','Empty filter (0)','Untagged (3)']);
+  assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Side project (1)','Work (101) ▶ 1','Empty filter (0)','Untagged (4)']);
   await page.screenshot({path:join(root,'recent-tags.png')});
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape'); // reset creation tag, not the filter or existing tasks
@@ -797,23 +878,23 @@ try {
   await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:['/nonexistent-pinote-kitty-test']});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await selectTaskAction(page, added.id, 'Start in Kitty…');
   await page.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('#draft').readOnly);
+  await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   await page.waitForTimeout(250);
   // A failed close must preserve the window/draft and allow a later successful close.
   await selectTaskAction(page, added.id, 'Edit text…');
-  const failedCloseEditor=page.locator('textarea[aria-label="Task text"]');
+  const failedCloseEditor=page.locator('.cm-content[aria-label="Task text"]');
   await failedCloseEditor.fill('Private draft before failed close');
   const stateDir=join(env.XDG_DATA_HOME,'pinote/electron');
   await chmod(stateDir,0o500);
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
   await page.getByText(/Could not finish closing:/).waitFor();
   assert.equal(await page.evaluate(()=>document.body.inert),false,'Failed close must restore interaction');
-  assert.equal(await failedCloseEditor.evaluate(input=>input.readOnly),false,'Failed close must restore the editor');
+  assert.equal(await failedCloseEditor.evaluate(input=>input.getAttribute('aria-readonly')==='true'),false,'Failed close must restore the editor');
   await failedCloseEditor.focus();
   await page.keyboard.press('End');
   await page.keyboard.type(' — still writable');
-  assert.equal(await failedCloseEditor.inputValue(),'Private draft before failed close — still writable');
+  assert.equal(await sourceValue(failedCloseEditor),'Private draft before failed close — still writable');
   await chmod(stateDir,0o700);
   const closed = app.waitForEvent('close');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
@@ -827,7 +908,7 @@ try {
   const close=async()=>{const done=app.waitForEvent('close');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await done;app=undefined;};
   let reopened=await reopen();
   await writeFile(faultFile,'add');
-  await reopened.evaluate(()=>{const input=document.querySelector('#draft');input.value='Rapid uncertain add draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));});
+  await reopened.evaluate(()=>{const input=document.querySelector('#draft');input.focus();window.getSelection().selectAllChildren(input);const data=new DataTransfer();data.setData('text/plain','Rapid uncertain add draft');input.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,bubbles:true}));});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
   await writeFile(faultFile,'snapshot');
   await reopened.getByText('busy: Injected rapid failure',{exact:true}).waitFor();
@@ -854,7 +935,7 @@ try {
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
   await selectTaskAction(reopened, added.id, 'Edit text…');
   await writeFile(faultFile,'edit');
-  await reopened.evaluate(()=>{const input=document.querySelector('textarea[aria-label="Task text"]');input.value='Rapid uncertain edit draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true}));});
+  await reopened.evaluate(()=>{const input=document.querySelector('.cm-content[aria-label="Task text"]');input.focus();window.getSelection().selectAllChildren(input);const data=new DataTransfer();data.setData('text/plain','Rapid uncertain edit draft');input.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,ctrlKey:true,bubbles:true}));});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).waitFor();
   await close();
   const submitted=JSON.parse(await readFile(join(stateDir,'state.json'),'utf8'));
@@ -874,7 +955,7 @@ try {
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
   await selectTaskAction(reopened, added.id, 'Edit text…');
   const closingText='Private editor draft frozen at final close';
-  const closingEditor=reopened.locator('textarea[aria-label="Task text"]');
+  const closingEditor=reopened.locator('.cm-content[aria-label="Task text"]');
   await closingEditor.fill(closingText);
   await app.evaluate(({ipcMain})=>{
     const original=ipcMain._invokeHandlers.get('finish-close');
@@ -896,10 +977,10 @@ try {
   }
   assert.ok(finishCloseWaiting,'Final persistence must reach the delayed finish-close handler');
   assert.equal(await reopened.evaluate(()=>document.body.inert),true,'Closing must freeze all UI interaction');
-  assert.equal(await closingEditor.evaluate(input=>input.readOnly),true,'Closing must freeze the open editor');
+  assert.equal(await closingEditor.evaluate(input=>input.getAttribute('aria-readonly')==='true'),true,'Closing must freeze the open editor');
   await reopened.keyboard.press('End');
   await reopened.keyboard.type(' LATE INPUT MUST NOT ENTER');
-  assert.equal(await closingEditor.inputValue(),closingText,'Actual keyboard input must not change the closing draft');
+  assert.equal(await sourceValue(closingEditor),closingText,'Actual keyboard input must not change the closing draft');
   await frozenClose; app=undefined;
   assert.equal(JSON.parse(await readFile(join(stateDir,'state.json'),'utf8')).edits[String(added.id)].text,closingText);
   reopened=await reopen();
@@ -946,7 +1027,7 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await reopened.waitForFunction(()=>!document.querySelector('#draft').readOnly);
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   const tinyDraft='x', newerDraft='Newer unsaved draft: '+'z'.repeat(4096);
   const newerCapacity=structuredClone(capacityState);
   newerCapacity.draft=newerDraft;
@@ -963,28 +1044,28 @@ try {
     await new Promise(resolve=>setTimeout(resolve,5));
   }
   assert.ok(addDispatched,'Tiny valid draft must flush and dispatch before newer input');
-  assert.equal(await capacityComposer.evaluate(input=>input.readOnly),false,'Delayed add must still be pending when newer input arrives');
+  assert.equal(await capacityComposer.evaluate(input=>input.getAttribute('aria-readonly')==='true'),false,'Delayed add must still be pending when newer input arrives');
   await capacityComposer.fill(newerDraft);
   // An unrelated editor opened during the pending add must freeze immediately on recovery.
   await selectTaskAction(reopened, added.id, 'Edit text…');
-  const recoveryEditor=reopened.locator('textarea[aria-label="Task text"]');
-  const recoveryText=await recoveryEditor.inputValue();
-  await reopened.waitForFunction(()=>document.querySelector('#draft').readOnly);
-  assert.equal(await recoveryEditor.evaluate(input=>input.readOnly),true,'Unknown outcome must freeze already-open editors');
+  const recoveryEditor=reopened.locator('.cm-content[aria-label="Task text"]');
+  const recoveryText=await sourceValue(recoveryEditor);
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='true');
+  assert.equal(await recoveryEditor.evaluate(input=>input.getAttribute('aria-readonly')==='true'),true,'Unknown outcome must freeze already-open editors');
   await reopened.keyboard.type(' MUST NOT BE ACCEPTED');
-  assert.equal(await recoveryEditor.inputValue(),recoveryText);
+  assert.equal(await sourceValue(recoveryEditor),recoveryText);
   await reopened.getByText(/Draft cache could not be saved:/).waitFor();
-  assert.equal(await capacityComposer.inputValue(),newerDraft,'Unknown outcome must retain the newer draft');
+  assert.equal(await sourceValue(capacityComposer),newerDraft,'Unknown outcome must retain the newer draft');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
   await reopened.getByText(/Could not finish closing:/).waitFor();
   assert.equal(app.process().exitCode,null,'Rejected read-only recovery save must keep the app alive');
   assert.equal(reopened.isClosed(),false,'Rejected read-only recovery save must keep the window open');
   assert.equal(await reopened.evaluate(()=>document.body.inert),false,'Failed recovery close must restore interaction');
-  assert.equal(await capacityComposer.inputValue(),newerDraft,'Failed recovery close must preserve newer text');
-  assert.equal(await capacityComposer.evaluate(input=>input.readOnly),true,'Unknown outcome must still require explicit acknowledgement');
+  assert.equal(await sourceValue(capacityComposer),newerDraft,'Failed recovery close must preserve newer text');
+  assert.equal(await capacityComposer.evaluate(input=>input.getAttribute('aria-readonly')==='true'),true,'Unknown outcome must still require explicit acknowledgement');
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
-  await reopened.waitForFunction(()=>!document.querySelector('#draft').readOnly);
-  assert.equal(await recoveryEditor.evaluate(input=>input.readOnly),false,'Acknowledgement must immediately restore eligible editors');
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
+  assert.equal(await recoveryEditor.evaluate(input=>input.getAttribute('aria-readonly')==='true'),false,'Acknowledgement must immediately restore eligible editors');
   await reopened.keyboard.press('Escape');
   await capacityComposer.fill('');
   await writeFile(faultFile,'');

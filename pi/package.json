@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.39.3",
+  "version": "0.39.4",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
@@ -42,6 +42,7 @@
     "footer-settings.ts",
     "task-picker.ts",
     "task-suggestion.ts",
+    "task-title.ts",
     "proposal.ts",
     "setup.ts",
     "preview-bridge.ts",

@@ -14,6 +14,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { defaultAgentGuidance, defaultFooterField, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, parseAgentGuidance, parseFooterConfig, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from '../footer-config.ts';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
 import type { FieldAutomation, FieldResult } from './field-events.ts';
+import { taskTitle } from '../task-title.ts';
 
 const URI = 'pinote://ui';
 const MIME = 'application/vnd.mcp-native-ui+json';
@@ -175,7 +176,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   const controls: Control[] = [];
   const action = (id: string, label: string, extra: Partial<Control> = {}) => controls.push({ id, label: label.slice(0, 2000), kind: 'action', ...extra });
   let title = 'Pinote · Tasks';
-  let body = task ? `#${task.id} · ${task.tag || 'No tag'} · ${humanStatus(task.state)} · CURRENT\n${task.text.split('\n')[0]}` : state.proposal ? `Suggestion only; no task is selected for this conversation.\n${suggestion!.text.split('\n')[0]}` : 'Select a task or create one. No task is selected for this conversation.';
+  let body = task ? `#${task.id} · ${task.tag || 'No tag'} · ${humanStatus(task.state)} · CURRENT\n${taskTitle(task.text)}` : state.proposal ? `Suggestion only; no task is selected for this conversation.\n${taskTitle(suggestion!.text)}` : 'Select a task or create one. No task is selected for this conversation.';
   // Footer actions remain valid on every screen, including Settings.
   if (task) {
     action('preview', 'Preview full task', { description: 'Display only; never sent to the model' });
@@ -221,22 +222,22 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     const matches = tasks.filter((t) => state.launch
       ? t.id === state.launch.task_id && t.updated_at === state.launch.updated_at
       : terms.every((term) => `${t.text} ${t.tag ?? ''} #${t.id}`.toLowerCase().includes(term)));
-    for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, candidate.text.split('\n')[0], { description: `#${candidate.id} · ${candidate.tag || 'No tag'} · ${humanStatus(candidate.state)}${candidate.id === task?.id ? ' · CURRENT' : ''} · Select and start this task for this conversation` });
+    for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, taskTitle(candidate.text), { description: `#${candidate.id} · ${candidate.tag || 'No tag'} · ${humanStatus(candidate.state)}${candidate.id === task?.id ? ' · CURRENT' : ''} · Select and start this task for this conversation` });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
   const footer: { text: string; openApp?: true; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic?: boolean } & NonNullable<FieldResult['display']>; width?: number }[] = features.footerNativeActions
     ? [{ text: `${icons['open-app']} `, openApp: true, width: 3 }]
     : [{ text: `${icons.note} `, width: 3 }];
   if (features.footerNativeActions) {
-    if (task) footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(features.footerDoubleActions ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
-    else if (state.proposal) footer.push({ text: `? ${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerDoubleActions ? { doubleAction: 'proposal:accept' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    if (task) footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${taskTitle(task.text).slice(0, 2000)}`, action: 'preview', ...(features.footerDoubleActions ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
+    else if (state.proposal) footer.push({ text: `? ${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${taskTitle(suggestion!.text).slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerDoubleActions ? { doubleAction: 'proposal:accept' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
     else footer.push({ text: 'Pinote · No task', width: config.config.titleWidth });
   } else if (task) {
     footer.push({ text: `${icons.check} `, action: 'done', width: 3 });
-    footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', width: config.config.titleWidth });
+    footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${taskTitle(task.text).slice(0, 2000)}`, action: 'preview', width: config.config.titleWidth });
   } else if (state.proposal) {
     footer.push({ text: `${icons.add} `, action: 'proposal:accept', ...(secondary ? { secondaryAction: 'proposal:dismiss' } : {}), width: 3 });
-    footer.push({ text: `${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    footer.push({ text: `${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${taskTitle(suggestion!.text).slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
   let fieldCount = 0;
   if (task) {
@@ -536,7 +537,7 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
       const tasks: Task[] = JSON.parse(await note(['list', '--json'], extra.signal));
       const matches = tasks.filter((task) => words.every((word) => `${task.text} ${task.tag ?? ''}`.toLowerCase().includes(word)));
       const page = matches.slice(args.offset, args.offset + args.limit);
-      result = { tasks: page.map(({ id, text, state, tag }) => ({ id, title: text.split('\n')[0].slice(0, 1000), state, tag })), total: matches.length, next_offset: args.offset + page.length < matches.length ? args.offset + page.length : null };
+      result = { tasks: page.map(({ id, text, state, tag }) => ({ id, title: taskTitle(text).slice(0, 1000), state, tag })), total: matches.length, next_offset: args.offset + page.length < matches.length ? args.offset + page.length : null };
     } else if (request.params.name === 'get_task') {
       const args = ExistingProposal.parse(request.params.arguments);
       result = JSON.parse(await note(['agent', 'get', String(args.task_id)], extra.signal));

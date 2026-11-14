@@ -122,14 +122,16 @@ async function boot() {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying. GTK remains available.'; }
   }
   await app.whenReady();
+  const styleNonce = randomUUID();
   const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
   protocol.handle('pinote-app', async request => {
     const url = new URL(request.url);
     const path = decodeURIComponent(url.pathname).replace(/^\//,'');
     if (request.method !== 'GET' || url.protocol !== 'pinote-app:' || url.hostname !== 'ui' || url.port !== '' || url.username || url.password || url.search || !assets.has(path)) return new Response('Not found', { status: 404 });
-    const content = await readFile(join(__dirname, path));
+    const rawContent = await readFile(join(__dirname, path));
+    const content = path === 'index.html' ? rawContent.toString().replace('PINOTE_STYLE_NONCE', styleNonce) : rawContent;
     const mime = path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
-    return new Response(content, { headers: { 'Content-Type': mime, 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'", 'X-Content-Type-Options': 'nosniff' } });
+    return new Response(content, { headers: { 'Content-Type': mime, 'Content-Security-Policy': `default-src 'none'; script-src 'self'; style-src 'self' 'nonce-${styleNonce}'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'`, 'X-Content-Type-Options': 'nosniff' } });
   });
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
