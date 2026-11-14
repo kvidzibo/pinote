@@ -196,6 +196,18 @@ export class RemoteUI {
         }
         if (choice.id === '__changed') continue;
         if (choice.id === '__refresh') { await this.refresh(ctx); continue; }
+        if (choice.id.startsWith('__preview:')) {
+          const id = Number(choice.id.slice('__preview:'.length));
+          try {
+            const result = await working(ctx, 'Loading task text…', () => this.session.tool('get_task', { task_id: id }, signal), signal);
+            if (!current() || !result) return;
+            const content = result.content.find((item) => item.type === 'text');
+            const task = JSON.parse(content?.type === 'text' ? content.text : 'null');
+            if (task?.id !== id || typeof task.text !== 'string') throw new RemoteFailure();
+            await document(ctx, `Pinote / Task text #${id}`, task.text, signal);
+          } catch (error) { if (current()) this.failure = error instanceof RemoteFailure ? error : new RemoteFailure(); }
+          continue;
+        }
         if (['__tasks', '__settings', '__prompts', '__footer', '__fields'].includes(choice.id)) { await go(choice.id.slice(2) as Screen); continue; }
         const control = view.controls.find((c) => c.id === choice.id);
         if (!control) continue;

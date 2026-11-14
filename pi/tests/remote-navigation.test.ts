@@ -90,6 +90,38 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
     assert.equal(await ui.dispatch(ctx, current, { id: 'preview', kind: 'action', label: 'Preview' }), true);
     assert.equal(actions, 1); assert.equal(documents, 1);
   });
+  await t.test('picker preview discloses a clipped full title without starting or selecting the task', async () => {
+    const text = 'Shared title prefix '.repeat(120) + 'DISTINCT END';
+    const current: NativeView = { version: 1, title: 'Pinote', revision: 'r', state: { selectedId: null },
+      controls: [{ id: 'select:7', kind: 'action', label: text.slice(0, 2000) }] };
+    let step = 0, reads = 0;
+    const session: any = { signal: new AbortController().signal, current: () => () => true, view: current,
+      refresh: async () => {}, action: () => assert.fail('Preview must not start/select a task'),
+      tool: async (name: string, args: unknown) => {
+        reads++; assert.equal(name, 'get_task'); assert.deepEqual(args, { task_id: 7 });
+        return { content: [{ type: 'text', text: JSON.stringify({ id: 7, text }) }] };
+      },
+    };
+    const ctx: any = { mode: 'tui', ui: { notify: (message: string) => assert.fail(message),
+      custom: native((component, rows) => {
+        switch (step++) {
+          case 0: component.handleInput('\r'); break; // Home -> picker.
+          case 1:
+            assert.match(rows.join(' '), /F1 preview/);
+            assert.ok(!rows.join(' ').includes('DISTINCT END'));
+            component.handleInput('\x1bOP'); break;
+          case 2:
+            assert.match(rows.join(' '), /Task text #7/);
+            component.handleInput('\x1b[6~');
+            assert.match(component.render(100).join(' '), /DISTINCT END/);
+            component.handleInput('\x1b'); break;
+          default: component.handleInput('\x1b');
+        }
+      }),
+    } };
+    await new RemoteUI({} as any, session).open(ctx);
+    assert.equal(step, 5); assert.equal(reads, 1); assert.equal(current.state.selectedId, null);
+  });
   await t.test('server search suppresses keyboard and mouse activation until results arrive', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const current = view(); current.state = { search: '' };
@@ -110,13 +142,18 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
       t.mock.timers.tick(250); assert.equal(searches, 1);
       const rows = component.render(100);
       assert.match(rows.join(' '), /Selection is disabled/);
-      component.handleInput('\r');
+      component.handleInput('\r'); component.handleInput('\x1bOP');
       for (let y = 0; y < rows.length; y++) component.handleMouse({ type: 'click', button: 'left', x: 3, y, clickCount: 1 });
       assert.equal(completed, false, 'Old task rows must remain inert during search');
       release(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
       component.render(100); component.handleInput('\r');
       assert.equal(completed, false, 'Settled search without a matching server view is still stale');
-      component.handleInput('\x1b'); assert.equal(await result, undefined);
+      component.handleInput('\x1b'); assert.equal(await result, undefined); component.dispose();
+      current.state.search = state.search;
+      const refreshed = remoteMenu(ctx, current, state, new AbortController().signal, () => () => {}, { search: 'tasks' });
+      component.render(100); component.handleInput(' tail');
+      assert.equal(state.search, 'new tail', 'A result refresh preserves the native input caret instead of prepending later typing');
+      component.handleInput('\x1b'); await refreshed;
     } finally { release(); component.dispose(); }
   });
 });

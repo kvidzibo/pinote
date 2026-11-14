@@ -52,6 +52,7 @@ Open **`/pinote`** for the selected task's actions, pending suggestion, task pic
 and shared settings. **Choose a task… / Switch task…** opens task-only search:
 all search terms must match the title, description, tag or numeric ID. Results show
 status and the current selection; selection waits for fresh search results.
+Press **F1** on a result to read its full title and text without selecting it.
 Selecting a task starts it and returns to the unchanged prompt without another
 confirmation. **Clear selection** leaves its progress unchanged.
 
@@ -196,8 +197,8 @@ agent guidance and footer definitions with confirmation and revision checks.
 A malformed configuration fails closed; fix it on the server rather than replacing
 it with defaults. Task fields such as `PR`, `Worktree` and `Next` remain task data,
 separate from global display settings. The remote **New session prompt** setting
-is stored for compatibility; remote `/new` does not insert it. Full previews above
-the protocol's 20,000-character limit show explicit guidance to read through the
+is stored for compatibility; remote `/new` does not insert it. Selected-task previews
+above the protocol's 20,000-character limit show explicit guidance to read through the
 CLI/service instead of silently truncating.
 
 ## Migration

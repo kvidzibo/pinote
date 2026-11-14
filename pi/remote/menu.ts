@@ -2,7 +2,7 @@ import { DynamicBorder, getSelectListTheme, keyText, type ExtensionContext } fro
 import { Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Container, type TUI } from '@earendil-works/pi-tui';
 import { clean, editorText, type NativeView } from './protocol.ts';
 
-export interface MenuState { search: string; selected?: string }
+export interface MenuState { search: string; selected?: string; input?: Input }
 export interface MenuChoice { id: string }
 export interface MenuOptions {
   search?: 'none' | 'local' | 'tasks';
@@ -32,7 +32,13 @@ export function remoteMenu(ctx: ExtensionContext, view: NativeView, state: MenuS
   if (signal.aborted) return Promise.resolve(undefined);
   return ctx.ui.custom<MenuChoice | undefined>((tui, theme, keys, done) => {
     const search = options.search ?? 'local';
-    const input = new Input(); input.setValue(state.search);
+    // Keep the native input/caret when a server result replaces the menu component.
+    const input = state.input ?? new Input();
+    if (!state.input) {
+      state.search = clean(state.search.replace(/[\r\n\t]/g, ' '));
+      input.handleInput(state.search);
+      state.input = input;
+    }
     const tasks = search === 'tasks';
     const items = view.controls.map((c) => ({ value: c.id,
       label: `${c.icon ? `${line(c.icon)} ` : ''}${line(c.label)}`,
@@ -60,10 +66,10 @@ export function remoteMenu(ctx: ExtensionContext, view: NativeView, state: MenuS
       }, 250);
     };
     schedule();
-    const activate = () => {
+    const activate = (preview = false) => {
       if (signal.aborted || !usable || !layout || !fresh() || searching || geometry !== `${tui.terminal.columns}:${tui.terminal.rows}:${inlineHeight(tui, tui.terminal.columns, component)}`) return;
       const item = list?.getSelectedItem();
-      if (item) done({ id: item.value });
+      if (item) done({ id: preview && tasks ? `__preview:${item.value.slice('select:'.length)}` : item.value });
     };
     const component: Component & { dispose(): void; focused: boolean; capturesViewportInput: boolean } = {
       capturesViewportInput: true,
@@ -76,7 +82,7 @@ export function remoteMenu(ctx: ExtensionContext, view: NativeView, state: MenuS
         if (!usable) { layout = ''; return [truncateToWidth('Enlarge terminal · Esc back', width)]; }
         const compact = height < 18;
         const border = new DynamicBorder((s) => theme.fg('border', s)).render(width);
-        const hints = wrapTextWithAnsi(`${keyText('tui.select.up')}/${keyText('tui.select.down')} move · ${keyText('tui.select.confirm')} ${tasks ? 'select' : 'open'} · ${keyText('tui.select.cancel')} back · Ctrl+R refresh`, width);
+        const hints = wrapTextWithAnsi(`${keyText('tui.select.up')}/${keyText('tui.select.down')} move · ${keyText('tui.select.confirm')} ${tasks ? 'select · F1 preview' : 'open'} · ${keyText('tui.select.cancel')} back · Ctrl+R refresh`, width);
         const summary = (view.body ?? '').split('\n').flatMap((s) => wrapTextWithAnsi(clean(s), width - 2));
         const summaryLimit = compact ? 1 : 3;
         const header = [...border, theme.fg('accent', heading(view.title, width)),
@@ -96,7 +102,7 @@ export function remoteMenu(ctx: ExtensionContext, view: NativeView, state: MenuS
           }, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: Math.min(40, Math.floor(width * 0.6)) });
           list.setSelectedIndex(Math.max(0, filtered.findIndex((item) => item.value === state.selected)));
           list.onSelectionChange = (item) => { state.selected = item.value; };
-          list.onSelect = activate; list.onCancel = cancel;
+          list.onSelect = () => activate(); list.onCancel = cancel;
           if (list.getSelectedItem()) state.selected = list.getSelectedItem()!.value;
         }
         const selectedIndex = filtered.findIndex((item) => item.value === list?.getSelectedItem()?.value);
@@ -117,6 +123,7 @@ export function remoteMenu(ctx: ExtensionContext, view: NativeView, state: MenuS
         if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.ctrl('c'))) cancel();
         else if (usable && geometry === `${tui.terminal.columns}:${tui.terminal.rows}:${inlineHeight(tui, tui.terminal.columns, component)}`) {
           if (matchesKey(data, Key.ctrl('r'))) done({ id: '__refresh' });
+          else if (tasks && matchesKey(data, Key.f1)) activate(true);
           else if (keys.matches(data, 'tui.select.confirm')) activate();
           else if (keys.matches(data, 'tui.select.pageUp') || keys.matches(data, 'tui.select.pageDown')) {
             const index = filtered.findIndex((item) => item.value === list?.getSelectedItem()?.value);
