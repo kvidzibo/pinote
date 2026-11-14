@@ -682,6 +682,14 @@ try {
     for (let i=0;i<4;i++) await composer.press('ArrowLeft');
     await composer.press('Shift+Enter');
     assert.equal(await sourceValue(composer),'# Title\n  - first \n  - tail','Splitting an indented bullet retains its marker and tail');
+    const composerSource = await sourceValue(composer);
+    await composer.press('Enter');
+    await page.locator('.task-title').filter({hasText:/^Title$/}).waitFor();
+    assert.ok(call('snapshot',{view:'active'}).notes.some(note=>note.text===composerSource),'Enter submits Markdown bullets instead of continuing them');
+    await composer.fill('Selected text'); await composer.press('Control+a');
+    await app.evaluate(({clipboard})=>clipboard.writeText('https://example.org/source'));
+    await composer.press('Control+v');
+    assert.equal(await sourceValue(composer),'https://example.org/source','Pasting a URL replaces selected source without creating a Markdown link');
     await composer.fill('');
 
     const source='# Markdown source **bold** *italic* `code`\n- saved bullet';

@@ -43,7 +43,7 @@ export class MarkdownEditor {
   private settingText = false;
   constructor(parent: HTMLElement, text: string, label: string, composer: boolean, changed: () => void, submit: () => void) {
     this.view = new EditorView({ parent, state: EditorState.create({ doc: text, extensions: [
-      this.mode.of(EditorState.readOnly.of(false)), history(), markdown(), syntaxHighlighting(style),
+      this.mode.of(EditorState.readOnly.of(false)), history(), markdown({ addKeymap: false, pasteURLAsLink: false }), syntaxHighlighting(style),
       EditorView.lineWrapping,
       EditorView.cspNonce.of(document.querySelector<HTMLMetaElement>('meta[name=style-nonce]')?.content ?? ''),
       EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'false', tabindex: '0' }),
