@@ -1,3 +1,4 @@
+import { parsePR } from "./pr-url.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { stripVTControlCharacters } from "node:util";
 import { defaultFooterConfig, defaultFooterField, type FooterConfig, type FooterField } from "./footer-config.ts";
@@ -186,8 +187,8 @@ function fieldSegments(field: FooterField, value: string | undefined): FooterSeg
   const original = renderMarkdown(value);
   const urls = [...new Set(original.flatMap((part) => part.url ? [part.url] : []))];
   const url = urls.length === 1 ? urls[0] : undefined;
-  const number = url && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/([1-9][0-9]*)\/?$/u.exec(url)?.[1]
-    || (/^[0-9]+$/u.test(value.trim()) ? value.trim() : undefined);
+  const number = parsePR(value)?.number
+    ?? (/^[0-9]+$/u.test(value.trim()) ? value.trim() : undefined);
   if (field.format.includes("<number>") && !number || field.format.includes("<url>") && !url) return [];
   let body: FooterSegment[];
   if (field.format === "<value>") body = original;

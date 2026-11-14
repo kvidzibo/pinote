@@ -80,8 +80,11 @@ process.stdout.write(process.env.GH_RESPONSE);
   // Removing gh proves ignored fields and rejected URLs never invoke it.
   rmSync(gh);
   for (const patch of [{ field: 'Other' }, { event: 'removed' }]) assert.deepEqual(run(base, patch).output, {});
+  for (const value of ['https://codeberg.org/owner/repo/pulls/42', 'https://github.com.evil/owner/repo/pull/42']) {
+    assert.deepEqual(run(base, { value }).output, {}, 'Other providers never invoke gh or mask their watcher results');
+  }
   for (const value of ['https://github.com/owner/repo/pull/42?x=1', 'https://github.com/owner/repo/pull/42/extra',
-    'https://github.com.evil/owner/repo/pull/42', 'https://github.com/owner/repo/pull/42;echo SECRET', null]) {
+    'https://github.com/owner/repo/pull/42;echo SECRET', null]) {
     assert.equal(run(base, { value }).output.state, 'error');
   }
 });

@@ -16,6 +16,7 @@ import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '
 import type { FieldAutomation, FieldResult } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from '../field-watchers.ts';
 import { taskTitle } from '../task-title.ts';
+import { parsePR } from '../pr-url.ts';
 
 const URI = 'pinote://ui';
 const MIME = 'application/vnd.mcp-native-ui+json';
@@ -264,7 +265,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
       const url = link?.[2] ?? (/^https?:\/\/[^\s]+$/.test(raw) ? raw : undefined);
       const value = link?.[1] ?? raw;
-      const number = url?.match(/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)\/?$/)?.[1] ?? (/^\d+$/.test(value) ? value : undefined);
+      const number = parsePR(raw)?.number ?? (/^\d+$/.test(value) ? value : undefined);
       if (field.format.includes('<url>') && !url || field.format.includes('<number>') && !number) continue;
       const substitutions: Record<string, string> = { value, url: url ?? '', number: number ?? '' };
       const rendered = ` · ${field.label ? `${field.label}: ` : ''}${field.format.replace(/<(value|url|number)>/g, (_match, key: string) => substitutions[key])}`;
