@@ -5,7 +5,28 @@ import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
-// Only explicit newline commands transform source; loading, paste and copy never do.
+// Only explicit editing commands transform source; loading, paste and copy never do.
+function sourceBulletIndent(view: EditorView, backspace: boolean): boolean {
+  if (view.composing || view.state.readOnly) return false;
+  const { state } = view;
+  const range = state.selection.main;
+  if (!range.empty || state.selection.ranges.length !== 1) return false;
+  const line = state.doc.lineAt(range.from);
+  const bullet = /^([ \t]*)-([ \t]+|$)/.exec(line.text);
+  if (!bullet || (backspace && range.from !== line.from + bullet[0].length)) return false;
+  const indent = bullet[1].replace(/\t/g, '  ');
+  const removeMarker = backspace && !indent;
+  const to = line.from + (removeMarker ? bullet[0].length : bullet[1].length);
+  const insert = backspace ? indent.slice(0, -2) : indent + '  ';
+  view.dispatch({
+    changes: { from: line.from, to, insert },
+    selection: EditorSelection.cursor(range.from + insert.length - (to - line.from)),
+    scrollIntoView: true, userEvent: backspace ? 'delete.backward' : 'input.indent',
+    annotations: isolateHistory.of('full'),
+  });
+  return true;
+}
+
 export function sourceNewline(view: EditorView): boolean {
   if (view.composing) return false;
   if (view.state.readOnly) return true;
@@ -51,6 +72,8 @@ export class MarkdownEditor {
       keymap.of([
         { key: composer ? 'Enter' : 'Ctrl-Enter', run: view => { if (view.composing) return false; submit(); return true; } },
         { key: 'Enter', run: sourceNewline }, { key: 'Shift-Enter', run: sourceNewline },
+        { key: 'Tab', run: view => sourceBulletIndent(view, false) },
+        { key: 'Backspace', run: view => sourceBulletIndent(view, true) },
         ...defaultKeymap, ...historyKeymap,
       ]),
       EditorView.updateListener.of(update => { if (update.docChanged && !this.settingText) changed(); }),
