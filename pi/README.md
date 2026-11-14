@@ -252,6 +252,8 @@ IDs. Session recording is integration-managed and independent of field switches.
 Watchers have separate enable switches. Removing a preset definition restores its
 disabled default; other definitions are removed without deleting saved values.
 New definitions/edits require confirmation and affect every connected client.
+Presets remain discoverable at the 64-definition limit; remove an existing
+definition before configuring another. Unedited presets do not consume slots.
 
 ### Multiple PRs (pi-note 0.43.0+)
 

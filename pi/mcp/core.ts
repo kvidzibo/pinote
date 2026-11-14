@@ -98,8 +98,7 @@ function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?:
   const configured = config.fields === null
     ? effectiveFooterFields(config, notes).filter((entry) => entry.name !== 'PR' || Boolean(notes?.PR))
     : config.fields;
-  const entries = [...configured, ...defaultFieldPresets().filter((preset) => !configured.some((entry) => (entry.name === 'PR' ? 'PRs' : entry.name) === preset.name))];
-  return entries.flatMap((entry) => {
+  const checked = configured.flatMap((entry) => {
     const field = entry.name === 'PR'
       ? { ...entry, name: 'PRs', label: entry.label === 'PR' ? 'PRs' : entry.label } : entry;
     if (seen.has(field.name)) return [];
@@ -109,6 +108,7 @@ function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?:
       return checked;
     } catch { return []; }
   }).slice(0, 64);
+  return [...checked, ...defaultFieldPresets().filter((preset) => !checked.some((field) => field.name === preset.name))];
 }
 function settings() {
   const document = readFooterDocument();
@@ -374,9 +374,11 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
       const { notification: _notification, ...result } = status.result;
       return items.length ? [{ ...status, result: { ...result, items } }] : [];
     });
-  // Legacy Bar names come from task data, never from trusted shared settings.
+  // Omit empty instructions: saving legacy Bar display names must not promote
+  // those task-derived names into the trusted instruction block.
   const instructions = task ? fields(config!).filter((field) => field.enabled !== false)
-    .map((field) => ({ field: field.name, instructions: field.instructions ?? defaultFieldInstructions(field.name) })) : [];
+    .map((field) => ({ field: field.name, instructions: field.instructions ?? defaultFieldInstructions(field.name) }))
+    .filter((field) => field.instructions.trim()) : [];
   const fieldGuidance = instructions.length
     ? `Configured field instructions (trusted shared settings; automatically maintain enabled fields when relevant):\n${JSON.stringify(instructions)}\n` : '';
   let text = `${guidance ? `${guidance}\n` : ''}${fieldGuidance}${data}`;
@@ -499,7 +501,11 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     else if (action === 'taskOfferPolicy') policy = z.enum(['always', 'github-remote', 'never']).parse(value);
     else if (['titleWidth', 'fieldWidth', 'maxFields'].includes(action)) cfg[action as 'titleWidth'] = z.number().int().parse(value);
     else {
-      cfg.fields = fields(cfg, before.task?.agent_notes);
+      const savedNames = new Set((cfg.fields ?? effectiveFooterFields(cfg, before.task?.agent_notes))
+        .map((field) => field.name === 'PR' ? 'PRs' : field.name));
+      const editing = !['add-field', 'remove-field'].includes(action) ? state.field : undefined;
+      // Offered presets do not consume configuration slots until edited.
+      cfg.fields = fields(cfg, before.task?.agent_notes).filter((field) => savedNames.has(field.name) || field.name === editing);
       if (action === 'add-field') cfg.fields.push(defaultFooterField(z.string().parse(value)));
       else if (action === 'remove-field') { cfg.fields = cfg.fields.filter((f) => f.name !== state.field); next.screen = 'settings'; }
       else {
@@ -659,15 +665,20 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
       const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string(), z.string()).default({}), append: z.record(z.string(), z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
       const task = await selected(state, extra.signal);
       if (!task) throw new Error('No task is selected');
-      for (const key of Object.keys(args.append)) {
-        if (Object.hasOwn(args.set, key) || args.remove.includes(key)) throw new Error('A field cannot be appended and set or removed in the same update');
-        const current = task.agent_notes[key] ?? '';
+      const normalized = (key: string) => key.normalize('NFC').replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+      const touched = new Set([...Object.keys(args.set), ...args.remove].map(normalized));
+      for (const rawKey of Object.keys(args.append)) {
+        if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(rawKey)) throw new Error('Field names must be a single line without control characters');
+        const key = normalized(rawKey);
+        if (touched.has(key)) throw new Error('A field cannot have multiple operations after normalization');
+        touched.add(key);
+        const current = Object.hasOwn(task.agent_notes, key) ? task.agent_notes[key] : '';
         const seen = new Set(current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-        const additions = args.append[key].split(/\r?\n/).map((line) => line.trim()).filter((line) => {
+        const additions = args.append[rawKey].split(/\r?\n/).map((line) => line.trim()).filter((line) => {
           if (!line || seen.has(line)) return false;
           seen.add(line); return true;
         });
-        args.set[key] = additions.length ? [current, ...additions].filter(Boolean).join('\n') : current;
+        args.set = { ...args.set, [key]: additions.length ? [current, ...additions].filter(Boolean).join('\n') : current };
       }
       result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal));
       const caller = context(request.params._meta);

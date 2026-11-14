@@ -79,7 +79,6 @@ export function inputValue(control: NativeControl, text: string, view: NativeVie
     case 'add-field': {
       const field = parseFooterConfig({ footer: { fields: [defaultFooterField(text)] } }).fields![0];
       const fields = view.controls.filter((c) => c.id.startsWith('field:'));
-      if (fields.length >= 64) throw new Error('At most 64 field definitions are allowed.');
       if (fields.some((c) => c.id === `field:${field.name}`)) throw new Error('A field with this name already exists.');
       return field.name;
     }
