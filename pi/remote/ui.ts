@@ -1,61 +1,19 @@
-import { DynamicBorder, keyText, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Input, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui';
+import { type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { Text, truncateToWidth } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
-import { clean, cleanUnbounded, editorText, footerText, literal, type NativeControl, type NativeView } from './protocol.ts';
+import { clean, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
 import { RemoteSession } from './session.ts';
-import { inlineHeight, remoteMenu, type MenuState } from './menu.ts';
+import { remoteMenu, type MenuState } from './menu.ts';
+import { document, editValue, working, type Draft } from './dialogs.ts';
+import { disclosure, menuView, parentScreen, serverScreen, type Screen } from './navigation.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
 
-
-/** Inline, review-gated disclosure. Enter is NEVER a default approval. */
-export async function review(ctx: ExtensionContext, title: string, text: string, signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted || ctx.mode !== 'tui') return false;
-  // Escaped values can exceed the wire text limit. Every disclosure line must remain reviewable.
-  const disclosure = cleanUnbounded(text);
-  const reviewed = await ctx.ui.custom<boolean>((tui, theme, keys, done) => {
-    let offset = 0, page = 1, max = 0, geometry = '', usable = false;
-    let seen = new Set<number>();
-    const cancel = () => done(false);
-    signal.addEventListener('abort', cancel, { once: true });
-    const component: Component & { dispose(): void } = {
-      render(width) {
-        const height = inlineHeight(tui, width, component);
-        const current = `${width}:${tui.terminal.rows}:${height}`;
-        if (geometry !== current) seen = new Set();
-        geometry = current;
-        page = Math.max(1, Math.min(18, height - 5));
-        usable = width >= 20 && height >= 6 && tui.terminal.rows >= 14;
-        if (!usable) return [truncateToWidth('Enlarge terminal · Esc cancel', width)];
-        const lines = disclosure.split('\n').flatMap((s) => wrapTextWithAnsi(s, width));
-        max = Math.max(0, lines.length - page); offset = Math.min(offset, max);
-        for (let i = offset; i < Math.min(lines.length, offset + page); i++) seen.add(i);
-        const complete = seen.size === lines.length;
-        const border = new DynamicBorder((s) => theme.fg('border', s)).render(width);
-        return [...border, truncateToWidth(theme.fg('accent', line(title)), width), ...lines.slice(offset, offset + page), '',
-          truncateToWidth(complete ? `Review complete · ${keyText('tui.select.confirm')} to choose · ${keyText('tui.select.cancel')} cancel` : `${keyText('tui.select.up')}/${keyText('tui.select.down')} review ALL · ${keyText('tui.select.cancel')} cancel`, width), ...border];
-      },
-      handleInput(data) {
-        if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.ctrl('c'))) cancel();
-        else if (usable && geometry === `${tui.terminal.columns}:${tui.terminal.rows}:${inlineHeight(tui, tui.terminal.columns, component)}`) {
-          if (keys.matches(data, 'tui.select.confirm') && !signal.aborted) {
-            // Every wrapped line must have been visible in this geometry.
-            const lines = disclosure.split('\n').flatMap((s) => wrapTextWithAnsi(s, tui.terminal.columns));
-            if (seen.size === lines.length) done(true);
-          } else if (keys.matches(data, 'tui.select.down')) offset = Math.min(max, offset + 1);
-          else if (keys.matches(data, 'tui.select.up')) offset = Math.max(0, offset - 1);
-          else if (matchesKey(data, Key.pageDown)) offset = Math.min(max, offset + page);
-          else if (matchesKey(data, Key.pageUp)) offset = Math.max(0, offset - page);
-        }
-        tui.requestRender();
-      },
-      invalidate() {},
-      dispose() { signal.removeEventListener('abort', cancel); },
-    };
-    return component;
-  });
-  return reviewed && !signal.aborted && await ctx.ui.select(line(title), ['Cancel', 'Confirm'], { signal }) === 'Confirm';
+/** Review and approval are separate; Enter can never approve by default. */
+export async function review(ctx: ExtensionContext, title: string, text: string, signal: AbortSignal, accept = 'Confirm'): Promise<boolean> {
+  return await document(ctx, title, text, signal, true) && !signal.aborted &&
+    await ctx.ui.select(line(title), ['Cancel', accept], { signal }) === accept && !signal.aborted;
 }
 
 export class RemoteUI {
@@ -63,7 +21,9 @@ export class RemoteUI {
   private repaint = () => {};
   private menuChanged?: () => void;
   private opening = false;
+  private acting = false;
   private closing = false;
+  private failure?: RemoteFailure;
   private pi: ExtensionAPI;
   private session: RemoteSession;
   private exitOnComplete: (taskId: number) => boolean;
@@ -80,6 +40,7 @@ export class RemoteUI {
       if (!this.session.fullscreen) return { render: () => [], invalidate() {} };
       return new NativeFooter(() => this.session.view ? [{ uri: 'pinote://ui', view: this.session.view }] : [], theme,
         async ({ view }, item, action) => {
+          if (this.opening || this.acting) return false;
           if (item.openApp) { await this.open(ctx); return true; }
           const control = view.controls.find((c) => c.id === action && c.kind === 'action');
           return control ? this.dispatch(ctx, view, control) : false;
@@ -101,16 +62,34 @@ export class RemoteUI {
   }
   async dispatch(ctx: ExtensionContext, view: NativeView, control: NativeControl, value?: NativeControl['value']): Promise<boolean> {
     if (ctx.mode !== 'tui') throw new Error('Pinote UI actions require TUI mode');
+    if (this.acting) return false;
     if (control.id === 'done' && !ctx.isIdle()) {
       ctx.ui.notify('Wait for the current agent run before completing this task.', 'warning'); return false;
     }
+    this.acting = true; this.failure = undefined;
     const current = this.session.current(), signal = this.session.signal;
     try {
       if (typeof value === 'string') editorText(value);
-      if (control.confirm && !await review(ctx, line(control.label), `${clean(control.confirm)}${control.kind === 'action' ? '' : `\n${literal(value)}`}`, signal)) return false;
-      if (!current()) return false;
-      const result = await this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle());
-      if (!current()) return false;
+      if (control.id === 'done') {
+        const exits = typeof view.state.selectedId === 'number' && this.exitOnComplete(view.state.selectedId);
+        const accept = exits ? 'Complete task and exit' : 'Complete task';
+        const summary = truncateToWidth(line(view.body ?? ''), 100);
+        if (await ctx.ui.select(`Pinote / ${accept} #${view.state.selectedId}\n${summary}\n${exits ? 'Closes this dedicated Pi session.' : 'Clears selection; keeps this conversation and editor.'}`,
+          ['Cancel', accept], { signal }) !== accept) return false;
+      }
+      if (control.confirm) {
+        const details = control.kind === 'action' ? control.confirm : `${control.confirm}\n\n${control.id === 'add' || control.id === 'add-field' ? '' : `Before:\n${disclosure(control.value)}\n\n`}After:\n${disclosure(value)}`;
+        const accept = control.id === 'add' ? 'Create, start and select' : control.id === 'proposal:accept' ? 'Accept suggestion' :
+          control.id === 'remove-field' ? 'Remove display field' : control.id === 'add-field' ? 'Add field' : 'Save change';
+        if (!await review(ctx, line(control.label), details, signal, accept)) return false;
+      }
+      if (!current() || signal.aborted) return false;
+      if (control.id === 'continue' && ctx.ui.getEditorText().length) {
+        ctx.ui.notify('Draft not inserted: your editor already contains text. Clear or save it first.', 'warning'); return false;
+      }
+      const result = await working(ctx, control.id === 'preview' || control.id === 'proposal:preview' ? 'Loading preview…' : 'Applying Pinote action…',
+        () => this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle()), signal);
+      if (!current() || !result) return false;
       const selected = this.session.view;
       if (selected && typeof selected.state.selectedId === 'number' && selected.state.selectedId !== view.state.selectedId) {
         await this.renameKittyTab(ctx, selected, signal);
@@ -118,122 +97,148 @@ export class RemoteUI {
       }
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
           this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
-        this.closing = true;
-        ctx.shutdown();
-        return true;
+        this.closing = true; ctx.shutdown(); return true;
       }
-      if (result.preview) this.pi.appendEntry('pinote-remote-preview', { title: line(view.title), text: clean(result.preview) });
-      if (result.draft && await review(ctx, 'Insert server draft?', result.draft, signal) && current()) {
+      if (result.preview) await document(ctx, `Pinote / ${control.id === 'proposal:preview' ? 'Suggestion' : 'Task preview'}`, result.preview, signal);
+      if (result.draft && await review(ctx, 'Pinote / Insert task prompt', `Insert into the editor only; never submit.\n\n${disclosure(result.draft)}`, signal, 'Insert draft') && current()) {
         if (ctx.ui.getEditorText().length) ctx.ui.notify('Draft not inserted: clear the editor first.', 'warning');
         else ctx.ui.setEditorText(editorText(result.draft));
       }
       return true;
     } catch (error) {
       if (current()) {
-        ctx.ui.notify(error instanceof RemoteFailure ? error.message : 'Pinote action failed. It may have committed; refresh before retrying.', 'warning');
-        await this.session.refresh(true).catch(() => {});
+        this.failure = error instanceof RemoteFailure ? error : new RemoteFailure(true);
+        ctx.ui.notify(this.failure.message, 'warning');
+        // Reconnection is an explicit read, never an automatic replay of a write.
       }
       return false;
-    }
+    } finally { this.acting = false; }
   }
   private async renameKittyTab(ctx: ExtensionContext, view: NativeView, signal: AbortSignal): Promise<void> {
     const window = process.env.KITTY_WINDOW_ID, socket = process.env.KITTY_LISTEN_ON;
     const title = line(view.footer?.find((item) => item.action === 'preview')?.text ?? '').trim();
-    // Never fall back to the focused tab or discover an unrelated Kitty instance.
     if (!window || !/^[1-9]\d*$/.test(window) || !socket || !title || process.env.SSH_CONNECTION || process.env.SSH_TTY) return;
     try {
-      const result = await this.pi.exec('kitty', ['@', '--to', socket, 'set-tab-title', `--match=window_id:${window}`, '--', title], {
-        signal, timeout: 1500,
-      });
+      const result = await this.pi.exec('kitty', ['@', '--to', socket, 'set-tab-title', `--match=window_id:${window}`, '--', title], { signal, timeout: 1500 });
       if (result.code !== 0) throw new Error('Kitty title update failed');
     } catch {
       if (!signal.aborted) ctx.ui.notify('Pinote task selected, but the Kitty tab could not be renamed.', 'warning');
     }
   }
+  private async refresh(ctx: ExtensionContext): Promise<boolean> {
+    try {
+      await working(ctx, 'Refreshing Pinote…', () => this.session.refresh(true), this.session.signal);
+      this.failure = undefined;
+      return !!this.session.view && !this.session.signal.aborted;
+    } catch (error) {
+      this.failure = error instanceof RemoteFailure ? error : new RemoteFailure();
+      return false;
+    }
+  }
   async open(ctx: ExtensionContext): Promise<void> {
     if (ctx.mode !== 'tui') { ctx.ui.notify('Pinote UI actions require TUI mode', 'warning'); return; }
-    if (this.opening) return;
+    if (this.opening || this.acting) return;
     this.opening = true;
     const current = this.session.current(), signal = this.session.signal;
-    const menus = new Map<string, MenuState>();
+    const menus = new Map<string, MenuState>(), drafts = new Map<string, Draft>();
+    let screen = 'home' as Screen, notice = '';
+    const go = async (next: Screen): Promise<boolean> => {
+      const view = this.session.view;
+      if (!view) return false;
+      const target = serverScreen(next);
+      if ((view.state.screen ?? 'tasks') !== target) {
+        const control = view.controls.find((c) => c.id === `screen:${target}`);
+        if (!control) return false;
+        try { await working(ctx, 'Opening Pinote…', () => this.session.action(view, control), signal); }
+        catch (error) { this.failure = error instanceof RemoteFailure ? error : new RemoteFailure(); return false; }
+      }
+      screen = next; notice = ''; return true;
+    };
     try {
-      await this.session.refresh(true);
+      await this.refresh(ctx);
+      await go('home');
       while (current() && !signal.aborted && !this.closing) {
+        if (this.failure || !this.session.view) {
+          const failure = this.failure;
+          const title = failure?.uncertain ? 'Pinote / Verify result' : failure?.stale ? 'Pinote / State changed' : 'Pinote / Unavailable';
+          const choice = await ctx.ui.select(`${title}\n${failure?.message ?? 'Task state could not be verified.'}\nNo automatic retries. Invalid config needs repair on the service.`,
+            ['Refresh and verify', 'Close'], { signal });
+          if (choice !== 'Refresh and verify' || !current()) return;
+          if (await this.refresh(ctx)) await go(screen === 'field' ? 'fields' : screen);
+          continue;
+        }
         const view = this.session.view;
-        if (!view) return;
-        const screen = String(view.state.screen ?? 'tasks');
-        const state = menus.get(screen) ?? { search: '' };
-        menus.set(screen, state);
-        const choice = await remoteMenu(ctx, view, state, signal, (changed) => {
+        if (screen === 'field' && view.state.screen !== 'field') screen = 'fields';
+        const menu = menuView(view, screen);
+        const key = screen === 'field' ? `field:${String(view.state.field)}` : screen;
+        const state = menus.get(key) ?? { search: screen === 'tasks' ? String(view.state.search ?? '') : '' };
+        menus.set(key, state);
+        const choice = await remoteMenu(ctx, menu, state, signal, (changed) => {
           this.menuChanged = changed;
           return () => { if (this.menuChanged === changed) this.menuChanged = undefined; };
+        }, { search: screen === 'tasks' ? 'tasks' : screen === 'fields' ? 'local' : 'none', notice,
+          searchLabel: screen === 'fields' ? 'Filter fields' : undefined,
+          onSearch: async (query) => {
+            const latest = this.session.view, control = latest?.controls.find((c) => c.id === 'search');
+            if (!current() || !latest || !control) throw new RemoteFailure();
+            try { await this.session.action(latest, control, query); }
+            catch (error) {
+              if (current()) { this.failure = error instanceof RemoteFailure ? error : new RemoteFailure(); this.menuChanged?.(); }
+              throw error;
+            }
+          },
         });
         if (!current()) return;
         if (!choice) {
-          const back = view.state.screen === 'field' ? 'screen:settings' : view.state.screen === 'settings' ? 'screen:tasks' : undefined;
-          const control = view.controls.find((item) => item.id === back);
-          if (control) { await this.dispatch(ctx, view, control); continue; }
-          return;
+          const parent = parentScreen(screen);
+          if (!parent) return;
+          await go(parent); continue;
         }
         if (choice.id === '__changed') continue;
-        if (choice.id === '__refresh') { await this.session.refresh(true); continue; }
+        if (choice.id === '__refresh') { await this.refresh(ctx); continue; }
+        if (['__tasks', '__settings', '__prompts', '__footer', '__fields'].includes(choice.id)) { await go(choice.id.slice(2) as Screen); continue; }
         const control = view.controls.find((c) => c.id === choice.id);
         if (!control) continue;
-        let value = control.value;
-        if (control.kind === 'toggle') value = choice.value === 'true';
-        else if (control.kind === 'select') {
-          const options = control.options ?? [];
-          if (options.length < 5) value = options[Number(choice.value?.split('.')[0]) - 1]?.value;
-          else {
-            const labels = options.map((o, i) => `${i + 1}. ${line(o.label)}`);
-            const picked = await ctx.ui.select(line(control.label), labels, { signal });
-            if (!picked) continue;
-            value = options[labels.indexOf(picked)].value;
-          }
-        } else if (control.kind === 'text' || control.kind === 'number') {
-          const entered = await jsonInput(ctx, line(control.label), JSON.stringify(value ?? (control.kind === 'text' ? '' : 0)), signal);
-          if (entered === undefined) continue;
-          try { value = JSON.parse(entered); }
-          catch { ctx.ui.notify('Enter a JSON value; quote strings.', 'warning'); continue; }
-          if (control.kind === 'text' ? typeof value !== 'string' : typeof value !== 'number' || !Number.isFinite(value)) {
-            ctx.ui.notify('Value does not match the field type.', 'warning'); continue;
-          }
+        if (control.id.startsWith('field:')) {
+          if (await this.dispatch(ctx, view, control)) { screen = 'field'; notice = ''; }
+          continue;
         }
-        if (current() && await this.dispatch(ctx, view, control, value) && control.id.startsWith('select:')) return;
+        let applied = false;
+        if (control.kind === 'text' || control.kind === 'number') {
+          const draftKey = `${key}:${control.id}`;
+          const draft = drafts.get(draftKey) ?? { text: String(control.value ?? '') };
+          drafts.set(draftKey, draft);
+          do {
+            let value: NativeControl['value'];
+            try { value = await editValue(ctx, `${menu.title} / ${line(control.label)}`, view, control, draft, signal); }
+            catch { ctx.ui.notify('This value cannot be edited safely in the terminal. Edit it on the service.', 'warning'); break; }
+            if (value === undefined || !current()) break;
+            applied = await this.dispatch(ctx, view, control, value);
+            if (applied) drafts.delete(draftKey);
+            // Approval cancellation returns to the draft; a stale/uncertain action returns to recovery.
+          } while (!applied && !this.failure && current() && !signal.aborted);
+        } else if (control.kind === 'toggle' || control.kind === 'select') {
+          const options = control.kind === 'toggle' ? [{ label: 'On', value: true }, { label: 'Off', value: false }] : control.options ?? [];
+          const choices = options.map((o, i) => ({ id: `option:${i}`, kind: 'action' as const,
+            label: `${line(o.label)}${o.value === control.value ? '  [current]' : ''}`, description: control.description }));
+          const picked = await remoteMenu(ctx, { ...view, title: `${menu.title} / ${line(control.label)}`, body: 'Choose a value, then review and confirm the shared change.', controls: choices },
+            { search: '', selected: `option:${Math.max(0, options.findIndex((o) => o.value === control.value))}` }, signal, () => () => {}, { search: 'none' });
+          const option = picked && options[Number(picked.id.split(':')[1])];
+          if (option && current()) applied = await this.dispatch(ctx, view, control, option.value);
+        } else applied = await this.dispatch(ctx, view, control);
+        if (applied) {
+          if (control.id.startsWith('select:') || ['add', 'proposal:accept', 'continue'].includes(control.id)) return;
+          if (control.id === 'remove-field') screen = 'fields';
+          notice = control.id === 'clear' ? 'Selection cleared; task progress is unchanged.' : control.id === 'done' ? 'Task completed.' :
+            control.id === 'proposal:dismiss' ? 'Suggestion dismissed; tasks are unchanged.' : control.confirm ? `Saved: ${line(control.label)}.` : '';
+        }
       }
-    } catch (error) { if (current()) ctx.ui.notify(error instanceof RemoteFailure ? error.message : 'Pinote unavailable', 'error'); }
-    finally { this.opening = false; }
+    } finally { this.opening = false; this.menuChanged = undefined; }
   }
 }
 
+/** Historical TUI-only preview entries remain readable after upgrading. */
 export function registerPreview(pi: ExtensionAPI): void {
   pi.registerEntryRenderer<{ title: string; text: string }>('pinote-remote-preview', (entry, _options, theme) =>
     new Text(`${theme.fg('accent', line(entry.data?.title ?? 'Pinote preview'))}\n\n${clean(entry.data?.text ?? '')}`, 0, 0));
-}
-
-/** JSON input preserves exact whitespace and does not confuse a placeholder with an initial value. */
-async function jsonInput(ctx: ExtensionContext, title: string, value: string, signal: AbortSignal): Promise<string | undefined> {
-  if (signal.aborted) return undefined;
-  return ctx.ui.custom<string | undefined>((tui, theme, keys, done) => {
-    const input = new Input(); input.setValue(value.replace(/[^\x20-\x7e]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`));
-    const cancel = () => done(undefined);
-    input.onSubmit = (text) => { if (!signal.aborted) done(text); };
-    signal.addEventListener('abort', cancel, { once: true });
-    return {
-      get focused() { return input.focused; },
-      set focused(value: boolean) { input.focused = value; },
-      render(width) {
-        const border = new DynamicBorder((s) => theme.fg('border', s)).render(width);
-        return [...border, truncateToWidth(theme.fg('accent', title), width), ...input.render(width),
-          truncateToWidth('JSON value · Enter submit · Esc cancel', width), ...border];
-      },
-      handleInput(data) {
-        if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.ctrl('c'))) cancel();
-        else input.handleInput(data);
-        tui.requestRender();
-      },
-      invalidate() { input.invalidate(); },
-      dispose() { signal.removeEventListener('abort', cancel); },
-    };
-  });
 }

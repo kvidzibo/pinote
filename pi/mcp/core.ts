@@ -137,7 +137,7 @@ function actionRevision(data: Snapshot, control: Control): string {
   const { id, revision: _revision, ...semantics } = control;
   let dependency: unknown = null;
   if (id === 'done') dependency = data.task && { id: data.task.id, updated_at: data.task.updated_at };
-  else if (id === 'proposal:accept') dependency = data.proposedTask;
+  else if (id === 'proposal:accept' || id === 'proposal:preview') dependency = data.proposedTask;
   else if (id.startsWith('select:')) dependency = data.tasks.find((task) => task.id === Number(id.slice(7)));
   else if (!['preview', 'continue', 'clear', 'search', 'add', 'proposal:accept', 'proposal:dismiss'].includes(id) && !id.startsWith('screen:') && !id.startsWith('field:')) {
     dependency = { raw: data.config.raw, ...(['add-field', 'remove-field', 'label', 'format', 'width', 'link'].includes(id) ? { fields: fields(data.config.config, data.task?.agent_notes) } : {}) };
@@ -157,70 +157,82 @@ function footerFeatures(meta: Record<string, unknown> | undefined) {
     footerDoubleActions: z.object({ footerDoubleActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
   };
 }
+function humanStatus(state: string): string {
+  return state === 'in_progress' ? 'In progress' : state === 'active' ? 'Not started' : state;
+}
+function fullPreview(task: { text: string; agent_notes?: Record<string, string> }): string {
+  const notes = task.agent_notes && Object.keys(task.agent_notes).length ? `\n\nHandoff notes:\n${JSON.stringify(task.agent_notes, null, 2)}` : '';
+  const document = task.text + notes;
+  return document.length <= 20_000 ? document : 'Full preview exceeds the 20000-character display limit. Nothing has been truncated here: read the complete task and handoff notes through the Pinote CLI or service (get_task).';
+}
 function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean } = {}) {
   const { tasks, task, suggestion, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
   const action = (id: string, label: string, extra: Partial<Control> = {}) => controls.push({ id, label: label.slice(0, 2000), kind: 'action', ...extra });
   let title = 'Pinote · Tasks';
-  let body = task ? task.text : 'Select a task or create one. No task is selected for this conversation.';
+  let body = task ? `#${task.id} · ${task.tag || 'No tag'} · ${humanStatus(task.state)} · CURRENT\n${task.text.split('\n')[0]}` : state.proposal ? `Suggestion only; no task is selected for this conversation.\n${suggestion!.text.split('\n')[0]}` : 'Select a task or create one. No task is selected for this conversation.';
   // Footer actions remain valid on every screen, including Settings.
   if (task) {
     action('preview', 'Preview full task', { description: 'Display only; never sent to the model' });
     action('done', 'Complete task', { icon: icons.check, ...(features.footerNativeActions ? { description: 'Complete the selected task' } : {}) });
   } else if (state.proposal) {
     const acceptance = 'task_id' in state.proposal ? `Start and select existing task #${state.proposal.task_id}; no new task is created.` : 'Create, start, and select this suggestion.';
-    action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: `${acceptance} ${features.footerNativeActions ? 'Double-click the suggested footer title to accept; use Dismiss suggestion to dismiss.' : 'Left-click to accept; right-click to dismiss.'}\n${suggestion!.text.slice(0, 4000)}` });
+    action('proposal:preview', 'Preview suggestion', { description: `${acceptance} Preview only; does not accept or select the suggestion.` });
+    const confirm = `${acceptance}\nTag: ${suggestion!.tag || 'No tag'}\n\n${suggestion!.text}`;
+    if (confirm.length <= 20_000) action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: `${acceptance} Review the complete task and tag before confirming.`, confirm });
+    else body += '\nSuggestion exceeds the confirmation limit; review and select it through the Pinote CLI or service.';
     action('proposal:dismiss', 'Dismiss suggestion', { icon: icons.cross });
   }
   action('screen:tasks', 'Tasks', { icon: icons.note });
-  action('screen:settings', 'Settings', { description: 'Global prompts, task offers, and footer fields' });
+  action('screen:settings', 'Settings', { description: 'Shared-service prompts, task offers, and footer fields; affects all clients using this configuration' });
   if (state.screen === 'settings') {
-    title = 'Pinote · Settings'; body = 'Personal pi-note.json · changes save after confirmation';
+    title = 'Pinote · Settings'; body = 'Shared-service pi-note.json · changes affect all clients using this configuration and save after confirmation.';
     for (const [id, label, value] of [['handoffPrompt', 'Task prompt', config.handoffPrompt], ['newSessionPrompt', 'New session prompt', config.newSessionPrompt]] as const) {
-      controls.push({ id, label, value, kind: 'text', multiline: true, confirm: 'Save this global prompt?' });
+      controls.push({ id, label, value, kind: 'text', multiline: true, description: id === 'newSessionPrompt' ? 'Stored for compatibility; remote /new does not insert this prompt. Tabs/newlines allowed; editor limit 20000 characters.' : 'Inserted into the composer only on request; never submitted. Must be nonblank; tabs/newlines allowed; editor limit 20000 characters.', confirm: 'Save this global prompt?' });
     }
     controls.push({ id: 'agentGuidance', label: 'Agent guidance', value: config.guidance, kind: 'text', multiline: true, description: `${config.guidanceOverridden ? 'Custom' : 'Default'} instructions injected before task data; task data is not edited here.`, confirm: 'Save these injected agent instructions?' });
     if (config.guidanceOverridden) action('reset-agent-guidance', 'Reset to default', { icon: icons.cross, description: 'Remove the agent guidance override; retain task data and other settings.', confirm: 'Reset agent guidance to the built-in default?' });
     controls.push({ id: 'taskOfferPolicy', label: 'Task offers', kind: 'select', value: config.policy, options: ['always', 'github-remote', 'never'].map((value) => ({ label: value, value })), confirm: 'Save this global task-offer policy?' });
-    for (const key of ['titleWidth', 'fieldWidth', 'maxFields'] as const) controls.push({ id: key, label: key, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
-    controls.push({ id: 'add-field', label: 'Add field', icon: icons.add, kind: 'text', value: '', confirm: 'Add this global footer field?' });
+    for (const [key, label, description] of [['titleWidth', 'Task title width', '3–1000 terminal cells.'], ['fieldWidth', 'Default field width', '3–1000 terminal cells; inherited by fields without a width override.'], ['maxFields', 'Maximum visible fields', '0–64 fields; 0 hides all task fields.']] as const) controls.push({ id: key, label, description, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
+    controls.push({ id: 'add-field', label: 'Add field', icon: icons.add, kind: 'text', value: '', description: 'Unique nonblank field name, at most 64 characters; Bar is reserved. Changes display definitions, not task values.', confirm: 'Add this global footer field?' });
     fields(config.config, task?.agent_notes).forEach((field) => action(`field:${field.name}`, field.name, { description: `${field.label || '(no label)'} · ${field.format}` }));
   } else if (state.screen === 'field') {
     const field = fields(config.config, task?.agent_notes).find((f) => f.name === state.field);
     if (!field) throw new Error('Field no longer exists; open Settings again');
-    title = `Pinote · ${field.name}`; body = 'Global footer display definition; task values are unchanged.';
-    controls.push({ id: 'label', label: 'Label', kind: 'text', value: field.label, confirm: 'Save this global field label?' });
-    controls.push({ id: 'format', label: 'Format', kind: 'text', value: field.format, description: '<value>, <url>, <number>', confirm: 'Save this global field format?' });
-    controls.push({ id: 'width', label: 'Width', kind: 'number', value: field.width ?? config.config.fieldWidth, confirm: 'Save this global field width?' });
-    controls.push({ id: 'link', label: 'Link', kind: 'toggle', value: field.link, confirm: 'Change this global link setting?' });
+    title = `Pinote · ${field.name}`; body = 'Shared-service footer display definition; affects all clients using this configuration. Task values are unchanged.';
+    controls.push({ id: 'label', label: 'Label', kind: 'text', value: field.label, description: 'Up to 64 characters; blank hides the label.', confirm: 'Save this global field label?' });
+    controls.push({ id: 'format', label: 'Format', kind: 'text', value: field.format, description: 'Up to 4096 characters; placeholders: <value>, <url>, <number>. URL/number formats hide fields without matching values.', confirm: 'Save this global field format?' });
+    controls.push({ id: 'width', label: 'Width', kind: 'number', value: field.width ?? config.config.fieldWidth, description: `3–1000 terminal cells. ${field.width === undefined ? 'Inherited from Default field width; saving creates an override.' : 'Custom width override; not inherited.'}`, confirm: 'Save this global field width?' });
+    controls.push({ id: 'link', label: 'Link', kind: 'toggle', value: field.link, description: 'Make recognized HTTP(S) URLs clickable.', confirm: 'Change this global link setting?' });
     action('remove-field', 'Remove field', { confirm: 'Remove this global display definition? Task values are retained.' });
   } else {
     if (task) {
-      if (config.handoffPrompt.length <= 20_000) action('continue', 'Continue', { description: 'Request insertion of the task prompt; never submit it' });
+      if (config.handoffPrompt.length <= 20_000) action('continue', 'Insert task prompt…', { description: 'Request insertion of the task prompt; never submit it' });
       action('clear', 'Clear selection', { description: 'Keep the task and its progress unchanged' });
     }
     controls.push({ id: 'add', label: 'New task', icon: icons.add, kind: 'text', multiline: true, value: '', confirm: 'Create and select this task?' });
     controls.push({ id: 'search', label: 'Filter tasks', kind: 'text', value: state.search ?? '' });
+    const terms = (state.search ?? '').toLowerCase().trim().split(/\s+/).filter(Boolean);
     const matches = tasks.filter((t) => state.launch
       ? t.id === state.launch.task_id && t.updated_at === state.launch.updated_at
-      : `${t.text} ${t.tag ?? ''}`.toLowerCase().includes((state.search ?? '').toLowerCase()));
-    for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, `${candidate.tag ? `[${candidate.tag}] ` : ''}${candidate.text.split('\n')[0]}`, { description: `#${candidate.id} · ${candidate.state} · Select and start this task` });
+      : terms.every((term) => `${t.text} ${t.tag ?? ''} #${t.id}`.toLowerCase().includes(term)));
+    for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, candidate.text.split('\n')[0], { description: `#${candidate.id} · ${candidate.tag || 'No tag'} · ${humanStatus(candidate.state)}${candidate.id === task?.id ? ' · CURRENT' : ''} · Select and start this task for this conversation` });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
   const footer: { text: string; openApp?: true; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic: boolean; color: 'accent' }; width?: number }[] = features.footerNativeActions
     ? [{ text: `${icons['open-app']} `, openApp: true, width: 3 }]
     : [{ text: `${icons.note} `, width: 3 }];
   if (features.footerNativeActions) {
-    if (task) footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(task.state === 'in_progress' ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
-    else if (state.proposal) footer.push({ text: `? ${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, doubleAction: 'proposal:accept', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    if (task) footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', width: config.config.titleWidth });
+    else if (state.proposal) footer.push({ text: `? ${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
     else footer.push({ text: 'Pinote · No task', width: config.config.titleWidth });
   } else if (task) {
     footer.push({ text: `${icons.check} `, action: 'done', width: 3 });
-    footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', ...(features.footerDoubleActions ? { doubleAction: 'done' } : {}), width: config.config.titleWidth });
+    footer.push({ text: `${task.tag ? `[${task.tag}] ` : ''}${task.text.split('\n')[0].slice(0, 2000)}`, action: 'preview', width: config.config.titleWidth });
   } else if (state.proposal) {
     footer.push({ text: `${icons.add} `, action: 'proposal:accept', ...(secondary ? { secondaryAction: 'proposal:dismiss' } : {}), width: 3 });
-    footer.push({ text: `${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, ...(features.footerDoubleActions ? { doubleAction: 'proposal:accept' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    footer.push({ text: `${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${suggestion!.text.split('\n')[0].slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
   let fieldCount = 0;
   if (task) {
@@ -314,7 +326,8 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
   if (!control || (control.revision ?? before.revision) !== request.params.revision) staleAction();
   const next: State = { ...before.state };
-  delete next.launch; // A launcher filter is one-shot; ordinary navigation restores the list.
+  // A launcher filter is one-shot; read-only previews preserve it.
+  if (action !== 'preview' && action !== 'proposal:preview') delete next.launch;
   let draft: string | undefined, preview: string | undefined;
   if (action === 'proposal:accept' || action === 'proposal:dismiss') {
     const proposal = before.state.proposal;
@@ -330,7 +343,8 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   else if (action === 'search') next.search = z.string().max(256).parse(value);
   else if (action === 'clear') next.selectedId = null;
   else if (action === 'continue') draft = before.config.handoffPrompt;
-  else if (action === 'preview') preview = (before.task!.text + '\n\n' + JSON.stringify(before.task!.agent_notes, null, 2)).slice(0, 20_000);
+  else if (action === 'preview') preview = fullPreview(before.task!);
+  else if (action === 'proposal:preview') preview = fullPreview(before.suggestion!);
   else if (action.startsWith('select:')) {
     const id = Number(action.slice(7));
     const candidate = before.tasks.find((task) => task.id === id);
