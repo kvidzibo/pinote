@@ -61,14 +61,14 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  creationTag?: string | null; collapsed?: boolean; scroll?: { ordinary: number; pinned: number };
+  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; scroll?: { ordinary: number; pinned: number };
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'task-actions' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'drafts' | 'close';
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
 export type PreviewApi = {
