@@ -25,7 +25,8 @@ npm --prefix electron run build
 npm --prefix electron start
 ```
 
-`setup` explicitly downloads the locked Electron 45 binary; there is no Electron
+`setup` installs the locked backend build dependencies, builds its bundles, and
+explicitly downloads the locked Electron 45 binary; there is no Electron
 postinstall download in this version. Dependencies have their own
 `electron/package-lock.json`. `start` rebuilds before launching.
 The build includes the backend bundle. At runtime it uses external `node` from
@@ -42,6 +43,41 @@ intended automatic-floating mechanism in i3, without additional rules. Although
 `start` requests `--class=pinote-electron`, native development `WM_CLASS` can be
 `electron`; do not rely on that requested class as an observed window identity.
 Icons are bundled rather than taken from the host icon theme.
+
+## Switch an existing installation
+
+After updating/building this Electron version, open **Menu → Backend settings…**
+and use **Switch to Node backend** (play icon). A native confirmation defaults to
+Cancel. The operation saves pending edits and drafts, verifies external Node and
+the bundled CLI/bridge against the same database, then:
+
+- Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
+- Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
+- Adds a user override for the **existing** `pinote.service`; no service is created
+  or enabled. A present service must be running so its database can be verified.
+- Saves an explicit Node preference, restarts the previously running service,
+  verifies its CLI/listener, and relaunches Electron.
+
+No downloads, administrator access, model requests or database conversion occur
+when clicking Switch. Normal desktop updates must first install this app version;
+its `setup` now also prepares the backend for the existing desktop updater.
+Keep the installed application's directory stable: the CLI launcher follows its
+bundled resources, so subsequent updates replace both runtimes together.
+
+The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
+`~/.config/pinote/backend.json`). It overrides only the exact backend override
+replaced during confirmation, including the old Python-forcing desktop launcher;
+a different explicit diagnostic override still works. GTK and its Python
+environments remain available, but are not used by the selected Node runtime.
+
+Backups and interrupted-switch recovery are under
+`$XDG_STATE_HOME/pinote/backend-switch` (default `~/.local/state/pinote/backend-switch`).
+On failure, configuration is restored and the prior active service is restarted;
+task data is **never** automatically restored or converted. Interrupted rollback
+is recovered on the next launch. Concurrent configuration edits are not overwritten:
+if recovery cannot finish, preserve `pending.json` and the private backups for repair.
+A busy updater, unsafe paths, a stopped/transitioning service, a different service
+database, or an unsupported/nonlocal listener blocks the switch rather than guessing.
 
 ## Controls and deliberate differences
 

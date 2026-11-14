@@ -4,7 +4,7 @@ import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result,
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
-import type { PreviewData } from './protocol';
+import type { BackendSettings, PreviewData } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -19,6 +19,7 @@ let state: UIState = initialState();
 let active: Snapshot | null = null;
 let creationTag: string | null = null;
 let readonly = false, closing = false, collapsed = false, polling = false, baseline = false, stateLoaded = false;
+let backendSwitchBusy = false;
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 let persistChain: Promise<void> = Promise.resolve();
 let draftSaveFailed = false;
@@ -70,7 +71,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'edit') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'edit' || l.kind === 'backend-settings') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -210,7 +211,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
-    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'edit') fitWindow();
+    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'edit' || kind === 'backend-settings') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
@@ -286,6 +287,7 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'manage-tags': manageTags(); break;
     case 'task-actions': configureTaskActions(); break;
     case 'composer-settings': configureComposer(); break;
+    case 'backend-settings': configureBackend(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
   }
@@ -310,6 +312,50 @@ function configureComposer(): void {
   }, readonly);
   controls(modal.panel).append(save);
 }
+function configureBackend(): void {
+  const existing = layers.find(l => l.kind === 'backend-settings');
+  if (existing) { existing.panel.focus(); return; }
+  const modal = layer('Backend settings', 'backend-settings');
+  const status = el('p', 'Loading backend settings…');
+  status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+  modal.panel.append(status, el('p', 'Switch to the Node backend after native confirmation. Pending edits and drafts are saved before closing, and backups are kept. The same database is used; no data conversion is needed. Pinote relaunches after a successful switch.'));
+  let settings: BackendSettings | undefined, loading = false;
+  const update = () => {
+    start.disabled = !settings || settings.switched || !settings.canSwitch || readonly || closing || backendSwitchBusy || loading;
+    reload.disabled = closing || backendSwitchBusy || loading;
+  };
+  const load = async () => {
+    if (loading || closing || backendSwitchBusy) return;
+    loading = true; update();
+    try {
+      settings = await api.backendSettings();
+      status.textContent = `${settings.detail} — ${settings.version}${settings.switched ? ' (already switched)' : ''}`;
+    } catch (error) {
+      settings = undefined;
+      status.textContent = `Could not load backend settings: ${message(error)}`;
+      report(status.textContent);
+    } finally { loading = false; update(); }
+  };
+  const start = button('start', 'Switch to Node backend', async () => {
+    if (!settings || settings.switched || !settings.canSwitch || readonly || closing || backendSwitchBusy) return;
+    backendSwitchBusy = true; update();
+    try {
+      if (await api.switchBackend()) {
+        // Main schedules the normal close/drain path. This tracked callback must return now.
+        return;
+      }
+      backendSwitchBusy = false;
+    } catch (error) {
+      backendSwitchBusy = false;
+      report(`Could not switch backend: ${message(error)}`);
+    } finally { update(); }
+  }, true);
+  const reload = button('reset', 'Refresh backend settings', load);
+  controls(modal.panel).append(start, reload);
+  modal.update = update;
+  void track(load()); fitWindow();
+}
+api.onBackendSwitchProgress(text => { report(`Backend switch: ${text}`); });
 function dueLabel(task: Task): string {
   const date = task.reminder_due_at ?? task.remind_at;
   if (!date) return '';
@@ -1233,10 +1279,13 @@ checklist.addEventListener('mouseup', e => {
   if (target === checklist || target === ordinary || target === pinned || target.classList.contains('empty')) composer.focus();
 });
 function updateEditors(): void {
-  for (const modal of layers) if (modal.kind === 'edit') modal.update?.();
+  for (const modal of layers) if (modal.kind === 'edit' || modal.kind === 'backend-settings') modal.update?.();
 }
 function setClosing(value: boolean): void {
-  closing = value; document.body.inert = value; composerEditor.readOnly = readonly || value; updateEditors();
+  closing = value;
+  // Keep the live notice readable during installation, while all editing/layers stay inert.
+  checklist.inert = $('composer').inert = popupRoot.inert = value;
+  composerEditor.readOnly = readonly || value; updateEditors();
 }
 api.onCloseRequested(() => {
   if (closing) return;
@@ -1249,7 +1298,13 @@ api.onCloseRequested(() => {
     // Read-only recovery may still contain newer, unsaved text. A failed save must block close.
     await persist(draftSaveFailed); await persistChain;
     await api.finishClose();
-  })().catch(async e => { setClosing(false); await api.cancelClose(); report(`Could not finish closing: ${message(e)}`); if (focused?.isConnected) focused.focus(); });
+  })().catch(async e => {
+    backendSwitchBusy = false; setClosing(false);
+    let detail = message(e);
+    try { await api.cancelClose(); } catch (error) { detail += `; could not cancel close: ${message(error)}`; }
+    report(`Could not finish closing: ${detail}`);
+    if (focused?.isConnected) focused.focus();
+  });
 });
 async function init(): Promise<void> {
   composerEditor.readOnly = true;

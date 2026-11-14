@@ -95,8 +95,13 @@ npm --prefix electron run package
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:package
 ```
 
-`setup` explicitly downloads Electron; `ci --ignore-scripts` installs locked npm
-packages (including esbuild's optional native binary) without lifecycle scripts.
+`setup` prepares the bundled backend and explicitly downloads Electron;
+`ci --ignore-scripts` installs locked npm packages (including esbuild's optional
+native binary) without lifecycle scripts. Unit tests exercise real CLI bundles
+with injected service control, including failed restart/rollback recovery. The E2E
+command also runs the Backend settings switch with temporary HOME/XDG data and a
+fake absent service, checking confirmation cancellation, draft preservation,
+relaunch, and bypass of the old Python override. No live service is changed.
 The end-to-end harness uses its own HOME/XDG directories, private i3 configuration
 and socket, and clears inherited real i3/Kitty sockets. Always use Xvfb and a
 private D-Bus session, never the actual desktop. Test screenshots stay in temporary
