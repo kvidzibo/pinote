@@ -1,5 +1,5 @@
 import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from './protocol.ts';
-import type { MenuRequest, Operation, UIState } from './protocol.ts';
+import type { MenuRequest, Operation, PreviewData, PreviewRequest, UIState } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
 // JSON escaping can use six bytes per warning code unit; reserve it separately from drafts.
@@ -27,6 +27,16 @@ export function validParams(op: unknown, value: unknown): op is Operation {
 export function validMenuRequest(value: unknown): value is MenuRequest {
   if (!record(value) || !['x', 'y'].every(k => typeof value[k] === 'number' && Number.isSafeInteger(value[k]) && value[k] >= 0 && value[k] <= 100000)) return false;
   return value.kind === 'app' && Object.keys(value).every(k => ['kind', 'x', 'y'].includes(k));
+}
+export function validPreviewData(value: unknown): value is PreviewData {
+  return record(value) && Object.keys(value).every(k => ['task','markdown','unread'].includes(k)) &&
+    validTask(value.task) && typeof value.markdown === 'boolean' && typeof value.unread === 'boolean' &&
+    Buffer.byteLength(JSON.stringify(value)) <= MAX_STATE_PAYLOAD_BYTES;
+}
+export function validPreviewRequest(value: unknown): value is PreviewRequest {
+  return record(value) && Object.keys(value).every(k => ['token','data','point'].includes(k)) &&
+    id(value.token) && validPreviewData(value.data) && record(value.point) && Object.keys(value.point).every(k => ['x','y'].includes(k)) &&
+    validMenuRequest({ ...value.point, kind: 'app' });
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
 function validTaskActionPreferences(value: unknown, ids: readonly string[], legacy: boolean): boolean {

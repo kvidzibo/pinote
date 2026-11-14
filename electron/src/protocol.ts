@@ -68,11 +68,21 @@ export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Oper
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
 export type MenuAction = 'archive' | 'filter' | 'scheduled' | 'manage-tags' | 'task-actions' | 'drafts' | 'close';
+export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
+export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
+export type PreviewApi = {
+  load(): Promise<PreviewData>; ready(height: number): Promise<void>;
+  action(action: 'copy' | 'edit' | 'close'): Promise<void>; openLink(url: string): Promise<void>;
+  onUpdate(callback: (data: PreviewData) => void): void;
+};
 export type PinoteApi = BackendApi & {
+  openPreview(request: PreviewRequest): Promise<boolean>;
+  updatePreview(token: number, data: PreviewData | null): Promise<void>;
+  onPreviewClosed(callback: (token: number, edit: boolean) => void): void;
   popupMenu(request: MenuRequest): Promise<MenuAction | null>;
   loadState(): Promise<UIState>; saveState(state: UIState): Promise<void>; acknowledgeWarning(): Promise<boolean>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
   onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
 };
-declare global { interface Window { pinote: PinoteApi } }
+declare global { interface Window { pinote: PinoteApi; pinotePreview: PreviewApi } }
