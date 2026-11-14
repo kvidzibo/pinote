@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from '../src/protocol.ts';
 import type { LegacyPerStateTaskActionSettings, LegacyTaskActionSettings } from '../src/protocol.ts';
-import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validState } from '../src/security.ts';
+import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
   assert.ok(validParams('edit', { id: 1, revision: 'rev', text: 'literal <script>☘</script>' }));
@@ -15,6 +15,22 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
     assert.ok(!validMenuRequest({ kind: 'task', x: 10, y: 20, inProgress, readOnly }));
   }
   for (const request of [null, {}, { kind: 'app', x: NaN, y: 0 }, { kind: 'app', x: -1, y: 0 }, { kind: 'app', x: 0.5, y: 0 }, { kind: 'app', x: 0, y: Infinity }, { kind: 'task', x: 0, y: 0 }, { kind: 'app', x: 0, y: 0, items: ['execute'] }, { kind: 'app', x: 0, y: 0, inProgress: false, readOnly: false }, { kind: 'task', x: 0, y: 0, inProgress: 'yes', readOnly: false }]) assert.ok(!validMenuRequest(request));
+  const task = { id: 1, text: 'Preview', tag: null, state: 'active', created_at: 'now', updated_at: 'rev', remind_at: null, reminder_due_at: null, archived_at: null, agent_notes: {}, agent_event_id: 0 };
+  const data = { task, markdown: true, unread: false };
+  const request = { token: 1, data, point: { x: 0, y: 100 } };
+  assert.ok(validPreviewData(data));
+  assert.ok(validPreviewRequest(request));
+  for (const value of [null, {}, { ...data, markdown: 'yes' }, { ...data, unread: 1 },
+    { ...data, task: { ...task, id: true } }, { ...data, task: { ...task, agent_event_id: -1 } },
+    { ...data, executable: '/bin/sh' }, { ...data, task: { ...task, text: 'x'.repeat(MAX_STATE_PAYLOAD_BYTES + 1) } },
+  ]) assert.ok(!validPreviewData(value));
+  for (const value of [null, {}, { ...request, token: 0 }, { ...request, token: 1.5 },
+    { ...request, token: Number.MAX_SAFE_INTEGER + 1 }, { ...request, data: null },
+    { ...request, point: null }, { ...request, point: { x: -1, y: 0 } },
+    { ...request, point: { x: NaN, y: 0 } }, { ...request, point: { x: 0, y: Infinity } },
+    { ...request, point: { x: 0.5, y: 0 } }, { ...request, point: { x: 100001, y: 0 } },
+    { ...request, point: { x: 0, y: 0, command: 'edit' } }, { ...request, command: 'edit' },
+  ]) assert.ok(!validPreviewRequest(value));
   assert.ok(validState(initialState()));
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));

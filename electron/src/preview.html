@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Task preview</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="preview-window">
+  <section class="panel" role="dialog" tabindex="-1" aria-label="Task preview">
+    <header><h2 id="title"></h2><button id="close" title="Close preview" aria-label="Close preview"><img src="icons/window-close-symbolic.svg" alt=""></button></header>
+    <div class="controls">
+      <button id="copy" title="Copy note" aria-label="Copy note"><img src="icons/edit-copy-symbolic.svg" alt=""></button>
+      <button id="edit" title="Edit text…" aria-label="Edit text…"><img src="icons/document-edit-symbolic.svg" alt=""></button>
+    </div>
+    <p id="error" role="alert" hidden></p>
+    <div id="body" class="preview scroll"></div>
+  </section>
+  <script type="module" src="preview.js"></script>
+</body>
+</html>

@@ -1,11 +1,8 @@
 import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
-// The optional frontend bundles markdown-it; raw HTML and resource loading are disabled.
-import MarkdownIt from 'markdown-it';
-
-type Token = { type: string; tag: string; nesting: number; content: string; children?: Token[]; attrs?: [string, string][] };
-const markdown = new MarkdownIt({ html: false, linkify: false, typographer: false });
+import { fillPreview } from './preview-content';
+import type { PreviewData } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -209,7 +206,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   panel.focus(); renderSelected(); return item;
 }
 function renderSelected(): void {
-  for (const [id, row] of rowNodes) row.classList.toggle('selected', taskActions?.task.id === id || layers.some(l => l.taskId === id));
+  for (const [id, row] of rowNodes) row.classList.toggle('selected', taskActions?.task.id === id || openedPreview?.data.task.id === id || layers.some(l => l.taskId === id));
 }
 function field(label: string, value = ''): { wrapper: HTMLLabelElement; input: HTMLInputElement } {
   const wrapper = el('label', label), input = el('input'); input.value = value; wrapper.append(input); return { wrapper, input };
@@ -302,7 +299,7 @@ function taskContent(task: Task, preferences: TaskActionPreferences, sample = fa
       const action = taskAction(task, id);
       const label = id === 'preview' ? (unread(task) ? 'Unread agent update — click to view.' : 'Preview full task')
         : `Task ${task.id}: ${action.label}; right-click ${mark ? 'delete' : isProgress(task) ? 'reset' : 'mark for deletion'}`;
-      const b = button(id === 'preview' && unread(task) ? 'unread' : action.icon, label, () => { if (!sample) return runTaskAction(task, action.id); }, !sample && actionBlocked(task, action.id));
+      const b = button(id === 'preview' && unread(task) ? 'unread' : action.icon, label, event => { if (!sample) return runTaskAction(task, action.id, event); }, !sample && actionBlocked(task, action.id));
       b.classList.add('row-action');
       if (id !== 'preview') {
         b.classList.add('checkbox');
@@ -399,7 +396,7 @@ function renderTasks(): void {
   }
   checklist.classList.toggle('mixed', ordinaryRows.length > 0);
   pinned.hidden = !progressRows.length && !Array.from(pinned.children).some(n => exiting.has(Number((n as HTMLElement).dataset.id)));
-  renderSelected(); fitWindow(); fitTaskRows();
+  renderSelected(); fitWindow(); fitTaskRows(); updatePreview();
   if (restoreActionFocus !== undefined) (rowNodes.get(restoreActionFocus)?.querySelector<HTMLElement>('.task-title') ?? composer).focus({ preventScroll: true });
   if (scrollToId !== undefined) {
     const row = rowNodes.get(scrollToId);
@@ -454,7 +451,7 @@ function openTaskActions(task: Task, source: HTMLElement): void {
   for (const id of settings.order) {
     if (settings.hidden.includes(id) && !row.querySelector<HTMLElement>(`.row-action[data-row-element="${id}"]`)?.hidden) continue;
     const action = taskAction(task, id);
-    bar.append(button(action.icon, action.label, () => runTaskAction(task, action.id), actionBlocked(task, action.id)));
+    bar.append(button(action.icon, action.label, event => runTaskAction(task, action.id, event), actionBlocked(task, action.id)));
   }
   bar.append(button('close', 'Close task actions', () => closeTaskActions()));
   const enabled = Array.from(bar.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
@@ -647,14 +644,16 @@ function configureTaskActions(): void {
   }, readonly);
   bar.append(reset, save); draw(); fitWindow();
 }
-async function runTaskAction(task: Task, action: TaskAction): Promise<void> {
+async function runTaskAction(task: Task, action: TaskAction, event: MouseEvent): Promise<void> {
+  const source = event.currentTarget as HTMLElement;
+  const point = event.detail ? { x: Math.round(event.clientX), y: Math.round(event.clientY) } : menuPoint(source);
   closeTaskActions();
   if (closing) return;
   if (!active?.notes.some(t => t.id === task.id && t.updated_at === task.updated_at)) { report('Task changed while its actions were open. Reopen them to use the latest version.'); return; }
   switch (action) {
     case 'kitty': await startKitty(task); break;
     case 'copy': await api.copy(task.text); break;
-    case 'preview': preview(task); break;
+    case 'preview': await preview(task, point, source); break;
     case 'unmark': if (!actionBlocked(task, action)) { marked.delete(task.id); renderTasks(); } break;
     case 'start': case 'reset': case 'done': await transition(task, action); break;
     case 'archive': await transition(task, 'rm'); break;
@@ -676,69 +675,43 @@ async function startKitty(task: Task): Promise<void> {
   } finally { busyTasks.delete(task.id); renderTasks(); }
 }
 
-// Markdown tokens become only known DOM elements. No HTML, style, or event attributes are copied.
-const allowed = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'em', 'strong', 's', 'blockquote', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td']);
-function safeLink(value: string): boolean { try { return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol); } catch { return false; } }
-function markdownDOM(text: string, parent: HTMLElement, firstLineHeading = true): void {
-  if (active?.config.markdownPreview === false) { parent.append(el('pre', text, 'literal')); return; }
-  const stack: HTMLElement[] = [parent];
-  function tokens(items: Token[]): void {
-    for (const token of items) {
-      const top = () => stack[stack.length - 1];
-      if (token.type === 'inline') { tokens(token.children ?? []); continue; }
-      if (token.type === 'text' || token.type === 'html_inline' || token.type === 'html_block') { top().append(document.createTextNode(token.content)); continue; }
-      if (token.type === 'softbreak' || token.type === 'hardbreak') { top().append(el('br')); continue; }
-      if (token.type === 'image') { top().append(document.createTextNode(token.content || '(image)')); continue; }
-      if (token.type === 'code_inline') { top().append(el('code', token.content)); continue; }
-      if (token.type === 'fence' || token.type === 'code_block') { const pre = el('pre'); pre.append(el('code', token.content)); top().append(pre); continue; }
-      if (token.type === 'hr') { top().append(el('hr')); continue; }
-      if (token.type === 'link_open') {
-        const url = token.attrs?.find(a => a[0] === 'href')?.[1] ?? '';
-        const a = el('a');
-        if (safeLink(url)) { a.href = url; a.title = url; a.addEventListener('click', e => { e.preventDefault(); void api.openLink(url).catch(err => report(message(err))); }); }
-        top().append(a); stack.push(a); continue;
-      }
-      if (token.type === 'link_close') { if (stack.length > 1) stack.pop(); continue; }
-      if (allowed.has(token.tag)) {
-        if (token.nesting === 1) { const node = document.createElement(token.tag); top().append(node); stack.push(node); }
-        else if (token.nesting === -1 && stack.length > 1) stack.pop();
-      } else if (token.content) top().append(document.createTextNode(token.content));
-    }
-  }
-  const parsed = markdown.parse(text, {}) as Token[];
-  // A normal literal first line is a heading in the preview, without changing saved text.
-  const first = text.split('\n')[0] ?? '';
-  if (firstLineHeading && parsed[0]?.type === 'paragraph_open' && !/^\s*(?:[#>*+-]|\d+[.)])\s/.test(first)) {
-    const split = text.indexOf('\n'), heading = el('h1');
-    parent.append(heading); stack.push(heading);
-    const line = markdown.parse(first, {}) as Token[];
-    tokens(line.find(t => t.type === 'inline')?.children ?? []); stack.pop();
-    if (split >= 0) tokens(markdown.parse(text.slice(split + 1), {}) as Token[]);
-  } else tokens(parsed);
-}
-function fillPreview(parent: HTMLElement, task: Task): void {
-  parent.replaceChildren(); markdownDOM(task.text, parent);
-  if (Object.keys(task.agent_notes).length || task.agent_event_id > 0) {
-    const agent = el('section', undefined, 'agent'); agent.append(el('h3', 'Agent'));
-    if (!Object.keys(task.agent_notes).length) agent.append(el('p', 'Agent fields were removed.'));
-    for (const [key, value] of Object.entries(task.agent_notes)) { agent.append(el('h4', key)); const body = el('div'); markdownDOM(value, body, false); agent.append(body); }
-    parent.append(agent);
+let previewToken = 0;
+let openedPreview: { token: number; data: PreviewData; source: HTMLElement } | undefined;
+async function preview(task: Task, point: MenuPoint, source: HTMLElement): Promise<void> {
+  const entry = { token: ++previewToken, data: { task, markdown: active?.config.markdownPreview !== false, unread: unread(task) }, source };
+  openedPreview = entry; renderSelected();
+  try {
+    const shown = await api.openPreview({ token: entry.token, data: entry.data, point });
+    if (!shown || openedPreview !== entry) return;
+    // Acknowledge only the event present when opened, never later updates.
+    state.read[String(task.id)] = task.agent_event_id; saveSoon(); renderTasks();
+  } catch (error) {
+    if (openedPreview === entry) { openedPreview = undefined; renderSelected(); }
+    throw error;
   }
 }
-function preview(task: Task): void {
-  const modal = layer(`Task ${task.id}`, 'preview', task.id), body = el('div', undefined, 'preview scroll');
-  let current = task;
-  const bar = controls(modal.panel); bar.append(button('copy', 'Copy note', () => api.copy(current.text)), button('edit', 'Edit text…', () => { modal.close(); edit(active?.notes.find(t => t.id === task.id) ?? task); })); modal.panel.append(body);
-  const wasUnread = unread(task); state.read[String(task.id)] = task.agent_event_id; saveSoon(); renderTasks();
-  fillPreview(body, current);
-  modal.update = () => {
-    const next = active?.notes.find(t => t.id === task.id);
-    if (!next || !visible(next)) { modal.close(); return; }
-    if (JSON.stringify(current) !== JSON.stringify(next)) { const scroll = body.scrollTop; current = next; fillPreview(body, next); body.scrollTop = scroll; }
-    // Do not advance the read cursor for updates arriving in an already-open preview.
-  };
-  if (wasUnread) requestAnimationFrame(() => body.querySelector('.agent')?.scrollIntoView({ block: 'start' }));
+function updatePreview(): void {
+  const entry = openedPreview;
+  if (!entry) return;
+  const task = active?.notes.find(t => t.id === entry.data.task.id);
+  if (!task || !visible(task)) { openedPreview = undefined; void api.updatePreview(entry.token, null).catch(e => report(message(e))); return; }
+  const data = { ...entry.data, task, markdown: active?.config.markdownPreview !== false };
+  if (JSON.stringify(data) === JSON.stringify(entry.data)) return;
+  entry.data = data;
+  void api.updatePreview(entry.token, data).catch(e => report(message(e)));
 }
+api.onPreviewClosed((token, editRequested) => {
+  const entry = openedPreview;
+  if (!entry || entry.token !== token) return;
+  openedPreview = undefined; renderSelected();
+  if (closing) return;
+  const task = active?.notes.find(t => t.id === entry.data.task.id);
+  if (editRequested && task && visible(task)) edit(task);
+  else if (document.hasFocus()) {
+    const source = entry.source.isConnected ? entry.source : rowNodes.get(entry.data.task.id)?.querySelector<HTMLElement>('[data-row-element="preview"]');
+    (source ?? composer).focus({ preventScroll: true });
+  }
+});
 function edit(task: Task): void {
   const existing = layers.find(l => l.kind === 'edit' && l.taskId === task.id); if (existing) { existing.panel.focus(); return; }
   const id = String(task.id), modal = layer(`Edit task ${task.id}`, 'edit', task.id);
@@ -965,7 +938,7 @@ function auxiliary(view: 'archive' | 'scheduled'): void {
       if (view === 'archive') metadata.append(button('reset', 'Restore task', () => transition(task, 'restore'), readonly || busyTasks.has(task.id)));
       else metadata.append(button('schedule', 'Change reminder time', () => schedule(task), readonly), button('reset', 'Release reminder now', () => transition(task, 'restore'), readonly));
       row.append(metadata);
-      if (expanded.has(task.id)) { const body = el('div', undefined, 'preview'); fillPreview(body, task); row.append(body); }
+      if (expanded.has(task.id)) { const body = el('div', undefined, 'preview'); fillPreview(body, task, { markdown: active?.config.markdownPreview !== false, openLink: url => { void api.openLink(url).catch(e => report(message(e))); } }); row.append(body); }
       list.append(row);
     }
     if (!notes.length) list.append(el('p', 'No tasks here.', 'empty')); list.scrollTop = top;
