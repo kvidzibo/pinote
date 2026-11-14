@@ -91,7 +91,7 @@ export async function handleFieldEvent(event) {
   const pr = validatePR(await request(`pulls/${number}`));
   const summary = `PR #${number}`;
   function terminal(current) {
-    if (current.merged) return { state: 'merged', summary: `${summary} merged`, display: { strikethrough: true, color: 'muted' } };
+    if (current.merged) return { state: 'merged', summary: `${summary} merged`, display: { strikethrough: false, color: 'accent' } };
     if (current.state === 'closed') return { state: 'closed', summary: `${summary} closed`, display: { strikethrough: false, color: 'muted' } };
   }
   const done = terminal(pr);

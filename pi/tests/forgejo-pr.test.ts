@@ -91,7 +91,8 @@ globalThis.fetch = async (url, options) => {
       for (const pulls of [[response], [pr, response]]) {
         const { output, requests } = run({ pulls });
         assert.equal(output.state, merged ? 'merged' : 'closed');
-        assert.equal(output.display?.strikethrough, merged);
+        assert.equal(output.display?.strikethrough, false);
+        assert.equal(output.display?.color, merged ? 'accent' : 'muted');
         assert.equal(output.recheckAfterSeconds, undefined);
         assert.equal(output.notification, undefined);
         if (pulls.length === 1) assert.equal(requests.length, 1, 'Terminal PRs need no commit-status request');
