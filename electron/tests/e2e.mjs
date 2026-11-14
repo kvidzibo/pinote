@@ -256,6 +256,7 @@ try {
     assertAllocation(tall);
     assert.equal(Math.round(tall.pinned.height),34,'One progress row must retain its content height with 100 ordinary tasks');
     let resizedTask=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
+    await page.mouse.move(-20,-20);
     call('transition',{id:first,revision:resizedTask.updated_at,state:resizedTask.state,action:'start'});
     await page.waitForFunction(()=>document.querySelectorAll('#pinned .task-row').length===2);
     assert.equal(Math.round((await layout()).pinned.height),67,'Progress must grow when another task starts');
@@ -314,6 +315,33 @@ try {
     assert.equal(await page.locator('#ordinary .task-row').count(),2);
     assert.equal(await page.locator('#pinned .task-row').count(),1);
     assert.match(await filter.getAttribute('aria-label'),/^Filter by tag: Untagged /);
+  }
+  // State changes immediately, but both directions retain placement until window exit.
+  {
+    const row=page.locator(`[data-id="${first}"]`);
+    const placement=()=>row.evaluate(node=>({parent:node.parentElement.id,index:Array.from(node.parentElement.children).indexOf(node)}));
+    const before=await placement();
+    await row.locator('[data-row-element="start"]').click();
+    await page.waitForFunction(id=>document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'),first);
+    assert.deepEqual(await placement(),before,'Starting must update the row without moving it');
+    await page.locator('#draft').hover();
+    await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
+    await page.waitForTimeout(1200);
+    assert.deepEqual(await placement(),before,'Leaving the row or losing focus must not release ordering');
+    await page.screenshot({path:join(root,'task462-start-held.png')});
+    await page.mouse.move(-20,-20);
+    await page.waitForFunction(id=>document.querySelector(`#pinned [data-id="${id}"]`),first);
+    await page.screenshot({path:join(root,'task462-start-reordered.png')});
+    const pinnedPlacement=await placement();
+    await selectTaskAction(page,first,'Reset progress');
+    await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'),first);
+    assert.deepEqual(await placement(),pinnedPlacement,'Reset must update controls without moving the row');
+    await row.locator('[data-row-element="start"]').waitFor();
+    await page.waitForTimeout(1200);
+    assert.deepEqual(await placement(),pinnedPlacement,'Polling must preserve the pending reset placement');
+    await page.screenshot({path:join(root,'task462-reset-held.png')});
+    await page.mouse.move(-20,-20);
+    await page.waitForFunction(id=>document.querySelector(`#ordinary [data-id="${id}"]`),first);
   }
   // Inline row actions: real pointer/keyboard input, stable layout and polling.
   {
@@ -386,6 +414,7 @@ try {
     // The reset Work task is filtered out; restore its state through the shared backend.
     const reset=call('snapshot',{view:'active'}).notes.find(n=>n.id===progress);
     assert.equal(reset.state,'active');
+    await page.mouse.move(-20,-20);
     call('transition',{id:progress,revision:reset.updated_at,state:reset.state,action:'start'});
     await page.waitForFunction(id=>document.querySelector(`#pinned [data-id="${id}"]`),progress);
     await actions.click();
