@@ -2,10 +2,10 @@ import { Store, NoteError } from './store.ts';
 import { validate_tag, validate_text, validate_folder, pythonStrip, timestamp } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
-import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, type Paths } from './runtime.ts';
-import { GuiConfig, ConfigError } from './config.ts';
+import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
+import { GuiConfig, ConfigError, guiConfigPath } from './config.ts';
 import { ReminderModel, folder_available } from './model.ts';
-import { start_in_kitty, validate_directory } from './kitty.ts';
+import { start_in_kitty, validate_directory, kittyAddressEnv } from './kitty.ts';
 export const PROTOCOL = 1, MAX_REQUEST = 1024 * 1024, MAX_ID = 9007199254740991;
 export class BridgeError extends Error { readonly code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge request.'); };
@@ -156,7 +156,13 @@ export async function main(argv = process.argv.slice(2), input?: Uint8Array): Pr
     }
     checkCancelled();
     const request = decode(input); const [op] = validate(request); const paths = discoverPaths();
-    if (op !== 'handshake') configureLogging(paths, { stderr: true });
+    if (op !== 'handshake') {
+      checkProfileIdentity(paths);
+      if (op === 'snapshot' || op === 'kitty') guiConfigPath();
+      if (op !== 'snapshot' && op !== 'completions') checkedEnv('PATH');
+      if (op === 'kitty') kittyAddressEnv();
+      configureLogging(paths, { stderr: true });
+    }
     response = await respond(request, paths);
     checkCancelled();
     if (!response.ok && op !== 'handshake') log('warning', `Electron bridge request failed (${response.error.code}).`);

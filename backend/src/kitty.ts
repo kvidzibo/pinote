@@ -3,7 +3,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NoteError, type Note } from './store.ts';
-import { findExecutable, jsonStringify, checkCancelled, realpathUtf8 } from './runtime.ts';
+import { findExecutable, jsonStringify, checkCancelled, realpathUtf8, checkedEnv, nulFields } from './runtime.ts';
 import { pythonStrip } from './compat.ts';
 const exec = promisify(execFile);
 export async function remote(kitty: string, address: string, ...args: string[]): Promise<string> {
@@ -11,15 +11,21 @@ export async function remote(kitty: string, address: string, ...args: string[]):
   try { return pythonStrip((await exec(kitty, ['@', '--to', address, ...args], { timeout: 5000, maxBuffer: Infinity })).stdout); }
   catch { throw new NoteError('Kitty remote control failed; check its configuration before retrying.'); }
 }
+export function kittyAddressEnv(): { explicit?: string; display?: string } {
+  const explicit = checkedEnv('KITTY_LISTEN_ON');
+  return explicit ? { explicit } : { display: checkedEnv('DISPLAY')?.replace(/\.0$/, '') };
+}
 export async function address(kitty: string): Promise<string | null> {
-  if (process.env.KITTY_LISTEN_ON) { await remote(kitty, process.env.KITTY_LISTEN_ON, 'ls'); return process.env.KITTY_LISTEN_ON; }
-  const display = (process.env.DISPLAY ?? '').replace(/\.0$/, ''); if (!display) return null;
+  const { explicit, display } = kittyAddressEnv();
+  if (explicit) { await remote(kitty, explicit, 'ls'); return explicit; }
+  if (!display) return null;
+  const matches = [Buffer.from('DISPLAY=' + display), Buffer.from('DISPLAY=' + display + '.0')];
   for (const pid of readdirSync('/proc')) {
     if (!/^\d+$/.test(pid)) continue;
     try {
       if (statSync(`/proc/${pid}`).uid !== process.getuid!() || pythonStrip(readFileSync(`/proc/${pid}/comm`, 'utf8')) !== 'kitty') continue;
-      const env = readFileSync(`/proc/${pid}/environ`).toString().split('\0');
-      if (![display, display + '.0'].some(d => env.includes('DISPLAY=' + d))) continue;
+      const fields = nulFields(readFileSync(`/proc/${pid}/environ`));
+      if (!Array.from(fields).some(field => matches.some(value => value.equals(field)))) continue;
       const target = `unix:@mykitty-${pid}`; await remote(kitty, target, 'ls'); return target;
     } catch { /* inaccessible or unavailable instance */ }
   }

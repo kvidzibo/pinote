@@ -1,6 +1,5 @@
 import { statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { resolvePath } from './runtime.ts';
+import { expandHome, resolvePath } from './runtime.ts';
 import { Temporal } from '@js-temporal/polyfill';
 import { caseFold } from 'unicode-case-folding';
 
@@ -43,9 +42,10 @@ export function validatePiSession(value: unknown): string|null {
 }
 export function validate_folder(value: string|null): string|null {
   if(value === null) return null;
-  if(value==='~' || value.startsWith('~/')) value=homedir()+value.slice(1);
-  const path=resolvePath(value);
-  try { if(statSync(path).isDirectory()) return path; } catch {}
+  try {
+    const path=resolvePath(expandHome(value));
+    if(statSync(path).isDirectory()) return path;
+  } catch { /* Invalid, inaccessible or missing directory. */ }
   throw new NoteError('Choose an existing directory.');
 }
 export function canonicalInstant(value: Temporal.Instant): string {

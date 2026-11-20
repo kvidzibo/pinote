@@ -7,6 +7,8 @@ Run checkout-relative commands from the repository root.
 ## Install
 
 Requires **Node.js 22.19+**, npm, and Linux `flock` (util-linux).
+Use UTF-8 for profile paths, launcher paths, and filenames passed to the CLI.
+Pinote rejects undecodable paths rather than using a different file with a similar name.
 Dunst (`dunstify`) is needed only for desktop notifications.
 The notifier uses portable short options and a stack-tag hint to support older
 distribution packages as well as current Dunst releases.

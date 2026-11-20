@@ -1,10 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
 import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
-import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, realpathUtf8, type Paths } from './runtime.ts';
+import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, realpathUtf8, resolvePath, expandHome, checkProfileIdentity, checkedEnv, InputEncodingError, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
 import * as notify from './notify.ts';
 
@@ -140,7 +139,11 @@ function validateCommand(args: Arguments): void {
   if (args.command === 'schedule' && parse_reminder_time(args.when!) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   if (args.command !== 'agent') return;
   validatePiSession(args.pi_session_id);
-  if (args.cwd !== undefined && !isAbsolute(args.cwd)) throw new NoteError('--cwd must be an absolute project directory.');
+  if (args.cwd !== undefined) {
+    if (!isAbsolute(args.cwd)) throw new NoteError('--cwd must be an absolute project directory.');
+    // Validate the selection key before opening SQLite or activating reminders.
+    args.cwd = resolvePath(args.cwd);
+  }
   if (args.tag !== undefined) explicitTag(args.tag);
   if (args.agent_action === 'add') validate_text(args.agent_text!);
   if (args.agent_action === 'update') validateAgentPatch(parseAgentFields(args.set_json), args.remove);
@@ -181,9 +184,10 @@ function repr(value: string): string {
   return result + quote;
 }
 type PreparedImport = { source: string; entries: markdown.Entry[] };
+const needsDisplayLock = (args: Arguments) => MUTATIONS.has(args.command) || args.command === 'show' || args.command === 'agent' && ['select', 'start', 'update', 'done', 'add', 'tag'].includes(args.agent_action!);
 async function execute(args: Arguments, paths: Paths, imported: PreparedImport | undefined): Promise<number> {
   const scheduled = args.command === 'schedule' ? parse_reminder_time(args.when!) : undefined;
-  const needsLock = MUTATIONS.has(args.command) || args.command === 'show' || args.command === 'agent' && ['select', 'start', 'update', 'done', 'add', 'tag'].includes(args.agent_action!);
+  const needsLock = needsDisplayLock(args);
   const run = async () => {
     checkCancelled();
     const store = new Store(paths.database);
@@ -275,8 +279,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     validateCommand(args);
     if (args.command === 'import') {
-      const path = args.path === '~' ? homedir() : args.path!.startsWith('~/') ? `${homedir()}/${args.path!.slice(2)}` : args.path!;
-      const source = realpathUtf8(path);
+      const source = realpathUtf8(expandHome(args.path!));
       const entries = validateImportEntries(markdown.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(source)).replace(/\r\n?/g, '\n')));
       imported = { source, entries };
     }
@@ -285,11 +288,17 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if ((error as Error).name === 'AbortError') return process.exitCode === 143 ? 143 : 130;
     print(`ERROR: ${(error as Error).message}`); return 1;
   }
-  try { checkCancelled(); const paths = discoverPaths(); configureLogging(paths); return await execute(args, paths, imported); }
+  try {
+    checkCancelled();
+    const paths = discoverPaths(); checkProfileIdentity(paths);
+    if (needsDisplayLock(args)) checkedEnv('PATH');
+    configureLogging(paths);
+    return await execute(args, paths, imported);
+  }
   catch (error) {
     if ((error as Error).name === 'AbortError') return process.exitCode === 143 ? 143 : 130;
     const message = error instanceof Error ? error.message : String(error);
-    const expected = error instanceof NoteError || typeof (error as NodeJS.ErrnoException).code === 'string' || (error instanceof TypeError && error.message.includes('encoded data'));
+    const expected = error instanceof NoteError || error instanceof InputEncodingError || typeof (error as NodeJS.ErrnoException).code === 'string' || (error instanceof TypeError && error.message.includes('encoded data'));
     log('error', expected ? message : `Unexpected failure. Run note to check the saved state.\n${error instanceof Error ? error.stack : message}`);
     return 1;
   }

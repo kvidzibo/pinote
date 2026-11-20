@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { xdgPath } from './runtime.ts';
 
+export const guiConfigPath = () => join(xdgPath('XDG_CONFIG_HOME', '.config'), 'pinote', 'config.toml');
 export class ConfigError extends Error {}
 export class GuiConfig {
   readonly max_visible_notes: number | bigint;
@@ -12,7 +13,7 @@ export class GuiConfig {
     kitty_start_prompt = 'is task clear?') {
     this.max_visible_notes = max_visible_notes; this.markdown_preview = markdown_preview; this.kitty_start_prompt = kitty_start_prompt;
   }
-  static load(path = join(xdgPath('XDG_CONFIG_HOME', '.config'), 'pinote', 'config.toml')): GuiConfig {
+  static load(path = guiConfigPath()): GuiConfig {
     let document: Record<string, any>;
     try { document = parse(new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(path)), { integersAsBigInt: true }); }
     catch (error: any) {

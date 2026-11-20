@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
-import { hasBackendPreference, preferredBackendEnvironment, recoverBackendSwitch, runCommand, switchToNode } from './backend-switch.ts';
+import { hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -100,6 +100,10 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
 }
 
 async function boot() {
+  // Before respawning the backend, ensure our inherited profile paths were not
+  // already lossily decoded by Node. Do not log to an unverified profile.
+  try { await processEnvironment(process.pid); }
+  catch { console.error('Cannot verify Pinote startup paths as UTF-8.'); app.exit(1); return; }
   await recoverBackendSwitch(process.env);
   const bundles = join(app.isPackaged ? process.resourcesPath : __dirname, 'pinote-backend');
   const bundle = join(bundles, 'bridge.mjs');

@@ -16,7 +16,7 @@ export class Backend {
   private run(operation: Operation, params: unknown): Promise<Result<unknown>> {
     return new Promise(resolve => {
       const write = mutating(operation);
-      let stdout = ''; let bytes = 0; let done = false; let stopping = '';
+      const chunks: Buffer[] = []; let bytes = 0; let done = false; let stopping = '';
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (result: Result<unknown>) => { if (!done) { done = true; clearTimeout(timer); clearTimeout(killTimer); resolve(result); } };
       const failed = (message: string) => finish({ protocol: 1, ok: false, error: { code: write ? 'unknown' : 'internal', message: write ? `${message} The operation may have succeeded; check saved state before retrying.` : message } });
@@ -34,18 +34,17 @@ export class Backend {
       child.on('exit', () => { if (stopping) closePipes(); });
       child.stdin.on('error', () => {});
       child.stderr.resume(); // Never send backend diagnostics or private paths into the renderer.
-      child.stdout.setEncoding('utf8');
       child.stdout.on('data', chunk => {
         if (stopping || done) return;
         bytes += Buffer.byteLength(chunk);
         if (bytes > 8 * 1024 * 1024) stop('Backend response exceeded the size limit.');
-        else stdout += chunk;
+        else chunks.push(chunk);
       });
       child.on('close', () => {
         if (done) return;
         if (stopping) { failed(stopping); return; }
         try {
-          const response: unknown = JSON.parse(stdout);
+          const response: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
           if (!validEnvelope(operation, response)) throw new Error('Invalid envelope');
           finish(response as Result<unknown>);
         } catch { failed('Backend returned an incomplete or invalid response.'); }

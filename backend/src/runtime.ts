@@ -1,5 +1,5 @@
-import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, accessSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, accessSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { delimiter, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -7,22 +7,57 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const VERSION = '0.26.0';
 export type Paths = { data: string; state: string; database: string; log: string };
+export class InputEncodingError extends Error {}
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+export function decodeIdentity(bytes: Uint8Array, source: string): string {
+  try { return utf8.decode(bytes); }
+  catch { throw new InputEncodingError(`${source} is not valid UTF-8.`); }
+}
+export function* nulFields(bytes: Buffer): Iterable<Buffer> {
+  for (let start = 0; start < bytes.length;) {
+    const end = bytes.indexOf(0, start);
+    if (end < 0) { yield bytes.subarray(start); break; }
+    yield bytes.subarray(start, end); start = end + 1;
+  }
+}
+// Node exposes lossy strings for inherited env entries (also in workers). Consult
+// Linux's exec-time bytes only for an ambiguous, used value. Never decode or
+// report other entries, and allow values supplied programmatically after exec.
+export function checkedEnv(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const value = env[name];
+  if (env !== process.env || !value?.includes('\ufffd')) return value;
+  let bytes: Buffer;
+  try { bytes = readFileSync('/proc/self/environ'); }
+  catch { throw new InputEncodingError(`Cannot verify the encoding of ${name}.`); }
+  const key = Buffer.from(name + '=');
+  for (const field of nulFields(bytes)) {
+    if (!field.subarray(0, key.length).equals(key)) continue;
+    const raw = field.subarray(key.length);
+    if (raw.toString('utf8') === value) decodeIdentity(raw, name);
+  }
+  return value;
+}
+export function expandHome(path: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (path !== '~' && !path.startsWith('~/')) return path;
+  const home = (env.HOME === undefined ? checkedEnv('HOME') : checkedEnv('HOME', env))
+    ?? decodeIdentity(userInfo({ encoding: 'buffer' }).homedir, 'Home directory');
+  return home + path.slice(1);
+}
 // Reject invalid filename bytes rather than resolving to a different path containing U+FFFD.
 export function realpathUtf8(path: string): string {
-  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-    realpathSync.native(path, { encoding: 'buffer' }),
-  );
+  return decodeIdentity(realpathSync.native(path, { encoding: 'buffer' }), 'Canonical path');
 }
 export function xdgPath(variable: string, fallback: string, env: NodeJS.ProcessEnv = process.env): string {
-  const home = env[variable] && isAbsolute(env[variable]!) ? env[variable]! : `${env.HOME || homedir()}/${fallback}`;
+  const value = env[variable];
+  const home = value && isAbsolute(value) ? checkedEnv(variable, env)! : expandHome(`~/${fallback}`, env);
   const components = home.split('/');
   const parent = components.lastIndexOf('..');
   // Python retains '..' during I/O, so it traverses symlinks before going up.
   // Resolve through the last '..' before join() can erase it. Require that
   // prefix to be traversable, but allow a not-yet-created profile after it.
-  return parent < 0 ? home : join(
-    realpathUtf8(components.slice(0, parent + 1).join('/') + '/'),
-    components.slice(parent + 1).join('/'),
+  const prefix = components.slice(0, parent + 1).join('/');
+  return parent < 0 ? (isAbsolute(home) ? home : `${realpathUtf8('.')}/${home}`) : join(
+    realpathUtf8(prefix + '/'), components.slice(parent + 1).join('/'),
   );
 }
 export function discoverPaths(env: NodeJS.ProcessEnv = process.env): Paths {
@@ -37,7 +72,7 @@ export function privateFile(path: string): void {
 }
 // Match pathlib.resolve(strict=False), including symlinks preceding '..' and missing tails.
 export function resolvePath(path: string): string {
-  const absolute = isAbsolute(path) ? path : `${process.cwd()}/${path}`;
+  const absolute = isAbsolute(path) ? path : `${realpathUtf8('.')}/${path}`;
   let resolved = parse(absolute).root;
   let parts = absolute.slice(resolved.length).split('/'); let links = 0;
   while (parts.length) {
@@ -48,7 +83,7 @@ export function resolvePath(path: string): string {
     try {
       if (lstatSync(candidate).isSymbolicLink()) {
         if (++links > 40) throw new Error('Too many symbolic links');
-        const target = readlinkSync(candidate);
+        const target = decodeIdentity(readlinkSync(candidate, { encoding: 'buffer' }), 'Symbolic link target');
         if (isAbsolute(target)) resolved = parse(target).root;
         parts = [...target.split('/'), ...parts];
       } else resolved = candidate;
@@ -59,8 +94,13 @@ export function resolvePath(path: string): string {
   }
   return resolved;
 }
+export function checkProfileIdentity(paths: Paths): void {
+  // Don't create a second, unusable profile or touch logging/SQLite before
+  // confirming that the database and log destinations can be identified.
+  resolvePath(paths.database); resolvePath(paths.log);
+}
 export function findExecutable(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const paths = isAbsolute(name) ? [name] : name.includes('/') ? [] : (env.PATH || '').split(delimiter).filter(isAbsolute).map(p => join(p, name));
+  const paths = isAbsolute(name) ? [name] : name.includes('/') ? [] : (checkedEnv('PATH', env) || '').split(delimiter).filter(isAbsolute).map(p => join(p, name));
   return paths.find(path => { try { accessSync(path, constants.X_OK); return statSync(path).isFile(); } catch { return false; } });
 }
 export function jsonStringify(value: unknown): string {

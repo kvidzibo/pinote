@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { Temporal } from '@js-temporal/polyfill';
 import { NoteError, canonicalInstant, pythonStrip } from './compat.ts';
+import { checkedEnv } from './runtime.ts';
 
 export function parse_reminder_time(value: string): string {
   value=pythonStrip(value);
@@ -33,9 +34,9 @@ export function local_reminder_time(value: string): string {
 // ICU's localized short names (e.g. GMT+1) differ from libc's %Z (CET).
 // Read the same system TZif abbreviations used by Python, without a subprocess.
 function zoneAbbreviation(instant:Temporal.Instant,offset:number):string {
-  const tz=(process.env.TZ??'').replace(/^:/,'');
-  const path=tz?(isAbsolute(tz)?tz:join('/usr/share/zoneinfo',tz)):'/etc/localtime';
   try {
+    const tz=(checkedEnv('TZ')??'').replace(/^:/,'');
+    const path=tz?(isAbsolute(tz)?tz:join('/usr/share/zoneinfo',tz)):'/etc/localtime';
     const data=readFileSync(path);
     const counts=(start:number)=>Array.from({length:6},(_,i)=>data.readUInt32BE(start+20+i*4));
     const size=(c:number[],width:number)=>c[3]*(width+1)+c[4]*6+c[5]+c[2]*(width+4)+c[1]+c[0];

@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants, closeSync, openSync, accessSync, statSync } from 'node:fs';
-import { access, chmod, link, lstat, mkdir, readFile, readlink, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, link, lstat, mkdir, readFile, readlink as readLinkBytes, realpath as realPathBytes, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
@@ -17,6 +17,9 @@ type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string
 type Journal = { version: 1; complete: boolean; backup: string; service: Service; files: SavedFile[] };
 export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; processArguments?: (pid: number) => Promise<string[]>; processExecutable?: (pid: number) => Promise<string>; processDirectory?: (pid: number) => Promise<string>; updateLock?: string; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
 const limit = 1024 * 1024;
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const realpath = async (path: string) => utf8.decode(await realPathBytes(path, { encoding: 'buffer' }));
+const readlink = async (path: string) => utf8.decode(await readLinkBytes(path, { encoding: 'buffer' }));
 const xdg = (env: NodeJS.ProcessEnv, name: string, fallback: string) => env[name] && isAbsolute(env[name]!) ? env[name]! : join(env.HOME || homedir(), fallback);
 function locations(env: NodeJS.ProcessEnv) {
   const home = env.HOME || homedir();
@@ -27,9 +30,9 @@ function locations(env: NodeJS.ProcessEnv) {
 }
 export async function runCommand(executable: string, args: string[], env: NodeJS.ProcessEnv, input?: string): Promise<string> {
   return new Promise((ok, fail) => {
-    const child = execFile(executable, args, { env: backendEnvironment(env), timeout: 60000, maxBuffer: limit }, (error, stdout) => {
+    const child = execFile(executable, args, { env: backendEnvironment(env), timeout: 60000, maxBuffer: limit, encoding: 'buffer' }, (error, stdout) => {
       if (error) fail(new Error(`Backend switch command failed: ${executable.split('/').at(-1)} ${args[0] || ''}.`));
-      else ok(stdout);
+      else { try { ok(utf8.decode(stdout)); } catch (err) { fail(err); } }
     });
     child.stdin?.on('error', () => {}); child.stdin?.end(input);
   });
@@ -120,7 +123,7 @@ export async function preferredBackendEnvironment(env: NodeJS.ProcessEnv): Promi
   try {
     const path = locations(env).preference, stat = await lstat(path);
     if (!stat.isFile() || stat.uid !== process.getuid!() || stat.size > 8192 || (stat.mode & 0o022)) throw new Error('Unsafe backend preference.');
-    const preference = JSON.parse(await readFile(path, 'utf8'));
+    const preference = JSON.parse(utf8.decode(await readFile(path)));
     if (preference.version !== 1 || preference.backend !== 'node' || !(preference.ignoredOverride === null || typeof preference.ignoredOverride === 'string' && isAbsolute(preference.ignoredOverride))) throw new Error('Invalid backend preference.');
     const clean = { ...env };
     // Ignore only the exact legacy override the user explicitly replaced.
@@ -141,12 +144,12 @@ async function service(run: Run, env: NodeJS.ProcessEnv): Promise<Service> {
   return { present: values.LoadState === 'loaded', active: values.ActiveState === 'active', pid: Number(values.MainPID) };
 }
 function runtimeInjection(name: string): boolean { return /^(LD_|NODE_|ELECTRON_|PYTHON)/.test(name) || name === 'GCONV_PATH' || name === 'GLIBC_TUNABLES'; }
-async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
+export async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
   if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Cannot verify the running Pinote service.');
   const raw = await readFile(`/proc/${pid}/environ`);
   if (raw.length > limit) throw new Error('Cannot verify the running Pinote service.');
-  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_HOST', 'PINOTE_PORT']);
-  return Object.fromEntries(raw.toString().split('\0').map(item => { const at = item.indexOf('='); return [item.slice(0, at), item.slice(at + 1)]; }).filter(([name]) => allowed.has(name) || runtimeInjection(name)));
+  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_HOST', 'PINOTE_PORT', 'PINOTE_NODE', 'PINOTE_ELECTRON_BACKEND', 'XDG_RUNTIME_DIR', 'XDG_CACHE_HOME', 'KITTY_LISTEN_ON']);
+  return Object.fromEntries(raw.toString('latin1').split('\0').map(item => { const at = item.indexOf('='); return [item.slice(0, at), item.slice(at + 1)]; }).filter(([name]) => allowed.has(name) || runtimeInjection(name)).map(([key, value]) => [key, utf8.decode(Buffer.from(value, 'latin1'))]));
 }
 async function listening(env: NodeJS.ProcessEnv): Promise<void> {
   const hosts: Record<string, string> = { '127.0.0.1': '127.0.0.1', '0.0.0.0': '127.0.0.1', '::': '::1', '::1': '::1' };
@@ -183,7 +186,7 @@ async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.P
   const path = await realpath(command === 'note' ? executable(env, 'note') : command);
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > 8192) throw new Error('The existing service CLI cannot be verified safely.');
-  const text = await readFile(path, 'utf8');
+  const text = utf8.decode(await readFile(path));
   const pythonBody = 'import sys\nfrom pinote.cli import main\nif __name__ == "__main__":\n    if sys.argv[0].endswith("-script.pyw"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(".exe"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())';
   const first = text.split('\n')[0];
   const body = text.slice(first.length + 1).replace(/^# -\*- coding: utf-8 -\*-\n/, '').trim();
@@ -241,7 +244,7 @@ async function loadJournal(env: NodeJS.ProcessEnv): Promise<Journal | undefined>
   try {
     const stat = await lstat(path);
     if (!stat.isFile() || stat.uid !== process.getuid!() || stat.size > 6 * limit || (stat.mode & 0o077)) throw new Error('Unsafe switch recovery journal.');
-    const journal = JSON.parse(await readFile(path, 'utf8')) as Journal;
+    const journal = JSON.parse(utf8.decode(await readFile(path))) as Journal;
     const expected = [paths.cli, paths.dropin, paths.preference];
     if (journal.version !== 1 || typeof journal.complete !== 'boolean' || !journal.service || typeof journal.service.active !== 'boolean' || typeof journal.service.present !== 'boolean' || !Array.isArray(journal.files) || ![2, 3].includes(journal.files.length) || new Set(journal.files.map(f => f.path)).size !== journal.files.length || !journal.files.every(f => expected.includes(f.path) && ['missing', 'file', 'link'].includes(f.kind) && (f.kind !== 'link' || f.path === paths.cli) && typeof f.data === 'string' && f.data.length <= 2 * limit && typeof f.replacement === 'string' && f.replacement.length < 16384 && typeof f.publishIntent === 'boolean' && typeof f.stash === 'string' && dirname(f.stash) === dirname(f.path) && basename(f.stash).startsWith('.' + basename(f.path) + '.pinote-switch-') && Number.isInteger(f.mode) && f.mode >= 0 && f.mode <= 0o777 && [0o600, 0o700].includes(f.replacementMode)) || typeof journal.backup !== 'string' || dirname(journal.backup) !== join(paths.state, 'backups')) throw new Error('Invalid switch recovery journal; preserve it for manual recovery.');
     return journal;
@@ -288,7 +291,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     let serviceArguments: string[] | undefined, originalHost: string | undefined, originalPort: string | undefined;
     if (before.active) {
       await access('/usr/bin/env', constants.X_OK);
-      serviceArguments = await (dependencies.processArguments || (async pid => (await readFile(`/proc/${pid}/cmdline`)).toString().split('\0').filter(Boolean)))(before.pid);
+      serviceArguments = await (dependencies.processArguments || (async pid => utf8.decode(await readFile(`/proc/${pid}/cmdline`)).split('\0').filter(Boolean)))(before.pid);
       if (serviceArguments.length !== 2 || serviceArguments.some(arg => !isAbsolute(arg) || arg.split('/').includes('..')) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
       let documented = false;
       try {
