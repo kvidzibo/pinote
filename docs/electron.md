@@ -10,7 +10,7 @@ default switch; local validation measurements are not performance guarantees.
 
 ## Install and launch from a checkout
 
-Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), and desktop
+Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
 The private `electron/` package (0.13.0) bundles the matching Node backend;
 editor autosave does not require Python.
@@ -60,7 +60,8 @@ the bundled CLI/bridge against the same database, then:
   executable used by Electron; the actual process executable is checked, not
   just its command line. The service PATH must contain only absolute entries and
   resolve `flock` to the system utility. PATH entries and home/XDG paths used for
-  switching must not contain `..`. Startup also rejects parent components in HOME,
+  switching must not contain `..`; HOME must be absolute so the service and
+  desktop cannot resolve it from different directories. Startup also rejects parent components in HOME,
   XDG_CONFIG_HOME and XDG_STATE_HOME before reading preferences or recovery data.
   An isolated service filesystem, root, credentials, user or network namespace
   requires a manual switch. The original CLI's database is checked before
@@ -279,7 +280,7 @@ On x64 Linux this creates `electron/out/pinote-electron-linux-x64/`, an unpacked
 application, not an installer. Packaging follows the host architecture. The
 backend and its dependency notices are bundled outside ASAR; source files and
 checkout dependencies are not needed on the target. External Node.js 22.19+ and
-`flock` are required; Python is not. There is no auto-updater or public publishing flow.
+`flock` are required; local reminders use GNU `/usr/bin/date` and system timezone data. Python is not required. There is no auto-updater or public publishing flow.
 
 The renderer uses a custom secure protocol, restrictive CSP, sandboxing,
 context isolation, and a narrow isolated preload API. Packaged native fuses

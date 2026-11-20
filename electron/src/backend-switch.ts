@@ -180,6 +180,7 @@ async function probe(options: SwitchOptions, run: Run, env = options.env): Promi
   return value.result.version;
 }
 export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']): void {
+  if (!env.HOME || !isAbsolute(env.HOME)) throw new Error('Backend selection requires an absolute HOME independent of the working directory.');
   for (const key of keys) {
     if (env[key]?.split('/').includes('..')) throw new Error('Backend switching requires unambiguous home and XDG paths without parent-directory components.');
   }

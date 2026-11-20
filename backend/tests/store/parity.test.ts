@@ -9,6 +9,50 @@ const worktree = fileURLToPath(new URL('../../../', import.meta.url));
 const pythonPath = fileURLToPath(new URL('../../../.venv/bin/python', import.meta.url));
 import { Store } from '../../src/store.ts';
 import { jsonStringify } from '../../src/runtime.ts';
+import { parse_reminder_time, local_reminder_time } from '../../src/reminders.ts';
+
+test('Vancouver reminder parsing and display match the worktree Python system timezone',t=>{
+ const TZ='America/Vancouver';
+ const inputs=[
+  '2030-01-01 12:00:00.123456', // Winter offset and abbreviation changed in tzdb 2026b.
+  '2030-11-03 01:30', // Former fold under older rules.
+  '2025-03-09 02:30', '2025-11-02 01:30', '2025-11-02 02:00',
+  '1870-01-01 12:00:00.123456', // Historical offset has seconds.
+  '1969-12-31 15:59:59.123456', // Fractional second before the epoch.
+ ];
+ const ref=spawnSync(pythonPath,['-c',`
+import json, sys
+from pinote.reminders import NoteError, local_reminder_time, parse_reminder_time
+results = []
+for wall in sys.argv[1:]:
+    try:
+        utc = parse_reminder_time(wall).isoformat(timespec='microseconds')
+    except NoteError as exc:
+        assert 'daylight saving' in str(exc), exc
+        results.append(None)
+    else:
+        results.append([utc, local_reminder_time(utc)])
+print(json.dumps(results))
+`,...inputs],{cwd:worktree,encoding:'utf8',env:{TZ,PYTHONPATH:'src',PYTHONDONTWRITEBYTECODE:'1'}});
+ assert.equal(ref.status,0,ref.stderr);
+ const expected=JSON.parse(ref.stdout);
+ assert.ok(expected[0]);
+ assert.deepEqual(expected.slice(2,4),[null,null]);
+ assert.ok(expected[4]);
+ const previousTZ=process.env.TZ, previousTZDIR=process.env.TZDIR;
+ process.env.TZ=TZ; delete process.env.TZDIR;
+ t.after(()=>{
+  if(previousTZ===undefined) delete process.env.TZ; else process.env.TZ=previousTZ;
+  if(previousTZDIR!==undefined) process.env.TZDIR=previousTZDIR;
+ });
+ for(const [i,wall] of inputs.entries()) {
+  if(expected[i]===null) assert.throws(()=>parse_reminder_time(wall),/daylight saving/,wall);
+  else {
+   const utc=parse_reminder_time(wall);
+   assert.deepEqual([utc,local_reminder_time(utc)],expected[i],wall);
+  }
+ }
+});
 
 test('complete mutation sequence matches Python durable snapshots apart from clock readings',t=>{
  const dir=mkdtempSync(join(tmpdir(),'pinote-parity-')); t.after(()=>rmSync(dir,{recursive:true,force:true}));

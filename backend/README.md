@@ -4,7 +4,7 @@ Shared `note` CLI and one-request JSON bridge for Electron and the Pi service.
 Uses the existing SQLite database and schema 8 unchanged; no data conversion.
 Legacy Python/GTK can coexist through the same display lock.
 
-Requires Linux, Node.js 22.19+, and util-linux `flock` on an absolute PATH.
+Requires Linux, Node.js 22.19+, util-linux `flock` on an absolute PATH, and GNU `/usr/bin/date` with system timezone data for local reminders.
 Dunst is optional for notifications. Electron bundles the bridge but requires
 external Node; there is no automatic Python fallback.
 

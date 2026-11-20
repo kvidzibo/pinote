@@ -85,11 +85,18 @@ test('import idempotency, rollback, bigint IDs and bounded cursors',t=>{
 });
 
 test('reminder parsing UTC6, invalid calendars, DST rejection, activation and due indicators',t=>{
- const {store:s}=fixture(t), tz=process.env.TZ; process.env.TZ='Europe/Prague'; t.after(()=>{if(tz===undefined) delete process.env.TZ; else process.env.TZ=tz;});
+ const {store:s}=fixture(t), tz=process.env.TZ, tzdir=process.env.TZDIR;
+ process.env.TZ='Europe/Prague'; delete process.env.TZDIR;
+ t.after(()=>{
+  if(tz===undefined) delete process.env.TZ; else process.env.TZ=tz;
+  if(tzdir!==undefined) process.env.TZDIR=tzdir;
+ });
  assert.equal(parse_reminder_time('2030-01-01 14:30'),'2030-01-01T13:30:00.000000+00:00');
  assert.equal(parse_reminder_time('2030-10-27 02:30:01.123456+02:00'),'2030-10-27T00:30:01.123456+00:00');
- for(const date of ['2030-03-31 02:30','2030-10-27 02:30']) assert.throws(()=>parse_reminder_time(date),/daylight saving/);
- for(const date of ['tomorrow','2030-02-30 12:00','2030-01-01 24:30','0000-01-01 00:00','2030-01-01 12:00:60Z']) assert.throws(()=>parse_reminder_time(date),/date and time/);
+ for(const date of ['2030-03-31 02:30','2030-10-27 02:30','2090-03-26 02:30','2090-10-29 02:30']) assert.throws(()=>parse_reminder_time(date),/daylight saving/);
+ assert.equal(parse_reminder_time('2090-03-26 01:59:59.999999'),'2090-03-26T00:59:59.999999+00:00');
+ assert.equal(parse_reminder_time('2090-03-26 03:00'),'2090-03-26T01:00:00.000000+00:00');
+ for(const date of ['tomorrow','2030-02-30 12:00','2030-01-01 24:30','0000-01-01 00:00','2030-01-01 12:00:60Z','2030-02-30 12:00+01:00','0001-01-01 00:00']) assert.throws(()=>parse_reminder_time(date),/date and time/);
  assert.equal(local_reminder_time('2030-01-01T13:30:00.000000+00:00'),'2030-01-01 14:30:00 CET');
  assert.equal(local_reminder_time('2090-07-01T13:30:00.000000+00:00'),'2090-07-01 15:30:00 CEST');
  const n=s.add_note('due'); const due='2999-01-01T00:00:00.123456+00:00'; assert(s.schedule(n.id,due)); assert(!s.schedule(n.id,due)); assert.equal(s.activate_due(),0);

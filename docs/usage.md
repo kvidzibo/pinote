@@ -6,7 +6,7 @@ Run checkout-relative commands from the repository root.
 
 ## Install
 
-Requires **Node.js 22.19+**, npm, and Linux `flock` (util-linux).
+Requires **Node.js 22.19+**, npm, Linux `flock` (util-linux), and GNU `/usr/bin/date` with system timezone data for local reminders.
 Use UTF-8 for profile paths, launcher paths, and filenames passed to the CLI.
 Pinote rejects undecodable paths rather than using a different file with a similar name.
 Dunst (`dunstify`) is needed only for desktop notifications.

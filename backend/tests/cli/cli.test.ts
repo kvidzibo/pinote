@@ -94,10 +94,13 @@ test('lifecycle, scheduling, import/export and bounded event scans',t=>{
   const db=new DatabaseSync(f.database); try {db.exec("UPDATE notes SET state='scheduled',remind_at='2000-01-01T00:00:00.000000+00:00' WHERE id=1");} finally{db.close();}
   assert.match(f.ok(),/check backups/); assert.equal(f.ok('reminders'),'No scheduled reminders.\n');
 });
-test('unsupported POSIX time zones reject wall times before saves and display explicit instants in UTC',t=>{
-  const f=fixture(t);
-  for(const tz of ['EST5EDT,M3.2.0,M11.1.0','UTC-3']) {
-    f.env.TZ=tz;
+test('unsupported time zones reject wall times before saves and display explicit instants in UTC',t=>{
+  const f=fixture(t), env:NodeJS.ProcessEnv=f.env;
+  for(const [tz,tzdir] of [
+    ['EST5EDT,M3.2.0,M11.1.0'], ['UTC-3'], [':/etc/localtime'], ['Europe/NotInstalled'], ['Europe/Prague',f.root],
+  ]) {
+    env.TZ=tz;
+    if(tzdir===undefined) delete env.TZDIR; else env.TZDIR=tzdir;
     const result=f.cli('schedule','1','2030-06-01 12:00','--no-notify');
     assert.equal(result.status,1,result.stdout+result.stderr);
     assert.match(result.stdout,/Unsupported local time zone.*explicit UTC offset/);

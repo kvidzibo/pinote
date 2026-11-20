@@ -187,6 +187,8 @@ type PreparedImport = { source: string; entries: markdown.Entry[] };
 const needsDisplayLock = (args: Arguments) => MUTATIONS.has(args.command) || args.command === 'show' || args.command === 'agent' && ['select', 'start', 'update', 'done', 'add', 'tag'].includes(args.agent_action!);
 async function execute(args: Arguments, paths: Paths, imported: PreparedImport | undefined): Promise<number> {
   const scheduled = args.command === 'schedule' ? parse_reminder_time(args.when!) : undefined;
+  // Formatting can fail (e.g. missing system date); do it before committing.
+  const scheduledLabel = scheduled === undefined ? undefined : local_reminder_time(scheduled);
   const needsLock = needsDisplayLock(args);
   const run = async () => {
     checkCancelled();
@@ -197,7 +199,7 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
       switch (args.command) {
         case 'agent': execute_agent(args, store); break;
         case 'add': print(`Added note ${store.add(args.text!.join(' '))}.`); break;
-        case 'schedule': { const changed = store.schedule(args.id!, scheduled!); print(`Note ${args.id} ${changed ? 'scheduled' : 'already scheduled'} for ${local_reminder_time(scheduled!)}.`); break; }
+        case 'schedule': { const changed = store.schedule(args.id!, scheduled!); print(`Note ${args.id} ${changed ? 'scheduled' : 'already scheduled'} for ${scheduledLabel}.`); break; }
         case 'reminders': {
           const notes = store.scheduled_notes();
           for (const note of notes) print(`${note.id}. ${local_reminder_time(note.remind_at!)} ${noteMarkdown(note).replaceAll('\n', '\n    ')}`);

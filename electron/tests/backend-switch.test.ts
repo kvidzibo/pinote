@@ -21,7 +21,7 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'isolated-service'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service'] as const) {
     // This optional kernel check requires unprivileged user/mount namespaces.
     if (mode === 'isolated-service' && !process.env.PINOTE_TEST_UNSHARE) continue;
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
@@ -96,6 +96,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           const captured: NodeJS.ProcessEnv = { ...env, PINOTE_NOTE_COMMAND: active && starts > 0 && override.includes('ExecStart=:/usr/bin/env ') ? cli : existingCLI };
           if (mode === 'absent-variable') delete captured.PINOTE_NOTE_COMMAND;
           if (mode === 'relative-path') captured.PATH = `first:${env.PATH}`;
+          if (mode === 'relative-home') { captured.HOME = 'profile'; delete captured.XDG_DATA_HOME; }
           if (mode === 'missing-flock') captured.PATH = join(root, 'bin');
           return captured;
         },
@@ -118,8 +119,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         assert.deepEqual(await readFile(database), source);
         continue;
       }
-      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper'].includes(mode)) {
-        await assert.rejects(operation, mode === 'relative-path' ? /absolute service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') || mode === 'unit-wrapper' ? /documented direct Node HTTP/ : /custom CLI wrapper/);
+      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'relative-home'].includes(mode)) {
+        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') || mode === 'unit-wrapper' ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }
