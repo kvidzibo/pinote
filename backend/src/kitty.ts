@@ -27,7 +27,7 @@ export async function address(kitty: string): Promise<string | null> {
 }
 export function validate_directory(directory: string): string {
   try {
-    const folder = realpathSync(directory);
+    const folder = realpathSync.native(directory);
     if (statSync(folder).isDirectory()) return folder;
   } catch { /* Invalid, inaccessible or missing directory. */ }
   throw new NoteError('Choose an existing directory.');

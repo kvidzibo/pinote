@@ -96,9 +96,11 @@ test('Kitty existing address, exact launch envelope and literal argv, no shell',
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit';
   const id = await model.add('task'), note = store(s => s.get(id));
   const title = 'current; $(touch bad)', prompt = 'say "hello"\n🌱';
-  await start_in_kitty(root, note, title, prompt);
+  mkdirSync(join(root, 'project/sub'), { recursive: true }); symlinkSync('project/sub', join(root, 'link'));
+  await start_in_kitty(`${root}/link/..`, note, title, prompt);
   const calls = tools.calls(); assert.deepEqual(calls[0], ['@', '--to', 'unix:@explicit', 'ls']);
   assert.deepEqual(calls[1].slice(0, 5), ['@', '--to', 'unix:@explicit', 'launch', '--type=tab']);
+  assert.ok(calls[1].includes(`--cwd=${root}/project`));
   const launch = JSON.parse(calls[1].find((x: string) => x.startsWith('--env=PINOTE_LAUNCH_TASK=')).slice('--env=PINOTE_LAUNCH_TASK='.length));
   assert.deepEqual(launch, { task_id: Number(id), updated_at: note.updated_at, prompt });
   assert.deepEqual(calls[2].slice(3), ['set-tab-title', '--match=window_id:42', '--', title]); assert.deepEqual(calls[3].slice(3), ['focus-window', '--match=id:42']);

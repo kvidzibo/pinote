@@ -69,8 +69,9 @@ test('lifecycle, scheduling, import/export and bounded event scans',t=>{
   assert.match(f.ok('history','1'),/reminder none -> 2099/);
   assert.equal(f.ok('export','--all'),'# Reminders\n\n');
   f.ok('restore','1','--no-notify');
-  const source=join(f.root,'notes.md');writeFileSync(source,'- Work\n  - [~] job\n      detail\n- [x] old\n');
-  assert.equal(f.ok('import',source,'--no-notify'),'Imported 2 notes. Tags created: 1.\n');
+  mkdirSync(join(f.root,'physical/sub'),{recursive:true}); symlinkSync('physical/sub',join(f.root,'link'));
+  const source=join(f.root,'physical/notes.md');writeFileSync(source,'- Work\n  - [~] job\n      detail\n- [x] old\n');
+  assert.equal(f.ok('import','~/link/../notes.md','--no-notify'),'Imported 2 notes. Tags created: 1.\n');
   symlinkSync(source,join(f.root,'alias.md'));
   assert.match(f.ok('import',join(f.root,'alias.md'),'--no-notify'),/already imported/);
   assert.match(f.ok('export','--all'),/- \[~\] job\n    detail/);

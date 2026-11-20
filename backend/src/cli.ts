@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
 import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
@@ -275,8 +275,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     validateCommand(args);
     if (args.command === 'import') {
-      const path = args.path === '~' ? homedir() : args.path!.startsWith('~/') ? join(homedir(), args.path!.slice(2)) : args.path!;
-      const source = realpathSync(path);
+      const path = args.path === '~' ? homedir() : args.path!.startsWith('~/') ? `${homedir()}/${args.path!.slice(2)}` : args.path!;
+      const source = realpathSync.native(path);
       const entries = validateImportEntries(markdown.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(source)).replace(/\r\n?/g, '\n')));
       imported = { source, entries };
     }
