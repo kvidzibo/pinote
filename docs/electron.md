@@ -67,7 +67,9 @@ the bundled CLI/bridge against the same database, then:
   requires a manual switch. The original CLI's database is checked before
   stopping the service. The user CLI being replaced is checked separately, even
   without a service. An active service also requires `busctl` to verify its actual
-  unit command. Custom launchers and runtime injection are unsupported. The
+  unit command. Standard direct-Python uv and pip/pipx entry points are
+  recognized; shell wrappers (including long-shebang shims) and runtime
+  injection require a manual switch. The
   drop-in preserves service arguments/environment files and overrides the CLI
   at execution, including an old command supplied by `EnvironmentFile`. At service
   startup, `ExecStartPre` runs the installed CLI's `--version` under the unit's

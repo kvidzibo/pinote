@@ -21,7 +21,7 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy'] as const) {
     // This optional kernel check requires unprivileged user/mount namespaces.
     if (mode === 'isolated-service' && !process.env.PINOTE_TEST_UNSHARE) continue;
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
@@ -36,7 +36,12 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       else await symlink(process.execPath, join(root, 'bin/node'));
       await mkdir(join(root, '.local/bin'), { recursive: true });
       const custom = join(root, 'old-note'); await writeFile(custom, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
-      const old = mode === 'user-wrapper' ? custom : resolve('../.venv/bin/note');
+      const isPip = mode === 'pip' || mode === 'pip-lazy';
+      const old = isPip ? join(root, 'pip-note') : mode === 'user-wrapper' ? custom : resolve('../.venv/bin/note');
+      if (isPip) {
+        const entry = mode === 'pip' ? "from pinote.cli import main\nif __name__ == '__main__':" : "if __name__ == '__main__':\n    from pinote.cli import main";
+        await writeFile(old, `#!${resolve('../.venv/bin/python')}\n# -*- coding: utf-8 -*-\nimport re\nimport sys\n${entry}\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n`, { mode: 0o700 });
+      }
       if (mode === 'absent-variable') {
         env.PINOTE_NOTE_COMMAND = resolve('../backend/bin/note'); // Desktop-only override must NOT leak.
         await writeFile(join(root, 'bin/note'), '#!/bin/sh\nexport XDG_DATA_HOME=/another/database\nexec note "$@"\n', { mode: 0o700 });
@@ -65,7 +70,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       if (mode === 'service-script') { await mkdir(dirname(script), { recursive: true }); await writeFile(script, '// custom service\n'); }
       const dropin = join(root, 'config/systemd/user/pinote.service.d/90-node-backend.conf');
       let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted' || mode === 'deletion' || mode === 'deletion-new';
-      const existingCLI = mode === 'wrapper' ? custom : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
+      const existingCLI = mode === 'wrapper' ? custom : isPip ? old : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
       const commands: string[] = [];
       let warmingUp = true;
       const dependencies = {
@@ -124,7 +129,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }
-      if (mode === 'success') {
+      if (mode === 'success' || isPip) {
         await operation;
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);

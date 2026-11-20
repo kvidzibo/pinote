@@ -200,9 +200,15 @@ async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.P
   if (!stat.isFile() || stat.size > 8192) throw new Error('The existing service CLI cannot be verified safely.');
   const text = utf8.decode(await readFile(path));
   const pythonBody = 'import sys\nfrom pinote.cli import main\nif __name__ == "__main__":\n    if sys.argv[0].endswith("-script.pyw"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(".exe"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())';
+  // pip/pipx distlib launchers have shipped both import placements. Match
+  // the entire generated body, without executing the wrapper.
+  const pipTail = String.raw`    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.exit(main())`;
+  const pipBodies = ["from pinote.cli import main\nif __name__ == '__main__':", "if __name__ == '__main__':\n    from pinote.cli import main"]
+    .map(entry => 'import re\nimport sys\n' + entry + '\n' + pipTail);
   const first = text.split('\n')[0];
   const body = text.slice(first.length + 1).replace(/^# -\*- coding: utf-8 -\*-\n/, '').trim();
-  if (/^#!\/[^\r\n]*\/python(?:3(?:\.\d+)?)?$/.test(first) && body === pythonBody) {
+  if (/^#!\/[^\r\n]*\/python(?:3(?:\.\d+)?)?$/.test(first) && (body === pythonBody || pipBodies.includes(body))) {
     const code = 'import json,sys; from pathlib import Path; sys.path.__setitem__(0, str(Path(sys.argv[1]).parent)) if not sys.flags.safe_path else None; from pinote.paths import Paths; print(json.dumps(str(Paths.discover().database.resolve())))';
     const database = JSON.parse(await run(first.slice(2), ['-c', code, path], env));
     if (typeof database !== 'string' || resolve(database) !== resolve(options.database)) throw new Error('The existing service CLI uses a different database; the switch was blocked.');
