@@ -20,6 +20,8 @@ full Markdown previews keep the original source.
 Tasks, tags, progress and handoff fields are shared. Selection and pending
 suggestions belong to each Pi conversation/branch, not the HTTP connection.
 Other tools continue running wherever Pi and their services run.
+Watcher results refresh normally; a change to the poll timestamp alone does not
+add another task-context update to the model conversation.
 
 ## Install
 
