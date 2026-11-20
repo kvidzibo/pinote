@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readlinkSync, renameSync, statSync, unlinkSync, accessSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, accessSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { delimiter, dirname, isAbsolute, join, parse, resolve } from 'node:path';
@@ -8,7 +8,18 @@ import { setTimeout as delay } from 'node:timers/promises';
 export const VERSION = '0.26.0';
 export type Paths = { data: string; state: string; database: string; log: string };
 export function xdgPath(variable: string, fallback: string, env: NodeJS.ProcessEnv = process.env): string {
-  return env[variable] && isAbsolute(env[variable]!) ? env[variable]! : join(env.HOME || homedir(), fallback);
+  const home = env[variable] && isAbsolute(env[variable]!) ? env[variable]! : `${env.HOME || homedir()}/${fallback}`;
+  const components = home.split('/');
+  const parent = components.lastIndexOf('..');
+  // Python retains '..' during I/O, so it traverses symlinks before going up.
+  // Resolve through the last '..' before join() can erase it. Require that
+  // prefix to be traversable, but allow a not-yet-created profile after it.
+  return parent < 0 ? home : join(
+    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      realpathSync.native(components.slice(0, parent + 1).join('/') + '/', { encoding: 'buffer' }),
+    ),
+    components.slice(parent + 1).join('/'),
+  );
 }
 export function discoverPaths(env: NodeJS.ProcessEnv = process.env): Paths {
   const data = join(xdgPath('XDG_DATA_HOME', '.local/share', env), 'pinote');

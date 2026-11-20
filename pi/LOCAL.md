@@ -370,13 +370,14 @@ avoid secrets. Agent commands do not send desktop notifications.
 From the repository root:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run build
 npm --prefix pi ci --ignore-scripts
 npm --prefix pi test
 (cd pi && npm pack --dry-run)
 ```
 
-The load test uses the real Pi loader and checkout's `.venv/bin/note` with temporary
+The load test uses the real Pi loader and checkout's `backend/bin/note` with temporary
 data. Run visual checks under Xvfb/private D-Bus; never use personal task data.
 
 `.github/workflows/publish.yml` follows the other Pi packages: every push to

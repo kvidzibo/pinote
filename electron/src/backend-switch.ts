@@ -165,10 +165,21 @@ async function probe(options: SwitchOptions, run: Run, env = options.env): Promi
   if (value.protocol !== 1 || value.ok !== true || typeof value.result?.database !== 'string' || typeof value.result?.version !== 'string' || resolve(value.result.database) !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
   return value.result.version;
 }
-async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<void> {
+function verifySwitchPaths(env: NodeJS.ProcessEnv): void {
+  for (const key of ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']) {
+    if (env[key]?.split('/').includes('..')) throw new Error('Backend switching requires unambiguous home and XDG paths without parent-directory components.');
+  }
+}
+async function verifyServiceEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
+  verifySwitchPaths(env);
   if (Object.keys(env).some(key => env[key] && runtimeInjection(key))) throw new Error('Custom service runtime injection settings require manual database verification.');
+  if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute service PATH.');
+  if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on the service PATH.');
+}
+async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<void> {
+  await verifyServiceEnvironment(env);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
-  if (command !== 'note' && !isAbsolute(command)) throw new Error('The service CLI must be a trusted absolute executable.');
+  if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The service CLI must be an unambiguous absolute executable.');
   const path = await realpath(command === 'note' ? executable(env, 'note') : command);
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > 8192) throw new Error('The existing service CLI cannot be verified safely.');
@@ -261,7 +272,9 @@ export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, dependencies:
   } finally { release(); }
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
-  const { env } = options, paths = locations(env), run = dependencies.run || runCommand;
+  const { env } = options;
+  verifySwitchPaths(env);
+  const paths = locations(env), run = dependencies.run || runCommand;
   const release = await acquire(env, dependencies.updateLock);
   let journal: Journal | undefined;
   try {
@@ -276,7 +289,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     if (before.active) {
       await access('/usr/bin/env', constants.X_OK);
       serviceArguments = await (dependencies.processArguments || (async pid => (await readFile(`/proc/${pid}/cmdline`)).toString().split('\0').filter(Boolean)))(before.pid);
-      if (serviceArguments.length !== 2 || !isAbsolute(serviceArguments[0]) || !isAbsolute(serviceArguments[1]) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
+      if (serviceArguments.length !== 2 || serviceArguments.some(arg => !isAbsolute(arg) || arg.split('/').includes('..')) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
       let documented = false;
       try {
         const runtime = await realpath(options.node);
@@ -323,14 +336,16 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       progress('Restarting and verifying the existing Pinote service…');
       await run(executable(env, 'systemctl'), ['--user', 'daemon-reload'], env);
       await run(executable(env, 'systemctl'), ['--user', 'start', 'pinote.service'], env);
-      for (let i = 0; i < 5; i++) {
+      for (let attempt = 0, ready = 0; ready < 5; attempt++) {
         await (dependencies.wait || (() => delay(250)))();
         const after = await service(run, env);
         if (!after.active || !after.pid) throw new Error('Pinote service did not restart; restoring the previous installation.');
         const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(after.pid);
+        await verifyServiceEnvironment(serviceEnv);
         if (serviceEnv.PINOTE_NOTE_COMMAND !== paths.cli) throw new Error('The service environment overrides the new CLI; restoring the previous installation.');
         await probe(options, run, serviceEnv);
-        await (dependencies.listening || listening)(serviceEnv);
+        try { await (dependencies.listening || listening)(serviceEnv); ready++; }
+        catch (error) { if (attempt >= 19) throw error; ready = 0; }
       }
     }
     const committed: Journal = { ...journal, complete: true };

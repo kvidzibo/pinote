@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock'] as const) {
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     let injected: ReturnType<typeof spawn> | undefined;
     try {
@@ -43,6 +43,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted' || mode === 'deletion' || mode === 'deletion-new';
       const existingCLI = mode === 'wrapper' ? old : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
       const commands: string[] = [];
+      let warmingUp = true;
       const dependencies = {
         updateLock: join(root, 'update-lock/update.lock'),
         processArguments: async () => [process.execPath, script],
@@ -68,17 +69,21 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           // command explicitly overrides it in the launched server process.
           const captured: NodeJS.ProcessEnv = { ...env, PINOTE_NOTE_COMMAND: active && starts > 0 && override.includes('ExecStart=:/usr/bin/env ') ? cli : existingCLI };
           if (mode === 'absent-variable') delete captured.PINOTE_NOTE_COMMAND;
+          if (mode === 'relative-path') captured.PATH = `first:${env.PATH}`;
+          if (mode === 'missing-flock') captured.PATH = join(root, 'bin');
           return captured;
         },
-        listening: async () => {}, wait: async () => {},
+        listening: async () => {
+          if (mode === 'success' && starts && warmingUp) { warmingUp = false; throw new Error('Listener is still starting'); }
+        }, wait: async () => {},
       };
       const phases: string[] = [];
       const operation = switchToNode({ env, node: process.execPath, bundles, database }, text => {
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
-      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper'].includes(mode)) {
-        await assert.rejects(operation, mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
+      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock'].includes(mode)) {
+        await assert.rejects(operation, mode === 'relative-path' ? /absolute service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }

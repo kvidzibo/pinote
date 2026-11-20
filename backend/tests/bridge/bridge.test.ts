@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -18,8 +18,10 @@ afterEach(() => { process.env = saved; rmSync(root, { recursive: true, force: tr
 const request = (operation: string, params: any = {}) => ({ protocol: 1, operation, params });
 async function call(op: string, params: any = {}): Promise<any> { const r = await respond(request(op, params), paths); assert.equal(r.ok, true, jsonStringify(r)); return r.result; }
 function target(id: bigint): any { const s = new Store(paths.database); try { return { id: Number(id), revision: s.get(id).updated_at }; } finally { s.close(); } }
+const bridgeCommand = [process.execPath, '--disable-warning=ExperimentalWarning', '--experimental-strip-types', resolve('src/bridge-entry.ts')] as const;
 function processRequest(data: Buffer | string, args: string[] = []) {
-  return spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', resolve('src/bridge-entry.ts'), ...args], { input: data, env: process.env, encoding: 'utf8', timeout: 10000 });
+  const [node, ...flags] = bridgeCommand;
+  return spawnSync(node, [...flags, ...args], { input: data, env: process.env, encoding: 'utf8', timeout: 10000 });
 }
 test('handshake, help and version are side-effect free', async () => {
   const r = processRequest(JSON.stringify(request('handshake'))); assert.equal(r.status, 0); assert.equal(r.stderr, '');
@@ -27,6 +29,58 @@ test('handshake, help and version are side-effect free', async () => {
   for (const flag of ['--help', '--version']) assert.equal(processRequest('', [flag]).status, 0);
   assert.equal(existsSync(paths.data), false); assert.equal(existsSync(paths.state), false);
   assert.equal((await respond(request('handshake'), paths)).ok, true);
+});
+test('symlink/.. in XDG_DATA_HOME shares the Python database and display lock', () => {
+  mkdirSync(join(root, 'actual', 'nested'), { recursive: true });
+  symlinkSync('actual/nested', join(root, 'link'));
+  process.env.XDG_DATA_HOME = `${root}/link/../profile`;
+  const expected = join(root, 'actual', 'profile', 'pinote', 'notes.db');
+  const handshake = processRequest(JSON.stringify(request('handshake')));
+  assert.equal(handshake.status, 0, handshake.stderr);
+  assert.equal(JSON.parse(handshake.stdout).result.database, expected);
+  assert.equal(existsSync(join(root, 'actual', 'profile')), false);
+  assert.equal(existsSync(paths.state), false);
+
+  const py = (code: string, args: readonly string[] = []) => {
+    const result = spawnSync(resolve('../.venv/bin/python'), ['-c', code, ...args], { env: process.env, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const locked = py(`
+import subprocess, sys
+from pinote.paths import Paths, display_lock
+paths = Paths.discover()
+print(paths.database.resolve(), flush=True)
+with display_lock(paths):
+    subprocess.run(sys.argv[2:], input=sys.argv[1], text=True, check=True, timeout=5)
+`, [JSON.stringify(request('add', { text: 'blocked', tag: null })), ...bridgeCommand]);
+  const [database, reply] = locked.split('\n');
+  assert.equal(database, expected);
+  assert.equal(JSON.parse(reply).error.code, 'busy');
+  assert.equal(existsSync(expected), false);
+
+  const added = processRequest(JSON.stringify(request('add', { text: 'shared note', tag: null })));
+  assert.equal(added.status, 0, added.stderr);
+  assert.equal(JSON.parse(added.stdout).ok, true);
+  assert.equal(py(`
+from pinote.paths import Paths
+from pinote.store import Store
+with Store(Paths.discover().database) as store:
+    print(store.get(1).text)
+`), 'shared note');
+  assert.equal(existsSync(join(root, 'profile')), false);
+});
+test('untraversable XDG_DATA_HOME parent step fails without opening a different profile', () => {
+  symlinkSync('missing/nested', join(root, 'link'));
+  process.env.XDG_DATA_HOME = `${root}/link/../profile`;
+  for (const value of [request('handshake'), request('add', { text: 'must not save', tag: null })]) {
+    const response = processRequest(JSON.stringify(value));
+    assert.equal(response.status, 0, response.stderr);
+    const body = JSON.parse(response.stdout);
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, 'internal');
+  }
+  for (const dir of [join(root, 'profile'), join(root, 'missing'), paths.state]) assert.equal(existsSync(dir), false);
 });
 test('strict JSON rejects malformed UTF8, duplicate decoded keys, floats, unsafe numeric tokens, nesting and oversize without side effects', () => {
   const bad = ['', '{}{}', '{"x":NaN}', '{"x":Infinity}', '{"x":1e999}', '{"x":1.0}', '{"x":1e0}', '{"protocol":1,"protoc\\u006fl":1}', '['.repeat(18) + ']'.repeat(18), '['.repeat(1100) + ']'.repeat(1100), ' '.repeat(MAX_REQUEST + 1), '\ufeff{}'];

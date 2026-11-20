@@ -58,8 +58,10 @@ the bundled CLI/bridge against the same database, then:
   or enabled. A present service must be running with the documented direct Node
   HTTP command from its project working directory and the same trusted Node
   executable used by Electron; the actual process executable is checked, not
-  just its command line. Custom service launchers/scripts are unsupported. Its original CLI's database is verified before changing anything;
-  custom CLI wrappers or runtime injection require manual verification. The
+  just its command line. The service PATH must contain only absolute entries and
+  resolve `flock` to the system utility. PATH entries and home/XDG paths used for
+  switching must not contain `..`. The original CLI's database is checked before
+  stopping the service. Custom launchers and runtime injection are unsupported. The
   drop-in preserves service arguments/environment files and overrides the CLI
   at execution, including an old command supplied by `EnvironmentFile`.
 - Saves an explicit Node preference, restarts the previously running service,

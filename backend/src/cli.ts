@@ -285,8 +285,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if ((error as Error).name === 'AbortError') return process.exitCode === 143 ? 143 : 130;
     print(`ERROR: ${(error as Error).message}`); return 1;
   }
-  const paths = discoverPaths();
-  try { checkCancelled(); configureLogging(paths); return await execute(args, paths, imported); }
+  try { checkCancelled(); const paths = discoverPaths(); configureLogging(paths); return await execute(args, paths, imported); }
   catch (error) {
     if ((error as Error).name === 'AbortError') return process.exitCode === 143 ? 143 : 130;
     const message = error instanceof Error ? error.message : String(error);
