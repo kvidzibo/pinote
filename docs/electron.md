@@ -60,12 +60,17 @@ the bundled CLI/bridge against the same database, then:
   executable used by Electron; the actual process executable is checked, not
   just its command line. The service PATH must contain only absolute entries and
   resolve `flock` to the system utility. PATH entries and home/XDG paths used for
-  switching must not contain `..`. The original CLI's database is checked before
+  switching must not contain `..`. Startup also rejects parent components in HOME,
+  XDG_CONFIG_HOME and XDG_STATE_HOME before reading preferences or recovery data.
+  An isolated service filesystem, root, credentials, user or network namespace
+  requires a manual switch. The original CLI's database is checked before
   stopping the service. The user CLI being replaced is checked separately, even
   without a service. An active service also requires `busctl` to verify its actual
   unit command. Custom launchers and runtime injection are unsupported. The
   drop-in preserves service arguments/environment files and overrides the CLI
-  at execution, including an old command supplied by `EnvironmentFile`.
+  at execution, including an old command supplied by `EnvironmentFile`. At service
+  startup, `ExecStartPre` runs the installed CLI's `--version` under the unit's
+  own restrictions; an inaccessible or unusable launcher prevents startup.
 - Saves an explicit Node preference, restarts the previously running service,
   verifies its CLI/listener, and relaunches Electron.
 

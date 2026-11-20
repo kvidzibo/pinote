@@ -9,8 +9,21 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
+test('startup never uses a sibling preference or journal through symlink/..', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pinote-startup-'));
+  try {
+    await mkdir(join(root, 'physical/nested'), { recursive: true });
+    await symlink('physical/nested', join(root, 'link'));
+    const env = { HOME: root, XDG_CONFIG_HOME: `${root}/link/../config`, XDG_STATE_HOME: `${root}/link/../state` };
+    await assert.rejects(preferredBackendEnvironment(env), /parent-directory/);
+    await assert.rejects(recoverBackendSwitch(env), /parent-directory/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'isolated-service'] as const) {
+    // This optional kernel check requires unprivileged user/mount namespaces.
+    if (mode === 'isolated-service' && !process.env.PINOTE_TEST_UNSHARE) continue;
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     let injected: ReturnType<typeof spawn> | undefined;
     try {
@@ -37,6 +50,11 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const bundles = resolve('../backend/dist'), database = join(root, 'data/pinote/notes.db');
       await runCommand(process.execPath, [join(bundles, 'cli.mjs'), '--no-notify', 'Keep all history and IDs'], env);
       const source = await readFile(database);
+      if (mode === 'isolated-service') {
+        injected = spawn('unshare', ['-Urmn', process.execPath, '-e', "process.stdout.write('ready');setInterval(()=>{},1000)"], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+        const first = await injected.stdout![Symbol.asyncIterator]().next();
+        assert.equal(first.value?.toString(), 'ready', 'unshare must be available for this opt-in check');
+      }
       if (mode === 'loader') {
         injected = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { env: { ...env, LD_PRELOAD: join(root, 'missing-injection.so') }, stdio: 'ignore' });
         await once(injected, 'spawn');
@@ -60,7 +78,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
           if (action === 'show' && ['user-wrapper', 'lossy-launcher'].includes(mode)) return 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n';
-          if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? injected?.pid || 123 : 0}\n`;
+          if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? injected?.pid || process.pid : 0}\n`;
           if (action === 'stop') active = false;
           if (action === 'start') {
             starts++;
@@ -90,6 +108,10 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
+      if (mode === 'isolated-service') {
+        await assert.rejects(operation, /filesystem|EACCES|EPERM/);
+        assert.ok(!commands.includes('stop')); assert.equal(await readlink(cli), old); continue;
+      }
       if (mode === 'lossy-launcher') {
         await assert.rejects(operation, /encoding|UTF-8/i);
         assert.deepEqual(await readlink(cli, { encoding: 'buffer' }), invalid);
@@ -105,6 +127,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await operation;
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
+        assert.ok((await readFile(dropin, 'utf8')).includes(`ExecStartPre=:/usr/bin/env ${JSON.stringify(cli)} --version\n`));
         assert.match(await readFile(dropin, 'utf8'), /ExecStart=:\/usr\/bin\/env /);
         const different = { ...env, PINOTE_ELECTRON_BACKEND: '/another/explicit/backend' };
         assert.equal((await preferredBackendEnvironment(different)).PINOTE_ELECTRON_BACKEND, different.PINOTE_ELECTRON_BACKEND);

@@ -162,7 +162,9 @@ open for automatic delivery to the main list. GUI-triggered changes do not refre
 CLI equivalents: `note schedule ID "YYYY-MM-DD HH:MM"`, `note reminders`, and
 `note restore ID` to bring one back early. `note rm ID` archives a scheduled note
 and cancels its timer. Times are stored in UTC; input without an offset uses the
-current local timezone. ISO times with an explicit offset are also accepted, e.g.
+system timezone or an installed IANA zone such as `America/New_York`. If `TZ`
+is an unsupported POSIX rule or uses a custom zone file, provide an explicit
+UTC offset; reminders then display in UTC. Offset example:
 `2030-09-18T14:30:00+02:00`. Ambiguous or nonexistent local times at daylight-saving
 changes are rejected; choose another time or use an explicit offset. All reminder
 changes and automatic activations are recorded in `note history ID`.

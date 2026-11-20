@@ -94,6 +94,22 @@ test('lifecycle, scheduling, import/export and bounded event scans',t=>{
   const db=new DatabaseSync(f.database); try {db.exec("UPDATE notes SET state='scheduled',remind_at='2000-01-01T00:00:00.000000+00:00' WHERE id=1");} finally{db.close();}
   assert.match(f.ok(),/check backups/); assert.equal(f.ok('reminders'),'No scheduled reminders.\n');
 });
+test('unsupported POSIX time zones reject wall times before saves and display explicit instants in UTC',t=>{
+  const f=fixture(t);
+  for(const tz of ['EST5EDT,M3.2.0,M11.1.0','UTC-3']) {
+    f.env.TZ=tz;
+    const result=f.cli('schedule','1','2030-06-01 12:00','--no-notify');
+    assert.equal(result.status,1,result.stdout+result.stderr);
+    assert.match(result.stdout,/Unsupported local time zone.*explicit UTC offset/);
+    assert.equal(existsSync(f.env.XDG_DATA_HOME),false);
+    assert.equal(existsSync(f.env.XDG_STATE_HOME),false);
+  }
+  f.ok('--no-notify','reminder');
+  assert.equal(f.ok('schedule','1','2099-06-01 12:00-04:00','--no-notify'),'Note 1 scheduled for 2099-06-01 16:00:00 UTC.\n');
+  f.env.TZ='EST5EDT,M3.2.0,M11.1.0';
+  assert.equal(f.ok('reminders'),'1. 2099-06-01 16:00:00 UTC reminder\n');
+  assert.equal(f.ok('schedule','1','2099-06-01T17:00:00Z','--no-notify'),'Note 1 scheduled for 2099-06-01 17:00:00 UTC.\n');
+});
 test('agent revisions, selection, prototype-safe fields, sessions and field pagination',t=>{
   const f=fixture(t);
   let task=JSON.parse(f.ok('agent','add','--text=Task','--tag=Work','--cwd',f.root));

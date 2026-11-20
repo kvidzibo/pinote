@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
-import { hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode } from './backend-switch.ts';
+import { hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -29,6 +29,7 @@ const warning = 'A previous operation may have succeeded without confirmation. C
 const log = (message: string) => {
   console.log(message);
   try {
+    if (!logFile) verifySwitchPaths(process.env, ['HOME', 'XDG_STATE_HOME']);
     const path = logFile || join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', 'app.log');
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     appendFileSync(path, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 });

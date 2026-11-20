@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants, closeSync, openSync, accessSync, statSync } from 'node:fs';
-import { access, chmod, link, lstat, mkdir, readFile, readlink as readLinkBytes, realpath as realPathBytes, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, link, lstat, stat, mkdir, readFile, readlink as readLinkBytes, realpath as realPathBytes, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
@@ -22,6 +22,7 @@ const realpath = async (path: string) => utf8.decode(await realPathBytes(path, {
 const readlink = async (path: string) => utf8.decode(await readLinkBytes(path, { encoding: 'buffer' }));
 const xdg = (env: NodeJS.ProcessEnv, name: string, fallback: string) => env[name] && isAbsolute(env[name]!) ? env[name]! : join(env.HOME || homedir(), fallback);
 function locations(env: NodeJS.ProcessEnv) {
+  verifySwitchPaths(env, ['HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']);
   const home = env.HOME || homedir();
   return { home, cli: join(home, '.local/bin/note'), preference: join(xdg(env, 'XDG_CONFIG_HOME', '.config'), 'pinote/backend.json'),
     dropin: join(xdg(env, 'XDG_CONFIG_HOME', '.config'), 'systemd/user/pinote.service.d/90-node-backend.conf'),
@@ -143,6 +144,16 @@ async function service(run: Run, env: NodeJS.ProcessEnv): Promise<Service> {
   if (!['loaded', 'not-found'].includes(values.LoadState) || !['active', 'inactive', 'failed'].includes(values.ActiveState) || !/^\d+$/.test(values.MainPID || '')) throw new Error('The existing Pinote service is unavailable or changing state; retry when it has settled.');
   return { present: values.LoadState === 'loaded', active: values.ActiveState === 'active', pid: Number(values.MainPID) };
 }
+async function verifyServiceContext(pid: number): Promise<void> {
+  // A probe run by Electron is not evidence for a different filesystem view.
+  // In particular, systemd path restrictions can hide the replacement CLI.
+  for (const entry of ['ns/mnt', 'ns/user', 'ns/net', 'root']) {
+    const [ours, theirs] = await Promise.all(['self', pid].map(id => stat(`/proc/${id}/${entry}`, { bigint: true })));
+    if (ours.dev !== theirs.dev || ours.ino !== theirs.ino) throw new Error('Automatic switching requires the service to share the desktop filesystem and network context.');
+  }
+  const identities = await Promise.all(['self', pid].map(async id => (await readFile(`/proc/${id}/status`, 'utf8')).split('\n').filter(line => /^(Uid|Gid|Groups|CapEff):/.test(line)).join('\n')));
+  if (identities[0] !== identities[1]) throw new Error('Automatic switching requires the service to use the same filesystem credentials as the desktop.');
+}
 function runtimeInjection(name: string): boolean { return /^(LD_|NODE_|ELECTRON_|PYTHON)/.test(name) || name === 'GCONV_PATH' || name === 'GLIBC_TUNABLES'; }
 export async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
   if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Cannot verify the running Pinote service.');
@@ -168,8 +179,8 @@ async function probe(options: SwitchOptions, run: Run, env = options.env): Promi
   if (value.protocol !== 1 || value.ok !== true || typeof value.result?.database !== 'string' || typeof value.result?.version !== 'string' || resolve(value.result.database) !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
   return value.result.version;
 }
-function verifySwitchPaths(env: NodeJS.ProcessEnv): void {
-  for (const key of ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']) {
+export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']): void {
+  for (const key of keys) {
     if (env[key]?.split('/').includes('..')) throw new Error('Backend switching requires unambiguous home and XDG paths without parent-directory components.');
   }
 }
@@ -218,7 +229,7 @@ function targets(options: SwitchOptions, serviceArguments: string[] | undefined)
   if (/[\r\n\0]/.test(command)) throw new Error('Unsupported CLI installation path.');
   return [
     { path: paths.cli, text: launcher, mode: 0o700, link: true },
-    ...(serviceArguments ? [{ path: paths.dropin, text: `[Service]\nEnvironment=${JSON.stringify(`PINOTE_NOTE_COMMAND=${command}`)}\nExecStart=\nExecStart=:/usr/bin/env ${[`PINOTE_NOTE_COMMAND=${paths.cli}`, ...serviceArguments].map(systemdQuote).join(' ')}\n`, mode: 0o600, link: false }] : []),
+    ...(serviceArguments ? [{ path: paths.dropin, text: `[Service]\nEnvironment=${JSON.stringify(`PINOTE_NOTE_COMMAND=${command}`)}\nExecStartPre=:/usr/bin/env ${systemdQuote(paths.cli)} --version\nExecStart=\nExecStart=:/usr/bin/env ${[`PINOTE_NOTE_COMMAND=${paths.cli}`, ...serviceArguments].map(systemdQuote).join(' ')}\n`, mode: 0o600, link: false }] : []),
     { path: paths.preference, text: JSON.stringify({ version: 1, backend: 'node', ignoredOverride: options.env.PINOTE_ELECTRON_BACKEND ?? null }), mode: 0o600, link: false },
   ];
 }
@@ -290,6 +301,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     if (before.present && !before.active) throw new Error('The installed Pinote service is stopped. Leave it stopped; switch when it is running so its database can be verified.');
     let serviceArguments: string[] | undefined, originalHost: string | undefined, originalPort: string | undefined;
     if (before.active) {
+      await verifyServiceContext(before.pid);
       await access('/usr/bin/env', constants.X_OK);
       serviceArguments = await (dependencies.processArguments || (async pid => utf8.decode(await readFile(`/proc/${pid}/cmdline`)).split('\0').filter(Boolean)))(before.pid);
       if (serviceArguments.length !== 2 || serviceArguments.some(arg => !isAbsolute(arg) || arg.split('/').includes('..')) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
@@ -352,6 +364,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
         await (dependencies.wait || (() => delay(250)))();
         const after = await service(run, env);
         if (!after.active || !after.pid) throw new Error('Pinote service did not restart; restoring the previous installation.');
+        await verifyServiceContext(after.pid);
         const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(after.pid);
         await verifyServiceEnvironment(serviceEnv);
         if (serviceEnv.PINOTE_HOST !== originalHost || serviceEnv.PINOTE_PORT !== originalPort) throw new Error('The service listener configuration changed; restoring the previous installation.');
