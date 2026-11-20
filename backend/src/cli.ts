@@ -1,10 +1,10 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
 import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
-import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, type Paths } from './runtime.ts';
+import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, realpathUtf8, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
 import * as notify from './notify.ts';
 
@@ -276,7 +276,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     validateCommand(args);
     if (args.command === 'import') {
       const path = args.path === '~' ? homedir() : args.path!.startsWith('~/') ? `${homedir()}/${args.path!.slice(2)}` : args.path!;
-      const source = realpathSync.native(path);
+      const source = realpathUtf8(path);
       const entries = validateImportEntries(markdown.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(source)).replace(/\r\n?/g, '\n')));
       imported = { source, entries };
     }

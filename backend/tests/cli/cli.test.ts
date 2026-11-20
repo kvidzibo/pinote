@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync, execFile, spawn } from 'node:child_process';
@@ -52,6 +52,22 @@ test('help/version/invalid input are side effect free',t=>{
     assert.equal(db.prepare('SELECT state FROM notes WHERE id=1').get()!.state,'scheduled');
     assert.equal(db.prepare('SELECT count(*) AS n FROM events').get()!.n,before);
   } finally {db.close();}
+});
+test('Markdown import rejects a non-UTF-8 canonical path without importing its U+FFFD sibling',t=>{
+  const f=fixture(t);
+  const target=Buffer.concat([Buffer.from(`${f.root}/notes-`),Buffer.from([0xff]),Buffer.from('.md')]);
+  const sibling=join(f.root,'notes-\ufffd.md'), alias=join(f.root,'alias.md');
+  writeFileSync(target,'- [ ] real target\n');
+  try {
+    writeFileSync(sibling,'- [ ] sibling note\n'); symlinkSync(target,alias);
+    const result=f.cli('--no-notify','import',alias);
+    assert.equal(result.status,1,result.stdout+result.stderr);
+    assert.match(result.stdout,/^ERROR:/);
+    assert.equal(existsSync(f.env.XDG_DATA_HOME),false);
+    assert.equal(existsSync(f.env.XDG_STATE_HOME),false);
+    assert.equal(f.ok('--no-notify','import',sibling),'Imported 1 notes. Tags created: 0.\n');
+    assert.equal(f.ok('--no-notify','list'),'1. sibling note\n');
+  } finally {unlinkSync(target);}
 });
 test('lifecycle, scheduling, import/export and bounded event scans',t=>{
   const f=fixture(t);

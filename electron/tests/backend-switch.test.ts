@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper'] as const) {
     const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
     let injected: ReturnType<typeof spawn> | undefined;
     try {
@@ -22,7 +22,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       if (mode === 'node-wrapper') await writeFile(join(root, 'bin/node'), '#!/bin/sh\nexport XDG_DATA_HOME=/different\nexit 1\n', { mode: 0o700 });
       else await symlink(process.execPath, join(root, 'bin/node'));
       await mkdir(join(root, '.local/bin'), { recursive: true });
-      const old = join(root, 'old-note'); await writeFile(old, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
+      const custom = join(root, 'old-note'); await writeFile(custom, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
+      const old = mode === 'user-wrapper' ? custom : resolve('../.venv/bin/note');
       if (mode === 'absent-variable') {
         env.PINOTE_NOTE_COMMAND = resolve('../backend/bin/note'); // Desktop-only override must NOT leak.
         await writeFile(join(root, 'bin/note'), '#!/bin/sh\nexport XDG_DATA_HOME=/another/database\nexec note "$@"\n', { mode: 0o700 });
@@ -41,7 +42,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       if (mode === 'service-script') { await mkdir(dirname(script), { recursive: true }); await writeFile(script, '// custom service\n'); }
       const dropin = join(root, 'config/systemd/user/pinote.service.d/90-node-backend.conf');
       let active = true, starts = 0, fail = mode === 'rollback' || mode === 'interrupted' || mode === 'deletion' || mode === 'deletion-new';
-      const existingCLI = mode === 'wrapper' ? old : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
+      const existingCLI = mode === 'wrapper' ? custom : mode === 'success' ? resolve('../.venv/bin/note') : resolve('../backend/bin/note');
       const commands: string[] = [];
       let warmingUp = true;
       const dependencies = {
@@ -50,8 +51,10 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         processExecutable: async () => mode === 'service-wrapper' ? '/bin/sh' : process.execPath,
         processDirectory: async () => resolve('..'),
         run: async (executable: string, args: string[], childEnv: NodeJS.ProcessEnv, input?: string) => {
+          if (executable === '/usr/bin/busctl') return JSON.stringify({ type: 'a(sasasttttuii)', data: [[mode === 'unit-wrapper' ? custom : process.execPath, [process.execPath, script], []]] });
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
+          if (action === 'show' && mode === 'user-wrapper') return 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n';
           if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? injected?.pid || 123 : 0}\n`;
           if (action === 'stop') active = false;
           if (action === 'start') {
@@ -82,8 +85,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
-      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock'].includes(mode)) {
-        await assert.rejects(operation, mode === 'relative-path' ? /absolute service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') ? /documented direct Node HTTP/ : /custom CLI wrapper/);
+      if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper'].includes(mode)) {
+        await assert.rejects(operation, mode === 'relative-path' ? /absolute service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') || mode === 'unit-wrapper' ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }

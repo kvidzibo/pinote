@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -107,6 +107,21 @@ test('Kitty existing address, exact launch envelope and literal argv, no shell',
   process.env.TEST_KITTY_FAIL = 'yes'; await assert.rejects(() => address(join(tools.bin, 'kitty')), /remote control failed/);
   assert.equal(tools.calls().slice(4).every((a: string[]) => a[0] === '@' && a[2] === 'unix:@explicit'), true);
   await assert.rejects(() => remote(join(tools.bin, 'missing'), 'unix:@x', 'ls'), /remote control failed/);
+});
+test('Kitty rejects a non-UTF-8 canonical folder without launching in its U+FFFD sibling', async () => {
+  const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit';
+  const id = await model.add('task'), note = store(s => s.get(id));
+  const target = Buffer.concat([Buffer.from(`${root}/project-`), Buffer.from([0xff])]);
+  const sibling = join(root, 'project-\ufffd'), alias = join(root, 'link');
+  mkdirSync(target);
+  try {
+    mkdirSync(sibling); symlinkSync(target, alias);
+    const launch = (directory: string) => respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory } }, paths);
+    assert.deepEqual(await launch(alias), { protocol: 1, ok: false, error: { code: 'invalid', message: 'Choose an existing directory.' } });
+    assert.equal(existsSync(tools.log), false);
+    assert.equal((await launch(sibling)).ok, true);
+    assert.ok(tools.calls()[1].includes(`--cwd=${sibling}`));
+  } finally { rmdirSync(target); }
 });
 test('Kitty new-window argv and unavailable tool/directory validation', async () => {
   const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id));

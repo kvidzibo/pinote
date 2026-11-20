@@ -7,6 +7,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const VERSION = '0.26.0';
 export type Paths = { data: string; state: string; database: string; log: string };
+// Reject invalid filename bytes rather than resolving to a different path containing U+FFFD.
+export function realpathUtf8(path: string): string {
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+    realpathSync.native(path, { encoding: 'buffer' }),
+  );
+}
 export function xdgPath(variable: string, fallback: string, env: NodeJS.ProcessEnv = process.env): string {
   const home = env[variable] && isAbsolute(env[variable]!) ? env[variable]! : `${env.HOME || homedir()}/${fallback}`;
   const components = home.split('/');
@@ -15,9 +21,7 @@ export function xdgPath(variable: string, fallback: string, env: NodeJS.ProcessE
   // Resolve through the last '..' before join() can erase it. Require that
   // prefix to be traversable, but allow a not-yet-created profile after it.
   return parent < 0 ? home : join(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-      realpathSync.native(components.slice(0, parent + 1).join('/') + '/', { encoding: 'buffer' }),
-    ),
+    realpathUtf8(components.slice(0, parent + 1).join('/') + '/'),
     components.slice(parent + 1).join('/'),
   );
 }

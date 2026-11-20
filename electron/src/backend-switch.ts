@@ -285,7 +285,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     if (version !== `pinote ${targetVersion}`) throw new Error('Bundled CLI verification failed.');
     const before = await service(run, env);
     if (before.present && !before.active) throw new Error('The installed Pinote service is stopped. Leave it stopped; switch when it is running so its database can be verified.');
-    let serviceArguments: string[] | undefined;
+    let serviceArguments: string[] | undefined, originalHost: string | undefined, originalPort: string | undefined;
     if (before.active) {
       await access('/usr/bin/env', constants.X_OK);
       serviceArguments = await (dependencies.processArguments || (async pid => (await readFile(`/proc/${pid}/cmdline`)).toString().split('\0').filter(Boolean)))(before.pid);
@@ -298,7 +298,12 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
         documented = running === runtime && await realpath(serviceArguments[0]) === runtime && await realpath(serviceArguments[1]) === await realpath(join(cwd, 'pi/dist-mcp/mcp/http.js'));
       } catch { /* An unverifiable process must not be stopped or reconfigured. */ }
       if (!documented) throw new Error('Automatic switching requires the documented direct Node HTTP service in its project working directory, using the same trusted Node runtime as Electron.');
+      // /proc cannot distinguish a direct unit from a wrapper that execs Node.
+      const unit = JSON.parse(await run('/usr/bin/busctl', ['--user', '--json=short', 'get-property', 'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/pinote_2eservice', 'org.freedesktop.systemd1.Service', 'ExecStartEx'], env));
+      const entry = unit.data?.[0];
+      if (unit.type !== 'a(sasasttttuii)' || unit.data.length !== 1 || entry[0] !== serviceArguments[0] || JSON.stringify(entry[1]) !== JSON.stringify(serviceArguments) || JSON.stringify(entry[2]) !== '[]') throw new Error('Automatic switching requires the documented direct Node HTTP unit command without wrappers or flags.');
       const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(before.pid);
+      originalHost = serviceEnv.PINOTE_HOST; originalPort = serviceEnv.PINOTE_PORT;
       await verifyExistingCLI(options, run, serviceEnv);
       await (dependencies.listening || listening)(serviceEnv);
     }
@@ -306,6 +311,10 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     for (const target of targets(options, serviceArguments)) {
       await safeDirectory(dirname(target.path));
       files.push(await snapshot(target.path, target.text, target.mode, target.link));
+    }
+    // This launcher is independently user-facing; the service may use another CLI.
+    if (files.some(file => file.path === paths.cli && file.kind !== 'missing')) {
+      await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: paths.cli });
     }
     const backup = join(paths.state, 'backups', randomUUID()); await safeDirectory(backup, true);
     for (const file of files) {
@@ -342,6 +351,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
         if (!after.active || !after.pid) throw new Error('Pinote service did not restart; restoring the previous installation.');
         const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(after.pid);
         await verifyServiceEnvironment(serviceEnv);
+        if (serviceEnv.PINOTE_HOST !== originalHost || serviceEnv.PINOTE_PORT !== originalPort) throw new Error('The service listener configuration changed; restoring the previous installation.');
         if (serviceEnv.PINOTE_NOTE_COMMAND !== paths.cli) throw new Error('The service environment overrides the new CLI; restoring the previous installation.');
         await probe(options, run, serviceEnv);
         try { await (dependencies.listening || listening)(serviceEnv); ready++; }

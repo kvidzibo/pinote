@@ -17,11 +17,13 @@ assert.equal(spawnSync('/usr/bin/flock', ['-x', '3'], { stdio: ['ignore', 'ignor
 const root = await mkdtemp(join(tmpdir(), 'pinote-switch-ui-'));
 const env = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_RUNTIME_DIR: join(root, 'runtime'), PATH: `${root}/bin:${dirname(process.execPath)}:/usr/bin:/bin`, PINOTE_NODE: process.execPath, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend'), NO_AT_BRIDGE: '1' };
 for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE']) delete env[key];
+// The simulated user installation must not inherit host loader overrides.
+for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key)) delete env[key];
 for (const path of ['bin', 'data', 'state', 'config', 'cache', 'runtime', '.local/bin']) await mkdir(join(root, path), { recursive: true, mode: 0o700 });
 await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nprintf "LoadState=not-found\\nActiveState=inactive\\nMainPID=0\\n"\n', { mode: 0o700 });
 const marker = join(root, 'python-calls');
 await writeFile(env.PINOTE_ELECTRON_BACKEND, `#!/bin/sh\nprintf x >> '${marker}'\nexec '${resolve('../.venv/bin/pinote-electron-backend')}'\n`, { mode: 0o700 });
-const old = join(root, 'legacy-note'); await writeFile(old, '#!/bin/sh\necho legacy\n', { mode: 0o700 });
+const old = resolve('../.venv/bin/note');
 await symlink(old, join(root, '.local/bin/note'));
 const seed = spawnSync(process.execPath, [resolve('../backend/dist/cli.mjs'), '--no-notify', 'Existing task survives switch'], { env, encoding: 'utf8' }); assert.equal(seed.status, 0, seed.stderr);
 const config = join(root, 'i3.conf');

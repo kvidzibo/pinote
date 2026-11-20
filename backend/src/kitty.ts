@@ -1,9 +1,9 @@
-import { readdirSync, readFileSync, statSync, realpathSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NoteError, type Note } from './store.ts';
-import { findExecutable, jsonStringify, checkCancelled } from './runtime.ts';
+import { findExecutable, jsonStringify, checkCancelled, realpathUtf8 } from './runtime.ts';
 import { pythonStrip } from './compat.ts';
 const exec = promisify(execFile);
 export async function remote(kitty: string, address: string, ...args: string[]): Promise<string> {
@@ -27,7 +27,7 @@ export async function address(kitty: string): Promise<string | null> {
 }
 export function validate_directory(directory: string): string {
   try {
-    const folder = realpathSync.native(directory);
+    const folder = realpathUtf8(directory);
     if (statSync(folder).isDirectory()) return folder;
   } catch { /* Invalid, inaccessible or missing directory. */ }
   throw new NoteError('Choose an existing directory.');

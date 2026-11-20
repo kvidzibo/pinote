@@ -61,7 +61,9 @@ the bundled CLI/bridge against the same database, then:
   just its command line. The service PATH must contain only absolute entries and
   resolve `flock` to the system utility. PATH entries and home/XDG paths used for
   switching must not contain `..`. The original CLI's database is checked before
-  stopping the service. Custom launchers and runtime injection are unsupported. The
+  stopping the service. The user CLI being replaced is checked separately, even
+  without a service. An active service also requires `busctl` to verify its actual
+  unit command. Custom launchers and runtime injection are unsupported. The
   drop-in preserves service arguments/environment files and overrides the CLI
   at execution, including an old command supplied by `EnvironmentFile`.
 - Saves an explicit Node preference, restarts the previously running service,
