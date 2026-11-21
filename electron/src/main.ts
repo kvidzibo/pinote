@@ -230,12 +230,12 @@ async function boot() {
         let service: Awaited<ReturnType<typeof checkSwitchEnvironment>>;
         try { service = await checkSwitchEnvironment(process.env, bundles, database); }
         catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
-        if (!command.args.length && service === 'matches') return { switched: false, canSwitch: false, detail: 'Your CLI and service already use Node. Remove the desktop diagnostic backend override and relaunch Pinote to use the bundled desktop backend.', version: '' };
+        const version = (await runCommand(switchRuntime().node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
+        if (!command.args.length && service === 'matches') return { switched: false, canSwitch: false, detail: 'Your CLI and service already use Node. Remove the desktop diagnostic backend override and relaunch Pinote to use the bundled desktop backend.', version };
         let installed: boolean;
         try { installed = await hasInstalledLauncher(switchOptions()); }
         catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the installed launcher.', version: '' }; }
         const switched = command.args.length > 0 && service !== 'different' && installed;
-        const version = (await runCommand(switchRuntime().node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
           detail: switched ? `The desktop and user CLI use Node. ${service === 'matches' ? 'The running service uses the same CLI.' : 'No Pinote service is installed.'}` : selected ? 'Node is selected for the desktop, but the user CLI or service still needs migration.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
       } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
