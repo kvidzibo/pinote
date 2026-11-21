@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.18.0) bundles the matching Node backend;
+The private `electron/` package (0.19.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -204,13 +204,18 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   reverts text edits within the open editor and autosaves the result; it does not
   undo tag changes.
   Copy remains available when saving is paused.
+- Below the text, **Agent fields** lists the task's saved handoff fields plus
+  those configured in Pi's field settings (`pi-note.json`), even when unset or
+  disabled. Edits autosave like text, one revision-bound write at a time;
+  clearing a value removes the field. History records them as agent-field
+  changes, but your own edit does not mark the task as an unread agent update.
 - Local text and pending tag selections (including new-tag folders and tag
   clears) are cached before each write. Failed saves pause autosave and offer
   an explicit retry; unknown outcomes require the recovery acknowledgement first.
   External revision changes make the editor read-only rather than overwriting
   another client's work. Close and use **Menu → Recover edit drafts…**
   to copy/discard stale text, then reopen the latest task to reconcile it.
-  Recovered drafts show any pending tag and never autosave merely because they
+  Recovered drafts show any pending tag and agent field values and never autosave merely because they
   are opened: review and explicitly retry both text and tag changes. Opening an
   editor does not create a write or history entry.
 - Search tag selectors and filters; create/manage saved tags and optional default

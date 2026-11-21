@@ -126,6 +126,11 @@ textarea { resize: none; line-height: 1.5; }
 .tag-chevron { color: #b6bfce; }
 .edit-text { flex: 1 1 auto; width: 100%; min-height: 80px; overflow: auto; }
 .task-editor > .warning { flex-shrink: 0; font-size: 11px; }
+.edit-fields { display: flex; flex-direction: column; flex-shrink: 0; gap: 6px; max-height: 40%; overflow: auto; }
+.edit-fields h3 { position: sticky; top: 0; margin: 0; color: #b6bfce; background: #232832; font-size: 11px; text-transform: uppercase; }
+.edit-fields label { flex-direction: row; align-items: baseline; gap: 8px; }
+.edit-fields label > span { flex: 0 0 90px; color: #b6bfce; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.edit-fields textarea { flex: 1; field-sizing: content; max-height: 7.5em; padding: 5px 7px; overflow-wrap: anywhere; }
 .edit-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .edit-feedback { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .edit-status { font-size: 12px; }

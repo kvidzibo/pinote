@@ -9,9 +9,10 @@ import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
+import { getAgentDir } from '../../pi/config-path.js';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
-import { MAX_STATE_FILE_BYTES, mutating, safeLink, validMenuRequest, validParams, validState } from './security.ts';
+import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.enableSandbox();
@@ -281,6 +282,8 @@ async function boot() {
       if (result.response !== 1) return false;
       uncertain = false; state.warning = ''; await persist(); return true;
     },
+    // Field names configured in Pi's settings; the editor offers them even when a task has no value yet.
+    'agent-fields': async () => { try { return agentFieldNames(JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8'))); } catch { return []; } },
     'save-state': async (_event, value: unknown) => { if (readonly || !validState(value)) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };

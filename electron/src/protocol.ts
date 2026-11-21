@@ -8,7 +8,7 @@ export type Task = {
 export type Tag = { name: string; folder: string | null; available?: boolean };
 export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean; kittyStartPrompt: string } };
 export type Target = { id: number; revision: string };
-export type Mutation = { changed: boolean; id?: number; tag?: string; revision?: string };
+export type Mutation = { changed: boolean; id?: number; tag?: string; revision?: string; agentEvent?: number };
 export type Operations = {
   handshake: { params: Record<string, never>; result: { version: string; protocol: number; database: string } };
   snapshot: { params: { view: View }; result: Snapshot };
@@ -16,6 +16,7 @@ export type Operations = {
   edit: { params: Target & { text: string }; result: Mutation };
   transition: { params: Target & { action: 'start' | 'reset' | 'done' | 'rm' | 'restore'; state: string }; result: Mutation };
   tag: { params: Target & { tag: string | null }; result: Mutation };
+  agent: { params: Target & { fields: Record<string, string | null> }; result: Mutation };
   schedule: { params: Target & { when: string }; result: Mutation };
   create_tag: { params: { name: string; folder: string | null; id?: number; revision?: string }; result: Mutation };
   rename_tag: { params: { name: string; newName: string }; result: Mutation };
@@ -58,7 +59,8 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
   });
   return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
 }
-export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null };
+// fields holds unsaved agent field values by name; an empty value removes the field.
+export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; fields?: Record<string, string> };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
   creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; scroll?: { ordinary: number; pinned: number };
@@ -78,6 +80,7 @@ export type PreviewApi = {
   onUpdate(callback: (data: PreviewData) => void): void;
 };
 export type PinoteApi = BackendApi & {
+  agentFields(): Promise<string[]>;
   backendSettings(): Promise<BackendSettings>;
   switchBackend(): Promise<boolean>;
   onBackendSwitchProgress(callback: (text: string) => void): void;

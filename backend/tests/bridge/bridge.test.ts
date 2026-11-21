@@ -115,6 +115,18 @@ test('all routes, canonical tags, revision acknowledgements, schedules and metad
   assert.equal((await call('snapshot', { view: 'scheduled' })).notes[0].remind_at, '2099-01-01T00:00:00.123456+00:00');
   await call('transition', { ...target(id), action: 'restore', state: 'scheduled' }); assert.deepEqual(await call('completions', { ids: [Number(id)] }), []);
 });
+test('agent sets and removes handoff fields against the task revision', async () => {
+  const id = (await call('add', { text: 'task', tag: null })).id, first = target(id);
+  const set = await call('agent', { ...first, fields: { PRs: 'https://example.test/pulls/1\nhttps://example.test/pulls/2', Worktree: '/tmp/work' } });
+  assert.equal(set.changed, true); assert.notEqual(set.revision, first.revision); assert.ok(set.agentEvent > 0);
+  assert.equal((await respond(request('agent', { ...first, fields: { Worktree: '/tmp/stale' } }), paths)).error.code, 'conflict');
+  for (const fields of [{ Worktree: 1 }, { Worktree: ' ' }, { ' ': 'value' }, [], 'x']) assert.equal((await respond(request('agent', { id: Number(id), revision: set.revision, fields }), paths)).error.code, 'invalid');
+  const same = await call('agent', { id: Number(id), revision: set.revision, fields: { Worktree: '/tmp/work' } });
+  assert.deepEqual([same.changed, same.revision, same.agentEvent], [false, set.revision, set.agentEvent]);
+  const removed = await call('agent', { id: Number(id), revision: set.revision, fields: { Worktree: null, Notes: 'kept' } });
+  assert.ok(removed.agentEvent > set.agentEvent);
+  assert.deepEqual({ ...(await call('snapshot', { view: 'active' })).notes[0].agent_notes }, { Notes: 'kept', PRs: 'https://example.test/pulls/1\nhttps://example.test/pulls/2' });
+});
 test('stale writes preserve history and create no tags; display and SQLite busy', async () => {
   const id = (await call('add', { text: 'task', tag: null })).id, old = target(id);
   await call('edit', { ...old, text: 'new' });
