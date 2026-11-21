@@ -390,8 +390,10 @@ function launcher(runtime: SwitchRuntime): string {
 export async function hasInstalledLauncher(options: SwitchOptions): Promise<boolean> {
   try {
     const file = await snapshot(locations(options.env).cli, '', 0, true);
-    return file.kind === 'file' && file.mode === 0o700 && file.data === Buffer.from(launcher(options)).toString('base64');
-  } catch { return false; } // Never execute an unknown launcher to check its status.
+    if (file.kind !== 'file' || file.mode !== 0o700 || file.data !== Buffer.from(launcher(options)).toString('base64')) return false;
+    if (await verifyDesktopCommand(options.env) !== file.path) throw new Error('The installed Node launcher is not executable on the desktop PATH. Check its filesystem mount options.');
+    return true;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; } // Never execute a launcher to inspect it.
 }
 function systemdQuote(value: string): string {
   if (/[\u0000-\u001f\u007f]/.test(value)) throw new Error('Unsupported service command path.');
@@ -672,7 +674,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       await controlService(run, env, 'daemon-reload');
       await startGuarded(env, journal, options, serviceArguments, dependencies, paths.cli);
     }
-    await verifyDesktopCommand(env);
+    if (await verifyDesktopCommand(env) !== paths.cli) throw new Error('The installed launcher was not selected by the desktop PATH.');
     const currentDatabase = await databaseIdentity(options.database);
     if (!same(currentDatabase, desktopDatabase) || (originalDatabase && !same(currentDatabase, originalDatabase))) throw new Error('The database was replaced during the switch.');
     // Restart and readiness probes take time. Re-read every published target
