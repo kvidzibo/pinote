@@ -78,7 +78,7 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
   const api = `${instance.url}/api/v1/repos/${owner}/${repo}`;
   async function request(path) {
     // Never follow API redirects or URLs returned by the server with credentials.
-    const response = await fetch(`${api}/${path}`, { headers, redirect: 'error', signal });
+    const response = await fetch(path ? `${api}/${path}` : api, { headers, redirect: 'error', signal });
     if (!response.ok) throw new Error('API request failed');
     let body = '';
     let size = 0;
@@ -134,8 +134,13 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
       notification: { key: `forgejo-pr:${fingerprint}`, message: 'PR checks failed' }, recheckAfterSeconds: 60 };
   }
   // mergeable=false also means checking, errors or drafts: never invent a conflict alert.
-  const pending = !current.mergeable || checks.some((check) => check.status === 'pending');
-  // No statuses on a mergeable PR: the repository reports no CI, so nothing is awaited.
+  let pending = !current.mergeable || checks.some((check) => check.status === 'pending');
+  if (!pending && !checks.length) {
+    // No statuses: Actions has yet to report where it is enabled; elsewhere nothing is awaited.
+    const repository = await request('');
+    if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
+    pending = repository.has_actions;
+  }
   return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : checks.length ? 'checks passing' : 'has no checks'}`,
     display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
 }
