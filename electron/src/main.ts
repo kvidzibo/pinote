@@ -116,7 +116,7 @@ async function boot() {
   const bundles = join(app.isPackaged ? process.resourcesPath : __dirname, 'pinote-backend');
   const bundle = join(bundles, 'bridge.mjs');
   const switchRuntime = () => ({ bundles, node: backendCommand(bundle, { ...process.env, PINOTE_ELECTRON_BACKEND: undefined }).executable });
-  await recoverBackendSwitch(process.env, switchRuntime);
+  await recoverBackendSwitch(process.env);
   const environment = await preferredBackendEnvironment(process.env);
   const command = backendCommand(bundle, environment);
   const backend = new Backend(command.executable, environment, command.args);
@@ -248,7 +248,7 @@ async function boot() {
         const selected = await hasBackendPreference(process.env);
         const switched = selected && await hasInstalledLauncher(options);
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
-          detail: switched ? 'Node is selected for the desktop. The user CLI matches this installation.' : selected ? 'Node is selected for the desktop, but the installed user CLI is missing or different. Check your CLI and service configuration before switching again.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
+          detail: switched ? 'Node is selected for the desktop. The user CLI matches this installation.' : selected ? 'Node is selected for the desktop, but the installed user CLI is missing or different. Check your CLI before switching again.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
       } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
     },
     'switch-backend': async () => {
@@ -257,7 +257,7 @@ async function boot() {
       try {
         switchOptions();
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
-          detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, replaces your ~/.local/bin/note command, and configures the existing pinote.service to use it. The service must be running to verify its database; no new service is installed or enabled.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. The existing service and Electron restart after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',
+          detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, and replaces your ~/.local/bin/note command. An existing note command must use the same database.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. Electron restarts after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',
           buttons: ['Cancel', 'Switch to Node backend'], defaultId: 0, cancelId: 0 });
         if (result.response !== 1 || closing) return false;
         switchRequested = true;

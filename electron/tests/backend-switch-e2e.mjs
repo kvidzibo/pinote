@@ -21,7 +21,6 @@ env.PI_CODING_AGENT_DIR = join(root, 'pi-agent'); // No token there: the embedde
 // The simulated user installation must not inherit host loader overrides.
 for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key)) delete env[key];
 for (const path of ['bin', 'data', 'state', 'config', 'cache', 'runtime', '.local/bin']) await mkdir(join(root, path), { recursive: true, mode: 0o700 });
-await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nprintf "LoadState=not-found\\nActiveState=inactive\\nMainPID=0\\n"\n', { mode: 0o700 });
 const marker = join(root, 'python-calls');
 await writeFile(env.PINOTE_ELECTRON_BACKEND, `#!/bin/sh\nprintf x >> '${marker}'\nexec '${resolve('../.venv/bin/pinote-electron-backend')}'\n`, { mode: 0o700 });
 const old = resolve('../.venv/bin/note');
