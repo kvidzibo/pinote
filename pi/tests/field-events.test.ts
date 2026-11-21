@@ -91,6 +91,13 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       const resource = await client!.readResource({ uri: 'pinote://ui', _meta: meta(feature, selectedId) });
       return ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
     };
+    const agentContext = async () => (await client!.readResource({ uri: 'pinote://agent-context', _meta: meta() })).contents;
+    const beforeRecheck = await agentContext();
+    assert.match(JSON.stringify(beforeRecheck), /CI failed/);
+    const beforeCheckTime = automation.statuses(task)[0].checkedAt;
+    forceDue(); await automation.tick();
+    assert.notEqual(automation.statuses(task)[0].checkedAt, beforeCheckTime);
+    assert.deepEqual(await agentContext(), beforeRecheck, 'an unchanged recheck must not append a prompt update');
     assert.equal((await view()).fieldNotifications?.length, 1);
     const acknowledged = await client.readResource({ uri: 'pinote://ui', _meta: {
       ...meta(), 'native-ui/context': { ...meta()['native-ui/context'], fieldReceipts: notices.map((notice) => notice.id) },
