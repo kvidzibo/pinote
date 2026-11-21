@@ -32,7 +32,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));
   const open = async (request: unknown, entries: any[] = [], reason = 'startup', draft = '', mode = 'tui', sessionId = randomUUID()) => {
     const previous = clients.at(-1);
-    if (previous) await previous.handlers.get('session_shutdown')!({ reason: reason === 'reload' ? 'reload' : 'quit' }, previous.ctx);
+    if (previous) await previous.handlers.get('session_shutdown')!({ reason: reason === 'reload' || reason === 'new' ? reason : 'quit' }, previous.ctx);
     if (request === undefined) delete process.env.PINOTE_LAUNCH_TASK;
     else process.env.PINOTE_LAUNCH_TASK = typeof request === 'string' ? request : JSON.stringify(request);
     const handlers = new Map<string, Function>(), commands = new Map<string, any>(), notices: string[] = [];
@@ -80,37 +80,42 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
         getEditorText: () => editor.text,
         setEditorText: (text: string) => { editor.text = text; editor.writes.push(text); } } };
     const client = { handlers, ctx, entries, notices, editor,
+      cards: () => entries.filter((entry) => entry.customType === 'pinote-startup-task').map((entry) => entry.data),
+      selection: () => entries.filter((entry) => entry.customType === 'pinote-remote-v1').at(-1).data.state,
       get shutdowns() { return shutdowns; }, setIdle: (value: boolean) => { idle = value; },
       choose: async (...values: unknown[]) => { choices.push(...values); await commands.get('pinote').handler('', ctx); } };
     clients.push(client);
-    await handlers.get('session_start')!({ reason }, ctx);
+    await handlers.get('session_start')!({ reason, previousSessionFile: previous?.ctx.sessionManager.getSessionFile() }, ctx);
     return client;
   };
   try {
     const { startPinoteHttpServer } = await import('../mcp/http.ts');
     service = await startPinoteHttpServer({ port: 0, logPath: join(temp, 'app.log') });
     process.env.PINOTE_URL = service.url;
-    const task = cli('agent', 'add', '--text=Kitty launch target');
+    const task = cli('agent', 'add', '--text=Kitty launch target\n\n- A **Markdown** detail beyond the title.\n\n```python\nif ready:\n\tprocess()\n```');
     const request = { task_id: task.id, updated_at: task.updated_at, prompt: 'is task clear?' };
     const stale = await open({ ...request, updated_at: 'stale-revision' });
     assert.ok(stale.notices.length);
     assert.deepEqual(stale.editor.writes, []);
-    assert.equal(stale.entries.at(-1).data.state.selectedId, null);
+    assert.equal(stale.selection().selectedId, null);
     assert.equal(cli('agent', 'get', String(task.id)).state, 'active');
     assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], [], 'Stale launches never record sessions');
     const malformed = await open('not-json');
     assert.ok(malformed.notices.some((notice) => notice.includes('invalid request')));
     const launched = await open(request, [{ type: 'thinking_level_change', thinkingLevel: 'off' }]);
     assert.deepEqual(launched.notices, []);
+    const card = { id: task.id, text: task.text };
+    assert.deepEqual(launched.cards(), [card]);
     assert.equal(launched.editor.text, 'is task clear?');
     assert.deepEqual(launched.editor.writes, ['is task clear?']);
     assert.equal(cli('agent', 'get', String(task.id)).state, 'in_progress');
-    assert.equal(launched.entries.at(-1).data.state.selectedId, task.id);
-    assert.equal(launched.entries.at(-1).data.state.launch, undefined);
+    assert.equal(launched.selection().selectedId, task.id);
+    assert.equal(launched.selection().launch, undefined);
     const revision = cli('agent', 'get', String(task.id)).updated_at;
     await launched.handlers.get('session_start')!({ reason: 'reload' }, launched.ctx);
-    assert.equal(launched.entries.at(-1).data.state.selectedId, task.id);
+    assert.equal(launched.selection().selectedId, task.id);
     assert.equal(cli('agent', 'get', String(task.id)).updated_at, revision);
+    assert.deepEqual(launched.cards(), [card], 'Reload does not duplicate the display entry');
     assert.deepEqual(launched.editor.writes, ['is task clear?']); // Never refill on reload.
     const launchSession = launched.ctx.sessionManager.getSessionId();
     assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], [launchSession]);
@@ -134,21 +139,26 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     for (const prompt of ['', undefined]) {
       const disabled = await open({ ...current, prompt });
       assert.deepEqual(disabled.editor.writes, []);
-      assert.equal(disabled.entries.at(-1).data.state.selectedId, task.id);
+      assert.equal(disabled.selection().selectedId, task.id);
     }
     const rpc = await open(current, [], 'startup', '', 'rpc');
     assert.deepEqual(rpc.editor.writes, []);
+    assert.deepEqual(rpc.cards(), []);
     for (const prompt of [42, 'x'.repeat(4001), '\x1b[31m']) {
       const invalid = await open({ ...current, prompt });
       assert.ok(invalid.notices.some((notice) => notice.includes('invalid request')));
-      assert.equal(invalid.entries.at(-1).data.state.selectedId, null);
+      assert.equal(invalid.selection().selectedId, null);
       assert.deepEqual(invalid.editor.writes, []);
     }
     const other = cli('agent', 'add', '--text=Do not replace the resumed selection');
     const resumed = await open({ task_id: other.id, updated_at: other.updated_at }, [...launched.entries], 'resume');
-    assert.equal(resumed.entries.at(-1).data.state.selectedId, task.id);
+    assert.equal(resumed.selection().selectedId, task.id);
     assert.deepEqual(resumed.editor.writes, []);
     assert.equal(cli('agent', 'get', String(other.id)).state, 'active');
+    const retained = await open(undefined, [], 'new');
+    assert.deepEqual(retained.cards(), [card], 'A retained selection is displayed in the new transcript');
+    await retained.choose('Clear');
+    assert.deepEqual((await open(undefined, [], 'new')).cards(), []);
     // Only acknowledged completion of the launch task closes its dedicated session.
     const closingTask = cli('agent', 'add', '--text=Close dedicated Kitty tab');
     const dedicated = await open({ task_id: closingTask.id, updated_at: closingTask.updated_at });
@@ -163,7 +173,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal(reloaded.shutdowns, 1);
     assert.deepEqual(reloaded.notices, [], 'completion exits without Git warnings');
     assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'done');
-    assert.equal(reloaded.entries.at(-1).data.state.selectedId, null);
+    assert.equal(reloaded.selection().selectedId, null);
 
     const next = cli('agent', 'add', '--text=Normal Pi completion stays open');
     const normal = await open(undefined);
