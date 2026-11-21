@@ -1,31 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { appendFileSync, mkdirSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isIP } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { createPinoteServer } from './core.ts';
+import { createPinoteServer, type TaskDatabase } from './core.ts';
 import { completionEvents } from './events.ts';
 import { pinoteToken } from '../token.ts';
 import { canonicalDatabase, FieldAutomation } from './field-events.ts';
-
-// Match core's CLI selection, captured at module load for MCP task operations.
-const noteCommand = process.env.PINOTE_NOTE_COMMAND || 'note';
-const exec = promisify(execFile);
-
-async function noteDatabase(): Promise<{ database: string; lexicalDatabase: string }> {
-  const { stdout } = await exec(noteCommand, ['--no-notify', '--database-identity'], {
-    timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024, encoding: 'buffer',
-  });
-  const { database, lexicalDatabase } = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(stdout));
-  if (typeof database !== 'string' || !isAbsolute(database) || typeof lexicalDatabase !== 'string' ||
-      !isAbsolute(lexicalDatabase) || canonicalDatabase(lexicalDatabase) !== database) throw new Error('Invalid note database identity');
-  return { database, lexicalDatabase };
-}
 
 export interface PinoteHttpOptions {
   token?: string;
@@ -77,52 +61,47 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   if (configuredHosts?.some((value) => !/^(?:\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+)(?::[0-9]+)?$/.test(value))) throw new Error('Invalid allowed HTTP authority');
   let allowedHosts = new Set(configuredHosts);
   const fieldListeners = new Set<() => void>();
-  let fieldAutomation: FieldAutomation | undefined;
-  let identity: Awaited<ReturnType<typeof noteDatabase>> | undefined;
-  let fileIdentity: string | undefined;
-  let probe: Promise<void> | undefined;
+  let identity: TaskDatabase | undefined;
+  let opening: Promise<FieldAutomation> | undefined;
   let fieldsDisabled = false;
   const disableFields = () => {
     if (fieldsDisabled) return;
     fieldsDisabled = true;
-    identity = undefined;
     log('field observation disabled; check CLI database identity and watcher state');
   };
-  const fieldsAvailable = () => {
-    if (!identity) return false;
+  const matchesFile = ({ database, lexicalDatabase, fileIdentity }: TaskDatabase) => {
     try {
-      // Also check at the point of use, not just before an asynchronous MCP
-      // request: its CLI calls could have crossed a profile alias retarget.
-      if (canonicalDatabase(identity.lexicalDatabase) === identity.database) {
-        const stat = statSync(identity.database, { bigint: true, throwIfNoEntry: false });
-        const current = stat?.isFile() ? `${stat.dev}:${stat.ino}` : undefined;
-        if (!stat || current) {
-          fileIdentity ??= current; // notes.db may not yet exist on first launch.
-          if (fileIdentity === current) return true;
-        }
-      }
-    } catch { /* An unreadable path isn't proof of identity. */ }
+      if (canonicalDatabase(lexicalDatabase) !== database) return false;
+      const stat = statSync(database, { bigint: true });
+      return stat.isFile() && `${stat.dev}:${stat.ino}` === fileIdentity;
+    } catch { return false; }
+  };
+  const fieldsAvailable = () => {
+    if (stopping || fieldsDisabled || !identity) return false;
+    if (matchesFile(identity)) return true;
     disableFields();
     return false;
   };
-  const verifyFields = () => {
-    if (!fieldsAvailable()) return;
-    // Recheck through the selected command, including wrapper-specific config.
-    // Share concurrent checks and stop probing after the first identity failure.
-    return probe ??= noteDatabase().then((actual) => {
-      if (identity && (actual.database !== identity.database || actual.lexicalDatabase !== identity.lexicalDatabase)) disableFields();
-    }, disableFields).finally(() => { probe = undefined; });
+  const resolveAutomation = async (actual?: TaskDatabase) => {
+    // The first proven task response pins this service to one database. Bare
+    // legacy output is still usable as task data, but never grants field access.
+    if (!actual || stopping || fieldsDisabled) return;
+    if (!matchesFile(actual) || identity && (actual.database !== identity.database ||
+        actual.lexicalDatabase !== identity.lexicalDatabase || actual.fileIdentity !== identity.fileIdentity)) {
+      disableFields();
+      return;
+    }
+    identity ??= actual;
+    try {
+      const fieldAutomation = await (opening ??= FieldAutomation.observe({
+        database: identity.database,
+        available: fieldsAvailable,
+        changed: () => { for (const listener of fieldListeners) listener(); },
+        onError: () => log('field observation failed'),
+      }));
+      return fieldsAvailable() ? fieldAutomation : undefined;
+    } catch { disableFields(); }
   };
-  try {
-    if ((process.env.PINOTE_NOTE_COMMAND || 'note') !== noteCommand) throw new Error('CLI selection changed');
-    identity = await noteDatabase();
-    if (fieldsAvailable()) fieldAutomation = await FieldAutomation.observe({
-      ...identity,
-      available: fieldsAvailable,
-      changed: () => { for (const listener of fieldListeners) listener(); },
-      onError: () => log('field observation failed'),
-    });
-  } catch { disableFields(); }
   const reject = (res: ServerResponse, status: number) => { res.writeHead(status, { 'Content-Type': 'text/plain' }); res.end(`${status}\n`); };
   const single = (req: IncomingMessage, name: string) => {
     const values = req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === name);
@@ -181,8 +160,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
         });
         const entry: Session = { transport, server: undefined!, busy: 0, streams: 0, touched: Date.now() };
         entry.server = createPinoteServer({
-          fieldAutomation,
-          get watcherLogPath() { return fieldsAvailable() ? fieldAutomation?.logPath : undefined; },
+          resolveAutomation,
           onFieldChange: (listener) => { fieldListeners.add(listener); return () => { fieldListeners.delete(listener); }; },
           onError: () => log('protocol or notification failed'),
           onBusy: (delta) => { entry.busy += delta; entry.touched = Date.now(); },
@@ -196,8 +174,6 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
         log('session opened');
       } else if (isInitializeRequest(body)) return reject(res, 400);
       const current = session;
-      if (req.method === 'POST' && !created) await verifyFields();
-      if (stopping) return reject(res, 503);
       await current.transport.handleRequest(req, res, body);
       if (current.transport.sessionId && all.has(current)) sessions.set(current.transport.sessionId, current);
       else await current.server.close();
@@ -211,7 +187,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   listener.headersTimeout = 10_000;
   try {
     await new Promise<void>((ok, fail) => { listener.once('error', fail); listener.listen(port, host, () => { listener.off('error', fail); ok(); }); });
-  } catch (error) { await fieldAutomation?.close(); await events.close(); throw error; }
+  } catch (error) { await events.close(); throw error; }
   const address = listener.address();
   if (!address || typeof address === 'string') throw new Error('Missing HTTP address');
   const authority = `${isIP(host) === 6 ? `[${host}]` : host}:${address.port}`;
@@ -241,7 +217,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
       await closed;
     } finally {
       clearTimeout(force);
-      await fieldAutomation?.close();
+      await opening?.then(automation => automation.close(), () => {});
       log('stopped');
     }
   })();

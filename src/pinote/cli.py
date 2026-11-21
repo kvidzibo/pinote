@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
+import stat
 import sys
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -197,7 +200,22 @@ def explicit_tag(value: str) -> str:
     return tag
 
 
-def execute_agent(args: argparse.Namespace, store: Store) -> None:
+def task_database_identity(path: Path) -> dict[str, str] | None:
+    try:
+        database = path.resolve(strict=True)
+        info = database.stat()
+        if stat.S_ISREG(info.st_mode):
+            return {
+                "database": str(database),
+                "lexicalDatabase": str(path),
+                "fileIdentity": f"{info.st_dev}:{info.st_ino}",
+            }
+    except (OSError, RuntimeError, UnicodeError):
+        pass  # A task operation can still succeed without usable identity metadata.
+    return None
+
+
+def execute_agent(args: argparse.Namespace, store: Store, emit: Callable[[object], None]) -> None:
     action = args.agent_action
     if action in {"select", "selected"} and not args.cwd.is_absolute():
         raise NoteError("--cwd must be an absolute project directory.")
@@ -244,7 +262,7 @@ def execute_agent(args: argparse.Namespace, store: Store) -> None:
         note = store.get(args.id)
     else:
         note = store.get(args.id)
-    print(json.dumps(agent_task(note), ensure_ascii=False))
+    emit(agent_task(note))
 
 
 def execute(args: argparse.Namespace, paths: Paths) -> int:
@@ -255,7 +273,26 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         and args.agent_action in {"select", "start", "update", "done", "add", "tag"}
     )
     lock = display_lock(paths) if needs_lock else nullcontext()
+    task_response = os.environ.get("PINOTE_TASK_RESPONSE") == "1" and (
+        args.command == "agent" and args.agent_action != "tags"
+        or args.command == "list" and args.json
+    )
+    before = task_database_identity(paths.database) if task_response else None
     with lock, Store(paths.database) as store:
+        def emit(data: object) -> None:
+            if task_response:
+                # Verify the file around SQLite open/use, and check the opened path
+                # on the same connection that produced the task result.
+                opened = store.connection.execute("PRAGMA database_list").fetchone()[2]
+                identity = (
+                    before
+                    if before and opened == before["database"]
+                    and task_database_identity(paths.database) == before
+                    else None
+                )
+                data = {"pinoteTaskResponse": 1, "identity": identity, "data": data}
+            print(json.dumps(data, ensure_ascii=False))
+
         # No nested lock, and ordinary reads stay lock-free unless a timer is due.
         if needs_lock:
             store.activate_due()
@@ -263,7 +300,7 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
             with display_lock(paths):
                 store.activate_due()
         if args.command == "agent":
-            execute_agent(args, store)
+            execute_agent(args, store, emit)
         elif args.command == "add":
             note_id = store.add(" ".join(args.text))
             print(f"Added note {note_id}.")
@@ -288,14 +325,11 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
         elif args.command == "list":
             notes = store.notes(all_states=args.all)
             if args.json:
-                print(
-                    json.dumps(
-                        [
-                            {"id": note.id, "text": note.text, "state": note.state, "tag": note.tag}
-                            for note in notes
-                        ],
-                        ensure_ascii=False,
-                    )
+                emit(
+                    [
+                        {"id": note.id, "text": note.text, "state": note.state, "tag": note.tag}
+                        for note in notes
+                    ]
                 )
             else:
                 for note in notes:
@@ -367,7 +401,9 @@ def main(argv: list[str] | None = None) -> int:
     paths = Paths.discover()
     try:
         if args.command == "database-identity":
-            print(json.dumps({"database": str(paths.database.resolve()), "lexicalDatabase": str(paths.database)}))
+            print(json.dumps({
+                "database": str(paths.database.resolve()), "lexicalDatabase": str(paths.database),
+            }))
             return 0
         configure_logging(paths)
         return execute(args, paths)

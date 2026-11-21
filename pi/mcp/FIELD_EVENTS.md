@@ -2,40 +2,76 @@
 
 Pinote Electron **0.14.0+** runs enabled field watchers while the desktop is open. The HTTP service (pi-note **0.47.0+**) delivers their results to Pi but never launches watcher scripts. Use the same user, database and XDG state directory for both processes. Upgrade both together; stop the old service runner before starting the new desktop.
 
-The HTTP service verifies the database through its selected CLI
-(`PINOTE_NOTE_COMMAND`, or `note` on PATH). Use Node CLI **0.27.0+** or Python CLI **0.26.0+** for the
-side-effect-free `note --database-identity` probe. A trusted wrapper must
-forward the probe to the same backend and profile that handles task commands.
-If verification fails or the observed profile changes, watcher delivery and
-conversation claims are disabled until HTTP is restarted. Ordinary task commands
-continue using the selected CLI.
+The HTTP service requests task-response metadata from its selected CLI
+(`PINOTE_NOTE_COMMAND`, or `note` on PATH) using `PINOTE_TASK_RESPONSE=1`.
+Use a Node or Python CLI build that supports this opt-in format. A trusted
+wrapper must preserve the environment flag and forward the response intact;
+do not attach identity from a separate probe. Regular CLI task JSON and Pi task
+content are unchanged. With an older CLI, or whenever a task response cannot
+prove which DB it used, ordinary task commands still work but watcher status,
+notifications and conversation claims are withheld for that operation. The
+service pins the first verified profile used for watcher access. If it detects
+a different profile or the pinned DB path/file changes, restart HTTP on the
+intended profile to restore watcher delivery. HTTP never runs the watchers.
 
-### Upgrading a profile accessed through a symlink
+### Upgrading old watcher state (including canonical paths)
 
-New watcher state uses the hash of the resolved `notes.db` path. Older releases
-hashed the lexical path (including any alias). When old state is found under a
-known alias, automation stops rather than replaying history and issuing new
-receipt IDs. If you plan to remove or change the old alias, migrate before
-starting either updated process; an alias no longer in use cannot be detected
-from the hash alone. To migrate without losing ownership or receipts:
+Older watcher databases do not record which notes DB they watched. The old
+service hashed its **own** configured `notes.db` path; a wrapper could select
+another DB even if that path was canonical. A matching hash, task ID, field,
+or current wrapper setting is not proof. Unverified state anywhere under the
+shared `pinote/field-events/` namespace root blocks watcher startup/delivery;
+ordinary task commands continue. New state binds its namespace to the resolved
+notes DB in SQLite. To resolve old state offline:
 
-1. Stop Electron and the HTTP service (including any old runner). Run
-   `note --database-identity` through the service's selected CLI with the same
-   profile environment. Confirm that the resolved `database` is the database the
-   old runner **actually** watched. The `lexicalDatabase` value is the previous
-   hash input for that alias; use the old runner's exact path if it used a
-   different alias. A retargeted alias or an unknown old profile cannot establish
-   where the old state belongs: do not migrate it by guessing.
-2. In the shared state home, back up the old and any new
-   `pinote/field-events/<hash>/` directories. Each `<hash>` is the first 16 hex
-   digits of SHA-256 of the corresponding absolute path, without a newline
-   (`printf '%s' "$path" | sha256sum`). With both processes stopped, move the
-   entire verified old directory, including any SQLite sidecars, to the resolved
-   hash directory. Do not merge or overwrite an existing destination; resolve
-   any conflict offline first. Keep the state private and do not move `notes.db`.
-3. Restart both processes on the verified profile. Any overdue result stays
-   stale and cannot alert until successfully rechecked; unchanged failures keep
-   their existing receipt IDs.
+1. Stop Electron and HTTP, including any old runner, for every profile sharing
+   the state root. Work as the same user. Locate the root at
+   `$XDG_STATE_HOME/pinote/field-events` (default `~/.local/state/pinote/field-events`).
+   Back up the entire root in a private location outside it, including SQLite
+   sidecars. Do not move or edit `notes.db`.
+2. For each unbound `<hash>/state.db`, verify from historical deployment records
+   which **single** notes database the old runner actually used for its entire
+   history. If that cannot be established, or the state mixed profiles, move
+   the entire `<hash>/` directory out of the root to a private archive. Do not
+   reuse its owners, results or receipts. Starting with fresh state can result
+   in new alerts for still-failing checks; disable watchers before restart if
+   that rescan is not wanted.
+3. Only for proven single-profile state, run `note --no-notify --database-identity`
+   through the intended CLI and environment to confirm its current `database`
+   is the verified historical database. Use its resolved absolute path as
+   `DB`. Its destination directory is `<hash>/`, where `<hash>` is the first
+   16 hex digits of `printf '%s' "$DB" | sha256sum`. If different from the old
+   directory, move the entire verified directory there, including sidecars. Do
+   not merge or overwrite an existing destination. If there is a conflict,
+   archive the conflicting state outside the root before choosing which single,
+   independently verified copy to keep. Preserve private permissions (directory
+   `0700`, database `0600`). Skip the move if the directory is already correct.
+4. Approve the **existing** state file offline, setting `STATE_DB` to its absolute
+   filename at the destination and `DB` to the verified resolved path from step 3:
+
+   ```sh
+   python3 - "$STATE_DB" "$DB" <<'PY'
+   import hashlib, sqlite3, sys
+   from pathlib import Path
+
+   state, notes = map(Path, sys.argv[1:])
+   if not state.is_absolute() or not notes.is_absolute() or notes.resolve(strict=True) != notes:
+       raise SystemExit("Expected absolute paths and canonical notes DB")
+   if state.name != 'state.db' or state.parent.name != hashlib.sha256(str(notes).encode()).hexdigest()[:16]:
+       raise SystemExit("State is not at the verified destination")
+   with sqlite3.connect(state.as_uri() + '?mode=rw', uri=True) as db:
+       db.execute('BEGIN IMMEDIATE')
+       db.execute('CREATE TABLE fw_database (id INTEGER PRIMARY KEY CHECK(id=1), database_path TEXT NOT NULL, file_identity TEXT NOT NULL)')
+       stat = notes.stat()
+       db.execute('INSERT INTO fw_database (id, database_path, file_identity) VALUES (1, ?, ?)', (str(notes), f'{stat.st_dev}:{stat.st_ino}'))
+   PY
+   ```
+
+   If approval fails (including an existing binding), stop and investigate;
+   do not remove or overwrite a binding to force adoption.
+5. Once every old namespace is resolved, start only the updated processes on
+   the verified profile. Approved state keeps owners and receipt IDs. Overdue
+   results remain stale and cannot alert until successfully rechecked.
 
 ## Enable
 

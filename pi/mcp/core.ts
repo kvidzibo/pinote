@@ -46,6 +46,14 @@ const Context = z.object({ conversationId: z.string().min(1).max(256), piSession
 }).default({}) });
 type State = z.infer<typeof Context>['state'];
 type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, string>; 'pi-sessions': string[] };
+const TaskDatabase = z.object({ database: z.string().refine(isAbsolute), lexicalDatabase: z.string().refine(isAbsolute),
+  fileIdentity: z.string().regex(/^\d+:\d+$/) }).strict();
+export type TaskDatabase = z.infer<typeof TaskDatabase>;
+type TaskResponse<T> = { data: T; identity?: TaskDatabase };
+type ResolveAutomation = (identity?: TaskDatabase) => FieldAutomation | undefined | Promise<FieldAutomation | undefined>;
+function matchingDatabase(a?: TaskDatabase, b?: TaskDatabase): TaskDatabase | undefined {
+  return a && b && a.database === b.database && a.lexicalDatabase === b.lexicalDatabase && a.fileIdentity === b.fileIdentity ? a : undefined;
+}
 type Scalar = string | number | boolean | null;
 type Control = { id: string; label: string; revision?: string; kind: 'action' | 'text' | 'number' | 'toggle' | 'select'; value?: Scalar; icon?: string; description?: string; multiline?: boolean; confirm?: string; options?: { label: string; value: Scalar }[] };
 const Action = z.object({ method: z.literal('native-ui/action'), params: z.object({
@@ -78,18 +86,26 @@ function boundedState(state: State): State {
   if (JSON.stringify(state).length > 8192) throw new Error('Proposal exceeds the host state budget; shorten it');
   return state;
 }
-async function note(args: string[], signal: AbortSignal): Promise<string> {
+async function note(args: string[], signal: AbortSignal, taskResponse = false): Promise<string> {
   signal.throwIfAborted();
   const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
   const version = (await exec(noteCommand, ['--version'], options)).stdout.trim();
   const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote service requires note 0.25.0+');
-  return (await exec(noteCommand, ['--no-notify', ...args], options)).stdout;
+  const env = { ...process.env, PINOTE_TASK_RESPONSE: taskResponse ? '1' : undefined };
+  return (await exec(noteCommand, ['--no-notify', ...args], { ...options, env })).stdout;
 }
-async function selected(state: State, signal: AbortSignal): Promise<Task | null> {
-  if (!state.selectedId) return null;
-  const task: Task | null = JSON.parse(await note(['agent', 'get', String(state.selectedId)], signal));
-  return task && ['active', 'in_progress'].includes(task.state) ? task : null;
+async function taskResponse<T>(args: string[], signal: AbortSignal): Promise<TaskResponse<T>> {
+  const output = JSON.parse(await note(args, signal, true));
+  if (output?.pinoteTaskResponse === 1 && Object.hasOwn(output, 'data')) {
+    return { data: output.data, identity: TaskDatabase.safeParse(output.identity).data };
+  }
+  return { data: output }; // Old CLIs return bare task JSON; no automation proof.
+}
+async function selected(state: State, signal: AbortSignal): Promise<TaskResponse<Task | null>> {
+  if (!state.selectedId) return { data: null };
+  const { data, identity } = await taskResponse<Task | null>(['agent', 'get', String(state.selectedId)], signal);
+  return { data: data && ['active', 'in_progress'].includes(data.state) ? data : null, identity };
 }
 function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?: Record<string, string>) {
   return footerCatalog(config, notes);
@@ -110,28 +126,32 @@ function agentGuidance(): string {
   return Object.hasOwn(root, 'agentGuidance') ? parseAgentGuidance(root.agentGuidance) : defaultAgentGuidance;
 }
 async function selection(state: State, signal: AbortSignal) {
-  const task = await selected(state, signal);
+  const { data: task, identity } = await selected(state, signal);
   let proposal = task || state.proposal && await consumed(state.proposal.id) ? null : state.proposal ?? null;
-  const proposedTask: Task | null = proposal && 'task_id' in proposal ? JSON.parse(await note(['agent', 'get', String(proposal.task_id)], signal)) : null;
+  const proposed = proposal && 'task_id' in proposal
+    ? await taskResponse<Task | null>(['agent', 'get', String(proposal.task_id)], signal) : undefined;
+  const proposedTask = proposed?.data ?? null;
   if (proposal && 'task_id' in proposal && (!proposedTask || !['active', 'in_progress'].includes(proposedTask.state))) proposal = null;
-  return { task, proposal, proposedTask };
+  return { task, identity, proposal, proposedTask, proposedIdentity: proposed?.identity };
 }
-async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = [], groupReceipts = false) {
-  const launchTask: Task | null = state.launch ? JSON.parse(await note(['agent', 'get', String(state.launch.task_id)], signal)) : null;
-  const tasks: Task[] = state.launch
-    ? launchTask && ['active', 'in_progress'].includes(launchTask.state) ? [launchTask] : []
-    : JSON.parse(await note(['list', '--json'], signal));
-  const { task, proposal, proposedTask } = await selection(state, signal);
+async function snapshot(state: State, signal: AbortSignal, resolveAutomation: ResolveAutomation, contextId?: string, receipts: readonly string[] = [], groupReceipts = false) {
+  const launch = state.launch ? await taskResponse<Task | null>(['agent', 'get', String(state.launch.task_id)], signal) : undefined;
+  const list = launch ?? await taskResponse<Task[]>(['list', '--json'], signal);
+  const tasks = launch ? launch.data && ['active', 'in_progress'].includes(launch.data.state) ? [launch.data] : [] : list.data as Task[];
+  const { task, identity, proposal, proposedTask, proposedIdentity } = await selection(state, signal);
   const config = settings();
+  const snapshotIdentity = state.selectedId ? matchingDatabase(list.identity, identity) : list.identity;
   const suggestion = proposal && ('task_id' in proposal ? proposedTask : proposal);
   state = { ...state, selectedId: task?.id ?? null, proposal };
   if (state.screen === 'field' && !fields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
   state = Context.parse({ conversationId: 'canonical', state }).state;
+  const automation = await resolveAutomation(snapshotIdentity);
+  signal.throwIfAborted();
   const fieldStatuses = task ? automation?.statuses(task) ?? [] : [];
   const fieldNotifications = task && contextId ? automation?.notices(task, contextId, receipts, groupReceipts) ?? [] : [];
   const watcherFailures = automation?.failures() ?? [];
   const revision = createHash('sha256').update(JSON.stringify({ state, tasks, task, proposedTask, raw: config.raw, fieldStatuses, fieldNotifications, watcherFailures })).digest('hex');
-  return { state, tasks, task, proposedTask, suggestion, config, revision, fieldStatuses, fieldNotifications, watcherFailures };
+  return { state, tasks, task, proposedTask, proposedIdentity, listIdentity: list.identity, suggestion, config, revision, fieldStatuses, fieldNotifications, watcherFailures, watcherLogPath: automation?.logPath };
 }
 type Snapshot = Awaited<ReturnType<typeof snapshot>>;
 function scopedActions(meta: Record<string, unknown> | undefined): boolean {
@@ -173,7 +193,7 @@ function fullPreview(task: { text: string; agent_notes?: Record<string, string> 
   const document = task.text + notes;
   return document.length <= 20_000 ? document : 'Full preview exceeds the 20000-character display limit. Nothing has been truncated here: read the complete task and handoff notes through the Pinote CLI or service (get_task).';
 }
-function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldReceiptGroups?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean; watcherDiagnostics?: boolean } = {}, watcherLogPath?: string) {
+function view(data: Snapshot, scoped = false, secondary = false, features: { footerNativeActions?: boolean; footerStyles?: boolean; footerDoubleActions?: boolean; fieldReceiptGroups?: boolean; fieldEvents?: boolean; fieldWatchers?: boolean; watcherDiagnostics?: boolean } = {}) {
   const { tasks, task, suggestion, config, revision } = data;
   const state = Context.parse({ conversationId: 'outgoing-state', state: { ...data.state, selectedId: task?.id ?? null } }).state;
   const controls: Control[] = [];
@@ -351,7 +371,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     return false;
   });
   if (scoped) for (const control of editable) control.revision = actionRevision(data, control);
-  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer, ...(features.watcherDiagnostics && watcherLogPath ? { watcherDiagnostics: { logPath: watcherLogPath, failures: data.watcherFailures } } : {}), ...(features.fieldEvents ? { fieldNotifications: data.fieldNotifications.map((notice) => ({ ...notice, ...(features.fieldWatchers ? { triggerWorker: true } : {}) })) } : {}) };
+  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer, ...(features.watcherDiagnostics && data.watcherLogPath ? { watcherDiagnostics: { logPath: data.watcherLogPath, failures: data.watcherFailures } } : {}), ...(features.fieldEvents ? { fieldNotifications: data.fieldNotifications.map((notice) => ({ ...notice, ...(features.fieldWatchers ? { triggerWorker: true } : {}) })) } : {}) };
   // JSON escaping and expanded footer formats can exceed the host budget even
   // with bounded row counts. Preserve navigation/filter controls ahead of rows.
   let shortened = false;
@@ -364,14 +384,14 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   if (shortened) result.body = `More matches omitted to fit the display budget; narrow Filter tasks.\n${result.body}`.slice(0, 20_000);
   return result;
 }
-async function agentContext(state: State, signal: AbortSignal, automation?: FieldAutomation): Promise<string> {
-  const { task, proposal, proposedTask } = await selection(state, signal);
+async function agentContext(state: State, signal: AbortSignal, resolveAutomation: ResolveAutomation): Promise<string> {
+  const { task, identity, proposal, proposedTask } = await selection(state, signal);
   const guidance = agentGuidance();
   const config = task ? settings().config : null;
   const data = task
     ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes) })}`
     : `No task is selected (including unavailable or completed selected targets).\nSaved tags:\n${await note(['agent', 'tags'], signal)}\nPending suggestion (not selected):\n${JSON.stringify(proposal ? { ...proposal, ...('task_id' in proposal ? { text: proposedTask!.text, tag: proposedTask!.tag } : {}) } : null)}`;
-  const statuses = (task ? automation?.statuses(task) ?? [] : [])
+  const statuses = (task ? (await resolveAutomation(identity))?.statuses(task) ?? [] : [])
     .filter((status) => !status.stale && status.result.state !== 'error')
     .flatMap((status) => {
       if (!status.result.items) return [status];
@@ -406,7 +426,8 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
   if (text.length > 64_000) throw new Error('Pinote agent context exceeds 64000 characters; use tools to read task context');
   return text;
 }
-export function createPinoteServer(options: { onClose?: () => void; onError?: () => void; onBusy?: (delta: number) => void; fieldAutomation?: FieldAutomation; watcherLogPath?: string; onFieldChange?: (listener: () => void) => () => void } = {}): Server {
+export function createPinoteServer(options: { onClose?: () => void; onError?: () => void; onBusy?: (delta: number) => void; fieldAutomation?: FieldAutomation; resolveAutomation?: ResolveAutomation; onFieldChange?: (listener: () => void) => () => void } = {}): Server {
+const resolveAutomation = options.resolveAutomation ?? (() => options.fieldAutomation);
 function serial<T>(run: () => Promise<T>): Promise<T> {
   options.onBusy?.(1);
   return sharedSerial(run).finally(() => options.onBusy?.(-1));
@@ -426,20 +447,20 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [
 ] }));
 server.setRequestHandler(ReadResourceRequestSchema, (request, extra) => serial(async () => {
   if (request.params.uri === AGENT_URI) {
-    const text = await agentContext(context(request.params._meta).state, extra.signal, options.fieldAutomation);
+    const text = await agentContext(context(request.params._meta).state, extra.signal, resolveAutomation);
     return { contents: [{ uri: AGENT_URI, mimeType: AGENT_MIME, text: JSON.stringify({ version: 1, text }) }] };
   }
   if (request.params.uri !== URI) throw new Error('Unknown resource');
   const caller = context(request.params._meta);
-  const data = await snapshot(caller.state, extra.signal, options.fieldAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
-  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath)) }] };
+  const data = await snapshot(caller.state, extra.signal, resolveAutomation, caller.contextId ?? caller.conversationId, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
+  return { contents: [{ uri: URI, mimeType: MIME, text: JSON.stringify(view(data, scopedActions(request.params._meta), secondaryActions(request.params._meta), footerFeatures(request.params._meta))) }] };
 }));
 server.setRequestHandler(Action, (request, extra) => serial(async () => {
   const caller = context(request.params._meta);
   const state = caller.state;
   const owner = caller.contextId ?? caller.conversationId;
   const sessionArgs = caller.piSessionId ? ['--pi-session-id', caller.piSessionId] : [];
-  const before = await snapshot(state, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
+  const before = await snapshot(state, extra.signal, resolveAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups);
   const scoped = scopedActions(request.params._meta);
   const { action, value } = request.params;
   const control = view(before, scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)).controls.find((item) => item.id === action);
@@ -448,14 +469,21 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
   // A launcher filter is one-shot; read-only previews preserve it.
   if (action !== 'preview' && action !== 'proposal:preview') delete next.launch;
   let draft: string | undefined, preview: string | undefined;
+  let started: TaskResponse<Task> | undefined;
+  const start = async (task: Task, source?: TaskDatabase) => {
+    const response = await taskResponse<Task>(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at, ...sessionArgs], extra.signal);
+    started = { data: response.data, identity: matchingDatabase(source, response.identity) };
+    next.selectedId = task.id;
+  };
   if (action === 'proposal:accept' || action === 'proposal:dismiss') {
     const proposal = before.state.proposal;
     if (!proposal || before.task) throw new Error('Suggestion no longer available');
     await consume(proposal.id); // Fail closed before any task mutation; never replay uncertain creation.
     next.proposal = null;
     if (action === 'proposal:accept') {
-      const task: Task = 'task_id' in proposal ? before.proposedTask! : JSON.parse(await note(['agent', 'add', `--text=${proposal.text}`, ...(proposal.tag ? [`--tag=${proposal.tag}`] : [])], extra.signal));
-      await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at, ...sessionArgs], extra.signal); next.selectedId = task.id;
+      const created = 'task_id' in proposal ? { data: before.proposedTask!, identity: before.proposedIdentity }
+        : await taskResponse<Task>(['agent', 'add', `--text=${proposal.text}`, ...(proposal.tag ? [`--tag=${proposal.tag}`] : [])], extra.signal);
+      await start(created.data, matchingDatabase(before.listIdentity, created.identity));
     }
   } else if (action.startsWith('screen:')) next.screen = action.slice(7) as State['screen'];
   else if (action.startsWith('field:')) { next.screen = 'field'; next.field = action.slice(6); }
@@ -468,15 +496,15 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     const id = Number(action.slice(7));
     const candidate = before.tasks.find((task) => task.id === id);
     if (!candidate) staleAction();
-    const target: Task = JSON.parse(await note(['agent', 'get', String(id)], extra.signal));
+    const { data: target, identity } = await taskResponse<Task>(['agent', 'get', String(id)], extra.signal);
     if (target.text !== candidate.text || target.state !== candidate.state || target.tag !== candidate.tag || state.launch && target.updated_at !== state.launch.updated_at) staleAction();
     if (next.proposal) await consume(next.proposal.id);
-    await note(['agent', 'start', String(id), '--expected-updated-at', target.updated_at, ...sessionArgs], extra.signal); next.selectedId = id; next.proposal = null;
+    await start(target, matchingDatabase(before.listIdentity, identity)); next.proposal = null;
   } else if (action === 'add') {
     if (next.proposal) await consume(next.proposal.id);
     next.proposal = null;
-    const task: Task = JSON.parse(await note(['agent', 'add', `--text=${z.string().min(1).parse(value)}`], extra.signal));
-    await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at, ...sessionArgs], extra.signal); next.selectedId = task.id;
+    const created = await taskResponse<Task>(['agent', 'add', `--text=${z.string().min(1).parse(value)}`], extra.signal);
+    await start(created.data, matchingDatabase(before.listIdentity, created.identity));
   } else if (action === 'done') {
     await note(['agent', 'done', String(before.task!.id), '--expected-updated-at', before.task!.updated_at], extra.signal);
     next.selectedId = null;
@@ -486,7 +514,7 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     let guidance: string | null | undefined;
     let watchers: FieldWatcherConfig[] | undefined;
     if (action === 'add-watcher' || action.startsWith('watcher:') || action.startsWith('remove-watcher:')) {
-      watchers = before.config.watchers.map(({ path, enabled }) => ({ path, enabled }));
+      watchers = before.config.watchers.map(({ path, enabled, activation }) => ({ path, enabled, ...(activation ? { activation } : {}) }));
       if (action === 'add-watcher') {
         const entry = parseFieldWatchers({ fieldWatchers: [{ path: z.string().parse(value), enabled: false }] })[0];
         validateWatcherExecutable(entry.path);
@@ -498,7 +526,9 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
         else {
           const enabled = z.boolean().parse(value);
           if (enabled) validateWatcherExecutable(watcher.path);
-          watchers.find((item) => item.path === watcher.path)!.enabled = enabled;
+          const entry = watchers.find((item) => item.path === watcher.path)!;
+          if (enabled && !entry.enabled) entry.activation = randomUUID();
+          entry.enabled = enabled;
         }
       }
       watchers = parseFieldWatchers({ fieldWatchers: watchers });
@@ -539,8 +569,10 @@ server.setRequestHandler(Action, (request, extra) => serial(async () => {
     extra.signal.throwIfAborted();
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers);
   }
-  if (next.selectedId && (action.startsWith('select:') || action === 'proposal:accept' || action === 'add')) options.fieldAutomation?.claim(next.selectedId, owner, true);
-  const result = { view: view(await snapshot(next, extra.signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  if (started?.data && started.data.id === next.selectedId) (await resolveAutomation(started.identity))?.claim(started.data.id, owner, true);
+  const afterAutomation: ResolveAutomation = started && options.resolveAutomation
+    ? (identity) => resolveAutomation(matchingDatabase(started?.identity, identity)) : resolveAutomation;
+  const result = { view: view(await snapshot(next, extra.signal, afterAutomation, owner, caller.fieldReceipts, footerFeatures(request.params._meta).fieldReceiptGroups), scoped, secondaryActions(request.params._meta), footerFeatures(request.params._meta)), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
   await notifyChanged();
   return result;
 }));
@@ -652,9 +684,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async () => {
   try {
     const state = context(request.params._meta).state;
-    let result: unknown, outgoing: State | undefined;
+    let result: unknown, outgoing: State | undefined, currentDatabase: string | undefined;
     if (request.params.name === 'propose') {
-      if (await selected(state, extra.signal)) throw new Error('A task is already selected');
+      if ((await selected(state, extra.signal)).data) throw new Error('A task is already selected');
       const args = ProposalInput.parse(request.params.arguments);
       if ('task_id' in args) {
         const task: Task | null = JSON.parse(await note(['agent', 'get', String(args.task_id)], extra.signal));
@@ -674,14 +706,16 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
     } else if (request.params.name === 'get_task') {
       const args = ExistingProposal.parse(request.params.arguments);
       result = JSON.parse(await note(['agent', 'get', String(args.task_id)], extra.signal));
-    } else if (request.params.name === 'get_current') result = await selected(state, extra.signal);
-    else if (request.params.name === 'fields') {
+    } else if (request.params.name === 'get_current') {
+      const current = await selected(state, extra.signal);
+      result = current.data; currentDatabase = current.identity?.database;
+    } else if (request.params.name === 'fields') {
       const config = settings().config;
       result = { ...config, fields: fields(config) };
     } else if (request.params.name === 'tags') result = JSON.parse(await note(['agent', 'tags'], extra.signal));
     else if (request.params.name === 'update_current') {
       const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string(), z.string()).default({}), append: z.record(z.string(), z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(request.params.arguments);
-      const task = await selected(state, extra.signal);
+      const { data: task, identity } = await selected(state, extra.signal);
       if (!task) throw new Error('No task is selected');
       const normalized = (key: string) => key.normalize('NFC').replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
       const touched = new Set([...Object.keys(args.set), ...args.remove].map(normalized));
@@ -698,12 +732,13 @@ server.setRequestHandler(CallToolRequestSchema, (request, extra) => serial(async
         });
         args.set = { ...args.set, [key]: additions.length ? [current, ...additions].filter(Boolean).join('\n') : current };
       }
-      result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal));
+      const updated = await taskResponse<Task>(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], extra.signal);
+      result = updated.data;
       const caller = context(request.params._meta);
-      options.fieldAutomation?.claim(task.id, caller.contextId ?? caller.conversationId, true);
+      if (updated.data?.id === task.id) (await resolveAutomation(matchingDatabase(identity, updated.identity)))?.claim(task.id, caller.contextId ?? caller.conversationId, true);
       await notifyChanged();
     } else throw new Error('Unknown tool');
-    return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(outgoing ? { _meta: { 'native-ui/state': outgoing } } : request.params.name === 'get_current' ? { _meta: { 'pinote/database': database } } : {}) };
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(outgoing ? { _meta: { 'native-ui/state': outgoing } } : currentDatabase ? { _meta: { 'pinote/database': currentDatabase } } : {}) };
   } catch (error) { return { isError: true, content: [{ type: 'text', text: String(error) }] }; }
 }));
 // Every MCP process observes shared storage, including writes by CLI/GTK/other

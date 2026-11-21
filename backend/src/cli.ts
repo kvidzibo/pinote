@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
 import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
@@ -152,7 +152,15 @@ function validateCommand(args: Arguments): void {
   if (args.agent_action === 'add') validate_text(args.agent_text!);
   if (args.agent_action === 'update') validateAgentPatch(parseAgentFields(args.set_json), args.remove);
 }
-export function execute_agent(args: Arguments, store: Store): void {
+function taskDatabaseIdentity(lexicalDatabase: string) {
+  try {
+    const database = realpathUtf8(lexicalDatabase);
+    const stat = statSync(database, { bigint: true });
+    if (stat.isFile()) return { database, lexicalDatabase, fileIdentity: `${stat.dev}:${stat.ino}` };
+  } catch { /* A task operation can still succeed without usable identity metadata. */ }
+  return null;
+}
+export function execute_agent(args: Arguments, store: Store, emit: (data: unknown) => void = (data) => print(jsonStringify(data))): void {
   const action = args.agent_action!;
   if (['select', 'selected'].includes(action) && !isAbsolute(args.cwd!)) throw new NoteError('--cwd must be an absolute project directory.');
   if (action === 'tags') { print(jsonStringify(store.tags())); return; }
@@ -170,7 +178,7 @@ export function execute_agent(args: Arguments, store: Store): void {
     store.set_tag(args.id!, args.clear ? null : explicitTag(args.tag!), { expected_updated_at: args.expected_updated_at! });
     note = store.get(args.id!);
   } else note = store.get(args.id!);
-  print(jsonStringify(agent_task(note)));
+  emit(agent_task(note));
 }
 // Python repr's quote selection is visible in history output.
 function repr(value: string): string {
@@ -196,12 +204,26 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
   const needsLock = needsDisplayLock(args);
   const run = async () => {
     checkCancelled();
+    const taskResponse = process.env.PINOTE_TASK_RESPONSE === '1' && (
+      args.command === 'agent' && args.agent_action !== 'tags' || args.command === 'list' && args.json);
+    const before = taskResponse ? taskDatabaseIdentity(paths.database) : null;
     const store = new Store(paths.database);
     try {
+      const emit = (data: unknown) => {
+        if (taskResponse) {
+          // Check the opened path on the same connection that produced the result.
+          const opened = store.row('PRAGMA database_list')?.file;
+          const after = taskDatabaseIdentity(paths.database);
+          const identity = before && opened === before.database && after?.database === before.database &&
+            after.fileIdentity === before.fileIdentity ? before : null;
+          data = { pinoteTaskResponse: 1, identity, data };
+        }
+        print(jsonStringify(data));
+      };
       if (needsLock) store.activate_due();
       else if (!['events', 'field-events'].includes(args.command) && store.has_due()) await withDisplayLock(paths, true, () => { store.activate_due(); });
       switch (args.command) {
-        case 'agent': execute_agent(args, store); break;
+        case 'agent': execute_agent(args, store, emit); break;
         case 'add': print(`Added note ${store.add(args.text!.join(' '))}.`); break;
         case 'schedule': { const changed = store.schedule(args.id!, scheduled!); print(`Note ${args.id} ${changed ? 'scheduled' : 'already scheduled'} for ${scheduledLabel}.`); break; }
         case 'reminders': {
@@ -216,7 +238,7 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
         }
         case 'list': {
           const notes = store.notes({ all_states: args.all });
-          if (args.json) print(jsonStringify(notes.map(({ id, text, state, tag }) => ({ id, text, state, tag }))));
+          if (args.json) emit(notes.map(({ id, text, state, tag }) => ({ id, text, state, tag })));
           else {
             for (const note of notes) print(`${note.id}. ${args.all || note.state === 'in_progress' ? `[${note.state.replaceAll('_', ' ')}] ` : ''}${noteMarkdown(note).replaceAll('\n', '\n    ')}${note.remind_at ? ` (${local_reminder_time(note.remind_at)})` : ''}`);
             if (!notes.length) print(args.all ? 'No notes.' : 'No active notes.');

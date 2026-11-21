@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, hasPendingBackendSwitch, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
-import { desktopFieldRunner, type FieldRunner } from './field-runner.ts';
+import { desktopFieldRunner, fieldDatabaseIdentity, type FieldRunner } from './field-runner.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -120,6 +120,11 @@ async function boot() {
   const identity = hello.result as { protocol?: unknown; database?: unknown; version?: unknown };
   if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(2[3-9]|[3-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.23.0+ with protocol 1.');
   const database = identity.database;
+  // Capture the watcher profile at handshake, not after the asynchronous UI
+  // setup (or when resuming after a failed backend switch).
+  let fieldDatabase: ReturnType<typeof fieldDatabaseIdentity> | undefined;
+  try { fieldDatabase = fieldDatabaseIdentity(database, environment); }
+  catch { /* An unverifiable profile disables watchers, not the desktop. */ }
   let switchRequested = false, switchConfirming = false;
   const switchOptions = () => ({ ...switchRuntime(), env: process.env, database });
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
@@ -135,7 +140,8 @@ async function boot() {
   logFile = join(profile, 'app.log');
   const startFieldRunner = () => {
     if (quitting) return;
-    fieldRunner = desktopFieldRunner(bundles, database, command, environment, switchRuntime, log);
+    if (!fieldDatabase) { log('Cannot start Electron field automation; the notes database identity could not be verified.'); return; }
+    fieldRunner = desktopFieldRunner(bundles, fieldDatabase, command, switchRuntime, log);
     fieldRunner.start();
   };
   try {

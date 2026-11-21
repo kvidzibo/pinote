@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync, unlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync, execFile, spawn } from 'node:child_process';
@@ -15,7 +15,7 @@ function fixture(t: {after(fn:()=>void):void}) {
   const database = join(root,'data/pinote/notes.db');
   const capture = join(root,'render');
   writeFileSync(join(bin,'dunstify'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n', {mode:0o700});
-  const env = {...process.env, HOME:root, XDG_DATA_HOME:join(root,'data'), XDG_STATE_HOME:join(root,'state'), PATH:`${bin}:/usr/bin:/bin`, CAPTURE:capture, TZ:'UTC'};
+  const env = {...process.env, PINOTE_TASK_RESPONSE: undefined as string | undefined, HOME:root, XDG_DATA_HOME:join(root,'data'), XDG_STATE_HOME:join(root,'state'), PATH:`${bin}:/usr/bin:/bin`, CAPTURE:capture, TZ:'UTC'};
   const cli = (...args:string[]) => spawnSync(process.execPath,['--experimental-strip-types',entry,...args],{env,encoding:'utf8'});
   const ok = (...args:string[]) => { const result=cli(...args); assert.equal(result.status,0, result.stdout+result.stderr); return result.stdout; };
   return {root,bin,database,capture,cli,ok,env};
@@ -64,6 +64,31 @@ test('database identity reports both paths without initializing a profile', t =>
   assert.equal(f.cli('--database-identity', 'add').status, 2);
   assert.equal(existsSync(join(f.root, 'data')), false);
   assert.equal(existsSync(f.env.XDG_STATE_HOME), false);
+});
+test('task-response metadata is opt-in and uses the DB opened through an alias', t => {
+  const f = fixture(t);
+  delete f.env.PINOTE_TASK_RESPONSE;
+  const read = (...args: string[]) => JSON.parse(f.ok('--no-notify', ...args));
+  const task = read('agent', 'add', '--text=Envelope test');
+  const list = read('list', '--json');
+  assert.equal(task.pinoteTaskResponse, undefined);
+  const alias = join(f.root, 'alias');
+  symlinkSync(f.env.XDG_DATA_HOME, alias);
+  f.env.XDG_DATA_HOME = alias;
+  f.env.PINOTE_TASK_RESPONSE = '1';
+  const info = statSync(f.database, { bigint: true });
+  const identity = { database: f.database, lexicalDatabase: join(alias, 'pinote/notes.db'), fileIdentity: `${info.dev}:${info.ino}` };
+  const expected = { pinoteTaskResponse: 1, identity };
+  assert.deepEqual(read('list', '--json'), { ...expected, data: list });
+  assert.deepEqual(read('agent', 'get', '1'), { ...expected, data: task });
+  const start = read('agent', 'start', '1', '--expected-updated-at', task.updated_at);
+  assert.deepEqual(start, { ...expected, data: { ...task, state: 'in_progress', updated_at: start.data.updated_at } });
+  const update = read('agent', 'update', '1', '--expected-updated-at', start.data.updated_at, '--set-json', '{"Deploy":"dev"}');
+  assert.deepEqual(update.identity, identity);
+  assert.equal(update.data.agent_notes.Deploy, 'dev');
+  assert.equal(f.cli('agent', 'update', '1', '--expected-updated-at', task.updated_at).status, 1);
+  delete f.env.PINOTE_TASK_RESPONSE;
+  assert.deepEqual(read('agent', 'get', '1'), update.data);
 });
 test('Markdown import rejects a non-UTF-8 canonical path without importing its U+FFFD sibling',t=>{
   const f=fixture(t);

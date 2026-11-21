@@ -1,28 +1,76 @@
-import { constants } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, type BigIntStats } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { discoverPaths, resolvePath } from '../../backend/src/runtime.ts';
+import { discoverPaths, realpathUtf8, resolvePath } from '../../backend/src/runtime.ts';
 import { backendEnvironment, type backendCommand } from './backend-command.ts';
-import { verifiedDesktopNote, verifySwitchPaths } from './backend-switch.ts';
+import { verifySwitchPaths } from './backend-switch.ts';
 
-export async function fieldNoteCommand(bundles: string, database: string, command: ReturnType<typeof backendCommand>,
-  environment: NodeJS.ProcessEnv, switchRuntime: Parameters<typeof verifiedDesktopNote>[0]) {
+type SwitchRuntime = () => { node: string };
+const sameFile = (original: BigIntStats, current: BigIntStats) => original.dev === current.dev && original.ino === current.ino;
+
+export function fieldDatabaseIdentity(database: string, environment: NodeJS.ProcessEnv) {
   const noteEnv = backendEnvironment(environment);
   verifySwitchPaths(noteEnv);
+  // Keep service wrappers, loader overrides and profile-specific PATH
+  // helpers out of polling. Watcher environments are unchanged.
+  for (const key of Object.keys(noteEnv)) {
+    if (/^(LD_|PYTHON)/.test(key) || ['GCONV_PATH', 'GLIBC_TUNABLES'].includes(key)) delete noteEnv[key];
+  }
+  delete noteEnv.PINOTE_NOTE_COMMAND;
+  delete noteEnv.PINOTE_TASK_RESPONSE; // Expect raw CLI response objects.
+  noteEnv.PATH = '/usr/bin:/bin';
   if (resolvePath(discoverPaths(noteEnv).database) !== database) throw new Error('The field CLI uses a different database.');
-  // Both supported CLIs select XDG_DATA_HOME/pinote/notes.db. Pass the
-  // canonical root, not the original XDG alias (or an aliased HOME fallback).
+  // Pass the canonical XDG root so retargeting the original alias cannot redirect polling.
   noteEnv.XDG_DATA_HOME = dirname(dirname(database));
   if (discoverPaths(noteEnv).database !== database) throw new Error('The field CLI cannot pin this database layout.');
-  if (!command.args.length) {
-    const noteCommand = await verifiedDesktopNote(switchRuntime, database, noteEnv);
-    return { noteCommand, noteEnv };
+
+  const parent = dirname(database);
+  const stat = (path: string) => lstatSync(path, { bigint: true, throwIfNoEntry: false });
+  let directory = stat(parent);
+  if (!directory) {
+    if (!mkdirSync(parent, { recursive: true, mode: 0o700 })) throw new Error('The notes database directory changed during setup.');
+    directory = stat(parent);
   }
-  // Do not use PATH's note (or a stale service PINOTE_NOTE_COMMAND) after a switch.
+  const parentMatches = () => {
+    const current = stat(parent);
+    return directory?.isDirectory() && current?.isDirectory() && sameFile(directory, current) && realpathUtf8(parent) === parent;
+  };
+  if (!parentMatches()) throw new Error('Cannot verify the notes database directory.');
+
+  let file = stat(database);
+  if (!file) {
+    // Reserve this inode, rather than trusting whichever DB happens to appear
+    // first. The backend/CLI initializes the schema on its next open as usual.
+    if (!parentMatches()) throw new Error('The notes database directory changed during setup.');
+    const fd = openSync(database, 'wx', 0o600);
+    try { file = fstatSync(fd, { bigint: true }); } finally { closeSync(fd); }
+  }
+  const original = file;
+  let replaced = false;
+  const matches = () => {
+    if (replaced) return false;
+    try {
+      const current = stat(database);
+      if (parentMatches() && current?.isFile() && sameFile(original, current) && realpathUtf8(database) === database) return true;
+    } catch { /* A missing or inaccessible path is also a lost identity. */ }
+    replaced = true;
+    return false;
+  };
+  if (!file.isFile() || !matches()) throw new Error('Cannot verify the notes database file.');
+  return { database, noteEnv, matches };
+}
+
+type FieldDatabase = ReturnType<typeof fieldDatabaseIdentity>;
+
+export async function fieldNoteCommand(bundles: string, profile: FieldDatabase, command: ReturnType<typeof backendCommand>,
+  switchRuntime: SwitchRuntime) {
+  // Even with a Python desktop override, do not run a PATH note or a service
+  // wrapper that can select another profile between reads.
+  if (!profile.matches()) throw new Error('The notes database changed during setup.');
   const cli = join(bundles, 'cli.mjs');
   await access(cli, constants.R_OK);
-  return { noteCommand: command.executable, noteArgs: [cli], noteEnv };
+  return { noteCommand: command.args.length ? command.executable : switchRuntime().node, noteArgs: [cli], noteEnv: profile.noteEnv };
 }
 
 type Scheduler = { start(): void; close(): Promise<void> };
@@ -63,13 +111,20 @@ export class FieldRunner {
   }
 }
 
-export function desktopFieldRunner(bundles: string, database: string, command: ReturnType<typeof backendCommand>,
-  environment: NodeJS.ProcessEnv, switchRuntime: Parameters<typeof verifiedDesktopNote>[0], log: (message: string) => void) {
+export function desktopFieldRunner(bundles: string, profile: FieldDatabase, command: ReturnType<typeof backendCommand>,
+  switchRuntime: SwitchRuntime, log: (message: string) => void) {
   return new FieldRunner(async () => {
-    const cli = await fieldNoteCommand(bundles, database, command, environment, switchRuntime);
+    const cli = await fieldNoteCommand(bundles, profile, command, switchRuntime);
     const { openDesktopFieldAutomation } = await import(pathToFileURL(join(bundles, 'field-events.mjs')).href) as typeof import('./field-runtime.ts');
-    const node = command.args.length ? command.executable : switchRuntime().node;
-    return openDesktopFieldAutomation(node, { noteCommand: cli.noteCommand, noteArgs: cli.noteArgs, noteEnv: cli.noteEnv, database, log: failure => log(failure ?
+    let stopped = false;
+    const databaseMatches = () => {
+      if (stopped) return false;
+      if (profile.matches()) return true;
+      stopped = true;
+      log('Electron field automation stopped: the notes database identity changed. Restart Electron to verify the profile.');
+      return false;
+    };
+    return openDesktopFieldAutomation(cli.noteCommand, { ...cli, database: profile.database, databaseMatches, log: failure => log(failure ?
       `Watcher check failed ${JSON.stringify(failure)}` : 'Electron field automation check failed; will retry.') });
   }, log);
 }

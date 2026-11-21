@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { appendFileSync, mkdirSync, lstatSync, openSync, closeSync, readlinkSync, realpathSync } from 'node:fs';
+import { appendFileSync, mkdirSync, lstatSync, readdirSync, openSync, closeSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
@@ -53,9 +53,10 @@ const prKey = (watcher: FieldWatcher, key: string) => watcher.bundled && watcher
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
 
 /** One bounded invocation, no shell. Kill the process group on cancellation/overflow. */
-export async function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000): Promise<FieldResult> {
+export async function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000, beforeSpawn?: () => void): Promise<FieldResult> {
   const { fieldHandlerGuardian: guardian } = await import('./handler-process.ts');
   signal.throwIfAborted();
+  beforeSpawn?.();
   return new Promise((resolve, reject) => {
     const child = guardian
       ? spawn(guardian.node, [guardian.script, String(process.pid), String(Date.now() + timeoutMs), handler],
@@ -105,8 +106,6 @@ export async function runFieldHandler(handler: string, input: unknown, signal: A
 type StorageOptions = {
   /** Verified absolute notes.db identity. Omit for the default XDG notes database. */
   database?: string;
-  /** The CLI-reported pre-resolution path, for detecting legacy state. */
-  lexicalDatabase?: string;
   /** Override the automation state file, not notes.db. Both sides must use the same path. */
   path?: string;
   changed?: () => void;
@@ -118,6 +117,8 @@ type RunnerOptions = StorageOptions & {
   /** CLI prefix argv and verified environment, e.g. a bundled script invoked by Node. */
   noteArgs?: readonly string[];
   noteEnv?: NodeJS.ProcessEnv;
+  /** Runner-only fence; a changed notes database permanently stops this runner. */
+  databaseMatches?: () => boolean;
   log?: (failure?: WatcherFailureLog) => void;
 };
 type Publication = { revision: number; active_until: number; watchers: string };
@@ -158,17 +159,49 @@ export function fieldAutomationPath(options: Pick<StorageOptions, 'database' | '
   return namespacePath(canonicalDatabase(database));
 }
 
-function checkLegacyNamespace(options: StorageOptions, path: string): void {
-  if (options.path !== undefined) return;
-  for (const database of new Set([defaultDatabase(), options.lexicalDatabase ?? options.database ?? defaultDatabase()])) {
-    const legacy = namespacePath(database);
-    if (legacy === path || database === canonicalDatabase(database)) continue;
-    // Legacy state contains no database identity: a retargeted alias may
-    // belong to another profile. Don't silently adopt it or replay in parallel.
-    try { lstatSync(legacy); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
-    throw new Error('Legacy lexical field automation state requires offline migration');
+function legacyState(): Error {
+  return new Error('Unverified field automation state requires offline migration');
+}
+
+function databaseBinding(db: DatabaseSync): string | undefined {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fw_database'").get()) return;
+  const row = db.prepare('SELECT database_path FROM fw_database WHERE id=1').get();
+  if (typeof row?.database_path === 'string') return row.database_path;
+}
+
+function checkLegacyNamespaces(path: string, Sqlite: typeof DatabaseSync): void {
+  const root = dirname(dirname(path));
+  // An old wrapper could watch B while storing results under A, even when
+  // both paths were canonical. Neither A nor B can safely start up beside
+  // unresolved state, and a removed/retargeted alias cannot be reverse-hashed.
+  let entries: string[];
+  try { entries = readdirSync(root); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  for (const name of entries) {
+    if (!/^[0-9a-f]{16}$/.test(name)) continue;
+    const candidate = join(root, name, 'state.db');
+    if (candidate === path) continue;
+    const file = lstatSync(candidate, { throwIfNoEntry: false });
+    if (!file) continue;
+    if (!lstatSync(dirname(candidate)).isDirectory() || !file.isFile() || file.uid !== process.getuid?.() || (file.mode & 0o077)) throw legacyState();
+    const db = new Sqlite(candidate, { readOnly: true });
+    try {
+      const binding = databaseBinding(db);
+      if (!binding || !isAbsolute(binding) || namespacePath(binding) !== candidate) throw legacyState();
+    } finally { db.close(); }
   }
+}
+
+function bindDatabase(db: DatabaseSync, database: string, fileIdentity: string): void {
+  if (databaseBinding(db) === database) {
+    if (db.prepare('SELECT file_identity FROM fw_database WHERE id=1').get()?.file_identity !== fileIdentity) throw legacyState();
+    return;
+  }
+  // Never stamp an existing schema. Only a new/empty DB can be initialized
+  // automatically, under the same write transaction as the first state tables.
+  if (db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get()) throw legacyState();
+  db.exec('CREATE TABLE fw_database (id INTEGER PRIMARY KEY CHECK(id=1), database_path TEXT NOT NULL, file_identity TEXT NOT NULL)');
+  db.prepare('INSERT INTO fw_database (id, database_path, file_identity) VALUES (1, ?, ?)').run(database, fileIdentity);
 }
 
 /** Electron owns execution; HTTP observes committed results and writes only conversation claims. */
@@ -190,16 +223,18 @@ export class FieldAutomation {
   private noteCommand: string;
   private noteArgs: readonly string[];
   private noteEnv?: NodeJS.ProcessEnv;
+  private databaseMatches?: () => boolean;
   private changed: () => void;
   private available = () => true;
   private log: (failure?: WatcherFailureLog) => void;
   readonly logPath: string;
-  private constructor(db: DatabaseSync, path: string, changed: () => void, runner?: RunnerOptions) {
+  private constructor(db: DatabaseSync, path: string, database: string, fileIdentity: string, changed: () => void, runner?: RunnerOptions) {
     this.db = db; this.changed = changed;
     this.watchers = runner && (runner.watchers ?? (() => discoverFieldWatchers(readConfigDocument().value)));
     this.noteCommand = runner?.noteCommand ?? process.env.PINOTE_NOTE_COMMAND ?? 'note';
     this.noteArgs = runner?.noteArgs ?? [];
     this.noteEnv = runner?.noteEnv;
+    this.databaseMatches = runner?.databaseMatches;
     this.logPath = join(dirname(path), 'watchers.log');
     this.log = (failure) => {
       const message = failure ? `watcher check failed ${JSON.stringify(failure)}` : 'field automation check failed; will retry';
@@ -208,6 +243,7 @@ export class FieldAutomation {
     };
     db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
     try {
+      bindDatabase(db, database, fileIdentity);
       // Early claims work even before Electron has launched. Only the runner
       // initializes scheduler state and migrates legacy results.
       db.exec(`
@@ -272,8 +308,15 @@ export class FieldAutomation {
   private static async connect(options: StorageOptions, runner?: RunnerOptions): Promise<FieldAutomation> {
     const { DatabaseSync } = await import('node:sqlite');
     if (options.available && !options.available()) throw new Error('Field automation identity is unavailable');
-    const path = fieldAutomationPath(options);
-    checkLegacyNamespace(options, path);
+    if (runner?.databaseMatches && !runner.databaseMatches()) throw new Error('The notes database changed during setup');
+    const database = options.database ?? defaultDatabase();
+    if (!isAbsolute(database)) throw new Error('Expected an absolute notes database identity');
+    // The fenced desktop already verified this canonical path. Do not resolve
+    // it a second time and risk selecting the replacement's state namespace.
+    const canonical = runner?.databaseMatches ? database : canonicalDatabase(database);
+    const path = options.path ?? namespacePath(canonical);
+    if (options.path === undefined) checkLegacyNamespaces(path, DatabaseSync);
+    if (options.available && !options.available()) throw new Error('Field automation identity is unavailable');
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const directory = lstatSync(dirname(path));
     if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077)) throw new Error('Unsafe field automation directory');
@@ -281,27 +324,48 @@ export class FieldAutomation {
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error('Unsafe field automation database');
     const db = new DatabaseSync(path);
-    try { return new FieldAutomation(db, path, options.changed ?? (() => {}), runner); }
+    try {
+      if (runner?.databaseMatches && !runner.databaseMatches()) throw new Error('The notes database changed during setup');
+      const file = options.path === undefined ? lstatSync(canonical, { bigint: true }) : undefined;
+      if (file && !file.isFile()) throw legacyState();
+      return new FieldAutomation(db, path, canonical, file ? `${file.dev}:${file.ino}` : 'explicit-state-path', options.changed ?? (() => {}), runner);
+    }
     catch (error) { db.close(); throw error; }
   }
+  private checkRunnerDatabase(): void {
+    this.lifetime.signal.throwIfAborted();
+    if (!this.databaseMatches || this.databaseMatches()) return;
+    this.lifetime.abort();
+    // Drain the current tick (including lease release), then withdraw our
+    // publication. Do not wait for close from inside that tick.
+    queueMicrotask(() => { void this.close().catch(() => {}); });
+    throw new Error('The notes database identity changed');
+  }
   private async note(args: string[]): Promise<unknown> {
-    const { stdout } = await exec(this.noteCommand, [...this.noteArgs, '--no-notify', ...args],
-      { env: this.noteEnv, signal: this.lifetime.signal, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
-    return JSON.parse(stdout);
+    this.checkRunnerDatabase();
+    let output: string;
+    try {
+      ({ stdout: output } = await exec(this.noteCommand, [...this.noteArgs, '--no-notify', ...args],
+        { env: this.noteEnv, signal: this.lifetime.signal, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }));
+    } finally { this.checkRunnerDatabase(); }
+    return JSON.parse(output);
   }
   private leased(): boolean {
     return Boolean(this.db.prepare('SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?').get(this.owner, Date.now()));
   }
-  private transaction(work: () => void): void {
+  private transaction(work: () => void, revise = true): void {
+    this.checkRunnerDatabase();
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (!this.leased()) throw new Error('Field scheduler lease expired');
       work();
-      this.db.exec('UPDATE fw_publication SET revision=revision+1 WHERE id=1; COMMIT');
+      this.checkRunnerDatabase();
+      if (revise) this.db.exec('UPDATE fw_publication SET revision=revision+1 WHERE id=1');
+      this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   private reconcile(): void {
-    this.lifetime.signal.throwIfAborted();
+    this.checkRunnerDatabase();
     if (!this.watchers || !this.leased()) throw new Error('Field scheduler lease expired');
     const enabled = this.watchers().filter((watcher) => watcher.enabled);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
@@ -483,11 +547,12 @@ export class FieldAutomation {
     return work;
   }
   private async performTick(): Promise<void> {
-    this.lifetime.signal.throwIfAborted();
+    this.checkRunnerDatabase();
     const acquired = this.db.prepare('UPDATE fw_scheduler SET owner=?, lease_until=? WHERE id=1 AND (lease_until<=? OR owner=?)')
       .run(this.owner, Date.now() + leaseMs, Date.now(), this.owner).changes;
     if (!acquired) return;
     try {
+      this.checkRunnerDatabase();
       // A new runner first checks for history accumulated during downtime,
       // even if the previous runner's publication has not yet expired.
       this.db.prepare(`UPDATE fw_publication SET active_until=0 WHERE id=1 AND owner<>? AND active_until>0
@@ -496,7 +561,9 @@ export class FieldAutomation {
       this.reconcile();
       const generation = this.generation;
       const valid = () => {
-        if (this.lifetime.signal.aborted || !this.leased()) return false;
+        if (this.lifetime.signal.aborted) return false;
+        this.checkRunnerDatabase();
+        if (!this.leased()) return false;
         this.reconcile();
         if (generation !== this.generation) return false;
         // Many watchers can make intake longer than one lease; each bounded operation renews it.
@@ -524,21 +591,19 @@ export class FieldAutomation {
       }
       // After downtime, don't expose cached notices as current until intake
       // reaches the tail (including same-value remove/re-add events).
-      const publish = (now: number) => this.db.prepare(`UPDATE fw_publication SET owner=?, active_until=? WHERE id=1
-        AND (?=0 OR active_until>?) AND EXISTS(SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?)`)
-        .run(this.owner, now + leaseMs, Number(drained), now, this.owner, now);
       // Make overdue results stale in the same commit that makes publication
       // live. Keep the results and notice IDs for dedup on successful recheck.
-      if (!drained && this.publication().active_until <= Date.now()) {
-        this.transaction(() => {
-          const now = Date.now();
-          this.db.prepare(`UPDATE fw_jobs SET job=json_set(job, '$.resumePending', json('true'))
-            WHERE json_extract(job, '$.due') <= ?`).run(now);
-          publish(now);
-        });
-        this.changed();
-      } else publish(Date.now());
-      if (drained) { this.changed(); return; }
+      const resuming = !drained && this.publication().active_until <= Date.now();
+      this.transaction(() => {
+        const now = Date.now();
+        if (resuming) this.db.prepare(`UPDATE fw_jobs SET job=json_set(job, '$.resumePending', json('true'))
+          WHERE json_extract(job, '$.due') <= ?`).run(now);
+        this.db.prepare(`UPDATE fw_publication SET owner=?, active_until=? WHERE id=1
+          AND (?=0 OR active_until>?) AND EXISTS(SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?)`)
+          .run(this.owner, now + leaseMs, Number(drained), now, this.owner, now);
+      }, resuming);
+      if (drained || resuming) this.changed();
+      if (drained) return;
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
       if (!job) return;
@@ -560,7 +625,10 @@ export class FieldAutomation {
           version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,
           event: job.checkedAt ? 'check' : event.event, value: event.value, previousValue: event.previousValue,
           ...(job.result ? { previousResult: job.result } : {}),
-        }, invocation.signal);
+        }, invocation.signal, undefined, () => {
+          if (!this.leased()) throw new Error('Field scheduler lease expired');
+          this.checkRunnerDatabase();
+        });
         if (result.state === 'error') {
           retryAfterSeconds = result.recheckAfterSeconds ?? 0;
           throw new FieldHandlerFailure('Watcher reported unavailable data; check dependencies, authentication and connectivity');

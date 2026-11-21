@@ -111,7 +111,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.equal(automation.statuses(task)[0].stale, false, 'Observing expiry does not modify the cached job');
     await automation.tick();
     assert.deepEqual(observer.notices(task, 'session-a'), notices, 'Rejoining restores the same receipt');
-    server = createPinoteServer({ fieldAutomation: observer, watcherLogPath: observer.logPath });
+    server = createPinoteServer({ fieldAutomation: observer });
     client = new Client({ name: 'field-test', version: '1' });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(b); await client.connect(a);

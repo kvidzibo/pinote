@@ -244,7 +244,8 @@ async function verifyServiceEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute service PATH.');
   if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on the service PATH.');
 }
-async function existingCLI(runtime: () => SwitchRuntime, run: Run, env: NodeJS.ProcessEnv): Promise<{ path: string; database: string }> {
+async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
+  await verifyServiceEnvironment(env);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
   if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The service CLI must be an unambiguous absolute executable.');
   const path = await realpath(command === 'note' ? executable(env, 'note') : command);
@@ -276,33 +277,22 @@ async function existingCLI(runtime: () => SwitchRuntime, run: Run, env: NodeJS.P
     const code = 'import json,sys; from pathlib import Path; sys.path.__setitem__(0, str(Path(sys.argv[1]).parent)) if not sys.flags.safe_path else None; from pinote.paths import Paths; print(json.dumps(str(Paths.discover().database.resolve())))';
     const database = JSON.parse(await run(interpreter, ['-c', code, path], env));
     if (!databasePath(database)) throw new Error('Cannot verify the Python CLI database.');
-    return { path, database };
+    return database;
   }
   const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
-  const nodeRuntime = runtime();
   if (text === nodeEntry) {
-    if (await realpath(executable(env, 'node')) !== await realpath(nodeRuntime.node)) throw new Error('The service CLI PATH selects a different Node runtime; automatic switching was blocked.');
-    return { path, database: (await probeBackend({ ...nodeRuntime, bundles: resolve(dirname(path), '../dist') }, run, env)).database };
+    if (await realpath(executable(env, 'node')) !== await realpath(runtime.node)) throw new Error('The service CLI PATH selects a different Node runtime; automatic switching was blocked.');
+    return (await probeBackend({ ...runtime, bundles: resolve(dirname(path), '../dist') }, run, env)).database;
   }
-  if (text === launcher(nodeRuntime)) return { path, database: (await probeBackend(nodeRuntime, run, env)).database };
+  if (text === launcher(runtime)) return (await probeBackend(runtime, run, env)).database;
   // Never execute an arbitrary wrapper to discover its database: even a read
   // command may activate reminders or hide an XDG override inside the script.
   throw new Error('The existing service uses a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.');
 }
 async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
-  await verifyServiceEnvironment(env);
-  const { database } = await existingCLI(() => options, run, env);
+  const database = await existingCLIDatabase(options, run, env);
   if (database !== resolve(options.database)) throw new Error('The existing CLI uses a different database; the switch was blocked.');
   return database;
-}
-export async function verifiedDesktopNote(runtime: () => SwitchRuntime, database: string, env: NodeJS.ProcessEnv): Promise<string> {
-  // For an explicit backend override, only start automation if we can also
-  // verify the existing CLI, without executing an arbitrary CLI wrapper.
-  await verifyServiceEnvironment(env);
-  const cli = await existingCLI(runtime, (file, args, env, input) => runCommand(file, args, env, input, 5000), env);
-  if (cli.database !== database) throw new Error('The existing CLI uses a different database.');
-  await access(cli.path, constants.X_OK);
-  return cli.path;
 }
 function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
 function launcher(runtime: SwitchRuntime): string {
@@ -386,7 +376,7 @@ export async function execGuardedService(bundles: string): Promise<void> {
       if (file.kind !== 'file' || file.mode !== 0o700 || file.data !== Buffer.from(launcher(runtime)).toString('base64')) throw new Error();
       env.PINOTE_NOTE_COMMAND = check.cli;
     }
-    const { database: path } = await existingCLI(() => runtime, (file, args, env, input) => runCommand(file, args, env, input, 5000), env);
+    const path = await existingCLIDatabase(runtime, (file, args, env, input) => runCommand(file, args, env, input, 5000), env);
     // Measure the DB discovered by the probe, not a path selected by the journal.
     if (path !== check.database.path) throw new Error();
     const actual = await databaseIdentity(path);

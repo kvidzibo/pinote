@@ -3,7 +3,7 @@ import { accessSync, constants, lstatSync, readFileSync, readdirSync } from 'nod
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type FieldWatcherConfig = { path: string; enabled: boolean };
+export type FieldWatcherConfig = { path: string; enabled: boolean; activation?: string };
 export type FieldWatcher = FieldWatcherConfig & { id: string; name: string; bundled: boolean };
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 // Source: repo/watchers; compiled HTTP service: npm-package/watchers.
@@ -20,12 +20,14 @@ export function parseFieldWatchers(root: Record<string, unknown>): FieldWatcherC
   if (!Array.isArray(entries) || entries.length > 32) throw new Error('fieldWatchers must be an array of at most 32 watchers');
   const seen = new Set<string>();
   return entries.map((entry: unknown) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).some((key) => key !== 'path' && key !== 'enabled')) throw new Error('Invalid field watcher');
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).some((key) => key !== 'path' && key !== 'enabled' && key !== 'activation')) throw new Error('Invalid field watcher');
     const config = entry as Record<string, unknown>;
     const path = watcherPath(config.path);
     if (typeof config.enabled !== 'boolean' || seen.has(path)) throw new Error('Invalid or duplicate field watcher');
     seen.add(path);
-    return { path, enabled: config.enabled };
+    const activation = config.activation;
+    if (activation !== undefined && (typeof activation !== 'string' || !/^[0-9a-f-]{36}$/.test(activation))) throw new Error('Invalid watcher activation');
+    return { path, enabled: config.enabled, ...(activation ? { activation } : {}) };
   });
 }
 /** Validation only: never starts the executable or invokes a shell. */
