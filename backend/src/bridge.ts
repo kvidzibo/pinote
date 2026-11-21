@@ -67,7 +67,7 @@ export function validate(request: any): [string, Record<string, any>] {
     else if (key === 'ids') { if (!Array.isArray(v) || v.length > 1000 || !v.every(safe_id)) invalid(); }
     else if (v === null && ['tag', 'folder'].includes(key)) continue;
     // A null field value removes that field; labels and values are validated below.
-    else if (key === 'fields') { if (!isObject(v) || !Object.values(v).every(value => value === null || typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value))) invalid(); }
+    else if (key === 'fields') { if (!isObject(v) || Object.keys(v).length > 64 || !Object.values(v).every(value => value === null || typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value))) invalid(); }
     else if (typeof v !== 'string' || /[\uD800-\uDFFF]/u.test(v)) invalid();
   }
   if (Object.hasOwn(p, 'revision') && (!p.revision || Array.from(p.revision).length > 128 || /[\p{C}\p{Zl}\p{Zp}]|[^\S\x20]/u.test(p.revision) || /[\p{Zs}]/u.test(p.revision.replaceAll(' ', '')))) invalid();

@@ -1178,11 +1178,11 @@ try {
     await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Close flushes the debounce$/}).waitFor();
     // Fields configured in Pi are editable before any agent has set them.
     await mkdir(env.PI_CODING_AGENT_DIR,{recursive:true});
-    await writeFile(join(env.PI_CODING_AGENT_DIR,'pi-note.json'),JSON.stringify({footer:{fields:['PRs',{name:'Worktree'}]}}));
+    await writeFile(join(env.PI_CODING_AGENT_DIR,'pi-note.json'),JSON.stringify({footer:{fields:['PRs',{name:'Worktree'},'constructor']}}));
     await selectTaskAction(page, added.id, 'Edit text…');
     await saved(); assert.equal(await sourceValue(text),'Close flushes the debounce');
     assert.equal(snapshot().text,'Close flushes the debounce');
-    const prs='https://example.test/pulls/1\nhttps://example.test/pulls/2';
+    const prs='  indented Markdown\nhttps://example.test/pulls/2';
     const worktree=editDialog.getByRole('textbox',{name:'Agent field Worktree',exact:true});
     await editDialog.getByRole('textbox',{name:'Agent field PRs',exact:true}).fill(prs);
     await worktree.fill('/tmp/work');

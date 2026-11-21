@@ -120,7 +120,7 @@ test('agent sets and removes handoff fields against the task revision', async ()
   const set = await call('agent', { ...first, fields: { PRs: 'https://example.test/pulls/1\nhttps://example.test/pulls/2', Worktree: '/tmp/work' } });
   assert.equal(set.changed, true); assert.notEqual(set.revision, first.revision); assert.ok(set.agentEvent > 0);
   assert.equal((await respond(request('agent', { ...first, fields: { Worktree: '/tmp/stale' } }), paths)).error.code, 'conflict');
-  for (const fields of [{ Worktree: 1 }, { Worktree: ' ' }, { ' ': 'value' }, [], 'x']) assert.equal((await respond(request('agent', { id: Number(id), revision: set.revision, fields }), paths)).error.code, 'invalid');
+  for (const fields of [{ Worktree: 1 }, { Worktree: ' ' }, { ' ': 'value' }, [], 'x', Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`f${i}`, null]))]) assert.equal((await respond(request('agent', { id: Number(id), revision: set.revision, fields }), paths)).error.code, 'invalid');
   const same = await call('agent', { id: Number(id), revision: set.revision, fields: { Worktree: '/tmp/work' } });
   assert.deepEqual([same.changed, same.revision, same.agentEvent], [false, set.revision, set.agentEvent]);
   const removed = await call('agent', { id: Number(id), revision: set.revision, fields: { Worktree: null, Notes: 'kept' } });

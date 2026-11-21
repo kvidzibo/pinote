@@ -106,6 +106,8 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
   if (typeof result.changed !== 'boolean' || (result.id !== undefined && !id(result.id)) || (result.tag !== undefined && !str(result.tag,256))) return false;
   if (Object.hasOwn(result, 'revision') && (typeof result.revision !== 'string' || !str(result.revision,128) || !result.revision || /[\p{C}\p{Z}]/u.test(result.revision.replaceAll(' ', '')))) return false;
   if (result.agentEvent !== undefined && !(typeof result.agentEvent === 'number' && Number.isSafeInteger(result.agentEvent) && result.agentEvent >= 0)) return false;
+  // The editor needs the event to keep its own field edit from showing as unread.
+  if (operation === 'agent') return id(result.id) && typeof result.revision === 'string' && typeof result.agentEvent === 'number';
   if (operation === 'add') return result.changed && id(result.id);
   return operation !== 'create_tag' || (typeof result.tag === 'string' && result.tag.length > 0);
 }

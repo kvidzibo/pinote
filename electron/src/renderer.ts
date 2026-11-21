@@ -848,18 +848,19 @@ async function edit(task: Task): Promise<void> {
   };
   const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, changed, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && !dirty()) modal.close(); })); });
   // Configured fields are offered even without a value; clearing a value removes the field.
-  const savedFields: Record<string, string> = { ...task.agent_notes };
+  const savedFields = new Map(Object.entries(task.agent_notes)), draftFields = new Map(Object.entries(draft.fields ?? {}));
   const fieldInputs = new Map<string, HTMLTextAreaElement>();
   const fieldList = el('div', undefined, 'edit-fields'); fieldList.setAttribute('role', 'group'); fieldList.setAttribute('aria-label', 'Agent fields');
   fieldList.append(el('h3', 'Agent fields'));
-  for (const name of new Set([...configuredFields, ...Object.keys(savedFields), ...Object.keys(draft.fields ?? {})])) {
+  for (const name of new Set([...configuredFields, ...savedFields.keys(), ...draftFields.keys()])) {
     const input = el('textarea'); input.rows = 1; input.maxLength = 4096; input.spellcheck = false; input.placeholder = 'Not set';
-    input.value = draft.fields?.[name] ?? savedFields[name] ?? ''; input.setAttribute('aria-label', `Agent field ${name}`);
+    input.value = draftFields.get(name) ?? savedFields.get(name) ?? ''; input.setAttribute('aria-label', `Agent field ${name}`);
     input.addEventListener('input', changed);
     const row = el('label'), label = el('span', name); label.title = name; row.append(label, input); fieldList.append(row); fieldInputs.set(name, input);
   }
   fieldList.hidden = !fieldInputs.size;
-  const pendingFields = (): Record<string, string> => Object.fromEntries([...fieldInputs].map(([name, input]) => [name, input.value.trim()]).filter(([name, value]) => value !== (savedFields[name] ?? '').trim()));
+  // Values are kept verbatim (Markdown indentation matters); only a blank value means removal.
+  const pendingFields = (): Record<string, string> => Object.fromEntries([...fieldInputs].map(([name, input]) => [name, input.value.trim() ? input.value : '']).filter(([name, value]) => value !== (savedFields.get(name) ?? '')));
   const dirty = () => editor.value !== savedText || queuedTag !== undefined || Object.keys(pendingFields()).length > 0;
   const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
   const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
@@ -896,8 +897,9 @@ async function edit(task: Task): Promise<void> {
   function check(): void {
     const current = active?.notes.find(t => t.id === task.id);
     if (!saving && (!current || current.updated_at !== revision)) conflict = true;
-    editor.readOnly = readonly || closing || conflict;
-    for (const input of fieldInputs.values()) input.readOnly = editor.readOnly;
+    const locked = readonly || closing || conflict;
+    editor.readOnly = locked;
+    for (const input of fieldInputs.values()) input.readOnly = locked;
     tagName.textContent = (queuedTag === undefined ? tag : queuedTag) ?? 'Untagged';
     tagControl.title = `Change tag: ${tagName.textContent}${queuedTag === undefined ? '' : ' (not saved)'}`; tagControl.setAttribute('aria-label', tagControl.title);
     // Stays enabled while saving: a tag picked during an autosave is queued behind it.
@@ -945,7 +947,7 @@ async function edit(task: Task): Promise<void> {
         }
         revision = result.revision; editEpoch++;
         if (textChanged) savedText = text;
-        else if (!tagChanged) for (const [name, value] of Object.entries(fields)) { if (value) savedFields[name] = value; else delete savedFields[name]; }
+        else if (!tagChanged) for (const [name, value] of Object.entries(fields)) { if (value) savedFields.set(name, value); else savedFields.delete(name); }
         else {
           tag = result.tag ?? nextTag!;
           if (queuedTag === nextTag && queuedFolder === folder) { queuedTag = undefined; queuedFolder = undefined; }
@@ -954,7 +956,7 @@ async function edit(task: Task): Promise<void> {
         if (current && (current.updated_at === base || current.updated_at === revision)) {
           current.updated_at = revision; current.text = savedText.replace(/\r\n/g, '\n').trim(); current.tag = tag;
           if (!textChanged && !tagChanged) {
-            current.agent_notes = { ...savedFields };
+            current.agent_notes = Object.fromEntries(savedFields);
             // Your own field edit is not an unread agent update.
             if (result.agentEvent !== undefined) { current.agent_event_id = result.agentEvent; if (wasRead) state.read[id] = result.agentEvent; }
           }

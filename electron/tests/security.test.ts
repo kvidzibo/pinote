@@ -70,6 +70,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   for (const result of [null, {}, {changed:true}, {changed:false,id:1}]) assert.ok(!validEnvelope('add', {protocol:1,ok:true,result}));
   assert.ok(validEnvelope('add', {protocol:1,ok:true,result:{changed:true,id:1}}));
   assert.ok(!validEnvelope('snapshot', {protocol:1,ok:true,result:{notes:[],tags:[]}}));
+  assert.ok(validEnvelope('agent', {protocol:1,ok:true,result:{changed:true,id:1,revision:'rev',agentEvent:3}}));
+  for (const result of [{changed:true,id:1,revision:'rev'}, {changed:true,id:1,agentEvent:3}, {changed:true,id:1,revision:'rev',agentEvent:-1}]) assert.ok(!validEnvelope('agent', {protocol:1,ok:true,result}));
 });
 
 test('configured agent field names are read defensively from Pi settings', () => {
