@@ -556,11 +556,13 @@ export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntim
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
   const { env } = options;
-  await verifyCLIEnvironment(env, 'desktop');
+  verifyRuntimeEnvironment(env, 'desktop');
+  verifySwitchPaths(env);
   const paths = locations(env), run = dependencies.run || runCommand;
   const release = await acquire(env, dependencies.updateLock);
   let journal: Journal | undefined;
   try {
+    await verifyCLIEnvironment(env, 'desktop');
     if (await loadJournal(env)) throw new Error('An interrupted switch needs recovery; restart Pinote before trying again.');
     progress('Checking the bundled Node runtime and existing service…');
     const targetVersion = await probe(options, run);

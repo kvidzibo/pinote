@@ -89,7 +89,8 @@ its `setup` now also prepares the backend for the existing desktop updater.
 Keep the installed application's directory stable: the CLI launcher follows its
 bundled resources, so subsequent updates replace both runtimes together.
 **Refresh backend settings** checks the saved desktop preference and the installed
-user CLI. It does not report the live service state.
+user CLI. Before switching, it also checks the current service environment and
+reports a stopped service. It does not continuously monitor service status.
 
 The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
 `~/.config/pinote/backend.json`). It overrides only the exact backend override

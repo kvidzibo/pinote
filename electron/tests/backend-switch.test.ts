@@ -28,7 +28,7 @@ test('preflight without a user CLI checks the lock helper and service overrides 
     const flock = join(root, 'flock');
     await symlink('/usr/bin/true', flock);
     await assert.rejects(checkSwitchEnvironment(env), /system flock on the desktop PATH/);
-    await assert.rejects(switchToNode({ env, node: env.PINOTE_NODE, database: root, bundles }, () => {}), /system flock on the desktop PATH/);
+    await assert.rejects(switchToNode({ env, node: env.PINOTE_NODE, database: root, bundles }, () => {}, { updateLock: join(root, 'locks/update.lock') }), /system flock on the desktop PATH/);
     await rm(flock); await symlink('/usr/bin/flock', flock);
     await assert.rejects(checkSwitchEnvironment(env), error => error instanceof Error && error.message.includes('pinote.service environment sets LD_LIBRARY_PATH') && !error.message.includes(root));
   } finally { child.kill(); await rm(root, { recursive: true, force: true }); }
