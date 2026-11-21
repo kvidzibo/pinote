@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.13.0) bundles the matching Node backend;
+The private `electron/` package (0.13.1) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -47,7 +47,11 @@ Icons are bundled rather than taken from the host icon theme.
 
 After updating/building this Electron version, open **Menu → Backend settings…**
 and use **Switch to Node backend** (play icon). A native confirmation defaults to
-Cancel. The operation saves pending edits and drafts, verifies external Node and
+Cancel. If a runtime override prevents database verification, settings identifies the
+variable (not its value) and whether it belongs to the desktop or service before
+closing. Relaunch the affected process without the override if appropriate;
+otherwise keep the current backend until its database can be verified manually.
+The operation saves pending edits and drafts, verifies external Node and
 the bundled CLI/bridge against the same database, then:
 
 - Backs up SQLite, Electron drafts/geometry, and the replaced configuration.

@@ -51,7 +51,15 @@ const settings = async page => {
 };
 try {
   for (let i = 0; i < 100; i++) { if (spawnSync('i3-msg', ['-s', join(root, 'i3.sock'), '-t', 'get_tree'], { env, stdio: 'ignore' }).status === 0) break; await new Promise(ok => setTimeout(ok, 20)); }
+  env.LD_LIBRARY_PATH = root;
   let page = await launch();
+  await settings(page);
+  await page.getByText(/desktop environment sets LD_LIBRARY_PATH/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
+  await page.screenshot({ path: join(root, 'backend-switch-blocked.png') });
+  await app.close();
+  delete env.LD_LIBRARY_PATH;
+  page = await launch();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).fill('Draft kept across backend switch');
   await settings(page);
   await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).waitFor({ state: 'visible' });

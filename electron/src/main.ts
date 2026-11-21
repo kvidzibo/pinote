@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
-import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
+import { checkSwitchEnvironment, hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -230,6 +230,10 @@ async function boot() {
         const version = (await runCommand(options.node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
         const selected = await hasBackendPreference(process.env);
         const switched = selected && await hasInstalledLauncher(options);
+        if (!switched) {
+          try { await checkSwitchEnvironment(options.env); }
+          catch (error) { return { switched, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version }; }
+        }
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
           detail: switched ? 'Node is selected for the desktop. The user CLI matches this installation.' : selected ? 'Node is selected for the desktop, but the installed user CLI is missing or different. Check your CLI and service configuration before switching again.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
       } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
@@ -238,7 +242,8 @@ async function boot() {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
       switchConfirming = true;
       try {
-        switchOptions();
+        await checkSwitchEnvironment(switchOptions().env);
+        if (closing) return false;
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
           detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, replaces your ~/.local/bin/note command, and configures the existing pinote.service to use it. The service must be running to verify its database; no new service is installed or enabled.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. The existing service and Electron restart after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',
           buttons: ['Cancel', 'Switch to Node backend'], defaultId: 0, cancelId: 0 });

@@ -238,14 +238,32 @@ export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_D
     if (env[key]?.split('/').includes('..')) throw new Error('Backend switching requires unambiguous home and XDG paths without parent-directory components.');
   }
 }
-async function verifyServiceEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
+type EnvironmentSource = 'desktop' | 'pinote.service';
+function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource): void {
+  const key = Object.keys(env).find(key => env[key] && runtimeInjection(key));
+  if (!key) return;
+  const name = /^[A-Z0-9_]{1,80}$/.test(key) ? key : 'a custom runtime variable';
+  const action = source === 'desktop' ? 'Relaunch Pinote without this setting' : 'Review the service environment and restart it without this setting';
+  throw new Error(`The ${source} environment sets ${name}. ${action}, or verify the database and switch manually.`);
+}
+// Read-only preview. The installer repeats the checks against the actual
+// environments under its lock; a settings snapshot never authorizes a switch.
+export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
+  const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  if (cli) verifyRuntimeEnvironment(env, 'desktop');
+  const current = await service(runCommand, env);
+  if (current.active) verifyRuntimeEnvironment(await processEnvironment(current.pid), 'pinote.service');
+}
+async function verifyServiceEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
-  if (Object.keys(env).some(key => env[key] && runtimeInjection(key))) throw new Error('Custom service runtime injection settings require manual database verification.');
+  verifyRuntimeEnvironment(env, source);
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute service PATH.');
   if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on the service PATH.');
 }
-async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
-  await verifyServiceEnvironment(env);
+async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<string> {
+  await verifyServiceEnvironment(env, source);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
   if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The service CLI must be an unambiguous absolute executable.');
   const path = await realpath(command === 'note' ? executable(env, 'note') : command);
@@ -289,8 +307,8 @@ async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS
   // command may activate reminders or hide an XDG override inside the script.
   throw new Error('The existing service uses a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.');
 }
-async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
-  const database = await existingCLIDatabase(options, run, env);
+async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<string> {
+  const database = await existingCLIDatabase(options, run, env, source);
   if (database !== resolve(options.database)) throw new Error('The existing CLI uses a different database; the switch was blocked.');
   return database;
 }
@@ -543,7 +561,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     }
     // This launcher is independently user-facing; the service may use another CLI.
     if (files.some(file => file.path === paths.cli && file.kind !== 'missing')) {
-      await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: paths.cli });
+      await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: paths.cli }, 'desktop');
     }
     const backup = join(paths.state, 'backups', randomUUID()); await safeDirectory(backup, true);
     for (const file of files) {
