@@ -58,6 +58,8 @@ const prKey = (watcher: FieldWatcher, key: string) => watcher.name === 'GitHub P
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
 /** Saved results depend on these settings: changing them checks the watcher's fields afresh. */
 const settings = (watcher: FieldWatcher) => JSON.stringify([watcher.fieldEvents, watcher.fields, watcher.params]);
+/** A task watcher's enablement with its current settings; each starts at the history tail read once it appears. */
+const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
 type TaskEvent = { id: number; taskId: number; event: typeof TASK_EVENTS[number]; fields: Record<string, string> };
 const wantsTask = (watcher: FieldWatcher, event: TaskEvent) => watcher.taskEvents.includes(event.event)
   && (!watcher.fields.length || watcher.fields.some((name) => Object.hasOwn(event.fields, name)));
@@ -195,6 +197,10 @@ export class FieldAutomation {
     if (signature !== this.signature) {
       this.generation++; this.invocation?.abort();
       this.enabled = enabled; this.signature = signature; this.changed();
+      // A subscription that ended takes its queued events with it: enabling it again starts afresh.
+      const current = new Set(enabled.filter((watcher) => watcher.taskEvents.length).map(subscription));
+      for (const key of this.taskSince.keys()) if (!current.has(key)) this.taskSince.delete(key);
+      this.taskQueue = this.taskQueue.filter((queued) => current.has(queued.subscription));
     }
     if (!durable || signature === this.stored) return;
     this.db.exec('BEGIN IMMEDIATE');
@@ -368,12 +374,7 @@ export class FieldAutomation {
       }
       let drained = false;
       // Read event history only after notes.db or the watcher set (see reconcile) changed.
-      // Each task watcher starts at the history tail read once it is enabled or its settings change.
-      const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
       const subscribed = new Map(this.enabled.filter((watcher) => watcher.taskEvents.length).map((watcher) => [subscription(watcher), watcher]));
-      // A subscription that ended takes its queued events with it: enabling it again starts afresh.
-      for (const key of this.taskSince.keys()) if (!subscribed.has(key)) this.taskSince.delete(key);
-      this.taskQueue = this.taskQueue.filter((queued) => subscribed.has(queued.subscription));
       if (!subscribed.size) this.taskCursor = undefined;
       let more = false;
       if (!this.enabled.length) { this.notes.close(); return; }
