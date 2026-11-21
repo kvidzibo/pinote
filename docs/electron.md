@@ -84,10 +84,10 @@ the bundled CLI/bridge against the same database, then:
   direct-Python uv and pip/pipx entry points are recognized when their shebang
   selects a trusted native Python installation. Interpreter shims, shell wrappers
   (including long-shebang shims), and runtime injection require a manual switch:
-  `LD_PRELOAD` and other `LD_*` loader settings, `PYTHON*`, `GCONV_PATH` or
-  `GLIBC_TUNABLES` in the desktop environment block it, and the error names the
-  variable. `LD_LIBRARY_PATH` (for example from a CUDA profile), `NODE_*` and
-  `ELECTRON_*` do not.
+  `LD_PRELOAD` and other `LD_*` loader settings, `PYTHON*`, `NODE_OPTIONS`,
+  `GCONV_PATH` or `GLIBC_TUNABLES` in the desktop environment block this check,
+  and the error names the variable. `LD_LIBRARY_PATH` (for example from a CUDA
+  profile) and other `NODE_*` or `ELECTRON_*` settings do not.
   Launcher checks do not authenticate Python installations or their installed
   packages. PATH must contain only absolute entries and resolve `flock` to the
   system utility. PATH entries and home/XDG paths used for switching must not

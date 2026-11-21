@@ -26,7 +26,7 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['python', 'node', 'rollback', 'interrupted', 'conflict', 'deletion', 'changed-after-install', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'lossy-launcher', 'relative-home', 'pip', 'pip-lazy', 'interpreter-shim'] as const) {
+  for (const mode of ['python', 'node', 'rollback', 'interrupted', 'conflict', 'deletion', 'changed-after-install', 'loader', 'node-options', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'lossy-launcher', 'relative-home', 'pip', 'pip-lazy', 'interpreter-shim'] as const) {
     const root = await mkdtemp(join(tmpdir(), mode === 'interpreter-shim' ? 'pinote-shim-' : "pinote switch-'"));
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
@@ -60,6 +60,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       // Common desktop settings (a CUDA profile, a Node or Electron hint) must not block the switch.
       if (mode === 'python') Object.assign(env, { LD_LIBRARY_PATH: '/usr/local/cuda/lib64', NODE_ENV: 'production', ELECTRON_OZONE_PLATFORM_HINT: 'auto' });
       if (mode === 'loader') env.LD_PRELOAD = join(root, 'missing-injection.so');
+      if (mode === 'node-options') env.NODE_OPTIONS = '--max-old-space-size=4096';
       if (mode === 'relative-path') env.PATH = `first:${env.PATH}`;
       if (mode === 'relative-home') env.HOME = 'profile';
       if (mode === 'missing-flock') env.PATH = join(root, 'bin');
@@ -97,8 +98,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         assert.deepEqual(await readFile(database), source);
         continue;
       }
-      if (['loader', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'relative-home'].includes(mode)) {
-        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection setting LD_PRELOAD/ : /custom CLI wrapper/);
+      if (['loader', 'node-options', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'relative-home'].includes(mode)) {
+        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection setting LD_PRELOAD/ : mode === 'node-options' ? /runtime injection setting NODE_OPTIONS/ : /custom CLI wrapper/);
         if (mode !== 'relative-home') { assert.equal(await readlink(cli), old); await assert.rejects(lstat(pending), { code: 'ENOENT' }); }
         assert.deepEqual(await readFile(database), source); continue;
       }
