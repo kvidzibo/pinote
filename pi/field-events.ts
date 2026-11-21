@@ -354,7 +354,7 @@ export class FieldAutomation {
       const version = this.notes.read();
       let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
       // A settings reset removes a watcher's row: start it again from durable history.
-      for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path).changes) intake = true;
+      for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path).changes) { intake = true; this.drained = undefined; }
       for (const watcher of intake ? this.enabled : []) {
         const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
         const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));

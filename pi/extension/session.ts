@@ -55,15 +55,17 @@ export class PinoteSession {
     this.lifetime = new AbortController(); this.active = true;
     this.conversationId = conversationId;
     this.piSessionId = piSessionId;
-    this.saved = carried ? structuredClone(carried) : restoreState(branch);
-    if (this.saved.scope !== SCOPE) await this.adopt();
+    const restored = carried ? structuredClone(carried) : restoreState(branch);
+    // Nothing may read an unverified selection: expose empty state until adoption decides.
+    this.saved = restored.scope === SCOPE ? restored : { ...restored, scope: SCOPE, state: {} };
+    if (restored.scope !== SCOPE) await this.adopt(restored.state.selectedId);
     this.persist(this.saved);
     await this.refresh(true);
   }
   /** A selection saved by the former HTTP client may name another database's task. Keep it only
    * if this machine's task records this Pi session among those that selected it; else start unselected. */
-  private async adopt(): Promise<void> {
-    const saved = this.saved!, id = saved.state.selectedId;
+  private async adopt(id: unknown): Promise<void> {
+    const current = this.current();
     let known = false;
     if (typeof id === 'number' && this.piSessionId) {
       try {
@@ -73,7 +75,7 @@ export class PinoteSession {
         known = Array.isArray(sessions) && sessions.includes(this.piSessionId);
       } catch { /* Unverifiable: fail closed. */ }
     }
-    this.saved = { ...saved, scope: SCOPE, state: known ? { selectedId: id } : {} };
+    if (known && current()) this.saved = { ...this.saved!, state: { selectedId: id } };
   }
   async stop(reason?: string): Promise<void> {
     this.active = false; this.epoch++; this.lifetime.abort(reason); this.connection?.abort();
