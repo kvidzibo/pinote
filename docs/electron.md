@@ -47,7 +47,12 @@ Icons are bundled rather than taken from the host icon theme.
 
 After updating/building this Electron version, open **Menu → Backend settings…**
 and use **Switch to Node backend** (play icon). A native confirmation defaults to
-Cancel. If a runtime override prevents database verification, settings identifies the
+Cancel. This is one migration for the desktop, user CLI, and existing service. A desktop
+using the standard administrator-installed CUDA library directory
+(`/usr/local/cuda/lib64` as the sole `LD_LIBRARY_PATH` entry) needs no special
+launch command. Pinote checks the directory and its contents before running the
+old and new CLI checks with that same environment; CUDA settings are not changed.
+If a runtime override prevents database verification, settings identifies the
 variable (not its value) and whether it belongs to the desktop or service before
 closing. Relaunch the affected process without the override if appropriate;
 otherwise keep the current backend until its database can be verified manually.
@@ -89,8 +94,8 @@ its `setup` now also prepares the backend for the existing desktop updater.
 Keep the installed application's directory stable: the CLI launcher follows its
 bundled resources, so subsequent updates replace both runtimes together.
 **Refresh backend settings** checks the saved desktop preference and the installed
-user CLI. Before switching, it also checks the current service environment and
-reports a stopped service. It does not continuously monitor service status.
+user CLI. It also checks that any running service selects that CLI, and reports
+a stopped service rather than treating the installation as fully switched. It does not continuously monitor service status.
 
 The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
 `~/.config/pinote/backend.json`). It overrides only the exact backend override

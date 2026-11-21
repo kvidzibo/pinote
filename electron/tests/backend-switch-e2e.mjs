@@ -63,7 +63,8 @@ try {
   await page.getByText(/absolute desktop PATH/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await app.close();
-  delete env.LD_LIBRARY_PATH;
+  if (process.env.PINOTE_TEST_SYSTEM_CUDA === '1') env.LD_LIBRARY_PATH = '/usr/local/cuda/lib64';
+  else delete env.LD_LIBRARY_PATH;
   env.PINOTE_NODE = process.execPath;
   page = await launch();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).fill('Draft kept across backend switch');
@@ -91,7 +92,7 @@ try {
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).waitFor();
   assert.match(await page.locator('#draft').innerText(), /Draft kept across backend switch/);
   await settings(page);
-  await page.getByText(/user CLI matches this installation/).waitFor();
+  await page.getByText(/The desktop and user CLI use Node. No Pinote service is installed/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   assert.equal(await readFile(marker, 'utf8'), calls, 'The saved Node choice bypasses the old launcher override after relaunch');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(280, 560));
@@ -100,7 +101,7 @@ try {
   await page.screenshot({ path: join(root, 'backend-switched-narrow.png') });
   await writeFile(join(root, '.local/bin/note'), '#!/bin/sh\nexit 99\n');
   await page.getByRole('button', { name: 'Refresh backend settings' }).click();
-  await page.getByText(/installed user CLI is missing or different/).waitFor();
+  await page.getByText(/user CLI or service still needs migration/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isEnabled(), true);
   await page.screenshot({ path: join(root, 'backend-launcher-changed.png') });
   await page.keyboard.press('Escape');

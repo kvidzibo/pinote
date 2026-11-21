@@ -227,18 +227,13 @@ async function boot() {
     'backend-settings': async () => {
       try {
         const selected = await hasBackendPreference(process.env);
-        let switched = false;
-        if (selected) {
-          try { switched = await hasInstalledLauncher(switchOptions()); }
-          catch { /* A missing Node executable cannot confirm a matching installation. */ }
-        }
-        if (!switched) {
-          try { await checkSwitchEnvironment(process.env); }
-          catch (error) { return { switched, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
-        }
+        let service: Awaited<ReturnType<typeof checkSwitchEnvironment>>;
+        try { service = await checkSwitchEnvironment(process.env); }
+        catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
+        const switched = selected && service !== 'different' && await hasInstalledLauncher(switchOptions());
         const version = (await runCommand(switchRuntime().node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
-          detail: switched ? 'Node is selected for the desktop. The user CLI matches this installation.' : selected ? 'Node is selected for the desktop, but the installed user CLI is missing or different. Check your CLI and service configuration before switching again.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
+          detail: switched ? `The desktop and user CLI use Node. ${service === 'matches' ? 'The running service uses the same CLI.' : 'No Pinote service is installed.'}` : selected ? 'Node is selected for the desktop, but the user CLI or service still needs migration.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
       } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
     },
     'switch-backend': async () => {

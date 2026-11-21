@@ -198,7 +198,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         }, wait: async () => {},
       };
       const phases: string[] = [];
-      const operation = switchToNode({ env, node: process.execPath, bundles, database }, text => {
+      const desktopEnv = mode === 'success' && process.env.PINOTE_TEST_SYSTEM_CUDA === '1' ? { ...env, LD_LIBRARY_PATH: '/usr/local/cuda/lib64' } : env;
+      const operation = switchToNode({ env: desktopEnv, node: process.execPath, bundles, database }, text => {
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);

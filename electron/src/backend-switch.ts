@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import { trustedCudaLibraryPath } from './cuda-library-path.ts';
 import { backendEnvironment, nodeExecutable } from './backend-command.ts';
 
 // Only main-process values enter this installer. No renderer-supplied paths,
@@ -244,23 +245,27 @@ export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_D
   }
 }
 type EnvironmentSource = 'desktop' | 'pinote.service';
-function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource): void {
-  const key = Object.keys(env).find(key => env[key] && runtimeInjection(key));
-  if (!key) return;
+async function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource): Promise<void> {
+  const keys = Object.keys(env).filter(key => env[key] && runtimeInjection(key));
+  if (!keys.length) return;
+  // Run the old and new CLI probes with the real desktop library path. Never
+  // infer the old CLI's database from a probe in a sanitized environment.
+  const key = keys.find(key => key !== 'LD_LIBRARY_PATH') || 'LD_LIBRARY_PATH';
+  if (key === 'LD_LIBRARY_PATH' && source === 'desktop' && await trustedCudaLibraryPath(env[key]!)) return;
   const name = /^[A-Z0-9_]{1,80}$/.test(key) ? key : 'a custom runtime variable';
   const action = source === 'desktop' ? 'Relaunch Pinote without this setting' : 'Review the service environment and restart it without this setting';
   throw new Error(`The ${source} environment sets ${name}. ${action}, or verify the database and switch manually.`);
 }
 // Read-only preview. The installer repeats the checks against the actual
 // environments under its lock; a settings snapshot never authorizes a switch.
-export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
+export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<'absent' | 'matches' | 'different'> {
   await verifyCLIEnvironment(env, 'desktop');
   const current = await switchableService(runCommand, env);
   let serviceEnv: NodeJS.ProcessEnv | undefined;
   if (current.active) {
     await verifyServiceContext(current.pid);
     serviceEnv = await processEnvironment(current.pid);
-    verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
+    await verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
   }
   const runtime = { node: nodeExecutable(env) };
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
@@ -268,10 +273,11 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<vo
   });
   if (cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
   if (serviceEnv) await inspectCLI(runtime, serviceEnv, 'pinote.service');
+  return !serviceEnv ? 'absent' : serviceEnv.PINOTE_NOTE_COMMAND === locations(env).cli ? 'matches' : 'different';
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
-  verifyRuntimeEnvironment(env, source);
+  await verifyRuntimeEnvironment(env, source);
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error(`Automatic switching requires an unambiguous absolute ${source} PATH.`);
   try {
     if (await realpath(executable(env, 'flock')) === await realpath('/usr/bin/flock')) return;
@@ -556,7 +562,7 @@ export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntim
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
   const { env } = options;
-  verifyRuntimeEnvironment(env, 'desktop');
+  await verifyRuntimeEnvironment(env, 'desktop');
   verifySwitchPaths(env);
   const paths = locations(env), run = dependencies.run || runCommand;
   const release = await acquire(env, dependencies.updateLock);
@@ -565,6 +571,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     await verifyCLIEnvironment(env, 'desktop');
     if (await loadJournal(env)) throw new Error('An interrupted switch needs recovery; restart Pinote before trying again.');
     progress('Checking the bundled Node runtime and existing service…');
+    const desktopDatabase = await databaseIdentity(options.database);
     const targetVersion = await probe(options, run);
     const version = (await run(options.node, [join(options.bundles, 'cli.mjs'), '--version'], env)).trim();
     if (version !== `pinote ${targetVersion}`) throw new Error('Bundled CLI verification failed.');
@@ -581,6 +588,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(before.pid);
       originalHost = serviceEnv.PINOTE_HOST; originalPort = serviceEnv.PINOTE_PORT;
       originalDatabase = await databaseIdentity(await verifyExistingCLI(options, run, serviceEnv));
+      if (!same(originalDatabase, desktopDatabase)) throw new Error('The service database no longer matches the desktop database.');
       await (dependencies.listening || listening)(serviceEnv);
     }
     const files: SavedFile[] = [];
@@ -622,10 +630,8 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       await controlService(run, env, 'daemon-reload');
       await startGuarded(env, journal, options, serviceArguments, dependencies, paths.cli);
     }
-    if (originalDatabase) {
-      const current = await databaseIdentity(options.database);
-      if (current.dev !== originalDatabase.dev || current.ino !== originalDatabase.ino) throw new Error('The database was replaced during the switch.');
-    }
+    const currentDatabase = await databaseIdentity(options.database);
+    if (!same(currentDatabase, desktopDatabase) || (originalDatabase && !same(currentDatabase, originalDatabase))) throw new Error('The database was replaced during the switch.');
     // Restart and readiness probes take time. Re-read every published target
     // before committing, without executing a potentially replaced launcher.
     for (const file of files) {
