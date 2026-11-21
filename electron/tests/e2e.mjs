@@ -890,7 +890,7 @@ try {
   }
   if (part === '2') {
     // Part 1 checks these invariants later, in its own processes.
-    assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
+    assert.equal(gtk.exitCode ?? gtk.signalCode,null,'GTK must coexist without exiting');
     assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
     assert.deepEqual(pageErrors,[]);
   }
@@ -1403,7 +1403,7 @@ try {
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
   if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
   await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);
-  assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
+  assert.equal(gtk.exitCode ?? gtk.signalCode,null,'GTK must coexist without exiting');
   // Reach a real failed launch: nonexistent folders are now rejected before effects.
   const kittyBin=join(root,'failed-kitty-bin'), kittyMarker=join(root,'kitty-launch-attempted');
   await mkdir(kittyBin);
