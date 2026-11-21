@@ -1079,7 +1079,7 @@ try {
       await editDialog.waitFor({state:'detached'});
       await writeFile(faultFile,'');
       // The saved tag may hide this row under the current filter; recovery must still open it.
-      if (!await page.getByRole('dialog',{name:'Private edit drafts',exact:true}).count()) await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
+      if (!await page.getByRole('dialog',{name:'Recover edit drafts',exact:true}).count()) await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
       await page.getByRole('button',{name:'Open revision-bound editor',exact:true}).click();
       await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
       await page.waitForTimeout(900);

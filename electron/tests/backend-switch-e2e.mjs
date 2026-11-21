@@ -86,6 +86,7 @@ try {
   assert.equal((await menuIds()).includes('backend-settings'), false, 'A completed switch hides its menu item');
   await app.evaluate(() => globalThis.__switchMenu.closePopup());
   assert.equal(await readFile(marker, 'utf8'), calls, 'The saved Node choice bypasses the old launcher override after relaunch');
+  const installed = await readFile(join(root, '.local/bin/note'));
   await writeFile(join(root, '.local/bin/note'), '#!/bin/sh\nexit 99\n');
   await settings(page);
   await page.getByText(/installed user CLI is missing or different/).waitFor();
@@ -95,6 +96,10 @@ try {
   await page.waitForTimeout(250);
   assert.ok(await page.getByRole('dialog', { name: 'Switch to Node backend', exact: true }).evaluate(node => node.scrollWidth <= node.clientWidth), 'Narrow settings must not clip horizontally');
   await page.screenshot({ path: join(root, 'backend-launcher-changed-narrow.png') });
+  await writeFile(join(root, '.local/bin/note'), installed);
+  await page.getByRole('button', { name: 'Refresh backend settings' }).click();
+  await page.getByText(/user CLI matches this installation/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await page.keyboard.press('Escape');
   await page.getByRole('dialog', { name: 'Switch to Node backend', exact: true }).waitFor({ state: 'detached' });
   console.log(`Backend-switch UI artifacts: ${root}`);

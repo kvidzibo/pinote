@@ -131,8 +131,10 @@ async function boot() {
   const database = identity.database;
   let switchRequested = false, switchConfirming = false;
   const switchOptions = () => ({ ...switchRuntime(), env: process.env, database });
+  // Resolve the runtime once: each menu opening only rereads the preference and launcher.
+  let menuSwitchOptions: ReturnType<typeof switchOptions> | undefined;
   const backendSwitched = async () => {
-    try { return await hasBackendPreference(process.env) && await hasInstalledLauncher(switchOptions()); } catch { return false; }
+    try { return await hasBackendPreference(process.env) && await hasInstalledLauncher(menuSwitchOptions ??= switchOptions()); } catch { return false; }
   };
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
   dataDir = join(dirname(identity.database), 'electron');

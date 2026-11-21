@@ -952,7 +952,7 @@ async function edit(task: Task): Promise<void> {
   modal.panel.append(warning, editorHost, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
 }
 function recoverDrafts(): void {
-  const modal = layer('Private edit drafts');
+  const modal = layer('Recover edit drafts');
   const list = el('div', undefined, 'scroll'); modal.panel.append(list);
   const draw = () => {
     list.replaceChildren();
