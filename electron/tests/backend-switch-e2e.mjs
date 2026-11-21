@@ -20,6 +20,7 @@ for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE', 'PINOTE_
 env.PI_CODING_AGENT_DIR = join(root, 'pi-agent'); // No token there: the embedded service neither listens nor runs a CLI.
 // The simulated user installation must not inherit host loader overrides.
 for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key)) delete env[key];
+env.LD_LIBRARY_PATH = join(root, 'cuda/lib64'); // A system profile's library path must not block the switch.
 for (const path of ['bin', 'data', 'state', 'config', 'cache', 'runtime', '.local/bin']) await mkdir(join(root, path), { recursive: true, mode: 0o700 });
 const marker = join(root, 'python-calls');
 await writeFile(env.PINOTE_ELECTRON_BACKEND, `#!/bin/sh\nprintf x >> '${marker}'\nexec '${resolve('../.venv/bin/pinote-electron-backend')}'\n`, { mode: 0o700 });
