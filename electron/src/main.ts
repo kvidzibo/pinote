@@ -230,6 +230,7 @@ async function boot() {
         let service: Awaited<ReturnType<typeof checkSwitchEnvironment>>;
         try { service = await checkSwitchEnvironment(process.env, bundles, database); }
         catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
+        if (!selected && service === 'matches') return { switched: false, canSwitch: false, detail: 'Your CLI and service already use Node. Remove the desktop diagnostic backend override and relaunch Pinote to use the bundled desktop backend.', version: '' };
         const switched = selected && service !== 'different' && await hasInstalledLauncher(switchOptions());
         const version = (await runCommand(switchRuntime().node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
@@ -240,7 +241,7 @@ async function boot() {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
       switchConfirming = true;
       try {
-        await checkSwitchEnvironment(process.env, bundles, database);
+        if (await checkSwitchEnvironment(process.env, bundles, database) === 'matches') return false; // Already managed; never reinstall its drop-in.
         if (closing) return false;
         switchRuntime(); // Verify the supported version only after the environment check.
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
