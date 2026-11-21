@@ -86,6 +86,24 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     observer = await FieldAutomation.observe({ path });
     assert.throws(() => observer!.start(), /observer cannot schedule/);
     await assert.rejects(observer.tick(), /observer cannot schedule/);
+    // Resume at the history tail with an overdue check blocked in its handler.
+    // The cached failure may be displayed as stale, but cannot trigger a worker.
+    await automation.close(); automation = await open();
+    const failure = { state: 'failed', display: { color: 'error' }, notification: { key: 'head:failed', message: 'CI failed' }, recheckAfterSeconds: 10 };
+    await setMode({ ...failure, wait: true });
+    forceDue();
+    const beforeResume = (await callLog()).length;
+    const resuming = automation.tick();
+    for (let i = 0; i < 500 && (await callLog()).length === beforeResume; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal((await callLog()).length, beforeResume + 1);
+    assert.equal(observer.statuses(task)[0].stale, true);
+    assert.deepEqual(observer.notices(task, 'session-a'), []);
+    assert.deepEqual(observer.failures(), [], 'waiting for resume revalidation is not a handler failure');
+    await writeFile(join(dir, 'release'), '');
+    await resuming;
+    await rm(join(dir, 'release'));
+    await setMode(failure);
+    assert.deepEqual(observer.notices(task, 'session-a'), notices, 'resume revalidation keeps the receipt ID');
     const clock = new DatabaseSync(path);
     try { clock.exec('UPDATE fw_publication SET active_until=1'); } finally { clock.close(); }
     assert.equal(observer.statuses(task)[0].stale, true, 'An expired runner leaves a stale cached result');

@@ -28,7 +28,7 @@ export const FieldResult = SingleFieldResult.extend({
 }).strict();
 export type FieldResult = z.infer<typeof FieldResult>;
 type FieldEvent = z.infer<typeof Event>;
-type Job = { watcherId: string; event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean };
+type Job = { watcherId: string; event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean; resumePending?: boolean };
 export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: number; field: string; reason: string; lastSuccess: string | null; retryAt: string };
 class FieldHandlerFailure extends Error {}
 export type FieldStatus = { watcherId: string; field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
@@ -53,12 +53,25 @@ const prKey = (watcher: FieldWatcher, key: string) => watcher.bundled && watcher
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
 
 /** One bounded invocation, no shell. Kill the process group on cancellation/overflow. */
-export function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000): Promise<FieldResult> {
+export async function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000): Promise<FieldResult> {
+  const { fieldHandlerGuardian: guardian } = await import('./handler-process.ts');
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn(handler, [], { cwd: dirname(handler), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    const child = guardian
+      ? spawn(guardian.node, [guardian.script, String(process.pid), String(Date.now() + timeoutMs), handler],
+        { env: guardian.env, stdio: ['pipe', 'pipe', 'pipe', 'ipc'], detached: true })
+      : spawn(handler, [], { cwd: dirname(handler), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let output = '', bytes = 0, failure: string | undefined;
+    let guardedExit: unknown;
+    if (guardian) child.on('message', status => { guardedExit = status; });
     const kill = (reason = 'Watcher cancelled') => {
+      if (guardian) {
+        // Let the guardian signal its group after spawn has finished, not
+        // during fork. Keep IPC open so the child's close event can drain it.
+        if (!failure && child.connected) child.send('cancel', () => {});
+        failure ??= reason;
+        return;
+      }
       failure ??= reason;
       try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
     };
@@ -66,31 +79,38 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
     const abort = () => kill();
     signal.addEventListener('abort', abort, { once: true });
     const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); };
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { bytes += Buffer.byteLength(chunk); if (bytes > 64 * 1024) kill('Watcher output exceeded 64 KiB'); else output += chunk; });
-    child.stderr.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > 64 * 1024) kill('Watcher output exceeded 64 KiB'); });
-    child.stdin.on('error', () => kill('Watcher input could not be delivered'));
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => { bytes += Buffer.byteLength(chunk); if (bytes > 64 * 1024) kill('Watcher output exceeded 64 KiB'); else output += chunk; });
+    child.stderr!.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes > 64 * 1024) kill('Watcher output exceeded 64 KiB'); });
+    child.stdin!.on('error', () => kill('Watcher input could not be delivered'));
+    const spawnFailure = (code?: string) => code === 'ENOENT' ? 'Watcher executable or interpreter not found; check service PATH' :
+      code === 'EACCES' ? 'Watcher execution denied; check permissions' : 'Watcher could not be started';
     child.on('error', (error: NodeJS.ErrnoException) => {
       cleanup();
-      reject(new FieldHandlerFailure(error.code === 'ENOENT' ? 'Watcher executable or interpreter not found; check service PATH' :
-        error.code === 'EACCES' ? 'Watcher execution denied; check permissions' : 'Watcher could not be started'));
+      reject(new FieldHandlerFailure(spawnFailure(error.code)));
     });
     child.on('close', (code) => {
       cleanup();
-      if (failure || code !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
-        (code === 127 ? 'Watcher exited with code 127; check interpreter and service PATH' : 'Watcher exited unsuccessfully')));
+      const status = guardian ? guardedExit : code;
+      if (failure || status !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
+        (typeof status === 'string' ? spawnFailure(status) : status === 127 ?
+          'Watcher exited with code 127; check interpreter and service PATH' : 'Watcher exited unsuccessfully')));
       try { resolve(FieldResult.parse(JSON.parse(output))); } catch { reject(new FieldHandlerFailure('Invalid watcher JSON or result schema')); }
     });
-    child.stdin.end(JSON.stringify(input));
+    if (guardian) child.send({ env: process.env }, error => { if (error) kill('Watcher could not be started'); });
+    child.stdin!.end(JSON.stringify(input));
   });
 }
 
 type StorageOptions = {
   /** Verified absolute notes.db identity. Omit for the default XDG notes database. */
   database?: string;
+  /** The CLI-reported pre-resolution path, for detecting legacy state. */
+  lexicalDatabase?: string;
   /** Override the automation state file, not notes.db. Both sides must use the same path. */
   path?: string;
   changed?: () => void;
+  available?: () => boolean;
 };
 type RunnerOptions = StorageOptions & {
   watchers?: () => FieldWatcher[];
@@ -106,7 +126,7 @@ const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 // Match the desktop's resolved identity, including an XDG directory alias or
 // a not-yet-created notes database when HTTP starts first.
-function canonicalDatabase(path: string, links = 0): string {
+export function canonicalDatabase(path: string, links = 0): string {
   try { return utf8.decode(realpathSync.native(path, { encoding: 'buffer' })); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   let target: string | undefined;
@@ -120,14 +140,35 @@ function canonicalDatabase(path: string, links = 0): string {
   return parent === path ? path : join(canonicalDatabase(parent, links), basename(path));
 }
 
-export function fieldAutomationPath(options: Pick<StorageOptions, 'database' | 'path'> = {}): string {
-  if (options.path !== undefined) return options.path;
+function defaultDatabase(): string {
   const dataHome = process.env.XDG_DATA_HOME;
-  const database = options.database ?? `${dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share')}/pinote/notes.db`;
-  if (!isAbsolute(database)) throw new Error('Expected an absolute notes database identity');
-  const namespace = createHash('sha256').update(canonicalDatabase(database)).digest('hex').slice(0, 16);
+  return join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
+}
+
+function namespacePath(database: string): string {
+  const namespace = createHash('sha256').update(database).digest('hex').slice(0, 16);
   const stateHome = process.env.XDG_STATE_HOME;
   return join(stateHome && isAbsolute(stateHome) ? stateHome : join(homedir(), '.local/state'), 'pinote/field-events', namespace, 'state.db');
+}
+
+export function fieldAutomationPath(options: Pick<StorageOptions, 'database' | 'path'> = {}): string {
+  if (options.path !== undefined) return options.path;
+  const database = options.database ?? defaultDatabase();
+  if (!isAbsolute(database)) throw new Error('Expected an absolute notes database identity');
+  return namespacePath(canonicalDatabase(database));
+}
+
+function checkLegacyNamespace(options: StorageOptions, path: string): void {
+  if (options.path !== undefined) return;
+  for (const database of new Set([defaultDatabase(), options.lexicalDatabase ?? options.database ?? defaultDatabase()])) {
+    const legacy = namespacePath(database);
+    if (legacy === path || database === canonicalDatabase(database)) continue;
+    // Legacy state contains no database identity: a retargeted alias may
+    // belong to another profile. Don't silently adopt it or replay in parallel.
+    try { lstatSync(legacy); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+    throw new Error('Legacy lexical field automation state requires offline migration');
+  }
 }
 
 /** Electron owns execution; HTTP observes committed results and writes only conversation claims. */
@@ -150,6 +191,7 @@ export class FieldAutomation {
   private noteArgs: readonly string[];
   private noteEnv?: NodeJS.ProcessEnv;
   private changed: () => void;
+  private available = () => true;
   private log: (failure?: WatcherFailureLog) => void;
   readonly logPath: string;
   private constructor(db: DatabaseSync, path: string, changed: () => void, runner?: RunnerOptions) {
@@ -214,6 +256,7 @@ export class FieldAutomation {
   /** Observe changes without acquiring a lease, reading watcher config or running commands. */
   static async observe(options: StorageOptions & { onError?: () => void } = {}): Promise<FieldAutomation> {
     const automation = await this.connect(options);
+    if (options.available) automation.available = options.available;
     let last: string;
     try { last = automation.observationKey(); }
     catch (error) { await automation.close(); throw error; }
@@ -227,14 +270,16 @@ export class FieldAutomation {
     return automation;
   }
   private static async connect(options: StorageOptions, runner?: RunnerOptions): Promise<FieldAutomation> {
+    const { DatabaseSync } = await import('node:sqlite');
+    if (options.available && !options.available()) throw new Error('Field automation identity is unavailable');
     const path = fieldAutomationPath(options);
+    checkLegacyNamespace(options, path);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const directory = lstatSync(dirname(path));
     if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077)) throw new Error('Unsafe field automation directory');
     try { closeSync(openSync(path, 'wx', 0o600)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error('Unsafe field automation database');
-    const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(path);
     try { return new FieldAutomation(db, path, options.changed ?? (() => {}), runner); }
     catch (error) { db.close(); throw error; }
@@ -318,6 +363,7 @@ export class FieldAutomation {
     return this.db.prepare('SELECT revision,active_until,watchers FROM fw_publication WHERE id=1').get() as Publication;
   }
   private observationKey(): string {
+    if (!this.available()) return 'unavailable';
     const { revision, active_until } = this.publication();
     return `${revision}:${active_until > Date.now()}`;
   }
@@ -331,23 +377,26 @@ export class FieldAutomation {
   }
   /** Explicit selection/write owns alerts; background reads can only claim unowned tasks. */
   claim(taskId: number, contextId: string, replace = false): void {
+    if (!this.available()) return;
     if (!replace && this.db.prepare('SELECT 1 FROM owners WHERE task_id=?').get(taskId)) return;
     this.db.prepare(replace
       ? 'INSERT INTO owners(task_id,context_id) VALUES (?,?) ON CONFLICT(task_id) DO UPDATE SET context_id=excluded.context_id WHERE context_id<>excluded.context_id'
       : 'INSERT OR IGNORE INTO owners(task_id,context_id) VALUES (?,?)').run(taskId, contextId);
   }
   statuses(task: Task): FieldStatus[] {
+    if (!this.available()) return [];
     return this.read((watchers, offline) => this.taskStatuses(task, watchers, offline));
   }
   private taskStatuses(task: Task, watchers: FieldWatcher[], offline: boolean): FieldStatus[] {
     return watchers.flatMap((watcher) => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=?').all(watcher.id, task.id) as Row[]).flatMap(({ job: raw }) => {
       const job = JSON.parse(raw) as Job;
       if (job.event.value === null || job.event.value !== task.agent_notes[job.event.field] || !job.result || Object.keys(job.result).length === 0) return [];
-      return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: offline || (job.stale ?? false) }];
+      return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: offline || Boolean(job.stale || job.resumePending) }];
     }));
   }
   /** Watcher failures, independent of desktop liveness and worker alerts. */
   failures() {
+    if (!this.available()) return [];
     return this.read((watchers) => watchers.flatMap((watcher) => {
       const fields = [...new Set((this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=?').all(watcher.id) as Row[])
         .map(({ job }) => JSON.parse(job) as Job).filter((job) => (job.stale || job.result?.items?.some((item) => item.state === 'error')) && job.event.value !== null).map((job) => job.event.field))].sort();
@@ -356,6 +405,7 @@ export class FieldAutomation {
   }
   notices(task: Task, contextId: string, receipts: readonly string[] = [], grouped = false): FieldNotice[] {
     this.claim(task.id, contextId);
+    if (!this.available()) return [];
     return this.read((watchers, offline) => {
       const owner = this.db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id);
       if (offline || owner?.context_id !== contextId || !watchers.length) return [];
@@ -474,10 +524,20 @@ export class FieldAutomation {
       }
       // After downtime, don't expose cached notices as current until intake
       // reaches the tail (including same-value remove/re-add events).
-      const now = Date.now();
-      this.db.prepare(`UPDATE fw_publication SET owner=?, active_until=? WHERE id=1
+      const publish = (now: number) => this.db.prepare(`UPDATE fw_publication SET owner=?, active_until=? WHERE id=1
         AND (?=0 OR active_until>?) AND EXISTS(SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?)`)
         .run(this.owner, now + leaseMs, Number(drained), now, this.owner, now);
+      // Make overdue results stale in the same commit that makes publication
+      // live. Keep the results and notice IDs for dedup on successful recheck.
+      if (!drained && this.publication().active_until <= Date.now()) {
+        this.transaction(() => {
+          const now = Date.now();
+          this.db.prepare(`UPDATE fw_jobs SET job=json_set(job, '$.resumePending', json('true'))
+            WHERE json_extract(job, '$.due') <= ?`).run(now);
+          publish(now);
+        });
+        this.changed();
+      } else publish(Date.now());
       if (drained) { this.changed(); return; }
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];

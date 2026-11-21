@@ -106,7 +106,10 @@ def test_argument_errors(cli, argv):
 
 def test_help_and_version_have_no_side_effects(cli):
     assert "durable history" in cli("--help").stdout
-    assert "pinote 0.25.2" in cli("--version").stdout
+    assert "pinote 0.26.0" in cli("--version").stdout
+    assert json.loads(cli("--no-notify", "--database-identity").stdout) == {
+        "database": str(cli.database.resolve()), "lexicalDatabase": str(cli.database)
+    }
     assert not cli.database.exists()
     assert not cli.log.exists()
 
@@ -272,7 +275,7 @@ def test_installed_console_entrypoint(cli):
         capture_output=True,
         check=True,
     )
-    assert result.stdout == "pinote 0.25.2\n"
+    assert result.stdout == "pinote 0.26.0\n"
 
 
 def test_bounded_completion_events(cli):

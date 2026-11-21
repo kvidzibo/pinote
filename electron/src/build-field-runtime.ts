@@ -1,5 +1,5 @@
 import { build, type BuildOptions } from 'esbuild';
-import { chmod, readdir } from 'node:fs/promises';
+import { chmod, copyFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export async function buildFieldRuntime(bundles: string) {
@@ -11,5 +11,8 @@ export async function buildFieldRuntime(bundles: string) {
     build({ ...runtimeBuild, entryPoints: ['src/field-runtime.ts'], outfile: join(bundles, 'field-events.mjs') }),
     build({ ...runtimeBuild, entryPoints: watchers.map(name => `../watchers/${name}`), outdir: join(bundles, 'watchers'), outExtension: { '.js': '.mjs' } }),
   ]);
-  await Promise.all(watchers.map(name => chmod(join(bundles, 'watchers', name), 0o755)));
+  await Promise.all([
+    copyFile('src/field-handler-guardian.mjs', join(bundles, 'field-handler-guardian.mjs')),
+    ...watchers.map(name => chmod(join(bundles, 'watchers', name), 0o755)),
+  ]);
 }

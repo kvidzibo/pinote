@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { discoverPaths, resolvePath } from '../../backend/src/runtime.ts';
 import { backendEnvironment, type backendCommand } from './backend-command.ts';
@@ -10,13 +10,16 @@ export async function fieldNoteCommand(bundles: string, database: string, comman
   environment: NodeJS.ProcessEnv, switchRuntime: Parameters<typeof verifiedDesktopNote>[0]) {
   const noteEnv = backendEnvironment(environment);
   verifySwitchPaths(noteEnv);
+  if (resolvePath(discoverPaths(noteEnv).database) !== database) throw new Error('The field CLI uses a different database.');
+  // Both supported CLIs select XDG_DATA_HOME/pinote/notes.db. Pass the
+  // canonical root, not the original XDG alias (or an aliased HOME fallback).
+  noteEnv.XDG_DATA_HOME = dirname(dirname(database));
+  if (discoverPaths(noteEnv).database !== database) throw new Error('The field CLI cannot pin this database layout.');
   if (!command.args.length) {
     const noteCommand = await verifiedDesktopNote(switchRuntime, database, noteEnv);
     return { noteCommand, noteEnv };
   }
-  // The bundled bridge and CLI share the same profile resolver and environment.
   // Do not use PATH's note (or a stale service PINOTE_NOTE_COMMAND) after a switch.
-  if (resolvePath(discoverPaths(noteEnv).database) !== database) throw new Error('The bundled CLI uses a different database.');
   const cli = join(bundles, 'cli.mjs');
   await access(cli, constants.R_OK);
   return { noteCommand: command.executable, noteArgs: [cli], noteEnv };
@@ -65,7 +68,8 @@ export function desktopFieldRunner(bundles: string, database: string, command: R
   return new FieldRunner(async () => {
     const cli = await fieldNoteCommand(bundles, database, command, environment, switchRuntime);
     const { openDesktopFieldAutomation } = await import(pathToFileURL(join(bundles, 'field-events.mjs')).href) as typeof import('./field-runtime.ts');
-    return openDesktopFieldAutomation({ noteCommand: cli.noteCommand, noteArgs: cli.noteArgs, noteEnv: cli.noteEnv, database, log: failure => log(failure ?
+    const node = command.args.length ? command.executable : switchRuntime().node;
+    return openDesktopFieldAutomation(node, { noteCommand: cli.noteCommand, noteArgs: cli.noteArgs, noteEnv: cli.noteEnv, database, log: failure => log(failure ?
       `Watcher check failed ${JSON.stringify(failure)}` : 'Electron field automation check failed; will retry.') });
   }, log);
 }

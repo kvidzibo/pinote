@@ -166,6 +166,8 @@ def arguments(argv: list[str]) -> argparse.Namespace:
     while argv and argv[0] == "--no-notify":
         prefix.append(argv[0])
         argv = argv[1:]
+    if argv == ["--database-identity"]:
+        return argparse.Namespace(command="database-identity")
     if not argv:
         argv = ["list"]
     elif argv[0] not in COMMANDS and argv[0] not in {"-h", "--help", "--version"}:
@@ -364,6 +366,9 @@ def main(argv: list[str] | None = None) -> int:
     args = arguments(list(sys.argv[1:] if argv is None else argv))
     paths = Paths.discover()
     try:
+        if args.command == "database-identity":
+            print(json.dumps({"database": str(paths.database.resolve()), "lexicalDatabase": str(paths.database)}))
+            return 0
         configure_logging(paths)
         return execute(args, paths)
     except (NoteError, OSError, sqlite3.Error, UnicodeError) as exc:

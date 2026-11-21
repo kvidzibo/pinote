@@ -5,7 +5,7 @@ import { delimiter, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const VERSION = '0.26.0';
+export const VERSION = '0.27.0';
 export type Paths = { data: string; state: string; database: string; log: string };
 export class InputEncodingError extends Error {}
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });

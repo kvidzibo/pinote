@@ -34,7 +34,7 @@ test('argument validation is exact for bigint IDs and bounded event cursors',()=
 });
 test('help/version/invalid input are side effect free',t=>{
   const f=fixture(t);
-  assert.equal(f.ok('--version'),'pinote 0.26.0\n');
+  assert.equal(f.ok('--version'),'pinote 0.27.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);
@@ -52,6 +52,18 @@ test('help/version/invalid input are side effect free',t=>{
     assert.equal(db.prepare('SELECT state FROM notes WHERE id=1').get()!.state,'scheduled');
     assert.equal(db.prepare('SELECT count(*) AS n FROM events').get()!.n,before);
   } finally {db.close();}
+});
+test('database identity reports both paths without initializing a profile', t => {
+  const f = fixture(t);
+  const alias = join(f.root, 'alias');
+  symlinkSync(f.env.XDG_DATA_HOME, alias);
+  f.env.XDG_DATA_HOME = alias;
+  assert.deepEqual(JSON.parse(f.ok('--no-notify', '--database-identity')), {
+    database: f.database, lexicalDatabase: join(alias, 'pinote/notes.db'),
+  });
+  assert.equal(f.cli('--database-identity', 'add').status, 2);
+  assert.equal(existsSync(join(f.root, 'data')), false);
+  assert.equal(existsSync(f.env.XDG_STATE_HOME), false);
 });
 test('Markdown import rejects a non-UTF-8 canonical path without importing its U+FFFD sibling',t=>{
   const f=fixture(t);

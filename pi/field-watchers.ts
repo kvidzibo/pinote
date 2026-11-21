@@ -52,7 +52,7 @@ export function discoverFieldWatchers(root: Record<string, unknown>, directory =
       if (info.isFile() && info.size < 64 * 1024 && JSON.parse(readFileSync(manifest, 'utf8')).name === 'pi-note') bundled.add(path);
     } catch { /* Standalone custom watcher. */ }
   }
-  const merged = [...stored, ...[...bundled].filter((path) => !stored.some((entry) => entry.path === path)).map((path) => ({ path, enabled: false }))];
+  const merged = [...stored, ...[...bundled].filter((path) => !stored.some((entry) => entry.path === path || bundled.has(entry.path) && basename(entry.path) === basename(path))).map((path) => ({ path, enabled: false }))];
   if (merged.length > 32) throw new Error('At most 32 discovered field watchers are supported');
   const names: Record<string, string> = { 'github-pr.mjs': 'GitHub PR', 'forgejo-pr.mjs': 'Forgejo PR' };
   return merged.map((config) => ({ ...config, id: createHash('sha256').update(config.path).digest('hex'), name: bundled.has(config.path) ? names[basename(config.path)] ?? basename(config.path, '.mjs') : basename(config.path, '.mjs'), bundled: bundled.has(config.path) }));

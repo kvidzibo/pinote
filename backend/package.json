@@ -1,13 +1,23 @@
 {
   "name": "pinote-backend",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "private": true,
   "description": "Pinote's shared SQLite backend and note CLI",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22.19.0" },
-  "bin": { "note": "bin/note", "pinote-electron-backend": "bin/pinote-electron-backend" },
-  "files": ["bin", "dist", "LICENSE", "README.md"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "note": "bin/note",
+    "pinote-electron-backend": "bin/pinote-electron-backend"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc --noEmit",

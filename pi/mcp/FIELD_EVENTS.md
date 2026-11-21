@@ -2,6 +2,41 @@
 
 Pinote Electron **0.14.0+** runs enabled field watchers while the desktop is open. The HTTP service (pi-note **0.47.0+**) delivers their results to Pi but never launches watcher scripts. Use the same user, database and XDG state directory for both processes. Upgrade both together; stop the old service runner before starting the new desktop.
 
+The HTTP service verifies the database through its selected CLI
+(`PINOTE_NOTE_COMMAND`, or `note` on PATH). Use Node CLI **0.27.0+** or Python CLI **0.26.0+** for the
+side-effect-free `note --database-identity` probe. A trusted wrapper must
+forward the probe to the same backend and profile that handles task commands.
+If verification fails or the observed profile changes, watcher delivery and
+conversation claims are disabled until HTTP is restarted. Ordinary task commands
+continue using the selected CLI.
+
+### Upgrading a profile accessed through a symlink
+
+New watcher state uses the hash of the resolved `notes.db` path. Older releases
+hashed the lexical path (including any alias). When old state is found under a
+known alias, automation stops rather than replaying history and issuing new
+receipt IDs. If you plan to remove or change the old alias, migrate before
+starting either updated process; an alias no longer in use cannot be detected
+from the hash alone. To migrate without losing ownership or receipts:
+
+1. Stop Electron and the HTTP service (including any old runner). Run
+   `note --database-identity` through the service's selected CLI with the same
+   profile environment. Confirm that the resolved `database` is the database the
+   old runner **actually** watched. The `lexicalDatabase` value is the previous
+   hash input for that alias; use the old runner's exact path if it used a
+   different alias. A retargeted alias or an unknown old profile cannot establish
+   where the old state belongs: do not migrate it by guessing.
+2. In the shared state home, back up the old and any new
+   `pinote/field-events/<hash>/` directories. Each `<hash>` is the first 16 hex
+   digits of SHA-256 of the corresponding absolute path, without a newline
+   (`printf '%s' "$path" | sha256sum`). With both processes stopped, move the
+   entire verified old directory, including any SQLite sidecars, to the resolved
+   hash directory. Do not merge or overwrite an existing destination; resolve
+   any conflict offline first. Keep the state private and do not move `notes.db`.
+3. Restart both processes on the verified profile. Any overdue result stays
+   stale and cannot alert until successfully rechecked; unchanged failures keep
+   their existing receipt IDs.
+
 ## Enable
 
 Open **Settings → Footer fields → Watchers**. The fixed package `watchers/` folder

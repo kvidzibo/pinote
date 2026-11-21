@@ -215,7 +215,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       }
       if (mode === 'success' || mode === 'no-service' || isPip) {
         await operation;
-        assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
+        assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.27\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
         if (mode === 'no-service') await assert.rejects(lstat(dropin), { code: 'ENOENT' });
         else assert.match(await readFile(dropin, 'utf8'), /ExecStart=:\/usr\/bin\/env /);

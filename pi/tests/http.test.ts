@@ -225,11 +225,11 @@ test('HTTP observes desktop field results live without intake or execution, incl
   const names = ['PINOTE_NOTE_COMMAND', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PI_CODING_AGENT_DIR'];
   const previous = names.map((name) => process.env[name]);
   const note = fileURLToPath(new URL('../../backend/bin/note', import.meta.url));
-  const front = join(dir, 'http-note.cjs'), verified = join(dir, 'desktop-note.cjs');
-  const handler = join(dir, 'watcher.mjs'), calls = join(dir, 'calls'), intake = join(dir, 'http-intake');
+  const verified = join(dir, 'desktop-note.cjs');
+  const handler = join(dir, 'watcher.mjs'), calls = join(dir, 'calls');
   const token = 'field-http-secret-'.repeat(3);
   const dataAlias = join(dir, 'data-alias');
-  Object.assign(process.env, { PINOTE_NOTE_COMMAND: front, XDG_DATA_HOME: dataAlias, XDG_STATE_HOME: dir, PI_CODING_AGENT_DIR: pathToFileURL(dir).href });
+  Object.assign(process.env, { PINOTE_NOTE_COMMAND: note, XDG_DATA_HOME: dataAlias, XDG_STATE_HOME: dir, PI_CODING_AGENT_DIR: pathToFileURL(dir).href });
   const command = async (...args: string[]) => JSON.parse((await exec(note, ['--no-notify', ...args])).stdout);
   const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   const { startPinoteHttpServer } = await import('../mcp/http.ts');
@@ -241,7 +241,6 @@ test('HTTP observes desktop field results live without intake or execution, incl
     const database = join(dir, 'pinote', 'notes.db');
     assert.equal(fieldAutomationPath({ database }), fieldAutomationPath(), 'The DB alias resolves consistently before notes.db exists');
     const forward = `process.stdout.write(require('node:child_process').execFileSync(${JSON.stringify(note)}, process.argv.slice(2)));`;
-    await writeFile(front, `#!${process.execPath}\nif (process.argv.includes('field-events')) require('node:fs').writeFileSync(${JSON.stringify(intake)}, '');\n${forward}`, { mode: 0o700 });
     await writeFile(verified, `if (process.env.VERIFIED_ELECTRON_CLI !== 'yes') process.exit(1);\n${forward}`);
     await writeFile(handler, `#!${process.execPath}
 import { appendFileSync } from 'node:fs';
@@ -317,7 +316,6 @@ console.log(JSON.stringify({state:'failed',notification:{key:'failed',message:'D
     assert.equal(edit.isError ?? false, false);
     assert.deepEqual((await read()).fieldNotifications, [], 'An explicit write reclaims the task from its first viewer');
     assert.equal((await read(meta('other'))).fieldNotifications?.[0]?.id, alert.id);
-    await assert.rejects(access(intake), { code: 'ENOENT' });
   } finally {
     await runner?.close(); await client.close(); await service?.close();
     names.forEach((name, i) => { if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i]; });

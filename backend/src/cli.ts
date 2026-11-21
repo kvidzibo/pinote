@@ -41,15 +41,19 @@ export interface Arguments {
   text?: string[]; when?: string; path?: string; all?: boolean; json?: boolean;
   after?: bigint; limit: number; cwd?: string; expected_updated_at?: string;
   pi_session_id?: string; set_json: string; remove: string[]; tag?: string; clear?: boolean;
-  help?: boolean; version?: boolean; agent_text?: string;
+  help?: boolean; version?: boolean; database_identity?: boolean; agent_text?: string;
 }
 export function arguments_(input: string[]): Arguments {
   let argv = [...input];
   const args: Arguments = { command: 'list', no_notify: false, limit: 256, set_json: '{}', remove: [] };
   while (argv[0] === '--no-notify') { args.no_notify = true; argv.shift(); }
   if (!argv.length) argv = ['list'];
-  else if (!COMMANDS.has(argv[0]) && !['-h', '--help', '--version'].includes(argv[0])) argv.unshift('add');
+  else if (!COMMANDS.has(argv[0]) && !['-h', '--help', '--version', '--database-identity'].includes(argv[0])) argv.unshift('add');
   if (argv[0] === '--version') { args.version = true; return args; }
+  if (argv[0] === '--database-identity') {
+    if (argv.length !== 1) throw new ArgumentError('--database-identity takes no arguments');
+    args.database_identity = true; return args;
+  }
   if (['-h', '--help'].includes(argv[0])) { args.help = true; return args; }
   args.command = argv.shift()!;
   // --no-notify belongs to the agent parser, not its action parser.
@@ -269,7 +273,7 @@ function help(args: Arguments): string {
     reminders: 'list scheduled reminders',
     agent: 'add/tag tasks and read/update agent fields (JSON, no desktop refresh)\n  {get,selected,select,start,update,done,add,tag,tags}\n  get ID\n  selected --cwd CWD\n  select ID --cwd CWD\n  start ID --expected-updated-at REVISION [--pi-session-id SESSION]\n  update ID --expected-updated-at REVISION [--set-json JSON] [--remove LABEL ...]\n  done ID --expected-updated-at REVISION\n  add --text TEXT [--tag TAG] [--cwd CWD]\n  tag ID --expected-updated-at REVISION (--tag TAG | --clear)\n  tags',
   };
-  return `usage: note [--version] [--no-notify] COMMAND ...\n\nPinned desktop reminders with stable IDs and durable history.\n\nCommands:\n${[...COMMANDS].map(command => `  ${command}  ${descriptions[command].split('\n')[0]}`).join('\n')}\n\n${args.command}: ${descriptions[args.command]}\n\nOptions:\n  -h, --help  show this help message and exit\n  --version   show program's version number and exit\n  --no-notify skip automatic desktop refresh\n\nShortcuts: note lists active notes; note "some text" adds a note. Use note add "done" for text matching a command name.`;
+  return `usage: note [--version] [--no-notify] COMMAND ...\n\nPinned desktop reminders with stable IDs and durable history.\n\nCommands:\n${[...COMMANDS].map(command => `  ${command}  ${descriptions[command].split('\n')[0]}`).join('\n')}\n\n${args.command}: ${descriptions[args.command]}\n\nOptions:\n  -h, --help  show this help message and exit\n  --version   show program's version number and exit\n  --database-identity  report the configured and resolved notes.db paths as JSON without opening it\n  --no-notify skip automatic desktop refresh\n\nShortcuts: note lists active notes; note "some text" adds a note. Use note add "done" for text matching a command name.`;
 }
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   let args: Arguments;
@@ -292,7 +296,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   try {
     checkCancelled();
-    const paths = discoverPaths(); checkProfileIdentity(paths);
+    const paths = discoverPaths();
+    if (args.database_identity) {
+      print(jsonStringify({ database: resolvePath(paths.database), lexicalDatabase: paths.database }));
+      return 0;
+    }
+    checkProfileIdentity(paths);
     if (needsDisplayLock(args)) checkedEnv('PATH');
     configureLogging(paths);
     return await execute(args, paths, imported);
