@@ -57,6 +57,10 @@ try {
   await page.getByText(/desktop environment sets LD_LIBRARY_PATH/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await page.screenshot({ path: join(root, 'backend-switch-blocked.png') });
+  await app.evaluate(() => { delete process.env.LD_LIBRARY_PATH; process.env.PATH += ':.'; });
+  await page.getByRole('button', { name: 'Refresh backend settings' }).click();
+  await page.getByText(/absolute desktop PATH/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await app.close();
   delete env.LD_LIBRARY_PATH;
   page = await launch();

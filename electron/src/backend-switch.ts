@@ -252,18 +252,21 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<vo
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error;
   });
-  if (cli) verifyRuntimeEnvironment(env, 'desktop');
+  if (cli) await verifyCLIEnvironment(env, 'desktop');
   const current = await service(runCommand, env);
-  if (current.active) verifyRuntimeEnvironment(await processEnvironment(current.pid), 'pinote.service');
+  if (current.active) await verifyCLIEnvironment(await processEnvironment(current.pid));
 }
-async function verifyServiceEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
+async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
   verifyRuntimeEnvironment(env, source);
-  if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute service PATH.');
-  if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on the service PATH.');
+  if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error(`Automatic switching requires an unambiguous absolute ${source} PATH.`);
+  try {
+    if (await realpath(executable(env, 'flock')) === await realpath('/usr/bin/flock')) return;
+  } catch { /* Missing or unresolvable flock is also unsafe. */ }
+  throw new Error(`Automatic switching requires the system flock on the ${source} PATH.`);
 }
 async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<string> {
-  await verifyServiceEnvironment(env, source);
+  await verifyCLIEnvironment(env, source);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
   if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The service CLI must be an unambiguous absolute executable.');
   const path = await realpath(command === 'note' ? executable(env, 'note') : command);
@@ -386,7 +389,7 @@ export async function execGuardedService(bundles: string): Promise<void> {
     if (process.argv.length !== 4 || !validDatabaseIdentity(check.database) || !process.execve) throw new Error();
     const runtime = { node: check.node, bundles };
     const env = await processEnvironment(process.pid, true);
-    await verifyServiceEnvironment(env);
+    await verifyCLIEnvironment(env);
     const args = await verifyDirectCommand(runtime, [process.argv0, script], process.cwd());
     if (env.PINOTE_HOST !== check.host || env.PINOTE_PORT !== check.port) throw new Error();
     if (check.cli !== undefined) {
@@ -468,7 +471,7 @@ async function startGuarded(env: NodeJS.ProcessEnv, journal: Journal, runtime: S
     if (!same(await (dependencies.processArguments || processArguments)(pid), args)) continue;
     await verifyServiceContext(pid);
     const actual = await (dependencies.processEnvironment || processEnvironment)(pid);
-    await verifyServiceEnvironment(actual);
+    await verifyCLIEnvironment(actual);
     if (actual.PINOTE_HOST !== journal.originalHost || actual.PINOTE_PORT !== journal.originalPort || (cli !== undefined && actual.PINOTE_NOTE_COMMAND !== cli)) throw new Error('The service environment changed during restart.');
     try { await (dependencies.listening || listening)(actual); ready++; }
     catch { ready = 0; }
