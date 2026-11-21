@@ -65,6 +65,8 @@ test('bounded configuration, inert fixed discovery and disabled legacy migration
 test('independent durable watchers, ignored results, immediate disable/removal and in-flight cancellation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'watcher-scheduler-'));
   let automation: FieldAutomation | undefined;
+  // The fake CLI has no notes.db; never watch the developer's real one for changes.
+  const dataHome = process.env.XDG_DATA_HOME; process.env.XDG_DATA_HOME = dir;
   try {
     const path = join(dir, 'state.db'), note = join(dir, 'note.mjs');
     const task = { id: 1, state: 'active', updated_at: 'v1', agent_notes: { PR: 'url' } };
@@ -144,5 +146,8 @@ test('independent durable watchers, ignored results, immediate disable/removal a
       await session.refresh();
       assert.equal(received.length, 66, 'Persistent conditions remain deduplicated');
     } finally { await session.stop(); }
-  } finally { await automation?.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    await automation?.close(); rmSync(dir, { recursive: true, force: true });
+    if (dataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = dataHome;
+  }
 });

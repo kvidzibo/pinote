@@ -24,7 +24,7 @@ export function completionEvents(log: () => void) {
   };
   const drop = (sub: Subscriber) => {
     subscribers.delete(sub);
-    if (!subscribers.size) { clearTimeout(timer); timer = undefined; controller?.abort(); }
+    if (!subscribers.size) { clearTimeout(timer); timer = undefined; controller?.abort(); notes.close(); }
   };
   const write = (sub: Subscriber, frame: string) => {
     // Disconnect rather than queue unbounded data. Resume from the last persisted ID.
@@ -71,7 +71,8 @@ export function completionEvents(log: () => void) {
       // Read event history only after notes.db changed or a subscriber is behind.
       const version = notes.read();
       const page = version !== undefined && `${version}|${after}` === settled && Date.now() < recheck ? undefined : await read(after);
-      if (page) { settled = page.events.length < LIMIT ? `${version}|${page.cursor}` : undefined; recheck = Date.now() + RECHECK_MS; }
+      // Settle only on an empty read: a page can be full of rows that are not completions.
+      if (page) { settled = page.cursor === after ? `${version}|${after}` : undefined; recheck = Date.now() + RECHECK_MS; }
       for (const sub of ready) {
         if (!subscribers.has(sub)) continue;
         for (const event of page?.events ?? []) {

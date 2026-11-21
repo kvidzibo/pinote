@@ -348,8 +348,9 @@ test('idle ticks start no CLI process; a committed change is read on the next ti
   await writeFile(handler, '#!/usr/bin/env node\nconsole.log("{}");\n', { mode: 0o700 });
   const note = async (...args: string[]) => JSON.parse((await exec(real, ['--no-notify', ...args])).stdout);
   const reads = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter((line) => line === 'field-events').length;
+  let enabled = true;
   const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: command,
-    watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] }) });
+    watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled }] }) });
   try {
     let task = await note('agent', 'add', '--text=Idle');
     for (let i = 0; i < 3; i++) await automation.tick(); // Drain history, then settle.
@@ -360,7 +361,14 @@ test('idle ticks start no CLI process; a committed change is read on the next ti
     task = await note('agent', 'update', String(task.id), '--expected-updated-at', task.updated_at, '--set-json', '{"Build":"1"}');
     await automation.tick();
     assert.equal(await reads(), settled + 1);
-    assert.equal(new DatabaseSync(join(dir, 'state.db')).prepare('SELECT count(*) AS jobs FROM fw_jobs').get()!.jobs, 1);
+    const jobs = () => { const db = new DatabaseSync(join(dir, 'state.db')); try { return db.prepare('SELECT count(*) AS jobs FROM fw_jobs').get()!.jobs; } finally { db.close(); } };
+    assert.equal(jobs(), 1);
+    for (let i = 0; i < 3; i++) await automation.tick(); // Run the check and settle again.
+    // Re-enabling between ticks resets the watcher's cursor: history is read again without a new commit.
+    enabled = false; automation.failures(); enabled = true; automation.failures();
+    assert.equal(jobs(), 0);
+    await automation.tick();
+    assert.equal(jobs(), 1);
   } finally {
     await automation.close();
     names.forEach((n, i) => { if (previous[i] === undefined) delete process.env[n]; else process.env[n] = previous[i]; });
