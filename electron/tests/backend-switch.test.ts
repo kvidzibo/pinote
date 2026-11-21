@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, processEnvironment, runCommand } from '../src/backend-switch.ts';
+import { checkSwitchEnvironment, switchToNode, recoverBackendSwitch, preferredBackendEnvironment, processEnvironment, runCommand } from '../src/backend-switch.ts';
 
 let bundles: string;
 before(async () => {
@@ -17,6 +17,22 @@ before(async () => {
   await build({ entryPoints: ['src/backend-switch-guard.ts'], outfile: join(bundles, 'switch-guard.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node22' });
 });
 after(async () => { if (bundles) await rm(bundles, { recursive: true, force: true }); });
+
+test('preflight without a user CLI checks the lock helper and service overrides before Node discovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pinote-preflight-'));
+  const env = { HOME: root, PATH: root, PINOTE_NODE: join(root, 'missing-node') };
+  const child = spawn('/usr/bin/sleep', ['60'], { env: { ...env, LD_LIBRARY_PATH: root } });
+  try {
+    await once(child, 'spawn');
+    await writeFile(join(root, 'systemctl'), `#!/bin/sh\nprintf 'LoadState=loaded\\nActiveState=active\\nMainPID=${child.pid}\\n'\n`, { mode: 0o700 });
+    const flock = join(root, 'flock');
+    await symlink('/usr/bin/true', flock);
+    await assert.rejects(checkSwitchEnvironment(env), /system flock on the desktop PATH/);
+    await assert.rejects(switchToNode({ env, node: env.PINOTE_NODE, database: root, bundles }, () => {}), /system flock on the desktop PATH/);
+    await rm(flock); await symlink('/usr/bin/flock', flock);
+    await assert.rejects(checkSwitchEnvironment(env), error => error instanceof Error && error.message.includes('pinote.service environment sets LD_LIBRARY_PATH') && !error.message.includes(root));
+  } finally { child.kill(); await rm(root, { recursive: true, force: true }); }
+});
 
 // The double runs the effective, daemon-reloaded ExecStart with one snapshot
 // of the unit environment. The disposable HTTP entry opens a listener and

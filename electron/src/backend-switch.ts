@@ -254,18 +254,20 @@ function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSou
 // Read-only preview. The installer repeats the checks against the actual
 // environments under its lock; a settings snapshot never authorizes a switch.
 export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
-  verifyRuntimeEnvironment(env, 'desktop');
+  await verifyCLIEnvironment(env, 'desktop');
+  const current = await switchableService(runCommand, env);
+  let serviceEnv: NodeJS.ProcessEnv | undefined;
+  if (current.active) {
+    await verifyServiceContext(current.pid);
+    serviceEnv = await processEnvironment(current.pid);
+    verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
+  }
   const runtime = { node: nodeExecutable(env) };
-  executable(env, 'flock'); // Required for the installer lock, even without an existing CLI.
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
   if (cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
-  const current = await switchableService(runCommand, env);
-  if (current.active) {
-    await verifyServiceContext(current.pid);
-    await inspectCLI(runtime, await processEnvironment(current.pid), 'pinote.service');
-  }
+  if (serviceEnv) await inspectCLI(runtime, serviceEnv, 'pinote.service');
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
@@ -371,7 +373,7 @@ async function acquire(env: NodeJS.ProcessEnv, updateLock = `/tmp/pi-extension-u
       // A short helper acquires the shared open-file-description lock, retained
       // by this process. Other subprocesses never inherit these descriptors.
       await new Promise<void>((ok, fail) => {
-        const child = spawn(executable(env, 'flock'), ['-n', '-E', '75', '3'], { env: backendEnvironment(env), timeout: 5000, stdio: ['ignore', 'ignore', 'ignore', fd] });
+        const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '3'], { env: backendEnvironment(env), timeout: 5000, stdio: ['ignore', 'ignore', 'ignore', fd] });
         child.once('error', fail);
         child.once('close', code => code === 0 ? ok() : fail(new Error('An update or desktop operation is running; retry after it finishes.')));
       });
@@ -554,8 +556,7 @@ export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntim
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
   const { env } = options;
-  verifyRuntimeEnvironment(env, 'desktop');
-  verifySwitchPaths(env);
+  await verifyCLIEnvironment(env, 'desktop');
   const paths = locations(env), run = dependencies.run || runCommand;
   const release = await acquire(env, dependencies.updateLock);
   let journal: Journal | undefined;
