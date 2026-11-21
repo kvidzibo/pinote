@@ -97,6 +97,9 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
     assert.deepEqual(output, { state: 'error', summary: 'Unable to check PR status', recheckAfterSeconds: 120 });
     assert.equal(stderr, 'PR field handler failed\n');
   }
+  for (const [interval, retry] of [[3600, 3600], [10, 120]]) {
+    assert.equal(run(base, { params: { interval } }, true).output.recheckAfterSeconds, retry, 'Errors retry at the interval, never sooner than 120 seconds');
+  }
   assert.equal(run(base, {}, true).output.state, 'error');
   const prUrl = (number: number) => `https://github.com/owner/repo/pull/${number}`;
   const responses = { '1': { ...base, state: 'MERGED' }, '2': { ...base, state: 'CLOSED' },

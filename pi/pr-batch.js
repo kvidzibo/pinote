@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 /** Seconds between checks: the watcher's `interval` setting, kept within the scheduler's 10–86,400 range. */
 export function recheckSeconds(event) {
-    const interval = event.params?.interval;
+    const interval = event?.params?.interval;
     return Number.isFinite(interval) ? Math.min(86_400, Math.max(10, Math.round(interval))) : 60;
 }
-/** Applies the configured interval to a single PR result that asks for another check. */
+/** Applies the configured interval to a single PR result that asks for another check; errors never retry sooner than their own delay. */
 export function withInterval(event, result) {
-    return result.recheckAfterSeconds ? { ...result, recheckAfterSeconds: recheckSeconds(event) } : result;
+    if (!result.recheckAfterSeconds) return result;
+    const seconds = recheckSeconds(event);
+    return { ...result, recheckAfterSeconds: result.state === 'error' ? Math.max(result.recheckAfterSeconds, seconds) : seconds };
 }
 /** Shared bounded execution and alert identity for the two trusted PR watchers.
  * @returns {Promise<import('./field-events.ts').FieldResult>} */

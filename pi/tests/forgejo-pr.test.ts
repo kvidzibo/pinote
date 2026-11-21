@@ -123,6 +123,7 @@ globalThis.fetch = async (url, options) => {
     assert.deepEqual(output, { state: 'error', summary: 'Unable to check Forgejo PR status', recheckAfterSeconds: 120 });
     assert.equal(stderr, 'Forgejo PR field handler failed\n');
   }
+  assert.equal(run({ fail: true }, { params: { interval: 3600 } }).output.recheckAfterSeconds, 3600, 'Errors retry at a longer interval');
   for (const origin of ['http://forgejo.example', 'http://localhost:3000', 'http://localhost.localdomain:3000',
     'http://127.0.0.2:3000', 'http://192.168.1.1:3000', 'http://[::2]:3000', 'http://127.0.0.1.evil:3000']) {
     const { output, requests } = run({}, {}, [{ url: origin }]);

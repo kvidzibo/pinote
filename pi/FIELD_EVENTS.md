@@ -210,8 +210,8 @@ triggering a potentially false conflict alert. GitHub conflict alerts are unchan
 Since pi-note 0.49.0, both PR watchers have a **Check interval (seconds)**
 parameter (`interval`, default 60), set separately for each in the desktop's
 Watchers settings. Values outside 10–86,400 use the nearest limit. Legacy `PR`
-API/configuration errors retry after 120 seconds; partial `PRs` batch errors
-retry with the field's regular check.
+API/configuration errors retry after 120 seconds, or the interval when longer;
+partial `PRs` batch errors retry with the field's regular check.
 
 To support another field, add another executable using the contract below. A
 watcher receives the field events selected in its [settings](#watcher-settings)

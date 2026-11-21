@@ -50,7 +50,7 @@ export async function handleFieldEvent(event) {
     const value = event.value?.trim() ?? '';
     const url = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
     try { if (new URL(url).hostname !== 'github.com') return {}; } catch { /* Invalid GitHub values remain errors. */ }
-    if (requests.length !== 1) return errorResult();
+    if (requests.length !== 1) return withInterval(event, errorResult());
     return withInterval(event, await checkPullRequest(requests[0], AbortSignal.timeout(25_000)));
   }
   if (!requests.length && event.value?.trim()) return {};
@@ -94,15 +94,16 @@ async function checkPullRequest({ url, number }, signal) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  let event;
   try {
     let input = '';
     for await (const chunk of process.stdin) {
       input += chunk;
       if (Buffer.byteLength(input) > 1024 * 1024) throw new Error('Input too large');
     }
-    process.stdout.write(`${JSON.stringify(await handleFieldEvent(JSON.parse(input)))}\n`);
+    process.stdout.write(`${JSON.stringify(await handleFieldEvent(event = JSON.parse(input)))}\n`);
   } catch {
     process.stderr.write('PR field handler failed\n');
-    process.stdout.write(`${JSON.stringify(errorResult())}\n`);
+    process.stdout.write(`${JSON.stringify(withInterval(event, errorResult()))}\n`);
   }
 }

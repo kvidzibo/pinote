@@ -140,15 +140,16 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  let event;
   try {
     let input = '';
     for await (const chunk of process.stdin) {
       input += chunk;
       if (Buffer.byteLength(input) > 1024 * 1024) throw new Error('Input too large');
     }
-    process.stdout.write(`${JSON.stringify(await handleFieldEvent(JSON.parse(input)))}\n`);
+    process.stdout.write(`${JSON.stringify(await handleFieldEvent(event = JSON.parse(input)))}\n`);
   } catch {
     process.stderr.write('Forgejo PR field handler failed\n');
-    process.stdout.write(`${JSON.stringify(errorResult())}\n`);
+    process.stdout.write(`${JSON.stringify(withInterval(event, errorResult()))}\n`);
   }
 }
