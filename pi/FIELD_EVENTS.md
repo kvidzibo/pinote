@@ -207,7 +207,7 @@ A mergeable PR with no reported statuses is passing ("has no checks") where the
 repository's Actions are disabled, and pending where they are enabled: CI has yet to
 report. An enabled repository whose workflows never run on PRs therefore stays
 pending, and external CI on a repository without Actions shows passing until its
-first status. Passing describes reported CI only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
+first status. Passing does not imply that CI ran, approvals were granted or branch protection was satisfied. Forgejo's boolean `mergeable=false`
 can also mean checking, an error or a draft, so it remains pending rather than
 triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
 Checks run every 60 seconds. Legacy `PR` API/configuration errors retry after
