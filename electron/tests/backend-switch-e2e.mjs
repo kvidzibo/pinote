@@ -16,7 +16,8 @@ const lock = openSync(join(lockRoot, 'run.lock'), constants.O_CREAT | constants.
 assert.equal(spawnSync('/usr/bin/flock', ['-x', '3'], { stdio: ['ignore', 'ignore', 'ignore', lock], timeout: 20000 }).status, 0);
 const root = await mkdtemp(join(tmpdir(), 'pinote-switch-ui-'));
 const env = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_RUNTIME_DIR: join(root, 'runtime'), PATH: `${root}/bin:${dirname(process.execPath)}:/usr/bin:/bin`, PINOTE_NODE: process.execPath, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend'), NO_AT_BRIDGE: '1' };
-for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE']) delete env[key];
+for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE', 'PINOTE_TOKEN', 'PINOTE_TOKEN_FILE', 'PINOTE_HOST', 'PINOTE_PORT', 'PINOTE_ALLOWED_HOSTS', 'PINOTE_NOTE_COMMAND']) delete env[key];
+env.PI_CODING_AGENT_DIR = join(root, 'pi-agent'); // No token there: the embedded service stays off.
 // The simulated user installation must not inherit host loader overrides.
 for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key)) delete env[key];
 for (const path of ['bin', 'data', 'state', 'config', 'cache', 'runtime', '.local/bin']) await mkdir(join(root, path), { recursive: true, mode: 0o700 });

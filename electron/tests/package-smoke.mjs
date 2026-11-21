@@ -26,7 +26,8 @@ env.PATH=join(root,'bin');
 // The desktop hosts the task service on a private port for exactly its own lifetime.
 const token='isolated-package-test-token-'.repeat(3);
 const port=await new Promise(done=>{const probe=createServer().listen(0,'127.0.0.1',()=>{const {port}=probe.address();probe.close(()=>done(port));});});
-Object.assign(env,{PINOTE_TOKEN:token,PINOTE_PORT:String(port),PINOTE_NOTE_COMMAND:resolve('../backend/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
+for(const key of ['PINOTE_TOKEN_FILE','PINOTE_ALLOWED_HOSTS','PINOTE_LOG_PATH']) delete env[key];
+Object.assign(env,{PINOTE_TOKEN:token,PINOTE_HOST:'127.0.0.1',PINOTE_PORT:String(port),PINOTE_NOTE_COMMAND:resolve('../backend/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
 const piRequire=createRequire(resolve('../pi/package.json'));
 const { Client }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/index.js'));
 const { StreamableHTTPClientTransport }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
