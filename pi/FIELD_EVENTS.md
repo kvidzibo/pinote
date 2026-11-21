@@ -64,7 +64,8 @@ adding/removing other URLs does not repeat acknowledged failures. Edited fields
 still require fresh checks. Legacy-only custom watchers keep independent alerts.
 Alerts are grouped only when every included PR fits the message budget. PRs alerts include
 PR numbers and URLs, within the notification budget. Checks repeat at the
-watcher's [check interval](#forgejo-prs) (60 seconds by default) until all entries are closed/merged; merging never completes the task.
+watcher's [check interval](#forgejo-prs) (60 seconds by default) until all
+entries are closed/merged; merging never completes the task.
 Passing means reported checks passed, not that all review/protection rules passed.
 
 ## Watcher settings
@@ -203,8 +204,11 @@ desktop when changing its environment.
 Forgejo checks the current head's latest commit statuses across all pages, including
 Forgejo Actions jobs published as commit statuses. Failures trigger the owning
 worker, unchanged alerts are deduplicated, and merged/closed PRs stop polling.
-No reported statuses means pending, not passing. Passing describes reported CI
-only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
+A mergeable PR with no reported statuses is passing ("has no checks") where the
+repository's Actions are disabled, and pending where they are enabled: CI has yet to
+report. An enabled repository whose workflows never run on PRs therefore stays
+pending, and external CI on a repository without Actions shows passing until its
+first status. Passing does not imply that CI ran, approvals were granted or branch protection was satisfied. Forgejo's boolean `mergeable=false`
 can also mean checking, an error or a draft, so it remains pending rather than
 triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
 Since pi-note 0.49.0, both PR watchers have a **Check interval (seconds)**
