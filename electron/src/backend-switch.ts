@@ -288,6 +288,9 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
   }
   await requireUnitCommand(run, env, unitCommand(forwardedCommand(locations(env).cli, args), ['no-env-expand']));
   if (serviceEnv.PINOTE_NOTE_COMMAND !== locations(env).cli || !await hasInstalledLauncher(options)) throw new Error('The service is already managed by Pinote, but its CLI configuration has changed. Restore the installed launcher and service configuration before switching.');
+  // Both environments must resolve the running desktop database before offering
+  // to remove a diagnostic desktop override: service agreement alone is insufficient.
+  await probe(options, run, env);
   await probe(options, run, serviceEnv);
   return 'matches';
 }

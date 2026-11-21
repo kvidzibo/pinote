@@ -259,6 +259,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await operation;
         if (mode === 'success') {
           assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, dependencies.run), 'matches');
+          await assert.rejects(checkSwitchEnvironment({ ...desktopEnv, XDG_DATA_HOME: join(root, 'different-desktop') }, bundles, database, dependencies.run), /same database/);
           const directPreview = (file: string, args: string[], env: NodeJS.ProcessEnv, input?: string) =>
             file === '/usr/bin/busctl' && args.at(-1) === 'ExecStartEx'
               ? Promise.resolve(JSON.stringify({type:'a(sasasttttuii)', data:[[process.execPath,[process.execPath,script],[]]]}))
