@@ -84,7 +84,7 @@ const installNativeMenuProbe = async () => app.evaluate(({Menu, ipcMain}) => {
 const menuState = () => app.evaluate(() => {
   const p = globalThis.__e2eMenu;
   return {serial:p.serial,pending:p.pending,request:p.request,options:p.options,
-    selected:p.selected, items:p.menu?.items.map(i=>({id:i.id,enabled:i.enabled,type:i.type}))};
+    selected:p.selected, items:p.menu?.items.map(i=>({id:i.id,enabled:i.enabled,type:i.type,hasIcon:!!i.icon && !i.icon.isEmpty()}))};
 });
 const waitMenu = async (predicate, message) => {
   for(let i=0;i<200;i++) { const state=await menuState(); if(predicate(state)) return state; await new Promise(r=>setTimeout(r,10)); }
@@ -511,7 +511,8 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['filter','scheduled','archive','manage-tags','task-actions','composer-settings','backend-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','backend-settings','drafts','close']);
+    assert.ok(state.items.every(i=>i.type==='separator' || i.hasIcon),'Every native menu item needs a bundled icon');
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
     assert.ok((await readFile(join(root,'native-menu-root.png'))).length>1000);
@@ -773,9 +774,9 @@ try {
   // Composer preference: native settings, new-draft lifecycle, source styling and recovery.
   {
     const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
-    const settings = page.getByRole('dialog',{name:'Add task input',exact:true});
+    const settings = page.getByRole('dialog',{name:'New task editor',exact:true});
     const open = () => selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'composer-settings');
-    const save = async () => { await settings.getByRole('button',{name:'Save add task input settings',exact:true}).click(); await settings.waitFor({state:'detached'}); };
+    const save = async () => { await settings.getByRole('button',{name:'Save new task editor settings',exact:true}).click(); await settings.waitFor({state:'detached'}); };
     const waitSavedDraft = async text => {
       for(let i=0;i<200;i++) {
         if((await page.evaluate(()=>window.pinote.loadState())).draft===text) return;
@@ -1078,7 +1079,7 @@ try {
       await editDialog.waitFor({state:'detached'});
       await writeFile(faultFile,'');
       // The saved tag may hide this row under the current filter; recovery must still open it.
-      if (!await page.getByRole('dialog',{name:'Private edit drafts',exact:true}).count()) await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
+      if (!await page.getByRole('dialog',{name:'Recover edit drafts',exact:true}).count()) await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'drafts');
       await page.getByRole('button',{name:'Open revision-bound editor',exact:true}).click();
       await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
       await page.waitForTimeout(900);

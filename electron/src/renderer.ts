@@ -51,7 +51,7 @@ const icons = {
   reset: 'document-revert', start: 'media-playback-start', done: 'task-complete',
   remove: 'archive', trash: 'edit-delete', folder: 'folder', tag: 'tag',
   filter: 'view-filter', clear: 'view-filter-clear', all: 'edit-select-all',
-  preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu',
+  preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu', settings: 'settings',
   close: 'window-close', kitty: 'utilities-terminal', schedule: 'preferences-system-notifications',
   collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo',
 } as const;
@@ -243,7 +243,7 @@ const collapseControl = button('collapse', 'Collapse checklist', async () => {
   saveSoon(); renderToolbar();
 });
 const moveControl = button('move', 'Drag to move window', () => undefined); moveControl.className = 'move-handle';
-const menuControl = button('menu', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
+const menuControl = button('settings', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
 toolbar.append(tagControl, filterControl, collapseControl, moveControl, menuControl);
 function renderToolbar(): void {
   tagLabel.textContent = creationTag ?? 'Untagged';
@@ -276,7 +276,6 @@ async function openMenu(event: MouseEvent): Promise<void> {
   const action = await chooseMenu({ kind: 'app', ...menuPoint(source) }, source);
   if (closing) return;
   switch (action) {
-    case 'filter': tagsMenu('filter'); break;
     case 'scheduled': auxiliary('scheduled'); break;
     case 'archive': auxiliary('archive'); break;
     case 'manage-tags': manageTags(); break;
@@ -288,12 +287,12 @@ async function openMenu(event: MouseEvent): Promise<void> {
   }
 }
 function configureComposer(): void {
-  const modal = layer('Add task input');
+  const modal = layer('New task editor');
   const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = state.composerStartAsMarkdown === true; toggle.disabled = readonly;
   const label = el('label', undefined, 'setting-toggle'); label.append(toggle, el('span', 'Start as Markdown'));
   modal.panel.append(label, el('p', 'Start new drafts with # and heading formatting. Off keeps the current plain-text start. Existing text is kept.'));
   let saving = false;
-  const save = button('save', 'Save add task input settings', async () => {
+  const save = button('save', 'Save new task editor settings', async () => {
     if (readonly || closing || saving || !stateLoaded) return;
     saving = true; save.disabled = toggle.disabled = true;
     const previous = state.composerStartAsMarkdown;
@@ -310,7 +309,7 @@ function configureComposer(): void {
 function configureBackend(): void {
   const existing = layers.find(l => l.kind === 'backend-settings');
   if (existing) { existing.panel.focus(); return; }
-  const modal = layer('Backend settings', 'backend-settings');
+  const modal = layer('Switch to Node backend', 'backend-settings');
   const status = el('p', 'Loading backend settings…');
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   modal.panel.append(status, el('p', 'Switch to the Node backend after native confirmation. Pending edits and drafts are saved before closing, and backups are kept. The same database is used; no data conversion is needed. Pinote relaunches after a successful switch.'));
@@ -937,7 +936,7 @@ async function edit(task: Task): Promise<void> {
       }
     })().catch(e => { paused = true; report(message(e)); }).finally(() => {
       saving = false; work = undefined; check();
-      if (detached && (paused || conflict)) report('Editor closed with unsaved local changes. Use Menu → Recover private edit drafts.');
+      if (detached && (paused || conflict)) report('Editor closed with unsaved local changes. Use Menu → Recover edit drafts.');
     });
     return work;
   }
@@ -953,7 +952,7 @@ async function edit(task: Task): Promise<void> {
   modal.panel.append(warning, editorHost, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
 }
 function recoverDrafts(): void {
-  const modal = layer('Private edit drafts');
+  const modal = layer('Recover edit drafts');
   const list = el('div', undefined, 'scroll'); modal.panel.append(list);
   const draw = () => {
     list.replaceChildren();

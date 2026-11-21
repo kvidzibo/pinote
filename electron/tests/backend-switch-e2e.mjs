@@ -42,13 +42,21 @@ const launch = async () => {
   });
   return page;
 };
-const settings = async page => {
+// Main checks the switch state before its async popup; wait for that fresh menu.
+const openMenu = async page => {
+  await app.evaluate(() => { globalThis.__switchMenu = undefined; });
   await page.getByRole('button', { name: 'Menu', exact: true }).click();
+  for (let i = 0; i < 200; i++) { if (await app.evaluate(() => !!globalThis.__switchMenu)) return; await new Promise(ok => setTimeout(ok, 10)); }
+  assert.fail('Native menu must open');
+};
+const menuIds = () => app.evaluate(() => globalThis.__switchMenu.items.filter(item => item.type !== 'separator').map(item => item.id));
+const settings = async page => {
+  await openMenu(page);
   await app.evaluate(({ BrowserWindow }) => {
     const menu = globalThis.__switchMenu, item = menu.getMenuItemById('backend-settings');
     item.click(item, BrowserWindow.getAllWindows()[0], {}); menu.closePopup();
   });
-  await page.getByRole('dialog', { name: 'Backend settings', exact: true }).waitFor();
+  await page.getByRole('dialog', { name: 'Switch to Node backend', exact: true }).waitFor();
 };
 try {
   for (let i = 0; i < 100; i++) { if (spawnSync('i3-msg', ['-s', join(root, 'i3.sock'), '-t', 'get_tree'], { env, stdio: 'ignore' }).status === 0) break; await new Promise(ok => setTimeout(ok, 20)); }
@@ -74,21 +82,26 @@ try {
   page = await launch();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).waitFor();
   assert.match(await page.locator('#draft').innerText(), /Draft kept across backend switch/);
-  await settings(page);
-  await page.getByText(/user CLI matches this installation/).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
+  await openMenu(page);
+  assert.equal((await menuIds()).includes('backend-settings'), false, 'A completed switch hides its menu item');
+  await app.evaluate(() => globalThis.__switchMenu.closePopup());
   assert.equal(await readFile(marker, 'utf8'), calls, 'The saved Node choice bypasses the old launcher override after relaunch');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(280, 560));
-  await page.waitForTimeout(250);
-  assert.ok(await page.getByRole('dialog', { name: 'Backend settings' }).evaluate(node => node.scrollWidth <= node.clientWidth), 'Narrow settings must not clip horizontally');
-  await page.screenshot({ path: join(root, 'backend-switched-narrow.png') });
+  const installed = await readFile(join(root, '.local/bin/note'));
   await writeFile(join(root, '.local/bin/note'), '#!/bin/sh\nexit 99\n');
-  await page.getByRole('button', { name: 'Refresh backend settings' }).click();
+  await settings(page);
   await page.getByText(/installed user CLI is missing or different/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isEnabled(), true);
   await page.screenshot({ path: join(root, 'backend-launcher-changed.png') });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(280, 560));
+  await page.waitForTimeout(250);
+  assert.ok(await page.getByRole('dialog', { name: 'Switch to Node backend', exact: true }).evaluate(node => node.scrollWidth <= node.clientWidth), 'Narrow settings must not clip horizontally');
+  await page.screenshot({ path: join(root, 'backend-launcher-changed-narrow.png') });
+  await writeFile(join(root, '.local/bin/note'), installed);
+  await page.getByRole('button', { name: 'Refresh backend settings' }).click();
+  await page.getByText(/user CLI matches this installation/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await page.keyboard.press('Escape');
-  await page.getByRole('dialog', { name: 'Backend settings' }).waitFor({ state: 'detached' });
+  await page.getByRole('dialog', { name: 'Switch to Node backend', exact: true }).waitFor({ state: 'detached' });
   console.log(`Backend-switch UI artifacts: ${root}`);
 } catch (error) { console.error(`Backend-switch failure artifacts: ${root}`); throw error; }
 finally { await app?.close().catch(() => {}); wm.kill('SIGTERM'); closeSync(lock); }

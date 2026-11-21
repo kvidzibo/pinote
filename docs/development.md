@@ -100,7 +100,7 @@ xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron
 `ci --ignore-scripts` installs locked npm packages (including esbuild's optional
 native binary) without lifecycle scripts. Unit tests exercise real CLI bundles,
 including failed verification and rollback recovery. The E2E
-command also runs the Backend settings switch with temporary HOME/XDG data,
+command also runs the Node backend switch with temporary HOME/XDG data,
 checking confirmation cancellation, draft preservation,
 relaunch, and bypass of the old Python override.
 The end-to-end harness uses its own HOME/XDG directories, private i3 configuration

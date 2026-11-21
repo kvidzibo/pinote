@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.17.0) bundles the matching Node backend;
+The private `electron/` package (0.18.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -73,8 +73,9 @@ Icons are bundled rather than taken from the host icon theme.
 
 ## Switch an existing installation
 
-After updating/building this Electron version, open **Menu → Backend settings…**
-and use **Switch to Node backend** (play icon). A native confirmation defaults to
+After updating/building this Electron version, open **Menu (cog) → Switch to Node backend…**
+and use **Switch to Node backend** (play icon). The menu item is hidden once
+the desktop uses Node and the matching user CLI is installed. A native confirmation defaults to
 Cancel. The operation saves pending edits and drafts, verifies external Node and
 the bundled CLI/bridge against the same database, then:
 
@@ -148,7 +149,7 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   top level it removes the bullet prefix. Elsewhere Backspace deletes normally.
   **Shift+Tab**, or Tab on a non-bullet line, moves focus between controls.
   Compact row/archive titles omit a leading heading marker, not stored text.
-- **Menu → Add task input… → Start as Markdown** starts new drafts with `# `
+- **Menu → New task editor… → Start as Markdown** starts new drafts with `# `
   and live heading formatting. It defaults off, preserving the current behavior.
   Existing draft text is not rewritten; the preference survives restarts.
 - Click a task's play icon to start it, then its checkmark to complete it.
@@ -207,7 +208,7 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   clears) are cached before each write. Failed saves pause autosave and offer
   an explicit retry; unknown outcomes require the recovery acknowledgement first.
   External revision changes make the editor read-only rather than overwriting
-  another client's work. Close and use **Menu → Recover private edit drafts**
+  another client's work. Close and use **Menu → Recover edit drafts…**
   to copy/discard stale text, then reopen the latest task to reconcile it.
   Recovered drafts show any pending tag and never autosave merely because they
   are opened: review and explicitly retry both text and tag changes. Opening an
@@ -218,15 +219,16 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   toggle a focused filter. The highlighted funnel indicates a tag filter is active; its
   count includes all visible tasks, including in-progress tasks that remain
   visible regardless of tag filters.
-- **Menu → Manage tags** opens a searchable saved-tag list beside a separate
+- **Menu → Manage tags…** opens a searchable saved-tag list beside a separate
   editor (stacked in narrow windows). Select a tag, edit its name, and use the
   save icon to rename it across tasks. Folder icons choose or clear its default
   Kitty folder immediately. The **+** creates a tag; the separated delete icon
   asks for confirmation and keeps tasks and history. Polling preserves an
   unfinished name edit while updating the selected tag's folder.
-- The bottom menu opens beside its button and provides scheduled reminders,
-  Archive (including restore), tag management, task-action settings, and draft
-  recovery. It remains a native popup menu, which can adjust its placement at screen edges and extend
+- The bottom cog menu opens beside its button and groups scheduled reminders
+  and Archive (including restore); tag management, task-action, new-task editor
+  and backend-switch settings; draft recovery; and **Quit Pinote**. Filtering
+  stays on the toolbar's filter button. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
 - The task row's eye opens a floating Markdown preview about 10 px from the
   click, including all saved agent fields, full Pi session IDs, and unread updates.
