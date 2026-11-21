@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { parsePullRequests, pullRequestValues } from '../pull-requests.ts';
+import { parsePullRequests, pullRequestValues } from '../pull-requests.js';
+
+test('published watchers run from node_modules, where Node refuses to strip types', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'field-handler-package-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const root = fileURLToPath(new URL('../', import.meta.url)), installed = join(directory, 'node_modules/pi-note');
+  mkdirSync(installed, { recursive: true });
+  for (const file of JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).files) cpSync(join(root, file), join(installed, file), { recursive: true });
+  for (const name of ['github-pr.mjs', 'forgejo-pr.mjs']) {
+    const result = spawnSync(join(installed, 'watchers', name), [], { encoding: 'utf8', timeout: 5000,
+      input: JSON.stringify({ version: 1, event: 'added', taskId: 1, field: 'Build', value: 'x', previousValue: null, eventId: 'event-1' }) });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {}, 'Other fields are ignored');
+  }
+});
 
 test('bundled PR executable validates gh results and emits bounded field updates', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'field-handler-'));

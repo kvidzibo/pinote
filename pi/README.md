@@ -300,8 +300,9 @@ then `/reload` or restart Pi.
    open; a watcher's tokens and `PATH` now come from the desktop's environment.
 5. A custom loader must import the package's `index.ts`; `remote.ts` is gone.
 
-Selections saved in existing Pi sessions are restored by task ID. If the former
-service used a different notes database, clear the selection in `/pinote`.
+A selection saved by the former client is kept when the local task records that
+Pi session among its `pi-sessions`; otherwise the session starts unselected and
+you select the task again in `/pinote`.
 Pi in a VM or on another machine no longer shares the host's tasks.
 
 The separate local-only extension with its own footer, `pinote_add` tool and CLI

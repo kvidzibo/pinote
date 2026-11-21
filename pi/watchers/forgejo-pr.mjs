@@ -4,9 +4,9 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { getAgentDir } from '../config-path.ts';
-import { checkPRBatch } from '../pr-batch.ts';
-import { parsePullRequests } from '../pull-requests.ts';
+import { getAgentDir } from '../config-path.js';
+import { checkPRBatch } from '../pr-batch.js';
+import { parsePullRequests } from '../pull-requests.js';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const errorResult = () => ({ state: 'error', summary: 'Unable to check Forgejo PR status', recheckAfterSeconds: 120 });

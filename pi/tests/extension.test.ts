@@ -45,10 +45,22 @@ test('branch-only restoration, selections saved by the former HTTP client and in
   assert.notEqual(a.contextId, b.contextId);
   const branch = [{ type: 'custom', customType: ENTRY_TYPE, data: { ...a, state: { selectedId: 7 } } }];
   assert.equal(restoreState(branch).state.selectedId, 7);
-  const upgraded = restoreState([{ ...branch[0], data: { ...branch[0].data, scope: 'endpoint-hash' } }]);
-  assert.equal(upgraded.state.selectedId, 7); assert.equal(upgraded.scope, SCOPE);
-  const h = harness();
   const piSessionId = '12345678-1234-4234-8234-123456789012';
+  // An endpoint-scoped selection may name another database's task: only a task recording this Pi session is kept.
+  const legacy = [{ ...branch[0], data: { ...branch[0].data, scope: 'endpoint-hash', state: { selectedId: 7, search: 'old' } } }];
+  for (const [sessions, selectedId] of [[[piSessionId], 7], [['another-session'], undefined]] as const) {
+    const upgraded = harness({ tool: async (name, args) => { assert.equal(name, 'get_task'); assert.deepEqual(args, { task_id: 7 }); return { result: { id: 7, 'pi-sessions': sessions } }; } });
+    await upgraded.session.start(legacy, 'pi-session', undefined, piSessionId);
+    assert.deepEqual(upgraded.session.snapshot()?.state, selectedId ? { selectedId } : {});
+    assert.equal(upgraded.session.snapshot()?.scope, SCOPE);
+    assert.equal(upgraded.session.snapshot()?.contextId, a.contextId);
+    await upgraded.session.stop();
+  }
+  const unverifiable = harness({ tool: async () => { throw new Error(token); } });
+  await unverifiable.session.start(legacy, 'pi-session', undefined, piSessionId);
+  assert.deepEqual(unverifiable.session.snapshot()?.state, {}, 'An unreadable task fails closed');
+  await unverifiable.session.stop();
+  const h = harness();
   await h.session.start(branch, 'pi-session', undefined, piSessionId);
   assert.equal((h.metas[0][UI_CONTEXT] as any).piSessionId, piSessionId);
   assert.equal((h.metas[0][UI_CONTEXT] as any).contextId, a.contextId);

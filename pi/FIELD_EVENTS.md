@@ -238,8 +238,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
   failure.
 - Newly enabled watchers reconstruct current fields from history independently.
-  Disabling/removing clears their automation state once the desktop's scheduler
-  sees it (about a second while it is open); enabling again then checks afresh.
+  Disabling/removing in `/pinote` settings clears their automation state; enabling
+  again checks afresh. After a manual `pi-note.json` edit, the desktop's scheduler
+  clears it on its next tick.
   Editing the same file affects its next invocation, not stopped checks.
   Restoring an older notes backup can invalidate the cursor: close the desktop and
   deliberately back up/reset its corresponding automation state before restarting.

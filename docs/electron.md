@@ -54,12 +54,11 @@ A standalone `pinote.service` from earlier versions is no longer used: first
 finish any [backend switch](#switch-an-existing-installation) while it is still
 running, then stop and disable it.
 
-Bundled watchers are shipped inside the application; entries enabled from a
-`pi/watchers/` path keep running, with the same grouped PR alerts, but are
-listed as **Custom**. After switching to the bundled entries, still failing
-checks can alert once more. With more than 30 stored
-watchers, first remove the old bundled paths from `pi-note.json` (keep a backup):
-the two added entries would exceed the 32-watcher limit and stop watchers loading.
+Watchers are enabled in Pi's `/pinote` settings, which list the pi-note package's
+own `watchers/` as **Bundled**; the desktop runs whichever executable path is
+saved. Entries saved by Electron 0.14 point at the copies inside the application:
+they keep running with the same grouped PR alerts and are listed as **Custom**.
+After switching entries, still failing checks can alert once more.
 
 The window is a compact, always-on-top utility window. Its utility type is the
 intended automatic-floating mechanism in i3, without additional rules. Although

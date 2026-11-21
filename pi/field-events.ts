@@ -8,7 +8,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { readConfigDocument } from './footer-config.ts';
 import { discoverFieldWatchers, type FieldWatcher } from './field-watchers.ts';
-import { parsePullRequests } from './pull-requests.ts';
+import { parsePullRequests } from './pull-requests.js';
 import { notesVersion, RECHECK_MS } from './notes-version.ts';
 
 const exec = promisify(execFile);
@@ -230,6 +230,16 @@ export class FieldAutomation {
     this.db.prepare('DELETE FROM fw_pr_notices WHERE watcher_id=? AND task_id=? AND url NOT IN (SELECT value FROM json_each(?))')
       .run(watcherId, taskId, JSON.stringify(urls));
   }
+  /** The user disabled or removed this watcher in settings: forget its saved state now, so
+   * enabling it again checks afresh even if no scheduler tick saw it disabled. */
+  reset(watcherId: string): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const table of ['fw_jobs', 'fw_notices', 'fw_pr_notices']) this.db.prepare(`DELETE FROM ${table} WHERE watcher_id=?`).run(watcherId);
+      this.db.prepare('DELETE FROM fw_watchers WHERE id=?').run(watcherId);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   /** Explicit selection/write owns alerts; background reads can only claim unowned tasks. */
   claim(taskId: number, contextId: string, replace = false): void {
     this.db.prepare(replace
@@ -342,7 +352,9 @@ export class FieldAutomation {
       // Read event history only after notes.db or the watcher set (see reconcile) changed.
       if (!this.enabled.length) { this.notes.close(); return; }
       const version = this.notes.read();
-      const intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
+      let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
+      // A settings reset removes a watcher's row: start it again from durable history.
+      for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path).changes) intake = true;
       for (const watcher of intake ? this.enabled : []) {
         const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
         const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));

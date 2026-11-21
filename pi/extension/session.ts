@@ -5,8 +5,8 @@ import { StateSchema, ViewSchema, UI_CONTEXT, UI_FEATURES, type NativeView, type
 export const ENTRY_TYPE = 'pinote-remote-v1';
 export interface SavedState { scope: string; contextId: string; state: Record<string, unknown>; retainOnNew?: boolean; fieldReceipts?: string[] }
 export interface BranchEntry { type: string; customType?: string; data?: unknown }
-/** Every entry refers to this machine's task storage. Entries saved by the former HTTP
- * client carry an endpoint hash as scope; they restore too, so upgrades keep selections. */
+/** Entries refer to this machine's task storage. Entries saved by the former HTTP client carry
+ * an endpoint hash as scope; PinoteSession.start verifies them before use. */
 export const SCOPE = 'local';
 export function restoreState(branch: readonly BranchEntry[]): SavedState {
   let saved: SavedState = { scope: SCOPE, contextId: randomUUID(), state: {} };
@@ -14,7 +14,7 @@ export function restoreState(branch: readonly BranchEntry[]): SavedState {
     if (entry.type !== 'custom' || entry.customType !== ENTRY_TYPE) continue;
     const data = entry.data as SavedState | undefined;
     if (data && typeof data.contextId === 'string' && data.contextId.length > 0 && data.contextId.length <= 256 && StateSchema.safeParse(data.state).success) {
-      saved = { ...structuredClone(data), scope: SCOPE };
+      saved = structuredClone(data);
       saved.fieldReceipts = Array.isArray(data.fieldReceipts) ? data.fieldReceipts.filter((id) => typeof id === 'string' && /^[a-f0-9-]{36}$/.test(id)).slice(-4096) : [];
     }
   }
@@ -56,8 +56,24 @@ export class PinoteSession {
     this.conversationId = conversationId;
     this.piSessionId = piSessionId;
     this.saved = carried ? structuredClone(carried) : restoreState(branch);
+    if (this.saved.scope !== SCOPE) await this.adopt();
     this.persist(this.saved);
     await this.refresh(true);
+  }
+  /** A selection saved by the former HTTP client may name another database's task. Keep it only
+   * if this machine's task records this Pi session among those that selected it; else start unselected. */
+  private async adopt(): Promise<void> {
+    const saved = this.saved!, id = saved.state.selectedId;
+    let known = false;
+    if (typeof id === 'number' && this.piSessionId) {
+      try {
+        const { result } = await (await this.connected(true)).tool('get_task', { task_id: id },
+          { [UI_CONTEXT]: { conversationId: this.conversationId, state: {} } }, this.signal);
+        const sessions = (result as { 'pi-sessions'?: unknown } | null)?.['pi-sessions'];
+        known = Array.isArray(sessions) && sessions.includes(this.piSessionId);
+      } catch { /* Unverifiable: fail closed. */ }
+    }
+    this.saved = { ...saved, scope: SCOPE, state: known ? { selectedId: id } : {} };
   }
   async stop(reason?: string): Promise<void> {
     this.active = false; this.epoch++; this.lifetime.abort(reason); this.connection?.abort();

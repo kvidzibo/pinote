@@ -89,7 +89,8 @@ test('independent durable watchers, ignored results, immediate disable/removal a
     assert.deepEqual(automation.statuses(task).map((s) => s.result.state), ['1']);
     configs = [configs[0]];
     assert.deepEqual(automation.notices(task, 'a'), []);
-    await automation.tick(); // The scheduler, not a reader, clears the disabled watchers' state.
+    // Reads never clear saved state; disabling in settings resets that watcher explicitly, with the desktop closed too.
+    for (const watcher of discoverFieldWatchers({ fieldWatchers: scripts.slice(0, 2).map((path) => ({ path, enabled: false })) }).filter((w) => scripts.slice(0, 2).includes(w.path))) automation.reset(watcher.id);
     configs[0].enabled = true;
     assert.deepEqual(automation.notices(task, 'a'), [], 'old notices cannot reappear before new checks');
     await automation.tick(); await automation.tick();

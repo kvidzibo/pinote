@@ -5,9 +5,9 @@ import { isAbsolute, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
-import { getAgentDir } from './config-path.ts';
+import { getAgentDir } from './config-path.js';
 import { z } from 'zod';
-import { parsePullRequests, pullRequestValues } from './pull-requests.ts';
+import { parsePullRequests, pullRequestValues } from './pull-requests.js';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
 import { defaultAgentGuidance, defaultFooterField, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, footerBarNames, footerCatalog, footerDisplayFields, parseAgentGuidance, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from './footer-config.ts';
@@ -15,7 +15,7 @@ import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '
 import type { FieldAutomation, FieldResult, FieldStatus } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from './field-watchers.ts';
 import { taskTitle } from './task-title.ts';
-import { parsePR } from './pr-url.ts';
+import { parsePR } from './pr-url.js';
 
 const CONTEXT = 'native-ui/context';
 const exec = promisify(execFile);
@@ -486,7 +486,7 @@ return {
     const cfg = structuredClone(before.config.config);
     let handoff = before.config.handoffPrompt, newSession = before.config.newSessionPrompt, policy = before.config.policy;
     let guidance: string | null | undefined;
-    let watchers: FieldWatcherConfig[] | undefined;
+    let watchers: FieldWatcherConfig[] | undefined, reset: string | undefined;
     if (action === 'add-watcher' || action.startsWith('watcher:') || action.startsWith('remove-watcher:')) {
       watchers = before.config.watchers.map(({ path, enabled }) => ({ path, enabled }));
       if (action === 'add-watcher') {
@@ -496,10 +496,10 @@ return {
       } else {
         const watcher = before.config.watchers.find((item) => item.id === action.split(':')[1]);
         if (!watcher) staleAction();
-        if (action.startsWith('remove-watcher:')) watchers = watchers.filter((item) => item.path !== watcher.path);
+        if (action.startsWith('remove-watcher:')) { watchers = watchers.filter((item) => item.path !== watcher.path); reset = watcher.id; }
         else {
           const enabled = z.boolean().parse(value);
-          if (enabled) validateWatcherExecutable(watcher.path);
+          if (enabled) validateWatcherExecutable(watcher.path); else reset = watcher.id;
           watchers.find((item) => item.path === watcher.path)!.enabled = enabled;
         }
       }
@@ -540,6 +540,8 @@ return {
     }
     signal.throwIfAborted();
     saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers);
+    // The desktop may be closed: forget a disabled watcher's results now, so re-enabling checks afresh.
+    if (reset) options.fieldAutomation?.reset(reset);
   }
   if (next.selectedId && (action.startsWith('select:') || action === 'proposal:accept' || action === 'add')) options.fieldAutomation?.claim(next.selectedId, owner, true);
   const result = { view: view(await snapshot(next, signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(params._meta).fieldReceiptGroups), scoped, secondaryActions(params._meta), footerFeatures(params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
