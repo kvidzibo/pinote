@@ -52,6 +52,7 @@ const settings = async page => {
 try {
   for (let i = 0; i < 100; i++) { if (spawnSync('i3-msg', ['-s', join(root, 'i3.sock'), '-t', 'get_tree'], { env, stdio: 'ignore' }).status === 0) break; await new Promise(ok => setTimeout(ok, 20)); }
   env.LD_LIBRARY_PATH = root;
+  env.PINOTE_NODE = '/bin/false'; // A failing external Node must not mask the override.
   let page = await launch();
   await settings(page);
   await page.getByText(/desktop environment sets LD_LIBRARY_PATH/).waitFor();
@@ -63,6 +64,7 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await app.close();
   delete env.LD_LIBRARY_PATH;
+  env.PINOTE_NODE = process.execPath;
   page = await launch();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).fill('Draft kept across backend switch');
   await settings(page);

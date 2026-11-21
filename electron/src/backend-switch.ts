@@ -148,6 +148,11 @@ async function service(run: Run, env: NodeJS.ProcessEnv): Promise<Service> {
   if (!['loaded', 'not-found'].includes(values.LoadState) || !['active', 'inactive', 'failed'].includes(values.ActiveState) || !/^\d+$/.test(values.MainPID || '')) throw new Error('The existing Pinote service is unavailable or changing state; retry when it has settled.');
   return { present: values.LoadState === 'loaded', active: values.ActiveState === 'active', pid: Number(values.MainPID) };
 }
+async function switchableService(run: Run, env: NodeJS.ProcessEnv): Promise<Service> {
+  const current = await service(run, env);
+  if (current.present && !current.active) throw new Error('The installed Pinote service is stopped. Leave it stopped; switch when it is running so its database can be verified.');
+  return current;
+}
 async function verifyServiceContext(pid: number): Promise<void> {
   // A probe run by Electron is not evidence for a different filesystem view.
   // In particular, systemd path restrictions can hide the replacement CLI.
@@ -255,7 +260,7 @@ export async function checkSwitchEnvironment(options: SwitchOptions): Promise<vo
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
   if (cli) await inspectCLI(options, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
-  const current = await service(runCommand, env);
+  const current = await switchableService(runCommand, env);
   if (current.active) {
     await verifyServiceContext(current.pid);
     await inspectCLI(options, await processEnvironment(current.pid), 'pinote.service');
@@ -558,8 +563,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     const targetVersion = await probe(options, run);
     const version = (await run(options.node, [join(options.bundles, 'cli.mjs'), '--version'], env)).trim();
     if (version !== `pinote ${targetVersion}`) throw new Error('Bundled CLI verification failed.');
-    const before = await service(run, env);
-    if (before.present && !before.active) throw new Error('The installed Pinote service is stopped. Leave it stopped; switch when it is running so its database can be verified.');
+    const before = await switchableService(run, env);
     let serviceArguments: [string, string] | undefined, originalHost: string | undefined, originalPort: string | undefined;
     let originalDatabase: DatabaseIdentity | undefined;
     if (before.active) {
