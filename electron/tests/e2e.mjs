@@ -11,6 +11,8 @@ const sourceValue = locator => locator.evaluate(node => node.querySelector('.cm-
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const handoffOnly = process.argv.includes('--handoff-only');
+const part = process.argv.find(arg => arg.startsWith('--part='))?.slice('--part='.length);
+assert.ok(part === undefined || ((part === '1' || part === '2') && !handoffOnly), 'Use --part=1 or --part=2 without --handoff-only');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
 const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
@@ -213,6 +215,8 @@ try {
   assert.ok(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences().sandbox));
   assert.equal(await page.locator('#pinned .task-row').count(),1);
   assert.equal(await page.locator('#ordinary .task-row').count(),2);
+  // The idle resource sample runs once, in the shorter part 2.
+  if (part !== '1') {
   const resources = await app.evaluate(({app})=>app.getAppMetrics().reduce((r,p)=>({rssKiB:r.rssKiB+p.memory.workingSetSize,cpuPercent:r.cpuPercent+p.cpu.percentCPUUsage}),{rssKiB:0,cpuPercent:0}));
   const gtkRSS=Number(spawnSync('ps',['-o','rss=','-p',String(gtk.pid)],{encoding:'utf8'}).stdout.trim());
   const scan=performance.now(); for(let i=0;i<5;i++)call('snapshot',{view:'active'});
@@ -224,12 +228,15 @@ try {
   const hz=Number(spawnSync('getconf',['CLK_TCK'],{encoding:'utf8'}).stdout.trim()), seconds=(performance.now()-at)/1000;
   const measurement={datasetTasks:103,coldStartToTasksMs:Math.round(taskReadyMs),electronReportedRSSKiB:resources.rssKiB,gtkRSSKiB:gtkRSS,backendSnapshotMeanMs:snapshotMean,electronIdleCPUPercent:+((after.electron-before.electron)/hz/seconds*100).toFixed(2),gtkIdleCPUPercent:+((after.gtk-before.gtk)/hz/seconds*100).toFixed(2)};
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
+  }
   assert.ok(await page.locator('img[src]').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
   await page.screenshot({path:join(root,'checklist.png')});
   assert.equal(await page.getByRole('button',{name:'Add task (Enter)',exact:true}).count(),0);
   await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
   assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Work (101) ▶ 1','Empty filter (0)','Untagged (2)']);
   await page.keyboard.press('Escape');
+  // CI runs these self-contained workflow checks (part 2) beside the lifecycle sequence (part 1).
+  if (part !== '1') {
   // task393: allocation and keyboard focus with the complete benchmark dataset.
   {
     const filter = page.locator('#toolbar button').filter({has:page.locator('img[src*="view-filter-symbolic"]')});
@@ -881,6 +888,14 @@ try {
     call('transition',{id,revision:started.updated_at,state:'in_progress',action:'rm'});
     await row.waitFor({state:'detached'});
   }
+  if (part === '2') {
+    // Part 1 checks these invariants later, in its own processes.
+    assert.equal(gtk.exitCode ?? gtk.signalCode,null,'GTK must coexist without exiting');
+    assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
+    assert.deepEqual(pageErrors,[]);
+  }
+  }
+  if (part !== '2') {
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Electron lifecycle ☘\nsecond line');
   await page.keyboard.press('Enter');
   await page.locator('.task-title').filter({hasText:/^Electron lifecycle ☘$/}).waitFor();
@@ -1388,7 +1403,7 @@ try {
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
   if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
   await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);
-  assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
+  assert.equal(gtk.exitCode ?? gtk.signalCode,null,'GTK must coexist without exiting');
   // Reach a real failed launch: nonexistent folders are now rejected before effects.
   const kittyBin=join(root,'failed-kitty-bin'), kittyMarker=join(root,'kitty-launch-attempted');
   await mkdir(kittyBin);
@@ -1750,6 +1765,7 @@ try {
     await close();
     assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
   } finally { await chmod(stateDir,0o700); }
+  }
   console.log(`Electron UI validation artifacts: ${root}`);
   }
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
