@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, protocol, screen, session, shell } from 'electron';
 import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -86,16 +86,20 @@ function saveGeometry() {
   return geometryWrites;
 }
 
-function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
+function popupMenu(request: MenuRequest, showBackend: boolean): Promise<MenuAction | null> {
   if (!window || closing || activeMenu) return Promise.resolve(null);
   const owner = window;
   return new Promise(resolve => {
     let selected: MenuAction | null = null;
-    const item = (id: MenuAction, label: string): Electron.MenuItemConstructorOptions => ({ id, label, click: () => { selected = id; } });
+    // Native menus cannot load SVG: icons/menu holds 16/32 px PNG copies in a grey readable on light and dark menus.
+    const item = (id: MenuAction, label: string, icon: string): Electron.MenuItemConstructorOptions => ({ id, label,
+      icon: nativeImage.createFromPath(join(__dirname, 'icons', 'menu', `${icon}-symbolic.png`)), click: () => { selected = id; } });
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
     const menu = Menu.buildFromTemplate([
-      item('filter', 'Filter by tag'), item('scheduled', 'Scheduled reminders'), item('archive', 'Archive'),
-      item('manage-tags', 'Manage tags'), item('task-actions', 'Task actions…'), item('composer-settings', 'Add task input…'), item('backend-settings', 'Backend settings…'), item('drafts', 'Recover private edit drafts'), separator, item('close', 'Close Pinote'),
+      item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
+      item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'),
+      ...showBackend ? [item('backend-settings', 'Switch to Node backend…', 'utilities-terminal')] : [], separator,
+      item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
     const content = owner.getContentBounds();
     activeMenu = menu;
@@ -127,6 +131,9 @@ async function boot() {
   const database = identity.database;
   let switchRequested = false, switchConfirming = false;
   const switchOptions = () => ({ ...switchRuntime(), env: process.env, database });
+  const backendSwitched = async () => {
+    try { return await hasBackendPreference(process.env) && await hasInstalledLauncher(switchOptions()); } catch { return false; }
+  };
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
   dataDir = join(dirname(identity.database), 'electron');
   const profile = join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', hash);
@@ -239,7 +246,7 @@ async function boot() {
   const handlers: Record<string, (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown> = {
     'open-preview': (_event, request: unknown) => closing ? false : preview.open(request),
     'update-preview': (_event, token: unknown, data: unknown) => preview.update(token, data),
-    'popup-menu': (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request); },
+    'popup-menu': async (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request, !await backendSwitched()); },
     'load-state': () => structuredClone(state),
     'backend-settings': async () => {
       try {
