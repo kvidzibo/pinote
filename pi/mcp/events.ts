@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { notesVersion, RECHECK_MS } from './notes-version.ts';
+
 const exec = promisify(execFile);
 const LIMIT = 256;
 type Page = { cursor: number; events: { id: number; task_id: number; timestamp: string }[] };
@@ -15,6 +17,8 @@ export function completionEvents(log: () => void) {
   let running: Promise<void> | undefined;
   let controller: AbortController | undefined;
   let stopped = false;
+  const notes = notesVersion();
+  let settled: string | undefined, recheck = 0;
   const reject = (res: ServerResponse, status: number, message: string) => {
     res.writeHead(status, { 'Content-Type': 'text/plain' }); res.end(`${message}\n`);
   };
@@ -64,17 +68,20 @@ export function completionEvents(log: () => void) {
       const ready = [...subscribers].filter((sub) => sub.ready);
       if (!ready.length) return;
       const after = Math.min(...ready.map((sub) => sub.cursor!));
-      const page = await read(after);
+      // Read event history only after notes.db changed or a subscriber is behind.
+      const version = notes.read();
+      const page = version !== undefined && `${version}|${after}` === settled && Date.now() < recheck ? undefined : await read(after);
+      if (page) { settled = page.events.length < LIMIT ? `${version}|${page.cursor}` : undefined; recheck = Date.now() + RECHECK_MS; }
       for (const sub of ready) {
         if (!subscribers.has(sub)) continue;
-        for (const event of page.events) {
+        for (const event of page?.events ?? []) {
           if (event.id <= sub.cursor!) continue;
           write(sub, `id: ${event.id}\nevent: task.completed\ndata: ${JSON.stringify({ task_id: event.task_id, timestamp: event.timestamp })}\n\n`);
           sub.cursor = event.id;
           if (!subscribers.has(sub)) break;
         }
         if (!subscribers.has(sub)) continue;
-        if (page.cursor > sub.cursor!) checkpoint(sub, page.cursor);
+        if (page && page.cursor > sub.cursor!) checkpoint(sub, page.cursor);
         if (!subscribers.has(sub)) continue;
         if (Date.now() - sub.heartbeat >= 15_000) { write(sub, ': heartbeat\n\n'); sub.heartbeat = Date.now(); }
       }
@@ -111,6 +118,7 @@ export function completionEvents(log: () => void) {
       for (const sub of subscribers) sub.res.end();
       subscribers.clear();
       await running;
+      notes.close();
     },
   };
 }
