@@ -52,13 +52,13 @@ const settings = async page => {
 try {
   for (let i = 0; i < 100; i++) { if (spawnSync('i3-msg', ['-s', join(root, 'i3.sock'), '-t', 'get_tree'], { env, stdio: 'ignore' }).status === 0) break; await new Promise(ok => setTimeout(ok, 20)); }
   env.LD_LIBRARY_PATH = root;
-  env.PINOTE_NODE = '/bin/false'; // A failing external Node must not mask the override.
+  env.PINOTE_NODE = join(root, 'missing-node'); // Even Node discovery must not mask the override.
   let page = await launch();
   await settings(page);
   await page.getByText(/desktop environment sets LD_LIBRARY_PATH/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await page.screenshot({ path: join(root, 'backend-switch-blocked.png') });
-  await app.evaluate(() => { delete process.env.LD_LIBRARY_PATH; process.env.PATH += ':.'; });
+  await app.evaluate((_, node) => { delete process.env.LD_LIBRARY_PATH; process.env.PINOTE_NODE = node; process.env.PATH += ':.'; }, process.execPath);
   await page.getByRole('button', { name: 'Refresh backend settings' }).click();
   await page.getByText(/absolute desktop PATH/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);

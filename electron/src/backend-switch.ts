@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { backendEnvironment } from './backend-command.ts';
+import { backendEnvironment, nodeExecutable } from './backend-command.ts';
 
 // Only main-process values enter this installer. No renderer-supplied paths,
 // executable names, service names or shell commands are accepted.
@@ -253,17 +253,18 @@ function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSou
 }
 // Read-only preview. The installer repeats the checks against the actual
 // environments under its lock; a settings snapshot never authorizes a switch.
-export async function checkSwitchEnvironment(options: SwitchOptions): Promise<void> {
-  const { env } = options;
+export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
+  verifyRuntimeEnvironment(env, 'desktop');
+  const runtime = { node: nodeExecutable(env) };
   executable(env, 'flock'); // Required for the installer lock, even without an existing CLI.
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
-  if (cli) await inspectCLI(options, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
+  if (cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
   const current = await switchableService(runCommand, env);
   if (current.active) {
     await verifyServiceContext(current.pid);
-    await inspectCLI(options, await processEnvironment(current.pid), 'pinote.service');
+    await inspectCLI(runtime, await processEnvironment(current.pid), 'pinote.service');
   }
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
@@ -276,7 +277,7 @@ async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentS
   throw new Error(`Automatic switching requires the system flock on the ${source} PATH.`);
 }
 const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
-async function inspectCLI(runtime: SwitchRuntime, env: NodeJS.ProcessEnv, source: EnvironmentSource) {
+async function inspectCLI(runtime: Pick<SwitchRuntime, 'node'>, env: NodeJS.ProcessEnv, source: EnvironmentSource) {
   await verifyCLIEnvironment(env, source);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
   if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error(`The ${source} CLI must be an unambiguous absolute executable.`);
@@ -553,6 +554,7 @@ export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntim
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
   const { env } = options;
+  verifyRuntimeEnvironment(env, 'desktop');
   verifySwitchPaths(env);
   const paths = locations(env), run = dependencies.run || runCommand;
   const release = await acquire(env, dependencies.updateLock);

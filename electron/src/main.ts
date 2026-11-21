@@ -226,11 +226,14 @@ async function boot() {
     'load-state': () => structuredClone(state),
     'backend-settings': async () => {
       try {
-        const options = switchOptions();
         const selected = await hasBackendPreference(process.env);
-        const switched = selected && await hasInstalledLauncher(options);
+        let switched = false;
+        if (selected) {
+          try { switched = await hasInstalledLauncher(switchOptions()); }
+          catch { /* A missing Node executable cannot confirm a matching installation. */ }
+        }
         if (!switched) {
-          try { await checkSwitchEnvironment(options); }
+          try { await checkSwitchEnvironment(process.env); }
           catch (error) { return { switched, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
         }
         const version = (await runCommand(switchRuntime().node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
@@ -242,7 +245,7 @@ async function boot() {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
       switchConfirming = true;
       try {
-        await checkSwitchEnvironment(switchOptions());
+        await checkSwitchEnvironment(process.env);
         if (closing) return false;
         switchRuntime(); // Verify the supported version only after the environment check.
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
