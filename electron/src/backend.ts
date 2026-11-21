@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
+import { backendEnvironment } from './backend-command.ts';
 import { PROTOCOL, type Operation, type Result } from './protocol.ts';
 import { mutating, validEnvelope, validParams } from './security.ts';
 
 export class Backend {
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(readonly executable: string, private env: NodeJS.ProcessEnv = process.env) {}
+  constructor(readonly executable: string, private env: NodeJS.ProcessEnv = process.env, private args: string[] = []) {}
   idle() { return this.tail; }
   call(operation: Operation, params: unknown): Promise<Result<unknown>> {
     if (!validParams(operation, params)) return Promise.resolve({ protocol: PROTOCOL, ok: false, error: { code: 'invalid', message: 'Invalid backend request.' } });
@@ -15,11 +16,11 @@ export class Backend {
   private run(operation: Operation, params: unknown): Promise<Result<unknown>> {
     return new Promise(resolve => {
       const write = mutating(operation);
-      let stdout = ''; let bytes = 0; let done = false; let stopping = '';
+      const chunks: Buffer[] = []; let bytes = 0; let done = false; let stopping = '';
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (result: Result<unknown>) => { if (!done) { done = true; clearTimeout(timer); clearTimeout(killTimer); resolve(result); } };
       const failed = (message: string) => finish({ protocol: 1, ok: false, error: { code: write ? 'unknown' : 'internal', message: write ? `${message} The operation may have succeeded; check saved state before retrying.` : message } });
-      const child = spawn(this.executable, [], { env: this.env, stdio: ['pipe','pipe','pipe'], shell: false });
+      const child = spawn(this.executable, this.args, { env: backendEnvironment(this.env), stdio: ['pipe','pipe','pipe'], shell: false });
       const closePipes = () => { child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); };
       const stop = (message: string) => {
         if (done || stopping) return;
@@ -32,19 +33,18 @@ export class Backend {
       child.on('error', () => { if (child.pid) stop('Cannot stop the configured Pinote backend.'); else failed('Cannot start the configured Pinote backend.'); });
       child.on('exit', () => { if (stopping) closePipes(); });
       child.stdin.on('error', () => {});
-      child.stderr.resume(); // Never send Python diagnostics or private paths into the renderer.
-      child.stdout.setEncoding('utf8');
+      child.stderr.resume(); // Never send backend diagnostics or private paths into the renderer.
       child.stdout.on('data', chunk => {
         if (stopping || done) return;
         bytes += Buffer.byteLength(chunk);
         if (bytes > 8 * 1024 * 1024) stop('Backend response exceeded the size limit.');
-        else stdout += chunk;
+        else chunks.push(chunk);
       });
       child.on('close', () => {
         if (done) return;
         if (stopping) { failed(stopping); return; }
         try {
-          const response: unknown = JSON.parse(stdout);
+          const response: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
           if (!validEnvelope(operation, response)) throw new Error('Invalid envelope');
           finish(response as Result<unknown>);
         } catch { failed('Backend returned an incomplete or invalid response.'); }

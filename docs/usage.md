@@ -6,39 +6,44 @@ Run checkout-relative commands from the repository root.
 
 ## Install
 
-Requires **Python 3.11+** and Dunst (`dunstify`) for desktop notifications.
+Requires **Node.js 22.19+**, npm, Linux `flock` (util-linux), and GNU `/usr/bin/date` with system timezone data for local reminders.
+Use UTF-8 for profile paths, launcher paths, and filenames passed to the CLI.
+Pinote rejects undecodable paths rather than using a different file with a similar name.
+Dunst (`dunstify`) is needed only for desktop notifications.
 The notifier uses portable short options and a stack-tag hint to support older
 distribution packages as well as current Dunst releases.
 Terminal commands work without Dunst. Install Dunst using your distribution's
 package manager; a graphical session and session D-Bus are needed to display
 reminders.
 
-From a checkout, choose one installer:
+From a checkout:
 
 ```sh
-uv tool install .        # recommended, if you use uv
-# or:
-pipx install .           # no uv CLI required
-
-note --help
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run build
+./backend/bin/note --help
+# Optional global installation:
+npm install -g ./backend
 ```
 
-Ensure your installer's tool bin directory (usually `~/.local/bin`) is on `PATH`.
-Alternatively, use standard Python tooling without uv or pipx:
+Use the checkout executable directly or keep npm's global bin directory on `PATH`.
+After source changes, rebuild; reinstall if using the global copy. For an offline
+transfer, `(cd backend && npm pack)` produces a tarball containing the CLI and
+bundled backend. No Python runtime or database conversion is needed.
+
+The legacy Python CLI remains available through `uv tool install .` / `pipx install .`
+for GTK compatibility; it shares the same schema-8 database and lock. Be explicit
+about executable paths when both CLIs are installed. GTK still requires Python 3.11+
+and GTK bindings; see [GUI setup](gui.md). Neither installer changes desktop startup
+or existing reminders.
+
+For a CLI-only Python install without uv or pipx, use a dedicated virtual environment:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install .
 .venv/bin/note --help
 ```
-
-Activate that virtual environment to invoke `note` without its full path.
-The core package has no Python runtime dependencies; `uv_build` is a build-time
-backend that pip installs automatically in an isolated build environment.
-The optional GUI additionally needs GTK 3 and its Python bindings; see [GUI setup](gui.md).
-The uv CLI is optional for users and recommended for the [development workflow](development.md). The package does not change your shell, desktop configuration, or
-existing reminders. After local source changes, reinstall with your chosen
-installer (for uv: `uv tool install --reinstall .` to rebuild the local source).
 
 ## Use
 
@@ -165,7 +170,9 @@ open for automatic delivery to the main list. GUI-triggered changes do not refre
 CLI equivalents: `note schedule ID "YYYY-MM-DD HH:MM"`, `note reminders`, and
 `note restore ID` to bring one back early. `note rm ID` archives a scheduled note
 and cancels its timer. Times are stored in UTC; input without an offset uses the
-current local timezone. ISO times with an explicit offset are also accepted, e.g.
+system timezone or an installed IANA zone such as `America/New_York`. If `TZ`
+is an unsupported POSIX rule or uses a custom zone file, provide an explicit
+UTC offset; reminders then display in UTC. Offset example:
 `2030-09-18T14:30:00+02:00`. Ambiguous or nonexistent local times at daylight-saving
 changes are rejected; choose another time or use an explicit offset. All reminder
 changes and automatic activations are recorded in `note history ID`.

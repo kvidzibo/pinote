@@ -88,7 +88,7 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
   const result = value.result;
   if (operation === 'completions') return Array.isArray(result) && result.every(id);
   if (!record(result)) return false;
-  if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && typeof result.database === 'string' && result.database.startsWith('/') && str(result.database);
+  if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && typeof result.database === 'string' && result.database.startsWith('/') && !/[\p{Cs}\x00]/u.test(result.database) && str(result.database);
   if (operation === 'snapshot') {
     return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean' && str(result.config.kittyStartPrompt);
   }

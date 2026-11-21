@@ -13,7 +13,7 @@ import { z } from 'zod';
 test('find, read, suggest, and accept an existing task without duplication or automatic selection', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-existing-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const env = { ...process.env, PINOTE_NOTE_COMMAND: join(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
+  const env = { ...process.env, PINOTE_NOTE_COMMAND: join(root, '../backend/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
   const cli = async (...args: string[]) => JSON.parse((await promisify(execFile)(env.PINOTE_NOTE_COMMAND, ['--no-notify', ...args], { env })).stdout);
   const connect = async () => {
     const client = new Client({ name: 'existing-task-test', version: '1' });

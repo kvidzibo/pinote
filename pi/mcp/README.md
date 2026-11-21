@@ -6,15 +6,16 @@ resources, notifications and its native terminal UI. No browser UI is served.
 
 ## Build and run
 
-On the machine holding your notes, requires **Node.js 22.19+**, **Python 3.11+**
-and the checkout's `note` CLI **0.25.0+** (schema 8). Upgrade all installations
+On the machine holding your notes, requires **Node.js 22.19+**, Linux `flock`
+and the checkout's Node `note` CLI **0.26.0+** (unchanged schema 8). Upgrade all installations
 sharing the database before starting the service:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run build
 npm --prefix pi ci --ignore-scripts
 npm --prefix pi run build:mcp
-export PINOTE_NOTE_COMMAND="$PWD/.venv/bin/note"
+export PINOTE_NOTE_COMMAND="$PWD/backend/bin/note"
 # Load PINOTE_TOKEN from a private environment file/secret manager.
 npm --prefix pi run serve
 ```
@@ -51,7 +52,7 @@ client's private token file, or use your secret manager's `PINOTE_TOKEN` environ
 
 Children run as your user. The service uses the same local database as the CLI and
 GTK app: normally `~/.local/share/pinote/notes.db`. Only the **service machine**
-needs Python or access to that file. Do not put SQLite/WAL files on a VM network
+needs the CLI or access to that file; Python is not required. Do not put SQLite/WAL files on a VM network
 share. Point every client at the service instead.
 
 ## Remote access
@@ -94,7 +95,7 @@ repository with mode `0600`:
 
 ```ini
 PINOTE_TOKEN_FILE=/absolute/path/to/private/pinote-token
-PINOTE_NOTE_COMMAND=/absolute/path/to/pinote/.venv/bin/note
+PINOTE_NOTE_COMMAND=/absolute/path/to/pinote/backend/bin/note
 PINOTE_LOG_PATH=/absolute/path/to/private/state/pinote/app.log
 # Set only when using a proxy or a remote bind:
 # PINOTE_ALLOWED_HOSTS=notes.example.net
@@ -149,7 +150,7 @@ needed for deployment.
 From the checkout root:
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts && npm --prefix backend run build
 npm --prefix pi test
 ```
 

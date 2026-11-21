@@ -20,7 +20,7 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
   const buses = new Map<any, ReturnType<typeof createEventBus>>();
   let service: any;
   Object.assign(process.env, { PINOTE_TOKEN: 'isolated-test-token-01234567890123456789',
-    PINOTE_NOTE_COMMAND: resolve(root, '../.venv/bin/note'), PI_CODING_AGENT_DIR: join(temp, 'agent'),
+    PINOTE_NOTE_COMMAND: resolve(root, '../backend/bin/note'), PI_CODING_AGENT_DIR: join(temp, 'agent'),
     XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state') });
   mkdirSync(join(temp, 'agent'));
   const event = async (extension: any, name: string, ctx: any, data = {}) => {

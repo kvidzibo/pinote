@@ -7,7 +7,10 @@ Run checkout-relative commands from the repository root.
 ## Development and tests
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
+npm --prefix backend run check && npm --prefix backend run build
+uv sync --locked                 # legacy reference for interoperability checks
+npm --prefix backend test
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
 xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
@@ -50,7 +53,10 @@ node --test --experimental-strip-types --test-shard=1/2 tests/*.test.ts test-loa
 
 Electron's 1280×900 and 800×600 end-to-end runs use separate parallel jobs, each
 with its own Xvfb and private D-Bus session. Type/unit checks and packaged-app
-validation run once, in the 1280×900 job. No tests or display sizes are dropped;
+validation run once, in the 1280×900 job. The packaged smoke test runs from a
+temporary working directory with a private PATH and no Python executable.
+Pass an unpacked app directory to `test:package` for relocation checks; copying
+CI's root-owned SUID sandbox helper would lose its ownership, so CI tests it in place. No tests or display sizes are dropped;
 parallel jobs trade additional runner setup for shorter elapsed CI time.
 
 On PRs, the standalone GTK job runs when the complete PR diff changes Python
@@ -66,7 +72,7 @@ recovery, packaging, and limitations. These checks supplement, not replace, all
 Python, Dunst, GTK (including smaller-display and i3 regressions), and Pi checks
 above. Keep the Python package and Pi package versions independent of Electron.
 
-Use Node.js 22.12+ (CI uses Node 24), the locked local `.venv` backend, and Linux
+Use Node.js 22.19+ (CI uses Node 24), Linux `flock`, and Linux
 Electron runtime libraries: GTK 3, NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11
 libraries. End-to-end tests additionally need `xvfb-run`, `dbus-run-session`,
 `xauth`, `i3-wm`, `xdotool`, and ImageMagick's `import` command (`imagemagick`
@@ -75,13 +81,13 @@ on Debian/Ubuntu) for native-menu screenshots. System Python with `python3-gi` a
 also uses the real Pi HTTP service/client without making model requests.
 
 ```sh
-uv sync --locked
+npm --prefix backend ci --ignore-scripts
+uv sync --locked                 # legacy reference only, not Electron's backend
 uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
 uv pip install --python .venv-gui/bin/python -e '.[gui]'
 npm --prefix pi ci --ignore-scripts && npm --prefix pi run build:mcp
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
-export PINOTE_ELECTRON_BACKEND="$PWD/.venv/bin/pinote-electron-backend"
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c 'npm --prefix electron run check && npm --prefix electron test && npm --prefix electron run test:e2e'
 xvfb-run -a -s '-screen 0 800x600x24' dbus-run-session -- npm --prefix electron run test:e2e
 # Focused saved-fields/session-ID preview check; prints its /tmp screenshot path:
@@ -91,8 +97,13 @@ npm --prefix electron run package
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:package
 ```
 
-`setup` explicitly downloads Electron; `ci --ignore-scripts` installs locked npm
-packages (including esbuild's optional native binary) without lifecycle scripts.
+`setup` prepares the bundled backend and explicitly downloads Electron;
+`ci --ignore-scripts` installs locked npm packages (including esbuild's optional
+native binary) without lifecycle scripts. Unit tests exercise real CLI bundles
+with injected service control, including failed restart/rollback recovery. The E2E
+command also runs the Backend settings switch with temporary HOME/XDG data and a
+fake absent service, checking confirmation cancellation, draft preservation,
+relaunch, and bypass of the old Python override. No live service is changed.
 The end-to-end harness uses its own HOME/XDG directories, private i3 configuration
 and socket, and clears inherited real i3/Kitty sockets. Always use Xvfb and a
 private D-Bus session, never the actual desktop. Test screenshots stay in temporary
@@ -107,16 +118,26 @@ machine configuration as a test workaround.
 
 ## Architecture and integration
 
-The package uses `src/pinote/` with `python -m pinote` support. Storage, Markdown,
-notification rendering, and CLI parsing are separated for focused testing.
-`gui/` contains the optional presentation and a GTK-free data adapter; GTK is
-loaded only when launching the GUI. Schema upgrades run transactionally in the
-shared store, so both frontends use the same progress states and history.
+`backend/` is the private Node/TypeScript CLI and Electron bridge package, using
+`node:sqlite` against the existing schema-8 database. Build-time dependencies are
+bundled into self-contained ES modules. Linux util-linux `flock` acquires the same
+retained file-description lock as Python; no writer supervisor or Python fallback
+is used. CLI/bridge work runs in a worker thread in that same process, keeping
+signal handling responsive during SQLite waits and large imports. A shared
+cancellation flag is checked before work and commit; exclusive write transactions
+acquire reader exclusion up front, avoiding a cancellable wait inside commit.
+No uncertain mutation is replayed. Tests compare schema migrations 0–8, durable snapshots and alternating
+Python/Node writes using only temporary databases and this checkout's `.venv`.
+
+`src/pinote/` remains the unchanged legacy Python/GTK implementation and reference.
+GTK is loaded only when launching its GUI. Both implementations preserve the same
+schema, history and display lock. Electron bundles its bridge outside ASAR and
+uses a separately installed supported Node runtime.
 
 `pi/` is the independently versioned `pi-note` npm package. Its default extension
 connects directly to the standalone Pinote HTTP service; only that service calls
 `note`, never SQLite directly. The explicit local-only compatibility extension also
-uses `note`. Tests need the checkout's own `.venv/bin/note` and exercise real Pi
+uses `note`. Tests use the checkout's own `backend/bin/note` and exercise real Pi
 loading and HTTP/stdio connections against temporary data. The full CI suite runs
 once per pull request update. On pushes to `main`, the publish workflow calls that
 same suite once before publishing; there is no

@@ -17,7 +17,7 @@ const { preview: click, socketPathFor } = createRequire(import.meta.url)("../pre
 test("native task-link preview renders complete local data but never reaches requests or summaries", async () => {
   const temp = mkdtempSync(join(tmpdir(), "pinote-preview-test-"));
   const overrides = {
-    PATH: `${resolve(root, "../.venv/bin")}:${process.env.PATH}`,
+    PATH: `${resolve(root, "../backend/bin")}:${process.env.PATH}`,
     XDG_DATA_HOME: join(temp, "data"), XDG_STATE_HOME: join(temp, "state"),
     XDG_CONFIG_HOME: join(temp, "config"), PI_CODING_AGENT_DIR: join(temp, "pi"),
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent-preview-bus",
@@ -113,7 +113,7 @@ test("native task-link preview renders complete local data but never reaches req
     mkdirSync(busyDir);
     writeFileSync(join(busyDir, "note"), `#!${process.execPath}\nconst fs=require('node:fs'),{execFile}=require('node:child_process');
 const argv=process.argv.slice(2);
-const run=()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},argv,{encoding:'utf8'},(err,out,stderr)=>{
+const run=()=>execFile(${JSON.stringify(resolve(root, "../backend/bin/note"))},argv,{encoding:'utf8'},(err,out,stderr)=>{
   process.stdout.write(out);process.stderr.write(stderr);process.exitCode=err?1:0;
 });
 if(argv[0]==='agent'&&argv[1]==='get'&&!fs.existsSync(${JSON.stringify(reading)})){
@@ -160,7 +160,7 @@ if(argv[0]==='agent'&&argv[1]==='get'&&!fs.existsSync(${JSON.stringify(reading)}
     mkdirSync(shimDir);
     writeFileSync(join(shimDir, "note"), `#!${process.execPath}\nconst {execFile}=require('node:child_process');
 const argv=process.argv.slice(2);
-setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../.venv/bin/note"))},argv,{encoding:'utf8'},(err,out,stderr)=>{
+setTimeout(()=>execFile(${JSON.stringify(resolve(root, "../backend/bin/note"))},argv,{encoding:'utf8'},(err,out,stderr)=>{
   process.stdout.write(out);process.stderr.write(stderr);process.exitCode=err?1:0;
 }),argv[0]==='--version'?1000:4500);\n`, { mode: 0o755 });
     const fastPath = process.env.PATH;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -7,14 +7,24 @@ import { spawn, spawnSync } from 'node:child_process';
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use Xvfb and a private D-Bus session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'));
 const root = await mkdtemp(join(tmpdir(),'pinote-electron-package-'));
-const binary = resolve(`out/pinote-electron-linux-${process.arch}/pinote-electron`);
-const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../.venv/bin/pinote-electron-backend');
-const env = { ...process.env, PINOTE_ELECTRON_BACKEND:backend, HOME:join(root,'home'), XDG_DATA_HOME:join(root,'data'), XDG_STATE_HOME:join(root,'state'), XDG_CONFIG_HOME:join(root,'config'), XDG_CACHE_HOME:join(root,'cache'), XDG_RUNTIME_DIR:join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
-for(const key of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE','NODE_OPTIONS','PYTHONPATH']) delete env[key];
+// An optional external copy supports relocation checks. CI keeps the provisioned
+// root-owned SUID sandbox helper in place rather than copying away its ownership.
+const packaged = resolve(process.argv[2] || `out/pinote-electron-linux-${process.arch}`);
+const binary = join(packaged, 'pinote-electron');
+const backend = join(packaged, 'resources/pinote-backend/bridge.mjs');
+const env = { ...process.env, PINOTE_NODE:process.execPath, HOME:join(root,'home'), XDG_DATA_HOME:join(root,'data'), XDG_STATE_HOME:join(root,'state'), XDG_CONFIG_HOME:join(root,'config'), XDG_CACHE_HOME:join(root,'cache'), XDG_RUNTIME_DIR:join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
+for(const key of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE','NODE_OPTIONS','PYTHONPATH','PINOTE_ELECTRON_BACKEND']) delete env[key];
 for(const key of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[key],{recursive:true,mode:0o700});
+await mkdir(join(root,'bin'));
+for(const command of ['node','flock','i3','i3-msg','xdotool','import','which']) {
+  const located=spawnSync('which',[command],{encoding:'utf8'}); assert.equal(located.status,0);
+  await symlink(located.stdout.trim(),join(root,'bin',command));
+}
+env.PATH=join(root,'bin');
+assert.equal(spawnSync('python3',['--version'],{env}).error?.code,'ENOENT');
 const run = (command,args,options={})=>spawnSync(command,args,{env,encoding:'utf8',timeout:10000,...options});
 const call = (operation,params)=>{
-  const p=run(backend,[],{input:JSON.stringify({protocol:1,operation,params})});
+  const p=run(process.execPath,[backend],{input:JSON.stringify({protocol:1,operation,params})});
   assert.equal(p.status,0,p.stderr); const r=JSON.parse(p.stdout);
   // Snapshot polling can overlap the app's write. Retry only this read, never a mutation.
   if(operation==='snapshot' && !r.ok && r.error?.code==='busy') return null;
@@ -57,8 +67,8 @@ try {
   run('xdotool',['windowfocus',windowId]);
   const closed=new Promise(r=>app.once('close',r)); run('xdotool',['key','Escape']); await closed; app=undefined;
   assert.equal(await readFile(statePath,'utf8'),'unreadable draft JSON');
-  const absent=spawnSync(binary,[],{env:{...env,PINOTE_ELECTRON_BACKEND:join(root,'missing')},cwd:root,encoding:'utf8',timeout:10000});
-  assert.equal(absent.status,1); assert.match(absent.stdout,/Install Pinote/);
+  const absent=spawnSync(binary,[],{env:{...env,PINOTE_NODE:join(root,'missing')},cwd:root,encoding:'utf8',timeout:10000});
+  assert.equal(absent.status,1); assert.match(absent.stdout,/Install Node/);
   console.log(`Packaged workflow artifacts: ${root}`);
 } catch(error) { console.error(stderr); console.error(`Package failure artifacts: ${root}`); throw error; }
 finally { app?.kill('SIGTERM'); wm?.kill('SIGTERM'); }
