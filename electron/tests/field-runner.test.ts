@@ -88,6 +88,7 @@ test('relocated field runtime pins the CLI and supervises enabled local watchers
     const otherData = join(root, 'other-data');
     mkdirSync(otherData);
     retarget(otherData);
+    assert.equal(profile.matches(), false, 'Desktop bridge now selects a different database');
     assert.equal(cli('agent', 'add', '--text', 'Other profile').id, task.id);
     assert.notEqual(cli('agent', 'get', String(task.id)).agent_notes.Next, 'review');
     for (const { noteCommand, noteArgs, noteEnv } of [bundled, legacy]) {
@@ -98,6 +99,7 @@ test('relocated field runtime pins the CLI and supervises enabled local watchers
     }
     assert.throws(() => readFileSync(unexpected), { code: 'ENOENT' });
     retarget(data);
+    assert.equal(profile.matches(), false, 'Retargeting back cannot rearm this session');
 
     run(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `
       import assert from 'node:assert/strict';

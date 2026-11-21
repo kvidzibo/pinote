@@ -10,7 +10,8 @@ type SwitchRuntime = () => { node: string };
 const sameFile = (original: BigIntStats, current: BigIntStats) => original.dev === current.dev && original.ino === current.ino;
 
 export function fieldDatabaseIdentity(database: string, environment: NodeJS.ProcessEnv) {
-  const noteEnv = backendEnvironment(environment);
+  const desktopEnv = backendEnvironment(environment);
+  const noteEnv = { ...desktopEnv };
   verifySwitchPaths(noteEnv);
   // Keep service wrappers, loader overrides and profile-specific PATH
   // helpers out of polling. Watcher environments are unchanged.
@@ -52,7 +53,7 @@ export function fieldDatabaseIdentity(database: string, environment: NodeJS.Proc
     if (replaced) return false;
     try {
       const current = stat(database);
-      if (parentMatches() && current?.isFile() && sameFile(original, current) && realpathUtf8(database) === database) return true;
+      if (resolvePath(discoverPaths(desktopEnv).database) === database && parentMatches() && current?.isFile() && sameFile(original, current) && realpathUtf8(database) === database) return true;
     } catch { /* A missing or inaccessible path is also a lost identity. */ }
     replaced = true;
     return false;
