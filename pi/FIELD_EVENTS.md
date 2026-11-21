@@ -101,13 +101,14 @@ afresh, like disabling and enabling it; still failing checks can alert once more
 
 ### Parameter file
 
-A script declares its name, defaults and parameters in `<script name>.params.json`
+A script declares its name, description, defaults and parameters in `<script name>.params.json`
 beside it (`deploy-status.mjs` → `deploy-status.params.json`). The file is read,
 never executed. All keys are optional:
 
 ```json
 {
   "name": "Deploy status",
+  "description": "Reports the deployment state of a task.",
   "taskEvents": ["completed"],
   "fieldEvents": ["changed"],
   "fields": ["Deploy"],
@@ -122,7 +123,8 @@ never executed. All keys are optional:
 
 Parameter `type` is `string`, `number`, `boolean`, `select` (with `options`),
 `directory` (an absolute path) or `list` (rows of text `columns`, each with a
-`key` and `label`). `help` adds a hint. A watcher with a missing `required`
+`key` and `label`). `help` adds a hint. The `description` is shown in the
+desktop and in Pi's confirmation before enabling. A watcher with a missing `required`
 parameter or an invalid parameter file cannot be enabled and does not run. At
 most 32 parameters; the file is limited to 64 KiB. A custom script cannot take
 the name of a bundled PR watcher.

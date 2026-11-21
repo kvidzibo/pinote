@@ -371,17 +371,17 @@ export class FieldAutomation {
       // Each task watcher starts at the history tail read once it is enabled or its settings change.
       const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
       const subscribed = new Map(this.enabled.filter((watcher) => watcher.taskEvents.length).map((watcher) => [subscription(watcher), watcher]));
+      // A subscription that ended takes its queued events with it: enabling it again starts afresh.
       for (const key of this.taskSince.keys()) if (!subscribed.has(key)) this.taskSince.delete(key);
-      if (!subscribed.size) { this.taskCursor = undefined; this.taskQueue = []; }
+      this.taskQueue = this.taskQueue.filter((queued) => subscribed.has(queued.subscription));
+      if (!subscribed.size) this.taskCursor = undefined;
       let more = false;
       if (!this.enabled.length) { this.notes.close(); return; }
       const version = this.notes.read();
       let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
       // A settings reset removes a watcher's row: start it again from durable history.
       for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path,config) VALUES (?,?,?)').run(watcher.id, watcher.path, settings(watcher)).changes) { intake = true; this.drained = undefined; }
-      // A full queue is dispatched first; the cursor keeps the rest.
-      if (intake && subscribed.size && this.taskQueue.length >= 64) more = true;
-      else if (intake && subscribed.size) {
+      if (intake && subscribed.size) {
         try {
           // Without a cursor the CLI returns the current tail: history from before this start never runs.
           const read = async (after?: number) => TaskBatch.parse(await this.note(['task-events', ...(after === undefined ? [] : ['--after', String(after)]), '--limit', '25']));
@@ -391,14 +391,19 @@ export class FieldAutomation {
             for (const key of subscribed.keys()) if (!this.taskSince.has(key)) this.taskSince.set(key, tail);
             this.taskCursor ??= tail;
           }
-          const cursor = this.taskCursor, batch = await read(cursor);
-          if (!valid()) return;
-          if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
-          for (const event of batch.events) {
-            for (const [key, watcher] of subscribed) if (event.id > this.taskSince.get(key)! && wantsTask(watcher, event)) this.taskQueue.push({ subscription: key, event });
+          // A full queue is dispatched first; the cursor keeps the rest.
+          if (this.taskQueue.length >= 64) more = true;
+          else {
+            const cursor = this.taskCursor, batch = await read(cursor);
+            if (!valid()) return;
+            if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
+            for (const event of batch.events) {
+              for (const [key, watcher] of subscribed) if (event.id > this.taskSince.get(key)! && wantsTask(watcher, event)) this.taskQueue.push({ subscription: key, event });
+            }
+            if (batch.cursor !== cursor) more = true;
+            this.taskCursor = batch.cursor;
           }
-          if (batch.cursor !== cursor) more = true;
-          this.taskCursor = batch.cursor; this.taskEventsFailed = false;
+          this.taskEventsFailed = false;
         } catch (error) {
           if (this.lifetime.signal.aborted) throw error;
           // A passing failure keeps the cursor, so changes made meanwhile still run. History that no longer
@@ -412,9 +417,7 @@ export class FieldAutomation {
       const queued = this.taskTurn ? this.taskQueue.shift() : undefined;
       this.taskTurn = !queued;
       if (queued) {
-        // A subscription changed since intake no longer receives the event.
-        const watcher = subscribed.get(queued.subscription);
-        if (!watcher) return;
+        const watcher = subscribed.get(queued.subscription)!;
         const { id, taskId, event, fields } = queued.event;
         const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields });
         if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId, field: `task:${event}`,

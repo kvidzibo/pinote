@@ -1333,7 +1333,8 @@ function configureWatchers(): void {
       chips.append(chip);
     }
     chips.append(input, options);
-    editor.append(el('h3', w.name), el('p', `${w.bundled ? 'Bundled' : 'Custom'} · ${w.path}`, 'tag-hint watcher-path'), issue, toggle,
+    editor.append(el('h3', w.name), el('p', `${w.bundled ? 'Bundled' : 'Custom'} · ${w.path}`, 'tag-hint watcher-path'),
+      ...w.description ? [el('p', w.description)] : [], issue, toggle,
       ...checks('Task events', TASK_EVENTS, w.taskEvents), ...checks('Field events', FIELD_EVENTS, w.fieldEvents),
       el('p', 'Fields', 'tag-editor-label'), chips,
       el('p', 'Field events: only these fields. Task events: only tasks that have one. Empty: all.', 'tag-hint'));

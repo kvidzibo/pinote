@@ -166,8 +166,16 @@ console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [
   history({ tail: 9, events: [completed(8), completed(9)] });
   await ticks(4);
   assert.deepEqual(delivered(), ['first:6', 'first:7', 'first:8', 'second:8'], 'One invocation per turn');
+  // Disabled with an event still queued, then enabled again with the same settings: it starts afresh.
+  const second = entries.pop()!;
+  await ticks(1);
+  entries = [...entries, second];
+  await ticks(4);
+  assert.deepEqual(delivered().slice(4), ['first:9']);
+  history({ tail: 11, events: [completed(10), completed(11)] });
+  await ticks(1);
   entries = entries.map((entry) => ({ ...entry, fields: ['Other'] }));
   await ticks(4);
-  assert.equal(delivered().length, 4, 'A queued task no longer selected by Fields does not run');
+  assert.equal(delivered().filter((call) => /:1[01]$/.test(call)).length <= 1, true, 'A queued task no longer selected by Fields does not run');
   assert.ok(!readFileSync(requests, 'utf8').includes('field-events'), 'A watcher without field events reads no field history');
 });

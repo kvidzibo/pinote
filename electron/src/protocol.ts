@@ -78,7 +78,7 @@ export type WatcherParam = { key: string; label: string; type: 'string' | 'numbe
   configKey?: string };
 export type WatcherEntry = { path: string; enabled: boolean; taskEvents: string[]; fieldEvents: string[]; fields: string[]; params: Record<string, WatcherValue> };
 /** A script with its effective settings; `spec` is what its parameter file declares. */
-export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; problem?: string };
+export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; description?: string; problem?: string };
 export type WatcherSettings = { raw: string | null; watchers: Watcher[]; fieldNames: string[] };
 export type BackendSettings = { switched: boolean; canSwitch: boolean; detail: string; version: string };
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean };

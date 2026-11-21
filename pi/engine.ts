@@ -230,7 +230,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     for (const watcher of config.watchers) {
       controls.push({ id: `watcher:${watcher.id}`, label: watcher.name, kind: 'toggle', value: watcher.enabled,
         description: `${watcher.bundled ? 'Bundled' : 'Custom'} · ${watcher.path}${watcher.problem ? ` · ${watcher.problem}; set it in the desktop's Watchers settings` : ''}`,
-        confirm: `Change this shared watcher?\n${watcher.path}\nEnabling executes trusted code with the desktop user’s permissions and credentials. Its alerts automatically trigger the owning Pi worker to investigate and fix the current task. Disabling stops checks and hides its results.` });
+        confirm: `Change this shared watcher?\n${watcher.path}\n${watcher.description ? `${watcher.description}\n` : ''}Enabling executes trusted code with the desktop user’s permissions and credentials. Its alerts automatically trigger the owning Pi worker to investigate and fix the current task. Disabling stops checks and hides its results.` });
       if (!watcher.bundled) action(`remove-watcher:${watcher.id}`, `Remove ${watcher.name}`, { icon: icons.cross,
         description: watcher.path, confirm: `Remove this watcher from shared settings? The file and task values are retained.\n${watcher.path}` });
     }
