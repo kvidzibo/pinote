@@ -201,7 +201,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         }, wait: async () => {},
       };
       const phases: string[] = [];
-      const desktopEnv = { ...env, PINOTE_NODE: process.execPath };
+      const desktopEnv = { ...env, PATH: `${root}/.local/bin:${env.PATH}`, PINOTE_NODE: process.execPath };
       if (mode === 'success' && process.env.PINOTE_TEST_SYSTEM_CUDA === '1') Object.assign(desktopEnv, { LD_LIBRARY_PATH: '/usr/local/cuda/lib64' });
       const operation = switchToNode({ env: desktopEnv, node: process.execPath, bundles, database }, text => {
         phases.push(text);
@@ -285,7 +285,7 @@ test('systemd guards forward and recovery starts before HTTP sees an edited Envi
     const root = await mkdtemp(join(tmpdir(), 'pinote-switch-profile-'));
     let unit: Awaited<ReturnType<typeof unitDouble>> | undefined;
     try {
-      const env = { HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_STATE_HOME: join(root, 'state'), XDG_DATA_HOME: join(root, 'profile-a'), PATH: `${root}/bin:/usr/bin:/bin` };
+      const env = { HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_STATE_HOME: join(root, 'state'), XDG_DATA_HOME: join(root, 'profile-a'), PATH: `${root}/.local/bin:${root}/bin:/usr/bin:/bin` };
       const profileB = join(root, 'profile-b');
       const database = join(env.XDG_DATA_HOME, 'pinote/notes.db'), databaseB = join(profileB, 'pinote/notes.db');
       const runtime = { node: process.execPath, bundles }, old = resolve('../backend/bin/note');

@@ -267,6 +267,7 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
     serviceEnv = await processEnvironment(current.pid);
     await verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
   }
+  await verifyDesktopCommand(env);
   const runtime = { node: nodeExecutable(env) };
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
@@ -276,6 +277,9 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
   await inspectCLI(runtime, serviceEnv, 'pinote.service');
   const options = { ...runtime, bundles, env, database };
   if (serviceEnv.PINOTE_NOTE_COMMAND !== locations(env).cli || !await hasInstalledLauncher(options)) return 'different';
+  const args = await verifyDirectCommand(options, await processArguments(current.pid), await readlink(`/proc/${current.pid}/cwd`));
+  if (await realpath(await readlink(`/proc/${current.pid}/exe`)) !== await realpath(options.node)) throw directCommandError();
+  await requireUnitCommand(run, env, unitCommand(forwardedCommand(locations(env).cli, args), ['no-env-expand']));
   await probe(options, run, serviceEnv);
   return 'matches';
 }
@@ -287,6 +291,22 @@ async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentS
     if (await realpath(executable(env, 'flock')) === await realpath('/usr/bin/flock')) return;
   } catch { /* Missing or unresolvable flock is also unsafe. */ }
   throw new Error(`Automatic switching requires the system flock on the ${source} PATH.`);
+}
+// Predict where a bare 'note' will resolve after publication, including a
+// currently missing launcher. Never replace a different command on PATH.
+async function verifyDesktopCommand(env: NodeJS.ProcessEnv): Promise<void> {
+  const target = locations(env).cli;
+  for (const dir of (env.PATH || '').split(':')) {
+    const candidate = join(dir, 'note');
+    if (candidate === target) return;
+    try {
+      await access(candidate, constants.X_OK);
+      if ((await stat(candidate)).isFile()) break;
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code || '')) throw error;
+    }
+  }
+  throw new Error('The desktop PATH must select ~/.local/bin/note. Put ~/.local/bin before other note installations and relaunch Pinote.');
 }
 const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
 async function inspectCLI(runtime: Pick<SwitchRuntime, 'node'>, env: NodeJS.ProcessEnv, source: EnvironmentSource) {
@@ -574,6 +594,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
   let journal: Journal | undefined;
   try {
     await verifyCLIEnvironment(env, 'desktop');
+    await verifyDesktopCommand(env);
     if (await loadJournal(env)) throw new Error('An interrupted switch needs recovery; restart Pinote before trying again.');
     progress('Checking the bundled Node runtime and existing service…');
     const desktopDatabase = await databaseIdentity(options.database);
@@ -635,6 +656,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       await controlService(run, env, 'daemon-reload');
       await startGuarded(env, journal, options, serviceArguments, dependencies, paths.cli);
     }
+    await verifyDesktopCommand(env);
     const currentDatabase = await databaseIdentity(options.database);
     if (!same(currentDatabase, desktopDatabase) || (originalDatabase && !same(currentDatabase, originalDatabase))) throw new Error('The database was replaced during the switch.');
     // Restart and readiness probes take time. Re-read every published target

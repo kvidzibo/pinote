@@ -15,7 +15,7 @@ await mkdir(lockRoot, { recursive: true, mode: 0o700 });
 const lock = openSync(join(lockRoot, 'run.lock'), constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
 assert.equal(spawnSync('/usr/bin/flock', ['-x', '3'], { stdio: ['ignore', 'ignore', 'ignore', lock], timeout: 20000 }).status, 0);
 const root = await mkdtemp(join(tmpdir(), 'pinote-switch-ui-'));
-const env = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_RUNTIME_DIR: join(root, 'runtime'), PATH: `${root}/bin:${dirname(process.execPath)}:/usr/bin:/bin`, PINOTE_NODE: process.execPath, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend'), NO_AT_BRIDGE: '1' };
+const env = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), XDG_RUNTIME_DIR: join(root, 'runtime'), PATH: `${root}/.local/bin:${root}/bin:${dirname(process.execPath)}:/usr/bin:/bin`, PINOTE_NODE: process.execPath, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend'), NO_AT_BRIDGE: '1' };
 for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE']) delete env[key];
 // The simulated user installation must not inherit host loader overrides.
 for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key)) delete env[key];
@@ -94,7 +94,7 @@ try {
   await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).click();
   await closed;
   const calls = await readFile(marker, 'utf8');
-  const cli = spawnSync(join(root, '.local/bin/note'), ['--version'], { env, encoding: 'utf8' }); assert.equal(cli.status, 0, cli.stderr); assert.match(cli.stdout, /^pinote 0\.26\.0/);
+  const cli = spawnSync('note', ['--version'], { env, encoding: 'utf8' }); assert.equal(cli.status, 0, cli.stderr); assert.match(cli.stdout, /^pinote 0\.26\.0/);
   const backupRoot = join(root, 'state/pinote/backend-switch/backups');
   assert.equal((await readdir(backupRoot)).length, 1);
   page = await launch();
