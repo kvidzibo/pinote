@@ -649,7 +649,7 @@ test('remote menu bounds native layout and preserves search/selection across not
   assert.deepEqual(await second, { id: 'setting-1' }); component.dispose();
 });
 
-test('extension registers seven tools before startup and injects unavailable instead of stale task data', async () => {
+test('extension registers seven tools before startup and returns hidden unavailable context', async () => {
   const { default: extension } = await import('../remote.ts');
   const tools: string[] = [], commands: string[] = [], handlers = new Map<string, (...args: any[]) => any>();
   extension({
@@ -663,10 +663,14 @@ test('extension registers seven tools before startup and injects unavailable ins
   assert.ok(tools.every((name) => name.startsWith('pinote_')));
   assert.deepEqual(commands, ['pinote']);
   const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
-  await handlers.get('before_agent_start')!(event, {});
-  assert.match(event.systemPromptOptions.sections.pinote_remote, /UNAVAILABLE/);
+  const { message } = await handlers.get('before_agent_start')!(event, {});
   assert.match(event.systemPromptOptions.sections.pinote_remote, /UNTRUSTED TASK DATA/);
-  assert.match(event.systemPromptOptions.sections.pinote_remote, /Do not infer no task/);
+  assert.equal(message.customType, 'pinote-context');
+  assert.equal(message.display, false);
+  const { service, text } = JSON.parse(message.content);
+  assert.equal(service, 'pinote');
+  assert.match(text, /UNAVAILABLE/);
+  assert.match(text, /Do not infer no task/);
 });
 
 const selectedDone = (selectedId: unknown = 7) => {
