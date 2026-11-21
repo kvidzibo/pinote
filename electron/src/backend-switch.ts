@@ -233,9 +233,10 @@ async function probeBackend(runtime: SwitchRuntime, run: Run, env: NodeJS.Proces
   if (value.protocol !== 1 || value.ok !== true || !databasePath(value.result?.database) || typeof value.result?.version !== 'string') throw new Error('Cannot verify the Node backend database.');
   return value.result;
 }
+export class DatabaseMismatch extends Error {}
 async function probe(options: SwitchOptions, run: Run, env = options.env): Promise<string> {
   const { database, version } = await probeBackend(options, run, env);
-  if (database !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
+  if (database !== resolve(options.database)) throw new DatabaseMismatch('The new backend does not resolve to the same database. Check the desktop override and data directory; nothing will be switched.');
   return version;
 }
 export async function verifiedSwitchVersion(options: SwitchOptions, run: Run = runCommand): Promise<string> {

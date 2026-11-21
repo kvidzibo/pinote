@@ -78,6 +78,14 @@ try {
   page = await launch();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).fill('Draft kept across backend switch');
   await settings(page);
+  // The running desktop remembers its original database; previewing a bundled
+  // backend under another data directory must not suggest reinstalling Node.
+  await app.evaluate((_, dir) => { process.env.XDG_DATA_HOME = dir; }, join(root, 'other-data'));
+  await page.getByRole('button', { name: 'Refresh backend settings' }).click();
+  await page.getByText(/new backend does not resolve to the same database/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
+  await app.evaluate((_, dir) => { process.env.XDG_DATA_HOME = dir; }, env.XDG_DATA_HOME);
+  await page.getByRole('button', { name: 'Refresh backend settings' }).click();
   await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => !document.querySelector('[aria-label="Switch to Node backend"]').disabled);
   await page.screenshot({ path: join(root, 'backend-settings.png') });

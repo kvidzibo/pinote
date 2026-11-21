@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { backendCommand, nodeExecutable } from './backend-command.ts';
-import { checkSwitchEnvironment, hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, switchToNode, verifiedSwitchVersion, verifySwitchPaths } from './backend-switch.ts';
+import { DatabaseMismatch, checkSwitchEnvironment, hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, switchToNode, verifiedSwitchVersion, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -238,7 +238,7 @@ async function boot() {
         const switched = command.args.length > 0 && service !== 'different' && installed;
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
           detail: switched ? `The desktop and user CLI use Node. ${service === 'matches' ? 'The running service uses the same CLI.' : 'No Pinote service is installed.'}` : selected ? 'Node is selected for the desktop, but the user CLI or service still needs migration.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
-      } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
+      } catch (error) { return { switched: false, canSwitch: false, detail: error instanceof DatabaseMismatch ? error.message : 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
     },
     'switch-backend': async () => {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
