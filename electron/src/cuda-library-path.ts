@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import type { Stats } from 'node:fs';
 import { lstat, opendir, readlink, statfs } from 'node:fs/promises';
 
@@ -33,7 +34,7 @@ async function rootOwnedStat(path: string, work: Budget): Promise<Stats> {
 // The parent path has already been verified and contains no symlink components.
 async function inspectChild(parent: Directory, name: string, work: Budget, links: Budget): Promise<Entry> {
   // Node decodes names as UTF-8; do not mistake an undecodable name for another entry.
-  if (name === '..' || name.includes('\uFFFD')) reject();
+  if (name.includes('\uFFFD')) reject();
   const path = parent.path === '/' ? `/${name}` : `${parent.path}/${name}`;
   if (Buffer.byteLength(path) > MAX_PATH_BYTES) reject();
   const info = await rootOwnedStat(path, work);
@@ -62,7 +63,8 @@ async function resolvePath(parent: Directory, path: string, work: Budget, links:
     // Even a trailing slash or dot requires the preceding component to be a directory.
     if (entry.kind !== 'directory') reject();
     if (name === '' || name === '.') continue;
-    entry = await inspectChild(entry, name, work, links);
+    if (name === '..') entry = { kind: 'directory', path: dirname(entry.path) }; // Physical parent was verified on descent.
+    else entry = await inspectChild(entry, name, work, links);
   }
   return entry;
 }

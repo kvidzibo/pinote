@@ -17,7 +17,7 @@ test('CUDA trust follows each link and rejects a writable link parent or library
     await fs.symlink('/opt/toolkit', join(aliases, 'cuda'));
     await fs.symlink('lib', join(root, 'opt/toolkit/lib64'));
     await fs.writeFile(join(target, 'libexample.so.1'), 'fixture', { mode: 0o644 });
-    await fs.symlink('libexample.so.1', join(target, 'libexample.so'));
+    await fs.symlink('../lib/libexample.so.1', join(target, 'libexample.so'));
     // Simulate the system root/uid without privileges. Real modes, symlinks and
     // directory enumeration exercise the validator on machines without CUDA.
     const { lstat, readlink, statfs, opendir } = fs;

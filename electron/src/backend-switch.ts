@@ -280,6 +280,12 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
   if (serviceEnv.PINOTE_NOTE_COMMAND !== locations(env).cli || !await hasInstalledLauncher(options)) return 'different';
   const args = await verifyDirectCommand(options, await processArguments(current.pid), await readlink(`/proc/${current.pid}/cwd`));
   if (await realpath(await readlink(`/proc/${current.pid}/exe`)) !== await realpath(options.node)) throw directCommandError();
+  // A documented direct unit can already name this CLI without our managed
+  // drop-in. Keep it eligible for the installer's normal guarded migration.
+  if (same(await unitCommands(run, env), unitCommand(args))) {
+    await requireUnitCommand(run, env, unitCommand(args));
+    return 'different';
+  }
   await requireUnitCommand(run, env, unitCommand(forwardedCommand(locations(env).cli, args), ['no-env-expand']));
   await probe(options, run, serviceEnv);
   return 'matches';
