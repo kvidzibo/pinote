@@ -25,6 +25,12 @@ let state = initialState();
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
 let service: Promise<{ close(): Promise<void> } | undefined> | undefined;
+let serviceStop: Promise<void> | undefined; let serviceStopped = false;
+// Bounded and never rejects: quitting must not hang on a client or watcher.
+const stopService = () => serviceStop ??= Promise.race([
+  Promise.resolve(service).then(started => started?.close()).catch(() => log('Pinote service did not stop cleanly.')),
+  new Promise<void>(done => setTimeout(done, 5000)),
+]).then(() => { serviceStopped = true; });
 let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
@@ -145,6 +151,8 @@ async function boot() {
   // The task service and its watchers live exactly as long as this desktop.
   service = (async () => {
     try {
+      // The service only invokes its CLI per request; do not listen without one.
+      if (!/^pinote \d/.test(await runCommand(process.env.PINOTE_NOTE_COMMAND || 'note', ['--version'], process.env, undefined, 10000))) throw new Error();
       const { startPinoteHttpServer } = await import(pathToFileURL(join(bundles, 'service/http.mjs')).href);
       return await startPinoteHttpServer({ logPath: logFile }) as { close(): Promise<void> };
     } catch { log('Pinote service did not start; check its token, port and note CLI. The desktop remains usable.'); }
@@ -306,14 +314,10 @@ async function boot() {
 }
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', event => {
-  const running = service;
-  if (!running) return;
-  service = undefined;
+  if (!service || serviceStopped) return;
   event.preventDefault();
-  const deadline = new Promise<void>(done => setTimeout(done, 5000));
-  void Promise.race([running.then(started => started?.close()), deadline])
-    .catch(() => log('Pinote service did not stop cleanly.')).finally(() => app.quit());
+  void stopService().then(() => app.quit());
 });
-process.on('uncaughtException', () => { log('Unexpected Electron failure; check saved state before retrying.'); app.exit(1); });
+process.on('uncaughtException', () => { log('Unexpected Electron failure; check saved state before retrying.'); void stopService().then(() => app.exit(1)); });
 process.on('unhandledRejection', () => { log('Unexpected Electron operation failure; check saved state before retrying.'); });
-void boot().catch(error => { log(error instanceof Error ? error.message : 'Cannot start Pinote Electron'); app.exit(1); });
+void boot().catch(error => { log(error instanceof Error ? error.message : 'Cannot start Pinote Electron'); void stopService().then(() => app.exit(1)); });

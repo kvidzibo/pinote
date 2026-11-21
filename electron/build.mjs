@@ -40,7 +40,12 @@ for (const [path, entry] of Object.entries(lock.packages)) {
 }
 const bundled = new Set([served, watched].flatMap(result => Object.keys(result.metafile.inputs).map(path => /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(path)?.[1]).filter(Boolean)));
 for (const path of [...bundled].sort()) {
-  const { version } = JSON.parse(await readFile(`${path}/package.json`, 'utf8'));
-  for (const file of (await readdir(path)).filter(name => /^licen[cs]e(?:\.|$)/i.test(name))) notices.push(`${path.replace(/^.*node_modules\//, 'node_modules/')} ${version}\n${await readFile(`${path}/${file}`, 'utf8')}`);
+  const { version, license, author, repository } = JSON.parse(await readFile(`${path}/package.json`, 'utf8'));
+  const files = (await readdir(path)).filter(name => /^licen[cs]e(?:\.|$)/i.test(name));
+  // Some packages declare a license without shipping its text.
+  const texts = files.length ? await Promise.all(files.map(file => readFile(`${path}/${file}`, 'utf8')))
+    : [`License: ${license}\nAuthor: ${author?.name ?? author}\nSource: ${repository?.url ?? repository}`];
+  if (!files.length && !license) throw new Error(`Missing license for bundled ${path}`);
+  for (const text of texts) notices.push(`${path.replace(/^.*node_modules\//, 'node_modules/')} ${version}\n${text}`);
 }
 await writeFile('dist/THIRD_PARTY_NOTICES.txt', notices.join('\n\n---\n\n'));
