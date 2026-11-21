@@ -25,14 +25,14 @@ export async function startFieldWatchers(options: { log?: (event: string) => voi
 }
 
 /** The desktop's Watchers settings. An unsaved bundled script is hidden when a saved entry is a copy of it (same
- * file name and declared parameters): entries saved by Pi point at the package's own copy of that watcher. */
+ * file name and parameter file): entries saved by Pi point at the package's own copy of that watcher. */
 export function watcherSettings() {
   const { raw, value } = readConfigDocument();
   const saved = new Set(parseFieldWatchers(value).map((entry) => entry.path));
   const all = discoverFieldWatchers(value);
-  const copy = (a: FieldWatcher, b: FieldWatcher) => basename(a.path) === basename(b.path) && JSON.stringify(a.spec) === JSON.stringify(b.spec);
+  const copy = (a: FieldWatcher, b: FieldWatcher) => basename(a.path) === basename(b.path) && a.declared === b.declared;
   const watchers = all.filter((watcher) => saved.has(watcher.path) || !all.some((other) => saved.has(other.path) && copy(other, watcher)))
-    .map(({ config, ...watcher }) => watcher);
+    .map(({ config, declared, ...watcher }) => watcher);
   let fieldNames: string[] = [];
   try { fieldNames = footerCatalog(parseFooterConfig(value)).map((field) => field.name); } catch { /* Invalid footer settings: no suggestions. */ }
   return { raw, watchers, fieldNames };
@@ -47,6 +47,6 @@ export function watcherSaveSummary(input: unknown): string[] {
 /** A script chosen in the desktop but not saved yet, with the defaults its parameter file declares. */
 export function describeWatcher(path: string) {
   validateWatcherExecutable(path);
-  const { config, ...watcher } = discoverFieldWatchers({ fieldWatchers: [{ path, enabled: false }] })[0];
+  const { config, declared, ...watcher } = discoverFieldWatchers({ fieldWatchers: [{ path, enabled: false }] })[0];
   return watcher;
 }

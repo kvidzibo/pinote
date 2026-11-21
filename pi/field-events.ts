@@ -115,7 +115,9 @@ export class FieldAutomation {
   private drainDue = 0;
   // In memory only: task events run once, for changes made while this scheduler is running.
   private taskCursor?: number;
-  private taskQueue: { watcherId: string; event: TaskEvent }[] = [];
+  private taskSince = new Map<string, number>();
+  private taskQueue: { subscription: string; event: TaskEvent }[] = [];
+  private taskTurn = true;
   private taskEventsFailed = false;
   private noteCommand: string;
   private changed: () => void;
@@ -366,38 +368,52 @@ export class FieldAutomation {
       }
       let drained = false;
       // Read event history only after notes.db or the watcher set (see reconcile) changed.
-      const tasking = this.enabled.some((watcher) => watcher.taskEvents.length);
-      if (!tasking) { this.taskCursor = undefined; this.taskQueue = []; }
+      // Each task watcher starts at the history tail read once it is enabled or its settings change.
+      const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
+      const subscribed = new Map(this.enabled.filter((watcher) => watcher.taskEvents.length).map((watcher) => [subscription(watcher), watcher]));
+      for (const key of this.taskSince.keys()) if (!subscribed.has(key)) this.taskSince.delete(key);
+      if (!subscribed.size) { this.taskCursor = undefined; this.taskQueue = []; }
+      let more = false;
       if (!this.enabled.length) { this.notes.close(); return; }
       const version = this.notes.read();
       let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
       // A settings reset removes a watcher's row: start it again from durable history.
       for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path,config) VALUES (?,?,?)').run(watcher.id, watcher.path, settings(watcher)).changes) { intake = true; this.drained = undefined; }
-      if (intake && tasking) {
-        // Without a cursor the CLI returns the current tail: history from before this start never runs.
+      // A full queue is dispatched first; the cursor keeps the rest.
+      if (intake && subscribed.size && this.taskQueue.length >= 64) more = true;
+      else if (intake && subscribed.size) {
         try {
-          const batch = TaskBatch.parse(await this.note(['task-events', ...(this.taskCursor === undefined ? [] : ['--after', String(this.taskCursor)]), '--limit', '25']));
-          if (!valid()) return;
-          const cursor = this.taskCursor;
-          if (cursor !== undefined && (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor))) throw new Error('Invalid task event cursor');
-          for (const event of cursor === undefined ? [] : batch.events) {
-            for (const watcher of this.enabled) if (wantsTask(watcher, event)) this.taskQueue.push({ watcherId: watcher.id, event });
+          // Without a cursor the CLI returns the current tail: history from before this start never runs.
+          const read = async (after?: number) => TaskBatch.parse(await this.note(['task-events', ...(after === undefined ? [] : ['--after', String(after)]), '--limit', '25']));
+          if (this.taskCursor === undefined || [...subscribed.keys()].some((key) => !this.taskSince.has(key))) {
+            const tail = (await read()).cursor;
+            if (!valid()) return;
+            for (const key of subscribed.keys()) if (!this.taskSince.has(key)) this.taskSince.set(key, tail);
+            this.taskCursor ??= tail;
           }
-          if (cursor !== undefined && batch.cursor !== cursor) drained = true;
+          const cursor = this.taskCursor, batch = await read(cursor);
+          if (!valid()) return;
+          if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
+          for (const event of batch.events) {
+            for (const [key, watcher] of subscribed) if (event.id > this.taskSince.get(key)! && wantsTask(watcher, event)) this.taskQueue.push({ subscription: key, event });
+          }
+          if (batch.cursor !== cursor) more = true;
           this.taskCursor = batch.cursor; this.taskEventsFailed = false;
         } catch (error) {
           if (this.lifetime.signal.aborted) throw error;
           // A passing failure keeps the cursor, so changes made meanwhile still run. History that no longer
           // reaches it (a replaced database) starts again from the tail rather than replaying.
-          if (/Invalid task event cursor|Cursor is ahead/.test(`${(error as Error).message} ${(error as { stderr?: unknown }).stderr ?? ''}`)) this.taskCursor = undefined;
+          if (/Invalid task event cursor|Cursor is ahead/.test(`${(error as Error).message} ${(error as { stderr?: unknown }).stderr ?? ''}`)) { this.taskCursor = undefined; this.taskSince.clear(); this.taskQueue = []; }
           if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
         }
       }
-      // Before field intake: reading a new watcher's field history must not delay a live task event.
-      const queued = this.taskQueue.shift();
+      // Task events run before field intake, so reading a new watcher's field history does not delay them,
+      // and take turns with field work, so a backlog of either cannot starve the other.
+      const queued = this.taskTurn ? this.taskQueue.shift() : undefined;
+      this.taskTurn = !queued;
       if (queued) {
-        // Settings may have changed since intake.
-        const watcher = this.enabled.find((w) => w.id === queued.watcherId && wantsTask(w, queued.event));
+        // A subscription changed since intake no longer receives the event.
+        const watcher = subscribed.get(queued.subscription);
         if (!watcher) return;
         const { id, taskId, event, fields } = queued.event;
         const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields });
@@ -424,7 +440,7 @@ export class FieldAutomation {
         }
       }
       if (drained) { this.changed(); return; }
-      if (intake) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
+      if (intake && !more) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
       if (!job) return;

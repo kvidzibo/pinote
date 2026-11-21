@@ -9,7 +9,7 @@
       "type": "directory",
       "default": "/tmp",
       "required": true,
-      "help": "Removes only the completed task's clean, unlocked worktree inside it."
+      "help": "Removes the completed task's clean, unlocked worktree inside it, with its ignored files."
     }
   ]
 }

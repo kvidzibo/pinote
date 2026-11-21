@@ -155,7 +155,9 @@ desktop or the CLI, for tasks that have a `Worktree` field. It runs
 `git worktree remove` on that path when it lies inside the **Worktrees directory**
 parameter (default `/tmp`). Git refuses changed or untracked files, locked
 worktrees and the main working tree; nothing is forced, no branch is deleted and
-the directory is never scanned. The recorded path is used exactly as saved. It is
+the directory is never scanned. **Ignored files are deleted with the worktree**:
+dependencies and build output, but also a local `.env` or ignored backups. Keep
+anything you need outside the worktree, or lock it with `git worktree lock`. The recorded path is used exactly as saved. It is
 disabled until you enable it and needs `git` on the desktop's `PATH`.
 
 ## Forgejo PRs

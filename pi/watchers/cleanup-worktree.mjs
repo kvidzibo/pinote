@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Removes a completed task's recorded Git worktree. Git itself refuses the main
 // working tree and dirty or locked worktrees: nothing is forced, no branch is deleted.
+// Ignored files (dependencies, build output, local configuration) go with the worktree.
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative } from 'node:path';

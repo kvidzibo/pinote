@@ -3,6 +3,7 @@ import { accessSync, constants, lstatSync, readdirSync, readFileSync } from 'nod
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { parseInstances } from './forgejo-instances.js';
 
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
@@ -36,7 +37,7 @@ export type FieldWatcherConfig = { path: string; enabled: boolean; taskEvents?: 
   fieldEvents?: typeof FIELD_EVENTS[number][]; fields?: string[]; params?: Record<string, WatcherValue> };
 /** Effective settings: saved values, else the script's declared defaults. `config` is the saved entry. */
 export type FieldWatcher = Required<FieldWatcherConfig> & { id: string; name: string; bundled: boolean; config: FieldWatcherConfig;
-  spec: WatcherParam[]; problem?: string };
+  spec: WatcherParam[]; declared: string; problem?: string };
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 // Beside this module in the package, and beside the bundle the desktop builds.
 const bundledDirectory = join(moduleDirectory, 'watchers');
@@ -114,7 +115,7 @@ export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatch
       problem ??= paramProblem(param, params[param.key]);
     }
     const file = basename(config.path);
-    return { ...defaults(manifest), ...config, id: createHash('sha256').update(config.path).digest('hex'), bundled: bundled.has(config.path), config, spec, params,
+    return { ...defaults(manifest), ...config, id: createHash('sha256').update(config.path).digest('hex'), bundled: bundled.has(config.path), config, spec, params, declared: JSON.stringify(manifest ?? null),
       // A custom script cannot take a built-in watcher's name, which selects PR alert handling.
       name: names[file] ?? (manifest?.name && !Object.values(names).includes(manifest.name) ? manifest.name : basename(file, '.mjs')),
       ...(problem ? { problem } : {}) };
@@ -133,6 +134,8 @@ export function watcherEntries(input: unknown): { entries: FieldWatcherConfig[];
       if (entry.enabled && problem) throw new Error(problem);
       if (param.configKey) {
         const value = rows.parse(params[param.key] ?? []);
+        // The script refuses the whole list when one instance is invalid.
+        try { parseInstances(value); } catch { throw new Error(`Invalid ${param.label}: each needs a different https base URL (http only for 127.0.0.1 or [::1]); a token variable name uses letters, digits and _`); }
         if (shared[param.configKey] !== undefined && !same(shared[param.configKey], value)) throw new Error(`${param.label} differs between watchers sharing ${param.configKey}`);
         shared[param.configKey] = value;
       }

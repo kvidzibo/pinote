@@ -308,6 +308,7 @@ async function boot() {
     },
     // The running scheduler rereads pi-note.json: saved changes apply to its next check.
     'save-watchers': async (_event, entries: unknown, raw: unknown) => {
+      if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing watchers.');
       if (closing || watcherSaving || !Array.isArray(entries) || !(raw === null || typeof raw === 'string') || Buffer.byteLength(JSON.stringify([entries, raw])) > 2 * 1024 * 1024) throw new Error('Invalid watcher settings');
       watcherSaving = true;
       try {

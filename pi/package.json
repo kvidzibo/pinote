@@ -38,6 +38,7 @@
     "pull-requests.js",
     "pr-batch.js",
     "pr-url.js",
+    "forgejo-instances.js",
     "footer-config.ts",
     "config-path.js",
     "task-title.ts",

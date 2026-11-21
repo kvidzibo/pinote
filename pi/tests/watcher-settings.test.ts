@@ -80,6 +80,9 @@ test('watcher settings save validated entries and the shared keys their scripts 
   ];
   assert.throws(() => saveFieldWatchers(entries, raw), /Invalid parameter: Directory/);
   entries[1].params = { dir: '/tmp' } as never;
+  for (const instances of [[{ tokenEnv: 'TOKEN' }], [{ url: 'forgejo.example' }], [{ url: 'https://forgejo.example' }, { url: 'https://forgejo.example/' }]]) {
+    assert.throws(() => saveFieldWatchers([{ ...entries[0], params: { instances } }], raw), /Invalid Instances/, 'An instance the script would refuse is not saved');
+  }
   assert.throws(() => saveFieldWatchers([{ ...entries[1], bad: true }], raw), /Invalid field watcher/);
   const saved = JSON.parse(saveFieldWatchers(entries, raw));
   assert.deepEqual(saved, { handoffPrompt: 'Keep', forgejoInstances: [{ url: 'http://127.0.0.1:3000' }], fieldWatchers: [
@@ -123,9 +126,8 @@ test('worktree cleanup removes only a clean linked worktree inside the configure
   assert.equal((await complete(join(inside, 'clean'))).state, 'kept', 'A repeated event is harmless');
 });
 
-test('task events survive a failed read, skip field history and respect settings changed before dispatch', async (t) => {
-  const dir = profile(t), note = join(dir, 'note.mjs'), state = join(dir, 'history.json'), requests = join(dir, 'requests.log');
-  const handler = join(dir, 'task.mjs'), calls = join(dir, 'calls.jsonl');
+test('task events survive a failed read, skip field history, and start at enablement for each watcher and setting', async (t) => {
+  const dir = profile(t), note = join(dir, 'note.mjs'), state = join(dir, 'history.json'), requests = join(dir, 'requests.log'), calls = join(dir, 'calls.log');
   writeFileSync(note, `#!${process.execPath}
 import fs from 'node:fs';
 const args = process.argv.slice(2), state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
@@ -133,28 +135,39 @@ fs.appendFileSync(${JSON.stringify(requests)}, args[1] + '\\n');
 if (state.fail) process.exit(1);
 const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined;
 console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [] : state.events.filter((event) => event.id > after) }));`, { mode: 0o700 });
-  writeFileSync(handler, `#!${process.execPath}\nimport fs from 'node:fs';fs.appendFileSync(${JSON.stringify(calls)},fs.readFileSync(0,'utf8')+'\\n');console.log('{}');`, { mode: 0o700 });
-  writeFileSync(join(dir, 'task.params.json'), JSON.stringify({ taskEvents: ['completed'], fields: ['Worktree'] }));
+  const script = (name: string) => {
+    const path = join(dir, `${name}.mjs`);
+    writeFileSync(path, `#!${process.execPath}\nimport fs from 'node:fs';fs.appendFileSync(${JSON.stringify(calls)},'${name}:'+JSON.parse(fs.readFileSync(0,'utf8')).eventId+'\\n');console.log('{}');`, { mode: 0o700 });
+    writeFileSync(join(dir, `${name}.params.json`), JSON.stringify({ taskEvents: ['completed'], fields: ['Worktree'] }));
+    return path;
+  };
   const history = (value: Record<string, unknown>) => writeFileSync(state, JSON.stringify(value));
   const completed = (id: number) => ({ id, taskId: id, event: 'completed', fields: { Worktree: `/tmp/${id}` } });
-  let entry: Record<string, unknown> = { path: handler, enabled: true }, failures = 0;
+  let entries: Record<string, unknown>[] = [{ path: script('first'), enabled: true }], failures = 0;
   const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, log: () => { failures++; },
-    watchers: () => discoverFieldWatchers({ fieldWatchers: [entry] }) });
+    watchers: () => discoverFieldWatchers({ fieldWatchers: entries }) });
   t.after(() => automation.close());
-  const delivered = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line).eventId) : [];
+  const ticks = async (count: number) => { for (let i = 0; i < count; i++) await automation.tick(); };
+  const delivered = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [];
 
   history({ tail: 5, events: [completed(5)] });
-  await automation.tick();
+  await ticks(1);
   history({ tail: 6, events: [completed(6)], fail: true });
-  await automation.tick();
+  await ticks(1);
   assert.deepEqual([delivered(), failures], [[], 1]);
   history({ tail: 6, events: [completed(6)] });
-  await automation.tick();
-  assert.deepEqual(delivered(), ['6'], 'A change made during a failed read still runs');
-  history({ tail: 8, events: [completed(7), completed(8)] });
-  await automation.tick();
-  entry = { ...entry, fields: ['Other'] };
-  await automation.tick(); await automation.tick();
-  assert.deepEqual(delivered(), ['6', '7'], 'A queued task no longer selected by Fields does not run');
+  await ticks(2);
+  assert.deepEqual(delivered(), ['first:6'], 'A change made during a failed read still runs');
+  // Committed but not read yet when a second watcher is enabled: only the watcher enabled at the time receives it.
+  history({ tail: 7, events: [completed(7)] });
+  entries = [...entries, { path: script('second'), enabled: true }];
+  await ticks(3);
+  assert.deepEqual(delivered(), ['first:6', 'first:7']);
+  history({ tail: 9, events: [completed(8), completed(9)] });
+  await ticks(4);
+  assert.deepEqual(delivered(), ['first:6', 'first:7', 'first:8', 'second:8'], 'One invocation per turn');
+  entries = entries.map((entry) => ({ ...entry, fields: ['Other'] }));
+  await ticks(4);
+  assert.equal(delivered().length, 4, 'A queued task no longer selected by Fields does not run');
   assert.ok(!readFileSync(requests, 'utf8').includes('field-events'), 'A watcher without field events reads no field history');
 });
