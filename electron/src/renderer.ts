@@ -853,7 +853,7 @@ async function edit(task: Task): Promise<void> {
   const fieldList = el('div', undefined, 'edit-fields'); fieldList.setAttribute('role', 'group'); fieldList.setAttribute('aria-label', 'Agent fields');
   fieldList.append(el('h3', 'Agent fields'));
   for (const name of new Set([...configuredFields, ...savedFields.keys(), ...draftFields.keys()])) {
-    const input = el('textarea'); input.rows = 1; input.maxLength = 4096; input.spellcheck = false; input.placeholder = 'Not set';
+    const input = el('textarea'); input.rows = 1; input.spellcheck = false; input.placeholder = 'Not set';
     input.value = draftFields.get(name) ?? savedFields.get(name) ?? ''; input.setAttribute('aria-label', `Agent field ${name}`);
     input.addEventListener('input', changed);
     const row = el('label'), label = el('span', name); label.title = name; row.append(label, input); fieldList.append(row); fieldInputs.set(name, input);
@@ -952,14 +952,12 @@ async function edit(task: Task): Promise<void> {
           tag = result.tag ?? nextTag!;
           if (queuedTag === nextTag && queuedFolder === folder) { queuedTag = undefined; queuedFolder = undefined; }
         }
+        // Your own field edit is not an unread agent update, even if a newer snapshot already replaced this revision.
+        if (!textChanged && !tagChanged && wasRead && result.agentEvent !== undefined) state.read[id] = Math.max(state.read[id] ?? 0, result.agentEvent);
         const current = active?.notes.find(t => t.id === task.id);
         if (current && (current.updated_at === base || current.updated_at === revision)) {
           current.updated_at = revision; current.text = savedText.replace(/\r\n/g, '\n').trim(); current.tag = tag;
-          if (!textChanged && !tagChanged) {
-            current.agent_notes = Object.fromEntries(savedFields);
-            // Your own field edit is not an unread agent update.
-            if (result.agentEvent !== undefined) { current.agent_event_id = result.agentEvent; if (wasRead) state.read[id] = result.agentEvent; }
-          }
+          if (!textChanged && !tagChanged) { current.agent_notes = Object.fromEntries(savedFields); current.agent_event_id = result.agentEvent ?? current.agent_event_id; }
           task = current;
         }
         if (!dirty()) delete state.edits[id]; else retain();
