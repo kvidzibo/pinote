@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { FieldAutomation } from '../mcp/field-events.ts';
+import { FieldAutomation } from '../field-events.ts';
 
 test('per-PR receipts retain an undelivered failure across alias recovery, restart and list edits', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-pr-receipts-'));

@@ -7,27 +7,21 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { getKeybindings } from '@earendil-works/pi-tui';
-import { remoteConfig } from '../remote/client.ts';
-import { RemoteSession } from '../remote/session.ts';
-import { RemoteUI } from '../remote/ui.ts';
-import type { startPinoteHttpServer } from '../mcp/http.ts';
+import { PinoteSession } from '../extension/session.ts';
+import { PinoteUI } from '../extension/ui.ts';
 
 test('selecting a task starts it with one menu activation and returns to the unchanged prompt', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'pinote-selection-'));
   const original = { ...process.env };
   delete process.env.KITTY_LISTEN_ON; // No live terminal controls in the mocked UI test.
-  let service: Awaited<ReturnType<typeof startPinoteHttpServer>> | undefined;
-  let session: RemoteSession | undefined;
+  let session: PinoteSession | undefined;
   Object.assign(process.env, {
-    PINOTE_TOKEN: 'isolated-task-selection-token-0123456789',
     PINOTE_NOTE_COMMAND: fileURLToPath(new URL('../../backend/bin/note', import.meta.url)),
     PI_CODING_AGENT_DIR: join(temp, 'agent'), XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state'),
   });
   const cli = (...args: string[]) => JSON.parse(execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', ...args], { encoding: 'utf8' }));
   try {
-    const { startPinoteHttpServer } = await import('../mcp/http.ts');
-    service = await startPinoteHttpServer({ port: 0, logPath: join(temp, 'app.log') });
-    session = new RemoteSession(remoteConfig({ ...process.env, PINOTE_URL: service.url }), () => {});
+    session = new PinoteSession(() => {});
     await session.start([], 'task-selection-test');
     initTheme('dark', false);
     let selections = 0, searches = 0, pendingMenus = 0;
@@ -65,7 +59,7 @@ test('selecting a task starts it with one menu activation and returns to the unc
         }); } finally { component?.dispose(); }
       },
     } } as any;
-    const ui = new RemoteUI({} as any, session);
+    const ui = new PinoteUI({} as any, session);
     const task = cli('agent', 'add', '--text=Task selection target');
     const other = cli('agent', 'add', '--text=Newer unrelated task');
     for (const expectedState of ['active', 'in_progress']) {
@@ -82,7 +76,6 @@ test('selecting a task starts it with one menu activation and returns to the unc
     assert.ok(pendingMenus > 0, 'Old-query replacements stay disabled until fresh search results arrive');
   } finally {
     await session?.stop();
-    await service?.close();
     for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
     Object.assign(process.env, original);
     rmSync(temp, { recursive: true, force: true });

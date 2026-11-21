@@ -1,4 +1,4 @@
-import { getAgentDir } from "./config-path.ts";
+import { getAgentDir } from "./config-path.js";
 import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";

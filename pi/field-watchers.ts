@@ -6,9 +6,8 @@ import { fileURLToPath } from 'node:url';
 export type FieldWatcherConfig = { path: string; enabled: boolean };
 export type FieldWatcher = FieldWatcherConfig & { id: string; name: string; bundled: boolean };
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-// tsc emits this module one level below the package root; discovery stays in
-// the same shipped package directory in source and compiled entry points.
-const bundledDirectory = join(basename(moduleDirectory) === 'dist-mcp' ? dirname(moduleDirectory) : moduleDirectory, 'watchers');
+// Beside this module in the package, and beside the bundle the desktop builds.
+const bundledDirectory = join(moduleDirectory, 'watchers');
 function watcherPath(path: unknown): string {
   if (typeof path !== 'string' || path.length > 4096 || !isAbsolute(path) || /[\u0000-\u001f\u007f-\u009f]/u.test(path)) {
     throw new Error('Watcher path must be an absolute executable file path (max 4096 characters)');
@@ -46,5 +45,5 @@ export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatch
   const merged = [...stored, ...[...bundled].filter((path) => !stored.some((entry) => entry.path === path)).map((path) => ({ path, enabled: false }))];
   if (merged.length > 32) throw new Error('At most 32 discovered field watchers are supported');
   const names: Record<string, string> = { 'github-pr.mjs': 'GitHub PR', 'forgejo-pr.mjs': 'Forgejo PR' };
-  return merged.map((config) => ({ ...config, id: createHash('sha256').update(config.path).digest('hex'), name: bundled.has(config.path) ? names[basename(config.path)] ?? basename(config.path, '.mjs') : basename(config.path, '.mjs'), bundled: bundled.has(config.path) }));
+  return merged.map((config) => ({ ...config, id: createHash('sha256').update(config.path).digest('hex'), name: names[basename(config.path)] ?? basename(config.path, '.mjs'), bundled: bundled.has(config.path) }));
 }

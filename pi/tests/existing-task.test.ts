@@ -6,36 +6,29 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { z } from 'zod';
+import { connectEngine } from './host.ts';
 
 test('find, read, suggest, and accept an existing task without duplication or automatic selection', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-existing-'));
   const root = fileURLToPath(new URL('../', import.meta.url));
   const env = { ...process.env, PINOTE_NOTE_COMMAND: join(root, '../backend/bin/note'), PI_CODING_AGENT_DIR: pathToFileURL(dir).href, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir };
   const cli = async (...args: string[]) => JSON.parse((await promisify(execFile)(env.PINOTE_NOTE_COMMAND, ['--no-notify', ...args], { env })).stdout);
-  const connect = async () => {
-    const client = new Client({ name: 'existing-task-test', version: '1' });
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(root, 'dist-mcp/mcp/server.js')], env, stderr: 'pipe' }));
-    return client;
-  };
+  Object.assign(process.env, env);
+  const connect = async () => connectEngine();
   let client = await connect();
   let state: Record<string, unknown> = {};
   const meta = () => ({ 'native-ui/context': { conversationId: 'existing-task', piSessionId: '12345678-1234-4234-8234-123456789012', state }, 'native-ui/features': { actionRevisions: true, footerNativeActions: true, footerStyles: true } });
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await client.callTool({ name, arguments: args, _meta: meta() });
-    if (result._meta?.['native-ui/state']) state = result._meta['native-ui/state'] as Record<string, unknown>;
+    if (result.state) state = result.state;
     return result;
   };
   const data = (result: any) => JSON.parse(result.content[0].text);
   const read = async () => {
-    const result = await client.readResource({ uri: 'pinote://ui', _meta: meta() });
-    assert.ok('text' in result.contents[0]);
-    return JSON.parse(result.contents[0].text);
+    return JSON.parse(await client.readView(meta()));
   };
   const act = async (view: any, action: string) => {
-    const result = await client.request({ method: 'native-ui/action', params: { uri: 'pinote://ui', revision: view.controls.find((control: any) => control.id === action)?.revision ?? view.revision, action, _meta: meta() } }, z.object({ view: z.any() }));
+    const result = await client.act({ revision: view.controls.find((control: any) => control.id === action)?.revision ?? view.revision, action, _meta: meta() });
     state = result.view.state;
     return result.view;
   };
@@ -46,9 +39,6 @@ test('find, read, suggest, and accept an existing task without duplication or au
     const completed = await cli('agent', 'add', '--text', 'OME registrations already fixed');
     await cli('agent', 'done', String(completed.id), '--expected-updated-at', completed.updated_at);
     const initial = await cli('list', '--all', '--json');
-    const tools = (await client.listTools()).tools;
-    assert.equal(tools.find((tool) => tool.name === 'search')?.annotations?.readOnlyHint, true);
-    assert.equal(tools.find((tool) => tool.name === 'get_task')?.annotations?.readOnlyHint, true);
     const found = data(await call('search', { query: 'CALLBACKS JOB ome' }));
     assert.deepEqual(found, { tasks: [{ id: task.id, title: 'OME registrations', state: 'active', tag: 'job' }], total: 1, next_offset: null });
     const first = data(await call('search', { query: 'ome', limit: 1 }));

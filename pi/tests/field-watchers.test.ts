@@ -1,33 +1,32 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { RemoteSession } from '../remote/session.ts';
-import { RemoteUI } from '../remote/ui.ts';
-import { ViewSchema, type NativeView } from '../remote/protocol.ts';
-import { remoteConfig } from '../remote/client.ts';
+import { PinoteSession } from '../extension/session.ts';
+import { PinoteUI } from '../extension/ui.ts';
+import { ViewSchema, type NativeView } from '../extension/protocol.ts';
 import test from 'node:test';
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable } from '../field-watchers.ts';
-import { FieldAutomation } from '../mcp/field-events.ts';
+import { FieldAutomation } from '../field-events.ts';
 
 test('watcher health is grouped, deduplicated and recovered only through terminal UI', () => {
   for (const fullscreen of [false, true]) {
     const notices: { message: string; level: string }[] = [];
     const base: NativeView = { version: 1, title: 'Pinote', revision: 'v1', state: {}, controls: [], footer: [] };
     const session: any = { fullscreen, view: base };
-    const ui = new RemoteUI({ sendMessage: () => assert.fail('No model turn'), appendEntry: () => assert.fail('No transcript entry') } as any, session);
+    const ui = new PinoteUI({ sendMessage: () => assert.fail('No model turn'), appendEntry: () => assert.fail('No transcript entry') } as any, session);
     ui.attach({ mode: 'tui', ui: { theme: {}, setWidget() {}, setStatus() {},
       notify: (message: string, level: string) => notices.push({ message, level }),
     } } as any);
-    const diagnostics = { logPath: '/service/app.log', failures: [
+    const diagnostics = { logPath: '/state/watchers.log', failures: [
       { watcherId: 'github', name: 'GitHub PR', fields: ['PR'], moreFields: 0 },
       { watcherId: 'deploy', name: 'Deploy', fields: ['Build', 'URL'], moreFields: 2 },
     ] };
     session.view = ViewSchema.parse({ ...base, watcherDiagnostics: diagnostics });
     session.onChange(); session.onChange();
-    assert.deepEqual(notices, [{ message: 'Pinote watchers failing: GitHub PR [PR], Deploy [Build, URL, +2 fields].\nDetails (service machine): /service/app.log', level: 'warning' }]);
+    assert.deepEqual(notices, [{ message: 'Pinote watchers failing: GitHub PR [PR], Deploy [Build, URL, +2 fields].\nDetails: /state/watchers.log', level: 'warning' }]);
     session.view = undefined; session.onChange();
     session.view = base; session.onChange();
     assert.equal(notices.length, 1, 'Unavailable or legacy views are not recovery');
@@ -90,6 +89,8 @@ test('independent durable watchers, ignored results, immediate disable/removal a
     assert.deepEqual(automation.statuses(task).map((s) => s.result.state), ['1']);
     configs = [configs[0]];
     assert.deepEqual(automation.notices(task, 'a'), []);
+    // Reads never clear saved state; disabling in settings resets that watcher explicitly, with the desktop closed too.
+    for (const watcher of discoverFieldWatchers({ fieldWatchers: scripts.slice(0, 2).map((path) => ({ path, enabled: false })) }).filter((w) => scripts.slice(0, 2).includes(w.path))) automation.reset(watcher.id);
     configs[0].enabled = true;
     assert.deepEqual(automation.notices(task, 'a'), [], 'old notices cannot reappear before new checks');
     await automation.tick(); await automation.tick();
@@ -128,14 +129,14 @@ test('independent durable watchers, ignored results, immediate disable/removal a
     try { recovered.exec("UPDATE fw_jobs SET job=json_set(job, '$.stale', json('false'))"); } finally { recovered.close(); }
     assert.deepEqual(automation.failures(), []);
     const received: string[] = [];
-    const session = new RemoteSession(remoteConfig({ PINOTE_TOKEN: 'x'.repeat(32) }), () => {}, async () => ({
-      read: async (_uri, meta) => {
+    const session = new PinoteSession(() => {}, async () => ({
+      view: async (meta) => {
         const caller = meta['native-ui/context'] as { fieldReceipts: string[] };
         const fieldNotifications = automation!.notices(many, 'a', caller.fieldReceipts);
         assert.ok(fieldNotifications.length <= 64);
-        return { contents: [{ mimeType: 'application/vnd.mcp-native-ui+json', text: JSON.stringify({ version: 1, title: 'Alerts', revision: 'r', state: { selectedId: 1 }, controls: [], fieldNotifications }) }] };
+        return { version: 1, title: 'Alerts', revision: 'r', state: { selectedId: 1 }, controls: [], fieldNotifications };
       },
-      tool: async () => ({ content: [] }), action: async () => { throw new Error('No action expected'); }, close: async () => {},
+      context: async () => '', tool: async () => ({ result: null }), action: async () => { throw new Error('No action expected'); }, close: async () => {},
     }));
     session.onFieldNotification = (notice) => { received.push(notice.id); return true; };
     try {

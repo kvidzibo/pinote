@@ -4,8 +4,8 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { parsePullRequests } from '../pull-requests.ts';
-import { checkPRBatch } from '../pr-batch.ts';
+import { parsePullRequests } from '../pull-requests.js';
+import { checkPRBatch } from '../pr-batch.js';
 
 const run = promisify(execFile);
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

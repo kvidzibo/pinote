@@ -2,21 +2,16 @@ import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chmod, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });
 execFileSync(process.execPath, ['build.mjs'], { cwd: fileURLToPath(new URL('../backend/', import.meta.url)), stdio: 'inherit' });
 await cp('../backend/dist', 'dist/pinote-backend', { recursive: true });
-// The task service and its bundled watchers run from real files beside the backend.
-// Watchers import pi's compiled output when published; bundle the sources instead.
-const piSource = { name: 'pi-source', setup(build) {
-  build.onResolve({ filter: /^\.\.\/dist-mcp\/.+\.js$/ }, args => ({ path: resolve(args.resolveDir, args.path.replace('dist-mcp/', '').replace(/\.js$/, '.ts')) }));
-} };
-const service = { bundle: true, platform: 'node', format: 'esm', target: 'node22', metafile: true, plugins: [piSource],
+// The watcher scheduler and its bundled watchers run from real files beside the backend.
+const service = { bundle: true, platform: 'node', format: 'esm', target: 'node22', metafile: true,
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" } };
 const watchers = (await readdir('../pi/watchers')).filter(name => name.endsWith('.mjs'));
 const [served, watched] = await Promise.all([
-  build({ ...service, entryPoints: ['../pi/mcp/http.ts'], outfile: 'dist/pinote-backend/service/http.mjs' }),
+  build({ ...service, entryPoints: ['../pi/watcher-host.ts'], outfile: 'dist/pinote-backend/service/watcher-host.mjs' }),
   build({ ...service, banner: {}, entryPoints: watchers.map(name => `../pi/watchers/${name}`), outdir: 'dist/pinote-backend/service/watchers', outExtension: { '.js': '.mjs' } }),
   build({ entryPoints: ['src/backend-switch-guard.ts'], outfile: 'dist/pinote-backend/switch-guard.mjs', bundle: true, platform: 'node', format: 'esm', target: 'node22' }),
   build({ entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
@@ -26,7 +21,6 @@ const [served, watched] = await Promise.all([
   build({ entryPoints: ['src/renderer.ts'], outfile: 'dist/renderer.js', bundle: true, platform: 'browser', target: 'chrome132' }),
 ]);
 await Promise.all(watchers.map(name => chmod(`dist/pinote-backend/service/watchers/${name}`, 0o755)));
-await cp('../pi/icons', 'dist/pinote-backend/icons', { recursive: true });
 await cp('src/index.html', 'dist/index.html');
 await cp('src/preview.html', 'dist/preview.html');
 await cp('src/style.css', 'dist/style.css');

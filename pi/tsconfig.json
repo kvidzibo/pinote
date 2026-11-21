@@ -8,7 +8,8 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "skipLibCheck": true
   },
-  "include": ["index.ts", "remote.ts", "mcp/**/*.ts", "tests/**/*.ts", "test-load.ts", "test-remote-load.ts"]
+  "include": ["index.ts", "watcher-host.ts", "tests/**/*.ts", "test-load.ts"]
 }

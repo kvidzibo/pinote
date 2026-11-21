@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Trusted instances live in the service's pi-note.json; tokens stay in its environment.
+// Trusted instances live in pi-note.json; tokens stay in the scheduler's environment.
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { getAgentDir } from '../dist-mcp/config-path.js';
-import { checkPRBatch } from '../pr-batch.ts';
-import { parsePullRequests } from '../pull-requests.ts';
+import { getAgentDir } from '../config-path.js';
+import { checkPRBatch } from '../pr-batch.js';
+import { parsePullRequests } from '../pull-requests.js';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const errorResult = () => ({ state: 'error', summary: 'Unable to check Forgejo PR status', recheckAfterSeconds: 120 });

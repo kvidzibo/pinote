@@ -1,4 +1,4 @@
-// Shared by the Pi tools and service so proposal limits cannot drift.
+// Shared by the Pi tools and engine so proposal limits cannot drift.
 export const proposalTitleOptions = {
   minLength: 1,
   maxLength: 60,
