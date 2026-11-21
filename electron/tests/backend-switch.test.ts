@@ -211,6 +211,12 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const phases: string[] = [];
       const desktopEnv = { ...env, PATH: `${root}/.local/bin:${env.PATH}`, PINOTE_NODE: process.execPath };
       if (mode === 'success' && process.env.PINOTE_TEST_SYSTEM_CUDA === '1') Object.assign(desktopEnv, { LD_LIBRARY_PATH: '/usr/local/cuda/lib64' });
+      if (mode === 'fallback-db') {
+        assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, async (file, args, env, input) => {
+          assert.equal(file, '/usr/bin/systemctl', 'Preview never executes the fallback installation');
+          return dependencies.run(file, args, env, input);
+        }), 'absent');
+      }
       const operation = switchToNode({ env: desktopEnv, node: process.execPath, bundles, database }, text => {
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }

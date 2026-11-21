@@ -62,7 +62,9 @@ the bundled CLI/bridge against the same database, then:
 - Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
 - Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
   The desktop PATH must select that command; Pinote will not overwrite another
-  installation earlier on PATH.
+  installation earlier on PATH. If a previously missing launcher now takes
+  precedence, existing Bash sessions may need `hash -r` or a new shell to
+  discard their cached location of the old command.
 - Adds a user override for the **existing** `pinote.service`; no service is created
   or enabled. A present service must be running with the documented direct Node
   HTTP command from its project working directory and the same trusted Node

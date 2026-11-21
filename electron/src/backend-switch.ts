@@ -273,7 +273,7 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
   if (cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
-  if (previous && previous !== locations(env).cli) await verifyExistingCLI({ ...runtime, env, bundles, database }, run, { ...env, PINOTE_NOTE_COMMAND: previous }, 'desktop');
+  if (previous && previous !== locations(env).cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: previous }, 'desktop');
   if (!serviceEnv) return 'absent';
   await inspectCLI(runtime, serviceEnv, 'pinote.service');
   const options = { ...runtime, bundles, env, database };
