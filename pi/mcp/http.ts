@@ -1,15 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isIP } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { createPinoteServer } from './core.ts';
+import { createPinoteServer, type TaskDatabase } from './core.ts';
 import { completionEvents } from './events.ts';
 import { pinoteToken } from '../token.ts';
-import { FieldAutomation } from './field-events.ts';
+import { canonicalDatabase, FieldAutomation } from './field-events.ts';
 
 export interface PinoteHttpOptions {
   token?: string;
@@ -61,10 +61,47 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   if (configuredHosts?.some((value) => !/^(?:\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+)(?::[0-9]+)?$/.test(value))) throw new Error('Invalid allowed HTTP authority');
   let allowedHosts = new Set(configuredHosts);
   const fieldListeners = new Set<() => void>();
-  const fieldAutomation = await FieldAutomation.open({
-    changed: () => { for (const listener of fieldListeners) listener(); },
-    log: (failure) => log(failure ? `watcher check failed ${JSON.stringify(failure)}` : 'field automation check failed; will retry'),
-  });
+  let identity: TaskDatabase | undefined;
+  let opening: Promise<FieldAutomation> | undefined;
+  let fieldsDisabled = false;
+  const disableFields = () => {
+    if (fieldsDisabled) return;
+    fieldsDisabled = true;
+    log('field observation disabled; check CLI database identity and watcher state');
+  };
+  const matchesFile = ({ database, lexicalDatabase, fileIdentity }: TaskDatabase) => {
+    try {
+      if (canonicalDatabase(lexicalDatabase) !== database) return false;
+      const stat = statSync(database, { bigint: true });
+      return stat.isFile() && `${stat.dev}:${stat.ino}` === fileIdentity;
+    } catch { return false; }
+  };
+  const fieldsAvailable = () => {
+    if (stopping || fieldsDisabled || !identity) return false;
+    if (matchesFile(identity)) return true;
+    disableFields();
+    return false;
+  };
+  const resolveAutomation = async (actual?: TaskDatabase) => {
+    // The first proven task response pins this service to one database. Bare
+    // legacy output is still usable as task data, but never grants field access.
+    if (!actual || stopping || fieldsDisabled) return;
+    if (!matchesFile(actual) || identity && (actual.database !== identity.database ||
+        actual.lexicalDatabase !== identity.lexicalDatabase || actual.fileIdentity !== identity.fileIdentity)) {
+      disableFields();
+      return;
+    }
+    identity ??= actual;
+    try {
+      const fieldAutomation = await (opening ??= FieldAutomation.observe({
+        database: identity.database,
+        available: fieldsAvailable,
+        changed: () => { for (const listener of fieldListeners) listener(); },
+        onError: () => log('field observation failed'),
+      }));
+      return fieldsAvailable() ? fieldAutomation : undefined;
+    } catch { disableFields(); }
+  };
   const reject = (res: ServerResponse, status: number) => { res.writeHead(status, { 'Content-Type': 'text/plain' }); res.end(`${status}\n`); };
   const single = (req: IncomingMessage, name: string) => {
     const values = req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === name);
@@ -123,8 +160,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
         });
         const entry: Session = { transport, server: undefined!, busy: 0, streams: 0, touched: Date.now() };
         entry.server = createPinoteServer({
-          fieldAutomation,
-          watcherLogPath: logPath,
+          resolveAutomation,
           onFieldChange: (listener) => { fieldListeners.add(listener); return () => { fieldListeners.delete(listener); }; },
           onError: () => log('protocol or notification failed'),
           onBusy: (delta) => { entry.busy += delta; entry.touched = Date.now(); },
@@ -151,8 +187,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   listener.headersTimeout = 10_000;
   try {
     await new Promise<void>((ok, fail) => { listener.once('error', fail); listener.listen(port, host, () => { listener.off('error', fail); ok(); }); });
-  } catch (error) { await fieldAutomation?.close(); await events.close(); throw error; }
-  fieldAutomation?.start();
+  } catch (error) { await events.close(); throw error; }
   const address = listener.address();
   if (!address || typeof address === 'string') throw new Error('Missing HTTP address');
   const authority = `${isIP(host) === 6 ? `[${host}]` : host}:${address.port}`;
@@ -178,10 +213,13 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
     const force = setTimeout(() => listener.closeAllConnections(), 3000);
     try {
       await events.close();
-      await fieldAutomation?.close();
       await Promise.allSettled([...all].map((session) => session.server.close()));
       await closed;
-    } finally { clearTimeout(force); log('stopped'); }
+    } finally {
+      clearTimeout(force);
+      await opening?.then(automation => automation.close(), () => {});
+      log('stopped');
+    }
   })();
   return { listener, url: `http://${authority}/mcp`, close };
 }
@@ -201,7 +239,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.once('SIGINT', () => stop());
   } catch {
     // Startup exceptions can contain paths or third-party data: do not print them.
-    const line = 'Pinote HTTP startup failed; check token, listener and writable log configuration\n';
+    const line = 'Pinote HTTP startup failed; check token, listener and writable state/log configuration\n';
     process.stdout.write(line);
     try { appendFileSync(resolve(process.env.PINOTE_LOG_PATH ?? 'app.log'), line, { mode: 0o600 }); } catch { /* An unwritable log can itself be the startup failure. */ }
     process.exitCode = 1;

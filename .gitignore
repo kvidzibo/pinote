@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 dist/
 /pi/dist-mcp/
+/pi/watchers/
 /electron/out/
 /electron/test-results/
 /electron/playwright-report/

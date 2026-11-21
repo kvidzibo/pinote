@@ -499,6 +499,9 @@ async function rollback(env: NodeJS.ProcessEnv, journal: Journal, dependencies: 
     await rm(pending);
   } catch (error) { throw recoveryError('Could not finalize the recovery record; check its permissions before retrying.', error); }
 }
+export async function hasPendingBackendSwitch(env: NodeJS.ProcessEnv): Promise<boolean> {
+  return !!await loadJournal(env);
+}
 export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntime?: () => SwitchRuntime, dependencies: SwitchDependencies = {}): Promise<void> {
   if (!await loadJournal(env)) return;
   const release = await acquire(env, dependencies.updateLock);

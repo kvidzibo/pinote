@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
 import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
@@ -41,15 +41,19 @@ export interface Arguments {
   text?: string[]; when?: string; path?: string; all?: boolean; json?: boolean;
   after?: bigint; limit: number; cwd?: string; expected_updated_at?: string;
   pi_session_id?: string; set_json: string; remove: string[]; tag?: string; clear?: boolean;
-  help?: boolean; version?: boolean; agent_text?: string;
+  help?: boolean; version?: boolean; database_identity?: boolean; agent_text?: string;
 }
 export function arguments_(input: string[]): Arguments {
   let argv = [...input];
   const args: Arguments = { command: 'list', no_notify: false, limit: 256, set_json: '{}', remove: [] };
   while (argv[0] === '--no-notify') { args.no_notify = true; argv.shift(); }
   if (!argv.length) argv = ['list'];
-  else if (!COMMANDS.has(argv[0]) && !['-h', '--help', '--version'].includes(argv[0])) argv.unshift('add');
+  else if (!COMMANDS.has(argv[0]) && !['-h', '--help', '--version', '--database-identity'].includes(argv[0])) argv.unshift('add');
   if (argv[0] === '--version') { args.version = true; return args; }
+  if (argv[0] === '--database-identity') {
+    if (argv.length !== 1) throw new ArgumentError('--database-identity takes no arguments');
+    args.database_identity = true; return args;
+  }
   if (['-h', '--help'].includes(argv[0])) { args.help = true; return args; }
   args.command = argv.shift()!;
   // --no-notify belongs to the agent parser, not its action parser.
@@ -148,7 +152,15 @@ function validateCommand(args: Arguments): void {
   if (args.agent_action === 'add') validate_text(args.agent_text!);
   if (args.agent_action === 'update') validateAgentPatch(parseAgentFields(args.set_json), args.remove);
 }
-export function execute_agent(args: Arguments, store: Store): void {
+function taskDatabaseIdentity(lexicalDatabase: string) {
+  try {
+    const database = realpathUtf8(lexicalDatabase);
+    const stat = statSync(database, { bigint: true });
+    if (stat.isFile()) return { database, lexicalDatabase, fileIdentity: `${stat.dev}:${stat.ino}` };
+  } catch { /* A task operation can still succeed without usable identity metadata. */ }
+  return null;
+}
+export function execute_agent(args: Arguments, store: Store, emit: (data: unknown) => void = (data) => print(jsonStringify(data))): void {
   const action = args.agent_action!;
   if (['select', 'selected'].includes(action) && !isAbsolute(args.cwd!)) throw new NoteError('--cwd must be an absolute project directory.');
   if (action === 'tags') { print(jsonStringify(store.tags())); return; }
@@ -166,7 +178,7 @@ export function execute_agent(args: Arguments, store: Store): void {
     store.set_tag(args.id!, args.clear ? null : explicitTag(args.tag!), { expected_updated_at: args.expected_updated_at! });
     note = store.get(args.id!);
   } else note = store.get(args.id!);
-  print(jsonStringify(agent_task(note)));
+  emit(agent_task(note));
 }
 // Python repr's quote selection is visible in history output.
 function repr(value: string): string {
@@ -192,12 +204,26 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
   const needsLock = needsDisplayLock(args);
   const run = async () => {
     checkCancelled();
+    const taskResponse = process.env.PINOTE_TASK_RESPONSE === '1' && (
+      args.command === 'agent' && args.agent_action !== 'tags' || args.command === 'list' && args.json);
+    const before = taskResponse ? taskDatabaseIdentity(paths.database) : null;
     const store = new Store(paths.database);
     try {
+      const emit = (data: unknown) => {
+        if (taskResponse) {
+          // Check the opened path on the same connection that produced the result.
+          const opened = store.row('PRAGMA database_list')?.file;
+          const after = taskDatabaseIdentity(paths.database);
+          const identity = before && opened === before.database && after?.database === before.database &&
+            after.fileIdentity === before.fileIdentity ? before : null;
+          data = { pinoteTaskResponse: 1, identity, data };
+        }
+        print(jsonStringify(data));
+      };
       if (needsLock) store.activate_due();
       else if (!['events', 'field-events'].includes(args.command) && store.has_due()) await withDisplayLock(paths, true, () => { store.activate_due(); });
       switch (args.command) {
-        case 'agent': execute_agent(args, store); break;
+        case 'agent': execute_agent(args, store, emit); break;
         case 'add': print(`Added note ${store.add(args.text!.join(' '))}.`); break;
         case 'schedule': { const changed = store.schedule(args.id!, scheduled!); print(`Note ${args.id} ${changed ? 'scheduled' : 'already scheduled'} for ${scheduledLabel}.`); break; }
         case 'reminders': {
@@ -212,7 +238,7 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
         }
         case 'list': {
           const notes = store.notes({ all_states: args.all });
-          if (args.json) print(jsonStringify(notes.map(({ id, text, state, tag }) => ({ id, text, state, tag }))));
+          if (args.json) emit(notes.map(({ id, text, state, tag }) => ({ id, text, state, tag })));
           else {
             for (const note of notes) print(`${note.id}. ${args.all || note.state === 'in_progress' ? `[${note.state.replaceAll('_', ' ')}] ` : ''}${noteMarkdown(note).replaceAll('\n', '\n    ')}${note.remind_at ? ` (${local_reminder_time(note.remind_at)})` : ''}`);
             if (!notes.length) print(args.all ? 'No notes.' : 'No active notes.');
@@ -269,7 +295,7 @@ function help(args: Arguments): string {
     reminders: 'list scheduled reminders',
     agent: 'add/tag tasks and read/update agent fields (JSON, no desktop refresh)\n  {get,selected,select,start,update,done,add,tag,tags}\n  get ID\n  selected --cwd CWD\n  select ID --cwd CWD\n  start ID --expected-updated-at REVISION [--pi-session-id SESSION]\n  update ID --expected-updated-at REVISION [--set-json JSON] [--remove LABEL ...]\n  done ID --expected-updated-at REVISION\n  add --text TEXT [--tag TAG] [--cwd CWD]\n  tag ID --expected-updated-at REVISION (--tag TAG | --clear)\n  tags',
   };
-  return `usage: note [--version] [--no-notify] COMMAND ...\n\nPinned desktop reminders with stable IDs and durable history.\n\nCommands:\n${[...COMMANDS].map(command => `  ${command}  ${descriptions[command].split('\n')[0]}`).join('\n')}\n\n${args.command}: ${descriptions[args.command]}\n\nOptions:\n  -h, --help  show this help message and exit\n  --version   show program's version number and exit\n  --no-notify skip automatic desktop refresh\n\nShortcuts: note lists active notes; note "some text" adds a note. Use note add "done" for text matching a command name.`;
+  return `usage: note [--version] [--no-notify] COMMAND ...\n\nPinned desktop reminders with stable IDs and durable history.\n\nCommands:\n${[...COMMANDS].map(command => `  ${command}  ${descriptions[command].split('\n')[0]}`).join('\n')}\n\n${args.command}: ${descriptions[args.command]}\n\nOptions:\n  -h, --help  show this help message and exit\n  --version   show program's version number and exit\n  --database-identity  report the configured and resolved notes.db paths as JSON without opening it\n  --no-notify skip automatic desktop refresh\n\nShortcuts: note lists active notes; note "some text" adds a note. Use note add "done" for text matching a command name.`;
 }
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   let args: Arguments;
@@ -292,7 +318,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   try {
     checkCancelled();
-    const paths = discoverPaths(); checkProfileIdentity(paths);
+    const paths = discoverPaths();
+    if (args.database_identity) {
+      print(jsonStringify({ database: resolvePath(paths.database), lexicalDatabase: paths.database }));
+      return 0;
+    }
+    checkProfileIdentity(paths);
     if (needsDisplayLock(args)) checkedEnv('PATH');
     configureLogging(paths);
     return await execute(args, paths, imported);

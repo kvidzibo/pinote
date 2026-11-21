@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
@@ -63,7 +63,7 @@
     ]
   },
   "scripts": {
-    "build:mcp": "tsc -p tsconfig.mcp.json && node -e \"require('node:fs').cpSync('icons', 'dist-mcp/icons', { recursive: true })\"",
+    "build:mcp": "tsc -p tsconfig.mcp.json && node stage-watchers.mjs && node -e \"require('node:fs').cpSync('icons', 'dist-mcp/icons', { recursive: true })\"",
     "prepack": "npm run build:mcp",
     "mcp": "node dist-mcp/mcp/server.js",
     "serve": "node dist-mcp/mcp/http.js",

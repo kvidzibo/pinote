@@ -62,15 +62,16 @@ test('bounded configuration, inert fixed discovery and disabled legacy migration
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('independent durable watchers, ignored results, immediate disable/removal and in-flight cancellation', async () => {
+test('independent durable watchers, ignored results, runner-owned disable/removal and in-flight cancellation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'watcher-scheduler-'));
-  let automation: FieldAutomation | undefined;
+  let automation: FieldAutomation | undefined, competitor: FieldAutomation | undefined;
   try {
     const path = join(dir, 'state.db'), note = join(dir, 'note.mjs');
     const task = { id: 1, state: 'active', updated_at: 'v1', agent_notes: { PR: 'url' } };
     writeFileSync(note, `#!${process.execPath}\nconst args=process.argv.slice(2); console.log(JSON.stringify(args.includes('field-events') ? {cursor:1,events:Number(args[args.indexOf('--after')+1])===0 ? [{id:1,taskId:1,field:'PR',event:'added',value:'url',previousValue:null}] : []} : ${JSON.stringify(task)}));`, { mode: 0o700 });
     const scripts = ['first', 'second', 'ignored', 'slow'].map((name) => join(dir, `${name}.mjs`));
-    scripts.forEach((script, i) => writeFileSync(script, `#!${process.execPath}\n${i === 3 ? `setInterval(()=>{},1000);` : `console.log(JSON.stringify(${i === 2 ? '{}' : JSON.stringify({ state: String(i), notification: { key: 'same', message: String(i) } })}));`}`, { mode: 0o700 }));
+    const entered = join(dir, 'entered');
+    scripts.forEach((script, i) => writeFileSync(script, `#!${process.execPath}\n${i === 3 ? `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(entered)}, ''); setInterval(()=>{},1000);` : `console.log(JSON.stringify(${i === 2 ? '{}' : JSON.stringify({ state: String(i), notification: { key: 'same', message: String(i) } })}));`}`, { mode: 0o700 }));
     let configs = scripts.slice(0, 3).map((path) => ({ path, enabled: true }));
     const watchers = () => discoverFieldWatchers({ fieldWatchers: configs });
     const open = () => FieldAutomation.open({ path, noteCommand: note, watchers });
@@ -85,8 +86,11 @@ test('independent durable watchers, ignored results, immediate disable/removal a
     await automation.close(); automation = await open();
     assert.deepEqual(automation.notices(task, 'a'), notices);
     configs[0].enabled = false;
+    assert.deepEqual(automation.statuses(task).map((s) => s.result.state), ['0', '1'], 'a read cannot reconcile configuration');
+    await automation.tick();
     assert.deepEqual(automation.statuses(task).map((s) => s.result.state), ['1']);
     configs = [configs[0]];
+    await automation.tick();
     assert.deepEqual(automation.notices(task, 'a'), []);
     configs[0].enabled = true;
     assert.deepEqual(automation.notices(task, 'a'), [], 'old notices cannot reappear before new checks');
@@ -95,20 +99,34 @@ test('independent durable watchers, ignored results, immediate disable/removal a
     configs = [{ path: scripts[3], enabled: true }];
     await automation.tick();
     const running = automation.tick();
-    await new Promise((r) => setTimeout(r, 250));
+    const deadline = Date.now() + 5000;
+    while (!existsSync(entered) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    assert.ok(existsSync(entered), 'slow watcher started');
+    competitor = await FieldAutomation.open({ path, noteCommand: note, watchers: () => [] });
+    assert.deepEqual(competitor.statuses(task), []);
+    assert.deepEqual(competitor.failures(), []);
+    assert.deepEqual(competitor.notices(task, 'a'), []);
+    await competitor.tick();
+    const countJobs = () => {
+      const db = new DatabaseSync(path);
+      try { return db.prepare('SELECT count(*) AS n FROM fw_jobs').get()?.n; } finally { db.close(); }
+    };
+    assert.equal(countJobs(), 1, 'competing reads and ticks cannot prune the leased job');
     configs = [];
+    await Promise.race([running, new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('runner did not cancel the disabled watcher')), 3000).unref();
+    })]);
     assert.deepEqual(automation.statuses(task), []);
-    await running;
     assert.deepEqual(automation.notices(task, 'a'), []);
-    const db = new DatabaseSync(path);
-    try { assert.equal(db.prepare('SELECT count(*) AS n FROM fw_jobs').get()?.n, 0); } finally { db.close(); }
+    assert.equal(countJobs(), 0);
 
     // Two watchers x 33 persistent field alerts exceed the wire page limit.
     configs = scripts.slice(0, 2).map((path) => ({ path, enabled: true }));
-    automation.statuses(task);
+    await automation.tick();
     const many = { ...task, agent_notes: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`F${i}`, 'url'])) };
     const seed = new DatabaseSync(path);
     try {
+      seed.exec('DELETE FROM fw_jobs'); // Replace the intake fixture with exactly 33 fields per watcher.
       for (const watcher of watchers().filter((w) => w.enabled)) for (const field of Object.keys(many.agent_notes)) {
         const result = { notification: { key: field, message: 'Still failing' } };
         const job = { watcherId: watcher.id, event: { id: 1, taskId: 1, field, value: 'url', previousValue: null, event: 'added' }, result, due: null, attempts: 0 };
@@ -144,5 +162,5 @@ test('independent durable watchers, ignored results, immediate disable/removal a
       await session.refresh();
       assert.equal(received.length, 66, 'Persistent conditions remain deduplicated');
     } finally { await session.stop(); }
-  } finally { await automation?.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { await competitor?.close(); await automation?.close(); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,14 +1,85 @@
 # Field watchers
 
-pi-note **0.40.0+** with **note 0.24.0+** runs independently enabled executables for
-task-field changes on the **HTTP service machine**. No extra daemon or Pi-local
-watcher is installed. The local-only extension and stdio service do not run watchers.
+Pinote Electron **0.14.0+** runs enabled field watchers while the desktop is open. The HTTP service (pi-note **0.47.0+**) delivers their results to Pi but never launches watcher scripts. Use the same user, database and XDG state directory for both processes. Upgrade both together; stop the old service runner before starting the new desktop.
+
+The HTTP service requests task-response metadata from its selected CLI
+(`PINOTE_NOTE_COMMAND`, or `note` on PATH) using `PINOTE_TASK_RESPONSE=1`.
+Desktop automation requires the bundled bridge: a `PINOTE_ELECTRON_BACKEND` override can choose a different database on each call, so Electron disables watchers in this mode. Ordinary task UI and HTTP access remain available.
+
+Use a Node or Python CLI build that supports this opt-in format. A trusted
+wrapper must preserve the environment flag and forward the response intact;
+do not attach identity from a separate probe. Regular CLI task JSON and Pi task
+content are unchanged. With an older CLI, or whenever a task response cannot
+prove which DB it used, ordinary task commands still work but watcher status,
+notifications and conversation claims are withheld for that operation. The
+service pins the first verified profile used for watcher access. If it detects
+a different profile or the pinned DB path/file changes, restart HTTP on the
+intended profile to restore watcher delivery. HTTP never runs the watchers.
+
+### Upgrading old watcher state (including canonical paths)
+
+Older watcher databases do not record which notes DB they watched. The old
+service hashed its **own** configured `notes.db` path; a wrapper could select
+another DB even if that path was canonical. A matching hash, task ID, field,
+or current wrapper setting is not proof. Unverified state anywhere under the
+shared `pinote/field-events/` namespace root blocks watcher startup/delivery;
+ordinary task commands continue. New state binds its namespace to the resolved
+notes DB in SQLite. To resolve old state offline:
+
+1. Stop Electron and HTTP, including any old runner, for every profile sharing
+   the state root. Work as the same user. Locate the root at
+   `$XDG_STATE_HOME/pinote/field-events` (default `~/.local/state/pinote/field-events`).
+   Back up the entire root in a private location outside it, including SQLite
+   sidecars. Do not move or edit `notes.db`.
+2. For each unbound `<hash>/state.db`, verify from historical deployment records
+   which **single** notes database the old runner actually used for its entire
+   history. If that cannot be established, or the state mixed profiles, move
+   the entire `<hash>/` directory out of the root to a private archive. Do not
+   reuse its owners, results or receipts. Starting with fresh state can result
+   in new alerts for still-failing checks; disable watchers before restart if
+   that rescan is not wanted.
+3. Only for proven single-profile state, run `note --no-notify --database-identity`
+   through the intended CLI and environment to confirm its current `database`
+   is the verified historical database. Use its resolved absolute path as
+   `DB`. Its destination directory is `<hash>/`, where `<hash>` is the first
+   16 hex digits of `printf '%s' "$DB" | sha256sum`. If different from the old
+   directory, move the entire verified directory there, including sidecars. Do
+   not merge or overwrite an existing destination. If there is a conflict,
+   archive the conflicting state outside the root before choosing which single,
+   independently verified copy to keep. Preserve private permissions (directory
+   `0700`, database `0600`). Skip the move if the directory is already correct.
+4. Approve the **existing** state file offline, setting `STATE_DB` to its absolute
+   filename at the destination and `DB` to the verified resolved path from step 3:
+
+   ```sh
+   python3 - "$STATE_DB" "$DB" <<'PY'
+   import hashlib, sqlite3, sys
+   from pathlib import Path
+
+   state, notes = map(Path, sys.argv[1:])
+   if not state.is_absolute() or not notes.is_absolute() or notes.resolve(strict=True) != notes:
+       raise SystemExit("Expected absolute paths and canonical notes DB")
+   if state.name != 'state.db' or state.parent.name != hashlib.sha256(str(notes).encode()).hexdigest()[:16]:
+       raise SystemExit("State is not at the verified destination")
+   with sqlite3.connect(state.as_uri() + '?mode=rw', uri=True) as db:
+       db.execute('BEGIN IMMEDIATE')
+       db.execute('CREATE TABLE fw_database (id INTEGER PRIMARY KEY CHECK(id=1), database_path TEXT NOT NULL, file_identity TEXT NOT NULL)')
+       stat = notes.stat()
+       db.execute('INSERT INTO fw_database (id, database_path, file_identity) VALUES (1, ?, ?)', (str(notes), f'{stat.st_dev}:{stat.st_ino}'))
+   PY
+   ```
+
+   If approval fails (including an existing binding), stop and investigate;
+   do not remove or overwrite a binding to force adoption.
+5. Once every old namespace is resolved, start only the updated processes on
+   the verified profile. Approved state keeps owners and receipt IDs. Overdue
+   results remain stale and cannot alert until successfully rechecked.
 
 ## Enable
 
 Open **Settings → Footer fields → Watchers**. The fixed package `watchers/` folder
 is scanned for executable `.mjs` files; discovery never executes or enables them.
-Enable **GitHub PR** or **Forgejo PR**, or add a custom absolute executable path on the service
+Enable **GitHub PR** or **Forgejo PR**, or add a custom absolute executable path on the Electron
 machine and enable it separately. Every change requires review and confirmation.
 Watchers are trusted code, not sandboxed; enabling authorizes their alerts to
 trigger the owning worker to investigate and fix the task within existing permissions.
@@ -34,13 +105,12 @@ footer style; alerts remain independent.
 disabled until explicitly enabled because the previous setting authorized only
 notifications, not automatic worker actions. Saving watchers removes the old key.
 
-The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PRs`
+The bundled [`watchers/github-pr.mjs`](../../watchers/github-pr.mjs) handles `PRs`
 and legacy `PR`, ignoring other fields. Keep it in its package directory so its
 shared parser remains available; add a separate executable for custom behavior.
 If customizing a copy of the package, make the watcher executable
 (`chmod u+x`), and ensure authenticated `gh` and Node 22.19+ are on the
-**service's** PATH. For systemd, follow the [service PATH setup](README.md#run-continuously);
-using an absolute Node path in `ExecStart` alone is insufficient for the watcher's
+**desktop's** PATH. An absolute Node path used to launch the service is insufficient for the watcher's
 `#!/usr/bin/env node` interpreter. `PRs` accepts one GitHub or Forgejo PR URL or Markdown link
 per line (optional `- ` bullets), deduplicating up to 64 valid links. Each number
 keeps its own link and status: green passing, red failed/conflicting, amber pending,
@@ -62,7 +132,7 @@ Passing means reported checks passed, not that all review/protection rules passe
 
 ## Forgejo PRs
 
-With pi-note **0.42.0+**, configure trusted instances in the **service machine's**
+With pi-note **0.42.0+**, configure trusted instances in the **desktop user's**
 `pi-note.json` (in `PI_CODING_AGENT_DIR`, default `~/.pi/agent`), then enable
 **Forgejo PR** in Watchers:
 
@@ -77,17 +147,17 @@ With pi-note **0.42.0+**, configure trusted instances in the **service machine's
 `url` is an HTTPS instance base URL, optionally including its installation subpath
 or port; it is not a repository or API URL. HTTP is also accepted for numeric
 loopback hosts `127.0.0.1` and `[::1]` only. At most 32 instances are allowed.
-`tokenEnv` names a service environment variable holding a read-only API token
+`tokenEnv` names an Electron environment variable holding a read-only API token
 (with repository read access for private repositories). Omit it for anonymous
 public access. Never put tokens in task fields, URLs or `pi-note.json`. Node must
-be on the service's PATH; `gh` is not needed. Source checkouts require
+be on Electron's PATH; `gh` is not needed. Source checkouts require
 `npm --prefix pi run build:mcp` before running the executable.
 
 For a local repository such as
 `http://127.0.0.1:3000/tomas/production-deploy`, configure the instance base
-`http://127.0.0.1:3000`, not the repository path. Loopback refers to the **service
+`http://127.0.0.1:3000`, not the repository path. Loopback refers to the **Electron
 machine**, not the Pi client. A sign-in-required instance needs `tokenEnv` even
-for repository reads; set that variable in the existing service's environment.
+for repository reads; set that variable in Electron's launch environment.
 
 Set `PRs` to `https://forgejo.example/owner/repo/pulls/123` or, for that local
 instance, `http://127.0.0.1:3000/tomas/production-deploy/pulls/123`, one URL or
@@ -97,8 +167,8 @@ one URL/link. Only explicitly configured instance URLs receive requests; credent
 to that instance, and API redirects are rejected. Both bundled watchers ignore
 other providers' links, so they can be enabled together. Displaying a PR link or
 formatting `<number>` does not authorize network access. After changing instances,
-toggle the Forgejo watcher off/on to rescan existing fields. Restart the existing
-service when changing its environment; no additional service is needed.
+toggle the Forgejo watcher off/on to rescan existing fields. Restart Electron
+when changing its environment; no additional service is needed.
 
 Forgejo checks the current head's latest commit statuses across all pages, including
 Forgejo Actions jobs published as commit statuses. Failures trigger the owning
@@ -180,14 +250,12 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 
 ## Delivery and reliability
 
-- The service stores its history cursor, scheduled checks, results and alert owner
+- Electron stores its history cursor, scheduled checks, results and alert owner
   under `$XDG_STATE_HOME/pinote/field-events/<database-path-hash>/state.db` (default
   state home: `~/.local/state`). Keep this private and local, like `notes.db`.
   Watcher cursors, jobs and notices are independent; alert ownership is shared.
   It uses Node's built-in SQLite API; Node 22 may print its experimental warning.
-- Monitoring continues without an open Pi session while the HTTP service runs.
-  Deadlines survive restarts. A lease prevents overlapping normal execution by
-  competing service processes; run one service/configuration per notes database.
+- Monitoring requires an open Electron app, not an open Pi session. Deadlines survive restarts. The HTTP service observes shared SQLite results; it does not take over when Electron exits.
 - Initial activation reconstructs fields from durable history. Intake scans at
   most 25 history rows per tick and coalesces superseded pending changes before
   execution. This is a **current-field automation API**, not a lossless audit hook:
@@ -195,7 +263,7 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   field snapshots cannot be reconstructed.
 - In Pi's interactive terminal, execution failures produce one grouped notice:
   `Pinote watchers failing: GitHub PR [PR], Deploy [Build, URL].`
-  It points to the actual service log on the **service machine**. Health is
+  The notice links to `watchers.log` beside the automation database. Health is
   service-wide, grouped by watcher and affected field across tasks; long field
   lists show an additional count. Notices appear on connection and when the
   failure set changes, not on every retry. A final notice clears the failure set
@@ -241,13 +309,13 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - Newly enabled watchers reconstruct current fields from history independently.
   Disabling/removing clears their automation state; enabling again checks afresh.
   Editing the same file affects its next invocation, not stopped checks.
-  Restoring an older notes backup can invalidate the cursor: stop the service and
+  Restoring an older notes backup can invalidate the cursor: stop Electron and the service, then
   deliberately back up/reset its corresponding automation state before restarting.
 
-Handlers run with the service user's permissions and inherited environment,
+Handlers run with the desktop user's permissions and inherited environment,
 including available credentials. They are trusted code, **not sandboxed**. The
 human-confirmed Watchers UI can configure executable paths; agent tools cannot.
-The existing service log records each failed invocation with timestamp, watcher
+The Electron log records each failed invocation with timestamp, watcher
 name/ID, task ID, field name, a fixed safe reason, last successful check and next
 retry. Reasons distinguish missing executables/interpreters, permissions, exit
 failures (including interpreter/PATH exit 127), timeouts, output limits, invalid

@@ -6,7 +6,8 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
-import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
+import { hasInstalledLauncher, hasBackendPreference, hasPendingBackendSwitch, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
+import { desktopFieldRunner, fieldDatabaseIdentity, type FieldRunner } from './field-runner.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -23,6 +24,8 @@ let activeMenu: Menu | undefined;
 let state = initialState();
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
+let fieldRunner: FieldRunner | undefined;
+let quitting = false;
 let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
@@ -117,6 +120,11 @@ async function boot() {
   const identity = hello.result as { protocol?: unknown; database?: unknown; version?: unknown };
   if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(2[3-9]|[3-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.23.0+ with protocol 1.');
   const database = identity.database;
+  // Capture the watcher profile at handshake, not after the asynchronous UI
+  // setup (or when resuming after a failed backend switch).
+  let fieldDatabase: ReturnType<typeof fieldDatabaseIdentity> | undefined;
+  try { fieldDatabase = fieldDatabaseIdentity(database, environment); }
+  catch { /* An unverifiable profile disables watchers, not the desktop. */ }
   let switchRequested = false, switchConfirming = false;
   const switchOptions = () => ({ ...switchRuntime(), env: process.env, database });
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
@@ -130,6 +138,12 @@ async function boot() {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   logFile = join(profile, 'app.log');
+  const startFieldRunner = () => {
+    if (quitting) return;
+    if (!fieldDatabase) { log('Cannot start Electron field automation; the notes database identity could not be verified.'); return; }
+    fieldRunner = desktopFieldRunner(bundles, fieldDatabase, command, log);
+    fieldRunner.start();
+  };
   try {
     const raw = await readFile(join(dataDir, 'state.json'), 'utf8');
     if (Buffer.byteLength(raw) > MAX_STATE_FILE_BYTES) throw new Error('Oversized state');
@@ -140,6 +154,7 @@ async function boot() {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying. GTK remains available.'; }
   }
   await app.whenReady();
+  startFieldRunner();
   const styleNonce = randomUUID();
   const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
   protocol.handle('pinote-app', async request => {
@@ -283,11 +298,23 @@ async function boot() {
       if (!closing) throw new Error('Close was not requested.');
       await tasks; await stateWrites; await saveGeometry();
       if (switchRequested) {
+        let paused = false;
         try {
           if (readonly || state.warning) throw new Error('Resolve the saved-state warning before switching backends.');
-          await switchToNode(switchOptions(), text => window?.webContents.send('backend-switch-progress', text));
-          app.relaunch();
-        } catch (error) { switchRequested = false; throw error; }
+          const options = switchOptions();
+          // The switch can replace the CLI launcher and restart the service.
+          await fieldRunner?.stop();
+          paused = true;
+          await switchToNode(options, text => window?.webContents.send('backend-switch-progress', text));
+        } catch (error) {
+          switchRequested = false;
+          if (paused) {
+            if (await hasPendingBackendSwitch(process.env).catch(() => true)) log('Field automation remains paused until backend-switch recovery.');
+            else startFieldRunner();
+          }
+          throw error;
+        }
+        app.relaunch();
       }
       exiting = true; window?.destroy(); app.quit();
     },
@@ -296,6 +323,24 @@ async function boot() {
   await window.loadURL(`${origin}/index.html`);
 }
 app.on('window-all-closed', () => app.quit());
-process.on('uncaughtException', () => { log('Unexpected Electron failure; check saved state before retrying.'); app.exit(1); });
+app.on('will-quit', event => {
+  quitting = true;
+  const runner = fieldRunner;
+  if (!runner) return;
+  event.preventDefault();
+  void runner.stop().then(() => {
+    if (fieldRunner !== runner) return;
+    fieldRunner = undefined;
+    app.quit();
+  });
+});
+async function exitWithWatcherCleanup(code: number) {
+  quitting = true;
+  await fieldRunner?.stop();
+  app.exit(code);
+}
+process.once('SIGINT', () => { void exitWithWatcherCleanup(130); });
+process.once('SIGTERM', () => { void exitWithWatcherCleanup(143); });
+process.on('uncaughtException', () => { log('Unexpected Electron failure; check saved state before retrying.'); void exitWithWatcherCleanup(1); });
 process.on('unhandledRejection', () => { log('Unexpected Electron operation failure; check saved state before retrying.'); });
-void boot().catch(error => { log(error instanceof Error ? error.message : 'Cannot start Pinote Electron'); app.exit(1); });
+void boot().catch(error => { log(error instanceof Error ? error.message : 'Cannot start Pinote Electron'); void exitWithWatcherCleanup(1); });

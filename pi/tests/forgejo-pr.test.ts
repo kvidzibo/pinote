@@ -30,7 +30,7 @@ globalThis.fetch = async (url, options) => {
   const body = page ? scenario.pages[Number(page)-1] ?? {statuses:null,total_count:0} : scenario.pulls[Math.min((pulls[repo] = (pulls[repo] ?? -1) + 1),scenario.pulls.length-1)];
   return new Response(JSON.stringify(body));
 };`);
-  const script = fileURLToPath(new URL('../watchers/forgejo-pr.mjs', import.meta.url));
+  const script = fileURLToPath(new URL('../../watchers/forgejo-pr.mjs', import.meta.url));
   const base = 'https://forgejo.example/git';
   const value = `${base}/owner/repo/pulls/42`;
   const event = { version: 1, event: 'added', taskId: 1, field: 'PR', value, previousValue: null, eventId: 'event-1' };
@@ -258,7 +258,7 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   }));
   process.env.PI_CODING_AGENT_DIR = dir;
   process.env.TEST_FORGEJO_HTTP_TOKEN = 'fake-loopback-only-token';
-  const { handleFieldEvent } = await import(new URL('../watchers/forgejo-pr.mjs', import.meta.url).href);
+  const { handleFieldEvent } = await import(new URL('../../watchers/forgejo-pr.mjs', import.meta.url).href);
   const event = { version: 1, event: 'check', taskId: 1, field: 'PR',
     value: `[PR](${base}/tomas/production-deploy/pulls/135)`, previousValue: null, eventId: 'local-http' };
   const passing = FieldResult.parse(await handleFieldEvent(event));
