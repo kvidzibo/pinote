@@ -104,9 +104,12 @@ try {
   await closed;
   const calls = await readFile(marker, 'utf8');
   const cli = spawnSync('note', ['--version'], { env, encoding: 'utf8' }); assert.equal(cli.status, 0, cli.stderr); assert.match(cli.stdout, /^pinote 0\.26\.0/);
+  const added = spawnSync('note', ['--no-notify', 'Written by the migrated CLI'], { env, encoding: 'utf8' });
+  assert.equal(added.status, 0, added.stderr);
   const backupRoot = join(root, 'state/pinote/backend-switch/backups');
   assert.equal((await readdir(backupRoot)).length, 1);
   page = await launch();
+  await page.locator('.task-title').filter({ hasText: 'Written by the migrated CLI' }).waitFor();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).waitFor();
   assert.match(await page.locator('#draft').innerText(), /Draft kept across backend switch/);
   await settings(page);

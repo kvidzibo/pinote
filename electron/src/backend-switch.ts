@@ -33,10 +33,12 @@ function locations(env: NodeJS.ProcessEnv) {
     state: join(xdg(env, 'XDG_STATE_HOME', '.local/state'), 'pinote/backend-switch'),
     updater: join(xdg(env, 'XDG_STATE_HOME', '.local/state'), 'pi-updates') };
 }
+function systemHelperEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !runtimeInjection(key)));
+}
 export async function runCommand(executable: string, args: string[], env: NodeJS.ProcessEnv, input?: string, timeout = 60000): Promise<string> {
   return new Promise((ok, fail) => {
-    const childEnv = backendEnvironment(env);
-    if (executable === '/usr/bin/systemctl' || executable === '/usr/bin/busctl') delete childEnv.LD_LIBRARY_PATH;
+    const childEnv = executable === '/usr/bin/systemctl' || executable === '/usr/bin/busctl' ? systemHelperEnvironment(env) : backendEnvironment(env);
     const child = execFile(executable, args, { env: childEnv, timeout, maxBuffer: limit, encoding: 'buffer' }, (error, stdout) => {
       if (error) fail(new Error(`Backend switch command failed: ${executable.split('/').at(-1)} ${args[0] || ''}.`));
       else { try { ok(utf8.decode(stdout)); } catch (err) { fail(err); } }
@@ -431,7 +433,7 @@ async function acquire(env: NodeJS.ProcessEnv, updateLock = `/tmp/pi-extension-u
       // A short helper acquires the shared open-file-description lock, retained
       // by this process. Other subprocesses never inherit these descriptors.
       await new Promise<void>((ok, fail) => {
-        const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '3'], { env: { ...backendEnvironment(env), LD_LIBRARY_PATH: undefined }, timeout: 5000, stdio: ['ignore', 'ignore', 'ignore', fd] });
+        const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '3'], { env: systemHelperEnvironment(env), timeout: 5000, stdio: ['ignore', 'ignore', 'ignore', fd] });
         child.once('error', fail);
         child.once('close', code => code === 0 ? ok() : fail(new Error('An update or desktop operation is running; retry after it finishes.')));
       });
@@ -605,12 +607,14 @@ async function rollback(env: NodeJS.ProcessEnv, journal: Journal, dependencies: 
 }
 export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntime?: () => SwitchRuntime, dependencies: SwitchDependencies = {}): Promise<void> {
   if (!await loadJournal(env)) return;
-  await verifyCLIEnvironment(env, 'desktop');
   const release = await acquire(env, dependencies.updateLock);
   try {
     const journal = await loadJournal(env); if (!journal) return;
-    if (!journal.complete) await rollback(env, journal, dependencies, trustedRuntime);
-    else await rm(join(locations(env).state, 'pending.json'));
+    if (journal.complete) await rm(join(locations(env).state, 'pending.json'));
+    else {
+      if (journal.service.active) await verifyCLIEnvironment(env, 'desktop');
+      await rollback(env, journal, dependencies, trustedRuntime);
+    }
   } finally { release(); }
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {

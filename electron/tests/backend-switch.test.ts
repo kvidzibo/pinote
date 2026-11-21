@@ -275,7 +275,15 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         }
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
-        if (mode === 'no-service') await assert.rejects(lstat(dropin), { code: 'ENOENT' });
+        if (mode === 'no-service') {
+          await assert.rejects(lstat(dropin), { code: 'ENOENT' });
+          const state = join(env.XDG_STATE_HOME!, 'pinote/backend-switch');
+          const [id] = await readdir(join(state, 'backups'));
+          const pending = join(state, 'pending.json');
+          await writeFile(pending, await readFile(join(state, 'backups', id, 'manifest.json')), { mode: 0o600 });
+          await recoverBackendSwitch({ ...env, PYTHONNOUSERSITE: '1', PATH: '.' }, undefined, dependencies);
+          await assert.rejects(lstat(pending), { code: 'ENOENT' });
+        }
         else assert.match(await readFile(dropin, 'utf8'), /ExecStart=:\/usr\/bin\/env /);
         const different = { ...env, PINOTE_ELECTRON_BACKEND: '/another/explicit/backend' };
         assert.equal((await preferredBackendEnvironment(different)).PINOTE_ELECTRON_BACKEND, different.PINOTE_ELECTRON_BACKEND);
