@@ -15,9 +15,9 @@ const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
 const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
-// Keep the desktop's embedded service off: no personal token, settings or listener.
+// Keep the desktop's embedded service off: without a token it neither listens nor runs a CLI.
 for (const name of ['PINOTE_TOKEN','PINOTE_TOKEN_FILE','PINOTE_HOST','PINOTE_PORT','PINOTE_ALLOWED_HOSTS','PINOTE_NOTE_COMMAND']) delete env[name];
-Object.assign(env,{PI_CODING_AGENT_DIR:join(root,'pi-agent'),PINOTE_NOTE_COMMAND:join(root,'no-note')});
+env.PI_CODING_AGENT_DIR=join(root,'pi-agent');
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
 const faultFile=join(root,'backend-fault');
 const slowAddMarker=join(root,'slow-add-dispatched');

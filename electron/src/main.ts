@@ -151,11 +151,12 @@ async function boot() {
   // The task service and its watchers live exactly as long as this desktop.
   service = (async () => {
     try {
-      // The service only invokes its CLI per request; do not listen without one.
-      if (!/^pinote \d/.test(await runCommand(process.env.PINOTE_NOTE_COMMAND || 'note', ['--version'], process.env, undefined, 10000))) throw new Error();
       const { startPinoteHttpServer } = await import(pathToFileURL(join(bundles, 'service/http.mjs')).href);
       return await startPinoteHttpServer({ logPath: logFile }) as { close(): Promise<void> };
-    } catch { log('Pinote service did not start; check its token, port and note CLI. The desktop remains usable.'); }
+    } catch (error) {
+      log((error as NodeJS.ErrnoException).code === 'EADDRINUSE' ? 'Pinote service did not start: its port is already in use, possibly by a standalone Pinote service. The desktop remains usable.'
+        : 'Pinote service did not start; check its token, host and port. The desktop remains usable.');
+    }
   })();
   const styleNonce = randomUUID();
   const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
