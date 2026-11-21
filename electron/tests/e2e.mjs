@@ -1059,6 +1059,7 @@ try {
     await writeFile(faultFile,'slow-edit');
     await text.fill('First delayed autosave');
     await delayedEditReady('First delayed autosave');
+    assert.ok(await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).isEnabled(),'The tag control must not flash disabled during autosave');
     await text.fill('Newer typing during save');
     await writeFile(faultFile,'');
     await saved(); assert.equal(snapshot().text,'Newer typing during save','In-flight typing must chain from the exact acknowledged revision');
@@ -1175,9 +1176,22 @@ try {
     await page.keyboard.press('Escape');
     await editDialog.waitFor({state:'detached'});
     await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Close flushes the debounce$/}).waitFor();
+    // Fields configured in Pi are editable before any agent has set them.
+    await mkdir(env.PI_CODING_AGENT_DIR,{recursive:true});
+    await writeFile(join(env.PI_CODING_AGENT_DIR,'pi-note.json'),JSON.stringify({footer:{fields:['PRs',{name:'Worktree'},'constructor']}}));
     await selectTaskAction(page, added.id, 'Edit text…');
     await saved(); assert.equal(await sourceValue(text),'Close flushes the debounce');
     assert.equal(snapshot().text,'Close flushes the debounce');
+    const prs='  indented Markdown\nhttps://example.test/pulls/2';
+    const worktree=editDialog.getByRole('textbox',{name:'Agent field Worktree',exact:true});
+    await editDialog.getByRole('textbox',{name:'Agent field PRs',exact:true}).fill(prs);
+    await worktree.fill('/tmp/work');
+    await saved(); assert.deepEqual(snapshot().agent_notes,{PRs:prs,Worktree:'/tmp/work'});
+    await page.screenshot({path:join(root,'editor-agent-fields.png')});
+    await worktree.fill(' ');
+    await saved(); assert.deepEqual(snapshot().agent_notes,{PRs:prs},'Clearing a value removes the field');
+    await page.waitForTimeout(900);
+    assert.equal(await page.locator(`[data-id="${added.id}"]`).getByRole('button',{name:'Unread agent update — click to view.',exact:true}).count(),0,'Your own field edit is not an unread agent update');
     await text.fill(original); await saved();
     await page.keyboard.press('Escape');
   }

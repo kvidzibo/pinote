@@ -9,11 +9,12 @@ const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 const id = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
 const str = (v: unknown, max = 16384) => typeof v === 'string' && v.length <= max;
 const nullable = (v: unknown) => v === null || str(v);
+const agentFields = (v: unknown, removable = false) => record(v) && Object.keys(v).length <= 64 && Object.entries(v).every(([k, value]) => str(k, 256) && (removable && value === null || str(value)));
 const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   handshake: {}, snapshot: { view: v => ['active', 'archive', 'scheduled'].includes(String(v)) },
   add: { text: str, tag: nullable }, edit: { id, revision: str, text: str },
   transition: { id, revision: str, state: v => ['active','in_progress','done','removed','scheduled'].includes(String(v)), action: v => ['start','reset','done','rm','restore'].includes(String(v)) },
-  tag: { id, revision: str, tag: nullable }, schedule: { id, revision: str, when: str },
+  tag: { id, revision: str, tag: nullable }, agent: { id, revision: str, fields: v => agentFields(v, true) }, schedule: { id, revision: str, when: str },
   create_tag: { name: str, folder: nullable, id: v => v === undefined || id(v), revision: v => v === undefined || str(v) },
   rename_tag: { name: str, newName: str }, delete_tag: { name: str }, tag_folder: { name: str, folder: nullable },
   completions: { ids: v => Array.isArray(v) && v.length <= 1000 && v.every(id) },
@@ -37,6 +38,16 @@ export function validPreviewRequest(value: unknown): value is PreviewRequest {
   return record(value) && Object.keys(value).every(k => ['token','data','point'].includes(k)) &&
     id(value.token) && validPreviewData(value.data) && record(value.point) && Object.keys(value.point).every(k => ['x','y'].includes(k)) &&
     validMenuRequest({ ...value.point, kind: 'app' });
+}
+// Names of the handoff fields in Pi's pi-note.json, as its footer settings accept them.
+export function agentFieldNames(config: unknown): string[] {
+  const fields = record(config) && record(config.footer) ? config.footer.fields : undefined;
+  if (!Array.isArray(fields) || fields.length > 64) return [];
+  const names = fields.map(entry => {
+    const source = typeof entry === 'string' ? entry : record(entry) ? entry.name ?? entry.label : undefined;
+    return typeof source === 'string' && !/[\x00-\x1f\x7f-\x9f]/u.test(source) ? source.normalize('NFC').trim() : '';
+  });
+  return [...new Set(names.filter(name => name && [...name].length <= 64))];
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
 function validTaskActionPreferences(value: unknown, ids: readonly string[], legacy: boolean): boolean {
@@ -68,7 +79,7 @@ export function validState(value: unknown): value is UIState {
   if (!str(value.draft, 65536) || !str(value.warning, 4096)) return false;
   if (value.filters !== null && (!Array.isArray(value.filters) || value.filters.length > 10000 || !value.filters.every(v => str(v, 256)))) return false;
   if (!record(value.read) || !Object.entries(value.read).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)) return false;
-  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision','pendingTag','pendingTagFolder'].includes(x)) && str(v.text,65536) && str(v.revision,128) && (!Object.hasOwn(v, 'pendingTag') || v.pendingTag === null || str(v.pendingTag,256)) && (!Object.hasOwn(v, 'pendingTagFolder') || typeof v.pendingTag === 'string' && (v.pendingTagFolder === null || str(v.pendingTagFolder)))) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
+  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision','pendingTag','pendingTagFolder','fields'].includes(x)) && (!Object.hasOwn(v, 'fields') || agentFields(v.fields)) && str(v.text,65536) && str(v.revision,128) && (!Object.hasOwn(v, 'pendingTag') || v.pendingTag === null || str(v.pendingTag,256)) && (!Object.hasOwn(v, 'pendingTagFolder') || typeof v.pendingTag === 'string' && (v.pendingTagFolder === null || str(v.pendingTagFolder)))) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function safeLink(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x20\x7f]/.test(value)) return false;
@@ -94,6 +105,9 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
   }
   if (typeof result.changed !== 'boolean' || (result.id !== undefined && !id(result.id)) || (result.tag !== undefined && !str(result.tag,256))) return false;
   if (Object.hasOwn(result, 'revision') && (typeof result.revision !== 'string' || !str(result.revision,128) || !result.revision || /[\p{C}\p{Z}]/u.test(result.revision.replaceAll(' ', '')))) return false;
+  if (result.agentEvent !== undefined && !(typeof result.agentEvent === 'number' && Number.isSafeInteger(result.agentEvent) && result.agentEvent >= 0)) return false;
+  // The editor needs the event to keep its own field edit from showing as unread.
+  if (operation === 'agent') return id(result.id) && typeof result.revision === 'string' && typeof result.agentEvent === 'number';
   if (operation === 'add') return result.changed && id(result.id);
   return operation !== 'create_tag' || (typeof result.tag === 'string' && result.tag.length > 0);
 }

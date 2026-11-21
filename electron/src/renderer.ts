@@ -828,6 +828,8 @@ async function edit(task: Task): Promise<void> {
     await closedEdits.get(task.id);
     task = active?.notes.find(t => t.id === task.id) ?? task;
   }
+  const configuredFields = await api.agentFields().catch(() => [] as string[]);
+  task = active?.notes.find(t => t.id === task.id) ?? task;
   if (closing) return;
   const existing = layers.find(l => l.kind === 'edit' && l.taskId === task.id); if (existing) { existing.panel.focus(); return; }
   const id = String(task.id), modal = layer(`Edit task ${task.id}`, 'edit', task.id);
@@ -839,11 +841,27 @@ async function edit(task: Task): Promise<void> {
   let work: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const editorHost = el('div', undefined, 'edit-text');
-  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, () => {
+  const changed = () => {
     if (readonly || closing || conflict) return;
     retain(); check(); clearTimeout(timer);
     if (!paused) timer = setTimeout(() => { void track(save()); }, 650);
-  }, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && editor.value === savedText && queuedTag === undefined) modal.close(); })); });
+  };
+  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, changed, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && !dirty()) modal.close(); })); });
+  // Configured fields are offered even without a value; clearing a value removes the field.
+  const savedFields = new Map(Object.entries(task.agent_notes)), draftFields = new Map(Object.entries(draft.fields ?? {}));
+  const fieldInputs = new Map<string, HTMLTextAreaElement>();
+  const fieldList = el('div', undefined, 'edit-fields'); fieldList.setAttribute('role', 'group'); fieldList.setAttribute('aria-label', 'Agent fields');
+  fieldList.append(el('h3', 'Agent fields'));
+  for (const name of new Set([...configuredFields, ...savedFields.keys(), ...draftFields.keys()])) {
+    const input = el('textarea'); input.rows = 1; input.spellcheck = false; input.placeholder = 'Not set';
+    input.value = draftFields.get(name) ?? savedFields.get(name) ?? ''; input.setAttribute('aria-label', `Agent field ${name}`);
+    input.addEventListener('input', changed);
+    const row = el('label'), label = el('span', name); label.title = name; row.append(label, input); fieldList.append(row); fieldInputs.set(name, input);
+  }
+  fieldList.hidden = !fieldInputs.size;
+  // Values are kept verbatim (Markdown indentation matters); only a blank value means removal.
+  const pendingFields = (): Record<string, string> => Object.fromEntries([...fieldInputs].map(([name, input]) => [name, input.value.trim() ? input.value : '']).filter(([name, value]) => value !== (savedFields.get(name) ?? '')));
+  const dirty = () => editor.value !== savedText || queuedTag !== undefined || Object.keys(pendingFields()).length > 0;
   const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
   const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
   const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async (name, folder) => {
@@ -872,16 +890,20 @@ async function edit(task: Task): Promise<void> {
     state.edits[id] = { text: editor.value, revision,
       ...(queuedTag !== undefined ? { pendingTag: queuedTag } : {}),
       ...(queuedFolder !== undefined ? { pendingTagFolder: queuedFolder } : {}),
+      ...(Object.keys(pendingFields()).length ? { fields: pendingFields() } : {}),
     };
     saveSoon();
   }
   function check(): void {
     const current = active?.notes.find(t => t.id === task.id);
     if (!saving && (!current || current.updated_at !== revision)) conflict = true;
-    editor.readOnly = readonly || closing || conflict;
+    const locked = readonly || closing || conflict;
+    editor.readOnly = locked;
+    for (const input of fieldInputs.values()) input.readOnly = locked;
     tagName.textContent = (queuedTag === undefined ? tag : queuedTag) ?? 'Untagged';
     tagControl.title = `Change tag: ${tagName.textContent}${queuedTag === undefined ? '' : ' (not saved)'}`; tagControl.setAttribute('aria-label', tagControl.title);
-    tagControl.disabled = readonly || closing || conflict || paused || saving;
+    // Stays enabled while saving: a tag picked during an autosave is queued behind it.
+    tagControl.disabled = readonly || closing || conflict || paused;
     undoButton.disabled = readonly || closing || conflict || !undoDepth(editor.view.state);
     retryButton.hidden = !paused || conflict || readonly;
     retryButton.disabled = saving || closing;
@@ -889,8 +911,8 @@ async function edit(task: Task): Promise<void> {
     warning.textContent = readonly ? 'Saving paused. Copy your text and resolve the recovery notice before retrying.'
       : conflict ? 'Task changed elsewhere. Local changes kept; copy your text, then close and use draft recovery to reconcile with the latest task.'
       : paused ? 'Local changes kept. Review them, then retry saving. Nothing is retried automatically.' : '';
-    status.textContent = readonly || conflict ? 'Saving paused' : saving ? 'Saving…' : paused ? 'Not saved — retry' : editor.value !== savedText || queuedTag !== undefined ? 'Unsaved changes' : 'All changes saved';
-    status.classList.toggle('saved', !readonly && !conflict && !saving && !paused && editor.value === savedText && queuedTag === undefined);
+    status.textContent = readonly || conflict ? 'Saving paused' : saving ? 'Saving…' : paused ? 'Not saved — retry' : dirty() ? 'Unsaved changes' : 'All changes saved';
+    status.classList.toggle('saved', !readonly && !conflict && !saving && !paused && !dirty());
     if (readonly || conflict) clearTimeout(timer);
   }
   async function retry(): Promise<void> {
@@ -901,13 +923,17 @@ async function edit(task: Task): Promise<void> {
     clearTimeout(timer);
     if (work) return work;
     if (readonly || (closing && !draining) || conflict || paused) return Promise.resolve();
-    if (editor.value === savedText && queuedTag === undefined && state.edits[id]) { delete state.edits[id]; saveSoon(); }
+    if (!dirty() && state.edits[id]) { delete state.edits[id]; saveSoon(); }
     work = (async () => {
-      while (!readonly && (!closing || draining) && !conflict && !paused && (editor.value !== savedText || queuedTag !== undefined)) {
+      while (!readonly && (!closing || draining) && !conflict && !paused && dirty()) {
         const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, folder = queuedFolder, base = revision;
+        // One revision-bound write per pass: text, then tag, then agent fields.
+        const tagChanged = !textChanged && nextTag !== undefined, fields = pendingFields(), wasRead = !unread(task);
         retain(); saving = true; check();
         const result = textChanged
           ? await call('edit', { id: task.id, revision: base, text }, draining)
+          : !tagChanged
+            ? await call('agent', { id: task.id, revision: base, fields: Object.fromEntries(Object.entries(fields).map(([name, value]) => [name, value || null])) }, draining)
           : folder !== undefined
             ? await call('create_tag', { id: task.id, revision: base, name: nextTag!, folder }, draining)
             : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
@@ -921,16 +947,20 @@ async function edit(task: Task): Promise<void> {
         }
         revision = result.revision; editEpoch++;
         if (textChanged) savedText = text;
+        else if (!tagChanged) for (const [name, value] of Object.entries(fields)) { if (value) savedFields.set(name, value); else savedFields.delete(name); }
         else {
           tag = result.tag ?? nextTag!;
           if (queuedTag === nextTag && queuedFolder === folder) { queuedTag = undefined; queuedFolder = undefined; }
         }
+        // Your own field edit is not an unread agent update, even if a newer snapshot already replaced this revision.
+        if (!textChanged && !tagChanged && wasRead && result.agentEvent !== undefined) state.read[id] = Math.max(state.read[id] ?? 0, result.agentEvent);
         const current = active?.notes.find(t => t.id === task.id);
         if (current && (current.updated_at === base || current.updated_at === revision)) {
           current.updated_at = revision; current.text = savedText.replace(/\r\n/g, '\n').trim(); current.tag = tag;
+          if (!textChanged && !tagChanged) { current.agent_notes = Object.fromEntries(savedFields); current.agent_event_id = result.agentEvent ?? current.agent_event_id; }
           task = current;
         }
-        if (editor.value === savedText && queuedTag === undefined) delete state.edits[id]; else retain();
+        if (!dirty()) delete state.edits[id]; else retain();
         saveSoon(); saving = false; check();
         renderTasks();
       }
@@ -949,7 +979,7 @@ async function edit(task: Task): Promise<void> {
     const done = track(flush().finally(() => { editor.destroy(); editFlushers.delete(flush); closedEdits.delete(task.id); }));
     closedEdits.set(task.id, done);
   };
-  modal.panel.append(warning, editorHost, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
+  modal.panel.append(warning, editorHost, fieldList, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
 }
 function recoverDrafts(): void {
   const modal = layer('Recover edit drafts');
@@ -961,6 +991,7 @@ function recoverDrafts(): void {
       row.append(el('h3', `Task ${id}`), el('p', `Revision: ${draft.revision}`, 'metadata'));
       if (draft.pendingTag !== undefined) row.append(el('p', `Pending tag: ${draft.pendingTag ?? 'Untagged'}`, 'metadata'));
       if (draft.pendingTagFolder !== undefined) row.append(el('p', `New tag folder: ${draft.pendingTagFolder ?? 'None'}`, 'metadata'));
+      for (const [name, value] of Object.entries(draft.fields ?? {})) row.append(el('p', `Pending agent field ${name}: ${value || '(removed)'}`, 'metadata'));
       const text = el('textarea', undefined, 'recovery-text'); text.value = draft.text; text.readOnly = true; text.setAttribute('aria-label', `Private draft for task ${id}`); row.append(text);
       const bar = controls(row);
       bar.append(button('copy', 'Copy private draft', () => api.copy(draft.text)), button('edit', 'Open revision-bound editor', () => {

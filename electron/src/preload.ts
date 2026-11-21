@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BackendApi, PinoteApi } from './protocol.ts';
 
-const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','schedule','create_tag','rename_tag','delete_tag','tag_folder','completions','kitty'].map(operation => [operation, (params: unknown) => ipcRenderer.invoke('backend', operation, params)])) as BackendApi;
+const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','agent','schedule','create_tag','rename_tag','delete_tag','tag_folder','completions','kitty'].map(operation => [operation, (params: unknown) => ipcRenderer.invoke('backend', operation, params)])) as BackendApi;
 const api: PinoteApi = {
   ...backend,
+  agentFields: () => ipcRenderer.invoke('agent-fields'),
   backendSettings: () => ipcRenderer.invoke('backend-settings'),
   switchBackend: () => ipcRenderer.invoke('switch-backend'),
   onBackendSwitchProgress: callback => { ipcRenderer.removeAllListeners('backend-switch-progress'); ipcRenderer.on('backend-switch-progress', (_event, text) => callback(text)); },

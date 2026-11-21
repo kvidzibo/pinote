@@ -1,5 +1,5 @@
 import { Store, NoteError } from './store.ts';
-import { validate_tag, validate_text, validate_folder, pythonStrip, timestamp } from './compat.ts';
+import { validate_tag, validate_text, validate_folder, validateAgentPatch, pythonStrip, timestamp } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
@@ -12,7 +12,7 @@ const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge 
 const conflict = (): never => { throw new BridgeError('conflict', 'This task changed elsewhere. Refresh before trying again.'); };
 export const safe_id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 const sources: Record<string, string[]> = { start: ['active'], reset: ['in_progress'], done: ['active', 'in_progress'], rm: ['active', 'in_progress'], restore: ['done', 'removed', 'scheduled'] };
-const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'] };
+const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'] };
 // A bounded recursive-descent decoder retains numeric token types and rejects duplicate
 // keys before JSON.parse could silently erase either distinction.
 export function decode(data: Uint8Array): unknown {
@@ -66,6 +66,8 @@ export function validate(request: any): [string, Record<string, any>] {
     if (key === 'id') { if (!safe_id(v)) invalid(); }
     else if (key === 'ids') { if (!Array.isArray(v) || v.length > 1000 || !v.every(safe_id)) invalid(); }
     else if (v === null && ['tag', 'folder'].includes(key)) continue;
+    // A null field value removes that field; labels and values are validated below.
+    else if (key === 'fields') { if (!isObject(v) || Object.keys(v).length > 64 || !Object.values(v).every(value => value === null || typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value))) invalid(); }
     else if (typeof v !== 'string' || /[\uD800-\uDFFF]/u.test(v)) invalid();
   }
   if (Object.hasOwn(p, 'revision') && (!p.revision || Array.from(p.revision).length > 128 || /[\p{C}\p{Zl}\p{Zp}]|[^\S\x20]/u.test(p.revision) || /[\p{Zs}]/u.test(p.revision.replaceAll(' ', '')))) invalid();
@@ -75,6 +77,7 @@ export function validate(request: any): [string, Record<string, any>] {
   // logging, the display lock, or SQLite, even on a fresh profile.
   if (op === 'add' || op === 'edit') validate_text(p.text);
   if (Object.hasOwn(p, 'tag')) validate_tag(p.tag);
+  if (op === 'agent') validateAgentPatch(...agentPatch(p.fields));
   if (['create_tag', 'rename_tag', 'delete_tag', 'tag_folder'].includes(op)) {
     if (validate_tag(p.name) === null) throw new NoteError('Tag name cannot be empty.');
     if (op === 'rename_tag' && validate_tag(p.newName) === null) throw new NoteError('Tag name cannot be empty.');
@@ -84,6 +87,10 @@ export function validate(request: any): [string, Record<string, any>] {
   if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   return [op, p];
 }
+const agentPatch = (fields: Record<string, string | null>): [Record<string, string>, string[]] => {
+  const entries = Object.entries(fields);
+  return [Object.fromEntries(entries.filter(([, v]) => v !== null)) as Record<string, string>, entries.filter(([, v]) => v === null).map(([k]) => k)];
+};
 export async function dispatch(op: string, p: Record<string, any>, paths: Paths): Promise<any> {
   checkCancelled();
   if (op === 'handshake') return { version: VERSION, protocol: PROTOCOL, database: resolvePath(paths.database) };
@@ -105,6 +112,10 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
       if (op === 'add') return { changed: true, id: store.add(p.text, { tag: p.tag }) };
       if (op === 'transition') { changed = store.transition(id!, p.action, { ...options, expected_states: new Set([p.state]) }); if (!changed) conflict(); }
       else if (op === 'edit' || op === 'tag') { const [changed, revision] = op === 'edit' ? store.edit_with_revision(id!, p.text, options) : store.set_tag_with_revision(id!, p.tag, options); return { changed, ...target, revision }; }
+      else if (op === 'agent') {
+        const note = store.update_agent(id!, ...agentPatch(p.fields), options);
+        return { changed: note.updated_at !== p.revision, ...target, revision: note.updated_at, agentEvent: note.agent_event_id };
+      }
       else if (op === 'schedule') changed = store.schedule(id!, parse_reminder_time(p.when), options);
       else if (op === 'create_tag') {
         const name = validate_tag(p.name); if (name === null) throw new NoteError('Tag name cannot be empty.');
