@@ -141,7 +141,7 @@ async function boot() {
   const startFieldRunner = () => {
     if (quitting) return;
     if (!fieldDatabase) { log('Cannot start Electron field automation; the notes database identity could not be verified.'); return; }
-    fieldRunner = desktopFieldRunner(bundles, fieldDatabase, command, switchRuntime, log);
+    fieldRunner = desktopFieldRunner(bundles, fieldDatabase, command, log);
     fieldRunner.start();
   };
   try {

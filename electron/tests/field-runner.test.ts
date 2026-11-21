@@ -74,16 +74,15 @@ test('relocated field runtime pins the CLI and supervises enabled local watchers
     const database = join(data, 'pinote/notes.db');
     assert.equal(handshake.result.database, database);
     const command = { executable: process.execPath, args: [bridge] };
-    const runtime = () => ({ bundles, node: process.execPath });
+    assert.throws(() => fieldDatabaseIdentity(database, { ...env, PINOTE_ELECTRON_BACKEND: '/wrapper' }), /bundled desktop bridge/);
     const profile = fieldDatabaseIdentity(database, { ...env, PINOTE_TASK_RESPONSE: '1' });
-    const bundled = await fieldNoteCommand(bundles, profile, command, runtime);
+    const bundled = await fieldNoteCommand(bundles, profile, command);
     const launcher = join(bin, 'note');
     const unexpected = join(root, 'unrelated-note-ran');
     writeFileSync(launcher, `#!/bin/sh\ntouch '${unexpected}'\nexit 1\n`, { mode: 0o700 });
-    const legacy = await fieldNoteCommand(bundles, profile, { executable: '/legacy', args: [] }, runtime);
-    assert.deepEqual(legacy, bundled);
-    assert.equal(legacy.noteEnv.PINOTE_NOTE_COMMAND, undefined);
-    assert.equal(legacy.noteEnv.PINOTE_TASK_RESPONSE, undefined);
+    await assert.rejects(fieldNoteCommand(bundles, profile, { executable: '/legacy', args: [] }), /bundled desktop bridge/);
+    assert.equal(bundled.noteEnv.PINOTE_NOTE_COMMAND, undefined);
+    assert.equal(bundled.noteEnv.PINOTE_TASK_RESPONSE, undefined);
     const retarget = (target: string) => { unlinkSync(env.XDG_DATA_HOME); symlinkSync(target, env.XDG_DATA_HOME); };
     const otherData = join(root, 'other-data');
     mkdirSync(otherData);
@@ -91,7 +90,8 @@ test('relocated field runtime pins the CLI and supervises enabled local watchers
     assert.equal(profile.matches(), false, 'Desktop bridge now selects a different database');
     assert.equal(cli('agent', 'add', '--text', 'Other profile').id, task.id);
     assert.notEqual(cli('agent', 'get', String(task.id)).agent_notes.Next, 'review');
-    for (const { noteCommand, noteArgs, noteEnv } of [bundled, legacy]) {
+    {
+      const { noteCommand, noteArgs, noteEnv } = bundled;
       const result = spawnSync(noteCommand, [...(noteArgs ?? []), '--no-notify', 'agent', 'get', String(task.id)],
         { cwd: root, env: noteEnv, encoding: 'utf8', timeout: 10_000 });
       assert.equal(result.status, 0, result.stderr);
@@ -111,7 +111,7 @@ test('relocated field runtime pins the CLI and supervises enabled local watchers
       const observer = await FieldAutomation.observe({ database });
       const logs = [];
       const runner = desktopFieldRunner(bundles, fieldDatabaseIdentity(database, process.env), { executable: process.execPath, args: [bridge] },
-        () => { throw new Error('The bundled CLI does not need an override probe'); }, message => logs.push(message));
+        message => logs.push(message));
       runner.start();
       try {
         const deadline = Date.now() + 5000;
@@ -153,7 +153,7 @@ test('relocated field runtime pins the CLI and supervises enabled local watchers
         import { desktopFieldRunner, fieldDatabaseIdentity } from ${JSON.stringify(new URL('../src/field-runner.ts', import.meta.url).href)};
         const [bundles, database, bridge] = process.argv.slice(1);
         const runner = desktopFieldRunner(bundles, fieldDatabaseIdentity(database, process.env), { executable: process.execPath, args: [bridge] },
-          () => { throw new Error('Unexpected override probe'); }, console.error);
+          console.error);
         process.once('SIGTERM', async () => { await runner.stop(); process.exit(0); });
         runner.start();
         setInterval(() => {}, 1000);
@@ -250,7 +250,7 @@ test('desktop stops on notes database replacement without running or publishing 
         const profile = fieldDatabaseIdentity(database, process.env);
         const logs = [];
         const runner = desktopFieldRunner(bundles, profile, { executable: process.execPath, args: ['bundled'] },
-          () => assert.fail('Unexpected runtime fallback'), message => logs.push(message));
+          message => logs.push(message));
         let state;
         const query = sql => state.prepare(sql).get();
         try {

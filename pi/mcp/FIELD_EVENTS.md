@@ -4,6 +4,8 @@ Pinote Electron **0.14.0+** runs enabled field watchers while the desktop is ope
 
 The HTTP service requests task-response metadata from its selected CLI
 (`PINOTE_NOTE_COMMAND`, or `note` on PATH) using `PINOTE_TASK_RESPONSE=1`.
+Desktop automation requires the bundled bridge: a `PINOTE_ELECTRON_BACKEND` override can choose a different database on each call, so Electron disables watchers in this mode. Ordinary task UI and HTTP access remain available.
+
 Use a Node or Python CLI build that supports this opt-in format. A trusted
 wrapper must preserve the environment flag and forward the response intact;
 do not attach identity from a separate probe. Regular CLI task JSON and Pi task

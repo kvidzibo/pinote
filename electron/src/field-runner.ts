@@ -6,10 +6,10 @@ import { discoverPaths, realpathUtf8, resolvePath } from '../../backend/src/runt
 import { backendEnvironment, type backendCommand } from './backend-command.ts';
 import { verifySwitchPaths } from './backend-switch.ts';
 
-type SwitchRuntime = () => { node: string };
 const sameFile = (original: BigIntStats, current: BigIntStats) => original.dev === current.dev && original.ino === current.ino;
 
 export function fieldDatabaseIdentity(database: string, environment: NodeJS.ProcessEnv) {
+  if (environment.PINOTE_ELECTRON_BACKEND !== undefined) throw new Error('Watcher execution requires the bundled desktop bridge.');
   const desktopEnv = backendEnvironment(environment);
   const noteEnv = { ...desktopEnv };
   verifySwitchPaths(noteEnv);
@@ -64,14 +64,12 @@ export function fieldDatabaseIdentity(database: string, environment: NodeJS.Proc
 
 type FieldDatabase = ReturnType<typeof fieldDatabaseIdentity>;
 
-export async function fieldNoteCommand(bundles: string, profile: FieldDatabase, command: ReturnType<typeof backendCommand>,
-  switchRuntime: SwitchRuntime) {
-  // Even with a Python desktop override, do not run a PATH note or a service
-  // wrapper that can select another profile between reads.
+export async function fieldNoteCommand(bundles: string, profile: FieldDatabase, command: ReturnType<typeof backendCommand>) {
+  if (!command.args.length) throw new Error('Watcher execution requires the bundled desktop bridge.');
   if (!profile.matches()) throw new Error('The notes database changed during setup.');
   const cli = join(bundles, 'cli.mjs');
   await access(cli, constants.R_OK);
-  return { noteCommand: command.args.length ? command.executable : switchRuntime().node, noteArgs: [cli], noteEnv: profile.noteEnv };
+  return { noteCommand: command.executable, noteArgs: [cli], noteEnv: profile.noteEnv };
 }
 
 type Scheduler = { start(): void; close(): Promise<void> };
@@ -113,9 +111,9 @@ export class FieldRunner {
 }
 
 export function desktopFieldRunner(bundles: string, profile: FieldDatabase, command: ReturnType<typeof backendCommand>,
-  switchRuntime: SwitchRuntime, log: (message: string) => void) {
+  log: (message: string) => void) {
   return new FieldRunner(async () => {
-    const cli = await fieldNoteCommand(bundles, profile, command, switchRuntime);
+    const cli = await fieldNoteCommand(bundles, profile, command);
     const { openDesktopFieldAutomation } = await import(pathToFileURL(join(bundles, 'field-events.mjs')).href) as typeof import('./field-runtime.ts');
     let stopped = false;
     const databaseMatches = () => {
