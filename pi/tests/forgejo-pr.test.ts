@@ -94,7 +94,10 @@ globalThis.fetch = async (url, options) => {
     assert.equal(run({ pages: [page([{ ...check, status }])] }).output.state,
       ['error', 'failure', 'warning'].includes(status) ? 'failed' : status === 'pending' ? 'pending' : 'passing');
   }
-  assert.equal(run({ pages: [] }).output.state, 'pending');
+  const unchecked = run({ pages: [] }).output;
+  assert.equal(unchecked.state, 'passing', 'A mergeable PR without CI awaits nothing');
+  assert.equal(unchecked.summary, 'PR #42 has no checks');
+  assert.equal(run({ pages: [], pulls: [{ ...pr, mergeable: false }] }).output.state, 'pending');
   const unmergeable = run({ pulls: [{ ...pr, mergeable: false }] }).output;
   assert.equal(unmergeable.state, 'pending');
   assert.equal(unmergeable.display?.color, 'warning');
@@ -159,7 +162,7 @@ globalThis.fetch = async (url, options) => {
   const routes = {
     passing: {},
     failed: { pages: [page([{ ...check, status: 'failure' }])] },
-    pending: { pages: [] },
+    pending: { pages: [page([{ ...check, status: 'pending' }])] },
     merged: { pulls: [{ state: 'closed', merged: true }] },
     closed: { pulls: [{ state: 'closed', merged: false }] },
     broken: { fail: true },

@@ -203,8 +203,9 @@ desktop when changing its environment.
 Forgejo checks the current head's latest commit statuses across all pages, including
 Forgejo Actions jobs published as commit statuses. Failures trigger the owning
 worker, unchanged alerts are deduplicated, and merged/closed PRs stop polling.
-No reported statuses means pending, not passing. Passing describes reported CI
-only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
+A mergeable PR with no reported statuses is passing ("has no checks"), so repositories
+without CI show green; so does one whose CI has not reported yet, until its first
+status arrives. Passing describes reported CI only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
 can also mean checking, an error or a draft, so it remains pending rather than
 triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
 Checks run every 60 seconds. Legacy `PR` API/configuration errors retry after

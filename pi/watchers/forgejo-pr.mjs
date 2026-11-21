@@ -134,8 +134,9 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
       notification: { key: `forgejo-pr:${fingerprint}`, message: 'PR checks failed' }, recheckAfterSeconds: 60 };
   }
   // mergeable=false also means checking, errors or drafts: never invent a conflict alert.
-  const pending = !current.mergeable || checks.length === 0 || checks.some((check) => check.status === 'pending');
-  return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : 'checks passing'}`,
+  const pending = !current.mergeable || checks.some((check) => check.status === 'pending');
+  // No statuses on a mergeable PR: the repository reports no CI, so nothing is awaited.
+  return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : checks.length ? 'checks passing' : 'has no checks'}`,
     display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
 }
 
