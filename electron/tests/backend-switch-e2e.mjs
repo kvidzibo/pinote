@@ -74,6 +74,9 @@ try {
   const before = await readFile(join(root, '.local/bin/note'), 'utf8');
   await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }); });
   await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).click();
+  // The IPC preflight is asynchronous: wait for cancellation before changing
+  // the dialog response for the next click.
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Switch to Node backend"]').disabled);
   assert.equal(await readFile(join(root, '.local/bin/note'), 'utf8'), before, 'Cancellation has no install effects');
   // Prevent an unmanaged relaunch in the test; reopen via Playwright below.
   await app.evaluate(({ app, dialog }) => { app.relaunch = () => {}; dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false }); });
