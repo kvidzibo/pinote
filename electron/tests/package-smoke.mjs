@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -21,6 +23,13 @@ for(const command of ['node','flock','i3','i3-msg','xdotool','import','which']) 
   await symlink(located.stdout.trim(),join(root,'bin',command));
 }
 env.PATH=join(root,'bin');
+// The desktop hosts the task service on a private port for exactly its own lifetime.
+const token='isolated-package-test-token-'.repeat(3);
+const port=await new Promise(done=>{const probe=createServer().listen(0,'127.0.0.1',()=>{const {port}=probe.address();probe.close(()=>done(port));});});
+Object.assign(env,{PINOTE_TOKEN:token,PINOTE_PORT:String(port),PINOTE_NOTE_COMMAND:resolve('../backend/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
+const piRequire=createRequire(resolve('../pi/package.json'));
+const { Client }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/index.js'));
+const { StreamableHTTPClientTransport }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
 assert.equal(spawnSync('python3',['--version'],{env}).error?.code,'ENOENT');
 const run = (command,args,options={})=>spawnSync(command,args,{env,encoding:'utf8',timeout:10000,...options});
 const call = (operation,params)=>{
@@ -41,6 +50,14 @@ try {
   let windowId;
   await wait(()=>{ const p=run('xdotool',['search','--all','--pid',String(app.pid),'--name','^Pinote$']); windowId=p.stdout.trim().split('\n')[0]; return p.status===0&&!!windowId; });
   await new Promise(r=>setTimeout(r,650));
+  const client=new Client({name:'package-smoke',version:'1'});
+  await wait(()=>fetch(`http://127.0.0.1:${port}/mcp`).then(r=>r.status===401,()=>false));
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`),{requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
+  const context={'native-ui/context':{conversationId:'package-smoke',state:{screen:'settings'}}};
+  const tags=await client.callTool({name:'tags',arguments:{},_meta:context}); assert.ok(!tags.isError,JSON.stringify(tags));
+  const view=await client.readResource({uri:(await client.listResources()).resources[0].uri,_meta:context});
+  assert.match(view.contents[0].text,/resources\/pinote-backend\/service\/watchers\/github-pr\.mjs/);
+  await client.close();
   const tree=JSON.parse(run('i3-msg',['-s',socket,'-t','get_tree']).stdout);
   const find=n=>n.window_properties?.title==='Pinote'?n:[...(n.nodes||[]),...(n.floating_nodes||[])].map(find).find(Boolean);
   const node=find(tree); assert.ok(node); assert.ok(node.floating==='auto_on'||node.floating==='user_on'); assert.ok(node.rect.width<=420);
@@ -57,6 +74,9 @@ try {
   await new Promise(r=>setTimeout(r,200));
   const stopped=new Promise(r=>app.once('close',r));
   run('xdotool',['key','Escape']); await stopped; app=undefined;
+  await assert.rejects(fetch(`http://127.0.0.1:${port}/mcp`));
+  const logs=join(env.XDG_STATE_HOME,'pinote/electron'), log=await readFile(join(logs,(await readdir(logs))[0],'app.log'),'utf8');
+  assert.match(log,/Pinote HTTP listening/); assert.match(log,/Pinote HTTP stopped/); assert.doesNotMatch(log,/failed|did not/);
   const statePath=join(env.XDG_DATA_HOME,'pinote/electron/state.json');
   assert.equal(JSON.parse(await readFile(statePath,'utf8')).draft,'Packaged unfinished draft');
   // Corrupt drafts must remain intact even if the read-only window is opened and closed.
