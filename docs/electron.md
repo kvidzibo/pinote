@@ -250,6 +250,9 @@ Kitty launching uses the existing backend integration and its prerequisites;
 see [GTK controls](gui.md). Tab titles omit leading
 Markdown heading markers (`# ` through `###### `) before the 30-character limit;
 tags and saved task text stay unchanged. The frontend does not send Dunst notifications.
+**Set reminder…** opens a local date-time picker preset to the current minute, or
+to the existing reminder time. Daylight-saving times that are skipped or repeated
+are rejected; choose another time or use `note schedule` with an explicit offset.
 Due reminders activate on backend refresh, not through a new alarm service.
 
 ## Shared tasks, separate UI state, and recovery

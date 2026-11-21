@@ -1195,7 +1195,13 @@ try {
   await page.keyboard.press('Escape');
   await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   await selectTaskAction(page, added.id, 'Set reminder…');
-  await page.getByRole('textbox',{name:'When (local time)',exact:true}).fill('2099-01-01 12:00');
+  const when = page.getByLabel('When (local time)',{exact:true});
+  assert.equal(await when.getAttribute('type'),'datetime-local');
+  // The picker opens on the current local minute.
+  const picked = await when.inputValue(), now = Date.now();
+  assert.match(picked,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  assert.ok(Math.abs(new Date(picked).getTime() - now) < 120000, picked);
+  await when.fill('2099-01-01T12:00');
   await page.getByRole('button',{name:'Set reminder',exact:true}).click();
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
   assert.ok(call('snapshot',{view:'scheduled'}).notes.some(n=>n.id===added.id));
