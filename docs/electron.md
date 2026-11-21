@@ -84,6 +84,8 @@ when clicking Switch. Normal desktop updates must first install this app version
 its `setup` now also prepares the backend for the existing desktop updater.
 Keep the installed application's directory stable: the CLI launcher follows its
 bundled resources, so subsequent updates replace both runtimes together.
+**Refresh backend settings** checks the saved desktop preference and the installed
+user CLI. It does not report the live service state.
 
 The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
 `~/.config/pinote/backend.json`). It overrides only the exact backend override
@@ -93,8 +95,9 @@ environments remain available, but are not used by the selected Node runtime.
 
 Backups and interrupted-switch recovery are under
 `$XDG_STATE_HOME/pinote/backend-switch` (default `~/.local/state/pinote/backend-switch`).
-On failure, configuration is restored and the prior active service is restarted;
-task data is **never** automatically restored or converted. Interrupted rollback
+On failure, rollback restores configuration and verifies that the restarted service
+uses its original database. If it cannot verify that database, it stops the service
+and retains the recovery journal. Task data is **never** automatically restored or converted. Interrupted rollback
 is recovered on the next launch. Concurrent configuration edits are not overwritten:
 if recovery cannot finish, preserve `pending.json` and the private backups for repair.
 Original configuration inodes are also kept beside their paths as hidden

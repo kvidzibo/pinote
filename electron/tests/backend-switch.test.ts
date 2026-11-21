@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rm, lstat, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rename, rm, lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
@@ -148,7 +148,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await assert.rejects(operation, mode === 'interrupted' || mode === 'conflict' || mode === 'deletion' ? /rollback could not finish/ : /Injected restart failure/);
         if (mode === 'interrupted') {
           assert.equal(active, false); fail = false;
-          await recoverBackendSwitch(env, dependencies);
+          await recoverBackendSwitch(env, () => ({ node: process.execPath, bundles }), dependencies);
         }
         if (mode === 'conflict') assert.equal(await readFile(cli, 'utf8'), 'owner changed configuration');
         else if (mode === 'deletion') await assert.rejects(lstat(cli), { code: 'ENOENT' });
@@ -172,4 +172,91 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       await rm(root, { recursive: true, force: true });
     }
   }
+});
+
+test('rollback stops the service when an EnvironmentFile edit changes its database', async t => {
+  for (const mode of ['immediate', 'startup', 'startup-unknown'] as const) await t.test(mode, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pinote-switch-profile-'));
+    try {
+      const env = { HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_STATE_HOME: join(root, 'state'), XDG_DATA_HOME: join(root, 'profile-a'), PATH: `${root}/bin:/usr/bin:/bin` };
+      const profileB = join(root, 'profile-b');
+      const database = join(env.XDG_DATA_HOME, 'pinote/notes.db'), databaseB = join(profileB, 'pinote/notes.db');
+      const runtime = { node: process.execPath, bundles: resolve('../backend/dist') };
+      const script = resolve('../pi/dist-mcp/mcp/http.js'), old = resolve('../backend/bin/note');
+      const cli = join(root, '.local/bin/note'), dropin = join(env.XDG_CONFIG_HOME, 'systemd/user/pinote.service.d/90-node-backend.conf');
+      const environmentFile = join(root, 'service.env');
+      const pending = join(env.XDG_STATE_HOME, 'pinote/backend-switch/pending.json');
+      await mkdir(join(root, 'bin')); await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+      await symlink(runtime.node, join(root, 'bin/node'));
+      await mkdir(dirname(cli), { recursive: true }); await symlink(old, cli);
+      for (const [profile, note] of [[env.XDG_DATA_HOME, 'Original task'], [profileB, 'Other profile task']]) {
+        await runCommand(runtime.node, [join(runtime.bundles, 'cli.mjs'), '--no-notify', note], { ...env, XDG_DATA_HOME: profile });
+      }
+      const source = await readFile(database), other = await readFile(databaseB);
+      // The running process still sees A, but systemd will read the edited file on the next start.
+      const edited = `XDG_DATA_HOME=${profileB}\n`;
+      await writeFile(environmentFile, edited);
+      let active = true, runningData = env.XDG_DATA_HOME, canReadProcess = true;
+      const starts: string[] = [];
+      const dependencies = {
+        updateLock: join(root, 'update-lock/update.lock'),
+        processArguments: async () => [runtime.node, script],
+        processExecutable: async () => runtime.node,
+        processDirectory: async () => resolve('..'),
+        processEnvironment: async () => {
+          if (!canReadProcess) throw new Error('Injected unreadable process environment');
+          const override = await readFile(dropin, 'utf8').catch(() => '');
+          return { ...env, XDG_DATA_HOME: runningData, PINOTE_NOTE_COMMAND: starts.length && override.includes('ExecStart=:/usr/bin/env ') ? cli : old };
+        },
+        listening: async () => {}, wait: async () => {},
+        run: async (executable: string, args: string[], childEnv: NodeJS.ProcessEnv, input?: string) => {
+          if (executable === '/usr/bin/busctl') return JSON.stringify({ type: 'a(sasasttttuii)', data: [[runtime.node, [runtime.node, script], []]] });
+          if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
+          if (args[1] === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? process.pid : 0}\n`;
+          if (args[1] === 'stop') active = false;
+          if (args[1] === 'start') {
+            runningData = (await readFile(environmentFile, 'utf8')).trimEnd().slice('XDG_DATA_HOME='.length);
+            starts.push(runningData); active = true;
+          }
+          return '';
+        },
+      };
+      const changed = /different database.*EnvironmentFile.*service was stopped.*pending\.json/;
+      const operation = switchToNode({ env, ...runtime, database }, message => {
+        if (mode !== 'immediate' && message.startsWith('Switch failed.')) throw new Error('Injected interruption before rollback');
+      }, dependencies);
+      if (mode === 'immediate') await assert.rejects(operation, changed);
+      else {
+        await assert.rejects(operation, /Injected interruption before rollback/);
+        assert.equal(active, true); assert.deepEqual(starts, [profileB]);
+        canReadProcess = mode !== 'startup-unknown';
+        await assert.rejects(recoverBackendSwitch(env, () => runtime, dependencies), canReadProcess ? changed : /Cannot verify the restored service database.*service was stopped.*pending\.json/);
+      }
+      assert.deepEqual(starts, [profileB, profileB], 'Both the failed switch and rollback restarted under the edited environment');
+      assert.equal(active, false);
+      assert.equal(await readlink(cli), old);
+      await assert.rejects(lstat(dropin), { code: 'ENOENT' });
+      const journal = JSON.parse(await readFile(pending, 'utf8'));
+      assert.equal(journal.originalDatabase.path, database);
+      assert.equal(journal.complete, false);
+      assert.equal(await readFile(environmentFile, 'utf8'), edited, 'Recovery must preserve the owner’s EnvironmentFile edit');
+      assert.deepEqual(await readFile(database), source);
+      assert.deepEqual(await readFile(databaseB), other);
+
+      await writeFile(environmentFile, `XDG_DATA_HOME=${env.XDG_DATA_HOME}\n`);
+      canReadProcess = true;
+      if (mode === 'immediate') {
+        // Even at the original path, a replacement file is not the original database.
+        await rename(database, `${database}.original`);
+        await writeFile(database, source);
+        await assert.rejects(recoverBackendSwitch(env, () => runtime, dependencies), changed);
+        assert.equal(active, false);
+        await rename(`${database}.original`, database);
+      }
+      await recoverBackendSwitch(env, () => runtime, dependencies);
+      assert.equal(active, true);
+      assert.equal(starts.at(-1), env.XDG_DATA_HOME);
+      await assert.rejects(lstat(pending), { code: 'ENOENT' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });

@@ -37,6 +37,14 @@ about executable paths when both CLIs are installed. GTK still requires Python 3
 and GTK bindings; see [GUI setup](gui.md). Neither installer changes desktop startup
 or existing reminders.
 
+For a CLI-only Python install without uv or pipx, use a dedicated virtual environment:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/note --help
+```
+
 ## Use
 
 ```sh

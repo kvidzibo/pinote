@@ -324,7 +324,7 @@ function configureBackend(): void {
     loading = true; update();
     try {
       settings = await api.backendSettings();
-      status.textContent = `${settings.detail} — ${settings.version}${settings.switched ? ' (already switched)' : ''}`;
+      status.textContent = settings.version ? `${settings.detail} Bundled CLI: ${settings.version}.` : settings.detail;
     } catch (error) {
       settings = undefined;
       status.textContent = `Could not load backend settings: ${message(error)}`;

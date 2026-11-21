@@ -10,11 +10,13 @@ import { backendEnvironment } from './backend-command.ts';
 
 // Only main-process values enter this installer. No renderer-supplied paths,
 // executable names, service names or shell commands are accepted.
-export type SwitchOptions = { env: NodeJS.ProcessEnv; node: string; bundles: string; database: string };
+type SwitchRuntime = { node: string; bundles: string };
+export type SwitchOptions = SwitchRuntime & { env: NodeJS.ProcessEnv; database: string };
 type Run = (executable: string, args: string[], env: NodeJS.ProcessEnv, input?: string) => Promise<string>;
 type Service = { present: boolean; active: boolean; pid: number };
 type SavedFile = { path: string; kind: 'missing' | 'file' | 'link'; data: string; mode: number; replacement: string; replacementMode: number; stash?: string; publishIntent?: boolean };
-type Journal = { version: 1; complete: boolean; backup: string; service: Service; files: SavedFile[] };
+type DatabaseIdentity = { path: string; dev: string; ino: string };
+type Journal = { version: 1; complete: boolean; backup: string; service: Service; originalDatabase?: DatabaseIdentity; originalHost?: string; originalPort?: string; files: SavedFile[] };
 export type SwitchDependencies = { run?: Run; processEnvironment?: (pid: number) => Promise<NodeJS.ProcessEnv>; processArguments?: (pid: number) => Promise<string[]>; processExecutable?: (pid: number) => Promise<string>; processDirectory?: (pid: number) => Promise<string>; updateLock?: string; listening?: (env: NodeJS.ProcessEnv) => Promise<void>; wait?: () => Promise<void> };
 const limit = 1024 * 1024;
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -154,6 +156,23 @@ async function verifyServiceContext(pid: number): Promise<void> {
   const identities = await Promise.all(['self', pid].map(async id => (await readFile(`/proc/${id}/status`, 'utf8')).split('\n').filter(line => /^(Uid|Gid|Groups|CapEff):/.test(line)).join('\n')));
   if (identities[0] !== identities[1]) throw new Error('Automatic switching requires the service to use the same filesystem credentials as the desktop.');
 }
+async function documentedServiceArguments(runtime: SwitchRuntime, pid: number, env: NodeJS.ProcessEnv, run: Run, dependencies: SwitchDependencies): Promise<string[]> {
+  const args = await (dependencies.processArguments || (async pid => utf8.decode(await readFile(`/proc/${pid}/cmdline`)).split('\0').filter(Boolean)))(pid);
+  if (args.length !== 2 || args.some(arg => !isAbsolute(arg) || arg.split('/').includes('..')) || !args[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
+  let documented = false;
+  try {
+    const node = await realpath(runtime.node);
+    const running = await realpath(await (dependencies.processExecutable || (pid => readlink(`/proc/${pid}/exe`)))(pid));
+    const cwd = await (dependencies.processDirectory || (pid => readlink(`/proc/${pid}/cwd`)))(pid);
+    documented = running === node && await realpath(args[0]) === node && await realpath(args[1]) === await realpath(join(cwd, 'pi/dist-mcp/mcp/http.js'));
+  } catch { /* An unverifiable process is not evidence of database identity. */ }
+  if (!documented) throw new Error('Automatic switching requires the documented direct Node HTTP service in its project working directory, using the same trusted Node runtime as Electron.');
+  // /proc cannot distinguish a direct unit from a wrapper that execs Node.
+  const unit = JSON.parse(await run('/usr/bin/busctl', ['--user', '--json=short', 'get-property', 'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/pinote_2eservice', 'org.freedesktop.systemd1.Service', 'ExecStartEx'], env));
+  const entry = unit.data?.[0];
+  if (unit.type !== 'a(sasasttttuii)' || unit.data.length !== 1 || entry[0] !== args[0] || JSON.stringify(entry[1]) !== JSON.stringify(args) || JSON.stringify(entry[2]) !== '[]') throw new Error('Automatic switching requires the documented direct Node HTTP unit command without wrappers or flags.');
+  return args;
+}
 function runtimeInjection(name: string): boolean { return /^(LD_|NODE_|ELECTRON_|PYTHON)/.test(name) || name === 'GCONV_PATH' || name === 'GLIBC_TUNABLES'; }
 export async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
   if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Cannot verify the running Pinote service.');
@@ -173,11 +192,29 @@ async function listening(env: NodeJS.ProcessEnv): Promise<void> {
     socket.once('timeout', () => { socket.destroy(); fail(new Error('Pinote service readiness timed out.')); });
   });
 }
-async function probe(options: SwitchOptions, run: Run, env = options.env): Promise<string> {
-  const raw = await run(options.node, [join(options.bundles, 'bridge.mjs')], env, JSON.stringify({ protocol: 1, operation: 'handshake', params: {} }));
+function databasePath(path: unknown): path is string {
+  return typeof path === 'string' && isAbsolute(path) && !path.includes('\0') && resolve(path) === path;
+}
+function validDatabaseIdentity(value: unknown): value is DatabaseIdentity {
+  if (!value || typeof value !== 'object') return false;
+  const { path, dev, ino } = value as Partial<DatabaseIdentity>;
+  return databasePath(path) && [dev, ino].every(part => typeof part === 'string' && /^\d{1,20}$/.test(part));
+}
+async function databaseIdentity(path: string): Promise<DatabaseIdentity> {
+  const info = await lstat(path, { bigint: true });
+  if (!info.isFile() || await realpath(path) !== path) throw new Error('The service database is not a verifiable regular file.');
+  return { path, dev: String(info.dev), ino: String(info.ino) };
+}
+async function probeBackend(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv): Promise<{ database: string; version: string }> {
+  const raw = await run(runtime.node, [join(runtime.bundles, 'bridge.mjs')], env, JSON.stringify({ protocol: 1, operation: 'handshake', params: {} }));
   const value = JSON.parse(raw);
-  if (value.protocol !== 1 || value.ok !== true || typeof value.result?.database !== 'string' || typeof value.result?.version !== 'string' || resolve(value.result.database) !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
-  return value.result.version;
+  if (value.protocol !== 1 || value.ok !== true || !databasePath(value.result?.database) || typeof value.result?.version !== 'string') throw new Error('Cannot verify the Node backend database.');
+  return value.result;
+}
+async function probe(options: SwitchOptions, run: Run, env = options.env): Promise<string> {
+  const { database, version } = await probeBackend(options, run, env);
+  if (database !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
+  return version;
 }
 export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']): void {
   if (!env.HOME || !isAbsolute(env.HOME)) throw new Error('Backend selection requires an absolute HOME independent of the working directory.');
@@ -191,7 +228,7 @@ async function verifyServiceEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute service PATH.');
   if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on the service PATH.');
 }
-async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<void> {
+async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
   await verifyServiceEnvironment(env);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
   if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The service CLI must be an unambiguous absolute executable.');
@@ -223,31 +260,44 @@ async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.P
     } finally { await fd.close(); }
     const code = 'import json,sys; from pathlib import Path; sys.path.__setitem__(0, str(Path(sys.argv[1]).parent)) if not sys.flags.safe_path else None; from pinote.paths import Paths; print(json.dumps(str(Paths.discover().database.resolve())))';
     const database = JSON.parse(await run(interpreter, ['-c', code, path], env));
-    if (typeof database !== 'string' || resolve(database) !== resolve(options.database)) throw new Error('The existing service CLI uses a different database; the switch was blocked.');
-    return;
+    if (!databasePath(database)) throw new Error('Cannot verify the Python CLI database.');
+    return database;
   }
   const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
   if (text === nodeEntry) {
-    if (await realpath(executable(env, 'node')) !== await realpath(options.node)) throw new Error('The service CLI PATH selects a different Node runtime; automatic switching was blocked.');
-    await probe({ ...options, bundles: resolve(dirname(path), '../dist') }, run, env); return;
+    if (await realpath(executable(env, 'node')) !== await realpath(runtime.node)) throw new Error('The service CLI PATH selects a different Node runtime; automatic switching was blocked.');
+    return (await probeBackend({ ...runtime, bundles: resolve(dirname(path), '../dist') }, run, env)).database;
   }
-  if (text === targets(options, undefined)[0].text) { await probe(options, run, env); return; }
+  if (text === launcher(runtime)) return (await probeBackend(runtime, run, env)).database;
   // Never execute an arbitrary wrapper to discover its database: even a read
   // command may activate reminders or hide an XDG override inside the script.
   throw new Error('The existing service uses a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.');
 }
+async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
+  const database = await existingCLIDatabase(options, run, env);
+  if (database !== resolve(options.database)) throw new Error('The existing CLI uses a different database; the switch was blocked.');
+  return database;
+}
 function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
+function launcher(runtime: SwitchRuntime): string {
+  return `#!/bin/sh\nunset NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS NODE_REDIRECT_WARNINGS NODE_V8_COVERAGE ELECTRON_RUN_AS_NODE\nexec ${shellQuote(runtime.node)} --disable-warning=ExperimentalWarning ${shellQuote(join(runtime.bundles, 'cli.mjs'))} "$@"\n`;
+}
+export async function hasInstalledLauncher(options: SwitchOptions): Promise<boolean> {
+  try {
+    const file = await snapshot(locations(options.env).cli, '', 0, true);
+    return file.kind === 'file' && file.mode === 0o700 && file.data === Buffer.from(launcher(options)).toString('base64');
+  } catch { return false; } // Never execute an unknown launcher to check its status.
+}
 function systemdQuote(value: string): string {
   if (/[\u0000-\u001f\u007f]/.test(value)) throw new Error('Unsupported service command path.');
   return JSON.stringify(value.replaceAll('%', '%%'));
 }
 function targets(options: SwitchOptions, serviceArguments: string[] | undefined) {
   const paths = locations(options.env);
-  const launcher = `#!/bin/sh\nunset NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS NODE_REDIRECT_WARNINGS NODE_V8_COVERAGE ELECTRON_RUN_AS_NODE\nexec ${shellQuote(options.node)} --disable-warning=ExperimentalWarning ${shellQuote(join(options.bundles, 'cli.mjs'))} "$@"\n`;
   const command = paths.cli.replaceAll('%', '%%');
   if (/[\r\n\0]/.test(command)) throw new Error('Unsupported CLI installation path.');
   return [
-    { path: paths.cli, text: launcher, mode: 0o700, link: true },
+    { path: paths.cli, text: launcher(options), mode: 0o700, link: true },
     ...(serviceArguments ? [{ path: paths.dropin, text: `[Service]\nEnvironment=${JSON.stringify(`PINOTE_NOTE_COMMAND=${command}`)}\nExecStartPre=:/usr/bin/env ${systemdQuote(paths.cli)} --version\nExecStart=\nExecStart=:/usr/bin/env ${[`PINOTE_NOTE_COMMAND=${paths.cli}`, ...serviceArguments].map(systemdQuote).join(' ')}\n`, mode: 0o600, link: false }] : []),
     { path: paths.preference, text: JSON.stringify({ version: 1, backend: 'node', ignoredOverride: options.env.PINOTE_ELECTRON_BACKEND ?? null }), mode: 0o600, link: false },
   ];
@@ -280,27 +330,67 @@ async function loadJournal(env: NodeJS.ProcessEnv): Promise<Journal | undefined>
     return journal;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
 }
-async function rollback(env: NodeJS.ProcessEnv, journal: Journal, run: Run): Promise<void> {
-  const systemctl = executable(env, 'systemctl');
+async function rollback(env: NodeJS.ProcessEnv, journal: Journal, dependencies: SwitchDependencies, trustedRuntime?: () => SwitchRuntime): Promise<void> {
+  const run = dependencies.run || runCommand;
+  const control = (action: string) => run(executable(env, 'systemctl'), action === 'daemon-reload' ? ['--user', action] : ['--user', action, 'pinote.service'], env);
+  const pending = join(locations(env).state, 'pending.json');
+  const recoveryError = (message: string, cause?: unknown) => new Error(`Automatic rollback could not finish. ${message} Keep ${pending} and its backups. No database was restored or converted.`, { cause });
   const failures: unknown[] = [];
   const attempt = async (action: () => Promise<unknown>) => { try { await action(); } catch (error) { failures.push(error); } };
-  if (journal.service.present) await attempt(() => run(systemctl, ['--user', 'stop', 'pinote.service'], env));
+  if (journal.service.present) await attempt(() => control('stop'));
   for (const file of [...journal.files].reverse()) await attempt(() => restore(file));
-  if (journal.service.present) {
-    await attempt(() => run(systemctl, ['--user', 'daemon-reload'], env));
-    if (journal.service.active) await attempt(() => run(systemctl, ['--user', 'start', 'pinote.service'], env));
+  if (journal.service.present) await attempt(() => control('daemon-reload'));
+  if (journal.service.active) {
+    // Old pending journals have no pre-switch evidence. Do not infer it from
+    // the current unit, the desktop profile, or the now-restored files.
+    const expected = journal.originalDatabase;
+    let reason = 'The original service database identity is missing or invalid; verify the profile manually before starting pinote.service.';
+    try {
+      if (!validDatabaseIdentity(expected)) throw new Error(reason);
+      reason = 'Cannot verify the restored service database without the trusted Node runtime and bundles. Check the Electron installation before retrying recovery.';
+      const runtime = trustedRuntime?.();
+      if (!runtime) throw new Error(reason);
+      reason = 'Cannot verify the restored service database. Check the unit, EnvironmentFile, and CLI profile before retrying recovery.';
+      await control('start');
+      await (dependencies.wait || (() => delay(250)))();
+      const restored = await service(run, env);
+      if (!restored.active) throw new Error('The prior service could not be resumed.');
+      await verifyServiceContext(restored.pid);
+      await documentedServiceArguments(runtime, restored.pid, env, run, dependencies);
+      const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(restored.pid);
+      // Resolve from the running process and its CLI, never from journal paths.
+      const path = await existingCLIDatabase(runtime, run, serviceEnv);
+      const actual = path === expected.path ? await databaseIdentity(path) : undefined;
+      if (!actual || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+        reason = 'The restored service points to a different database. Check the unit, EnvironmentFile, and CLI profile and point them back to the original database before retrying recovery.';
+        throw new Error(reason);
+      }
+      reason = 'Cannot verify the restored service listener. Check the unit and EnvironmentFile before retrying recovery.';
+      if (serviceEnv.PINOTE_HOST !== journal.originalHost || serviceEnv.PINOTE_PORT !== journal.originalPort) throw new Error(reason);
+      for (let attempt = 0; ; attempt++) {
+        try { await (dependencies.listening || listening)(serviceEnv); break; }
+        catch (error) { if (attempt >= 19) throw error; await (dependencies.wait || (() => delay(250)))(); }
+      }
+      const verified = await service(run, env);
+      if (!verified.active || verified.pid !== restored.pid) throw new Error('The service changed during database verification.');
+    } catch (error) {
+      try { await control('stop'); }
+      catch (stopError) { throw recoveryError(`${reason} Could not stop pinote.service; stop it manually.`, new AggregateError([error, stopError])); }
+      throw recoveryError(`${reason} Pinote service was stopped.`, error);
+    }
   }
-  if (journal.service.active) await attempt(async () => { if (!(await service(run, env)).active) throw new Error('The prior service could not be resumed.'); });
-  if (failures.length) throw new Error('Configuration recovery needs repair; service restoration was attempted.');
-  await atomic(join(journal.backup, 'manifest.json'), JSON.stringify({ ...journal, recovered: true }));
-  await rm(join(locations(env).state, 'pending.json'));
+  if (failures.length) throw recoveryError('Check for concurrent configuration changes and repair the configuration before retrying.', new AggregateError(failures));
+  try {
+    await atomic(join(journal.backup, 'manifest.json'), JSON.stringify({ ...journal, recovered: true }));
+    await rm(pending);
+  } catch (error) { throw recoveryError('Could not finalize the recovery record; check its permissions before retrying.', error); }
 }
-export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, dependencies: SwitchDependencies = {}): Promise<void> {
+export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntime?: () => SwitchRuntime, dependencies: SwitchDependencies = {}): Promise<void> {
   if (!await loadJournal(env)) return;
   const release = await acquire(env, dependencies.updateLock);
   try {
     const journal = await loadJournal(env); if (!journal) return;
-    if (!journal.complete) await rollback(env, journal, dependencies.run || runCommand);
+    if (!journal.complete) await rollback(env, journal, dependencies, trustedRuntime);
     else await rm(join(locations(env).state, 'pending.json'));
   } finally { release(); }
 }
@@ -319,26 +409,14 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     const before = await service(run, env);
     if (before.present && !before.active) throw new Error('The installed Pinote service is stopped. Leave it stopped; switch when it is running so its database can be verified.');
     let serviceArguments: string[] | undefined, originalHost: string | undefined, originalPort: string | undefined;
+    let originalDatabase: DatabaseIdentity | undefined;
     if (before.active) {
       await verifyServiceContext(before.pid);
       await access('/usr/bin/env', constants.X_OK);
-      serviceArguments = await (dependencies.processArguments || (async pid => utf8.decode(await readFile(`/proc/${pid}/cmdline`)).split('\0').filter(Boolean)))(before.pid);
-      if (serviceArguments.length !== 2 || serviceArguments.some(arg => !isAbsolute(arg) || arg.split('/').includes('..')) || !serviceArguments[1].endsWith('/dist-mcp/mcp/http.js')) throw new Error('Automatic switching requires the documented direct Node HTTP service command.');
-      let documented = false;
-      try {
-        const runtime = await realpath(options.node);
-        const running = await realpath(await (dependencies.processExecutable || (pid => readlink(`/proc/${pid}/exe`)))(before.pid));
-        const cwd = await (dependencies.processDirectory || (pid => readlink(`/proc/${pid}/cwd`)))(before.pid);
-        documented = running === runtime && await realpath(serviceArguments[0]) === runtime && await realpath(serviceArguments[1]) === await realpath(join(cwd, 'pi/dist-mcp/mcp/http.js'));
-      } catch { /* An unverifiable process must not be stopped or reconfigured. */ }
-      if (!documented) throw new Error('Automatic switching requires the documented direct Node HTTP service in its project working directory, using the same trusted Node runtime as Electron.');
-      // /proc cannot distinguish a direct unit from a wrapper that execs Node.
-      const unit = JSON.parse(await run('/usr/bin/busctl', ['--user', '--json=short', 'get-property', 'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/pinote_2eservice', 'org.freedesktop.systemd1.Service', 'ExecStartEx'], env));
-      const entry = unit.data?.[0];
-      if (unit.type !== 'a(sasasttttuii)' || unit.data.length !== 1 || entry[0] !== serviceArguments[0] || JSON.stringify(entry[1]) !== JSON.stringify(serviceArguments) || JSON.stringify(entry[2]) !== '[]') throw new Error('Automatic switching requires the documented direct Node HTTP unit command without wrappers or flags.');
+      serviceArguments = await documentedServiceArguments(options, before.pid, env, run, dependencies);
       const serviceEnv = await (dependencies.processEnvironment || processEnvironment)(before.pid);
       originalHost = serviceEnv.PINOTE_HOST; originalPort = serviceEnv.PINOTE_PORT;
-      await verifyExistingCLI(options, run, serviceEnv);
+      originalDatabase = await databaseIdentity(await verifyExistingCLI(options, run, serviceEnv));
       await (dependencies.listening || listening)(serviceEnv);
     }
     const files: SavedFile[] = [];
@@ -355,7 +433,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       file.stash = join(dirname(file.path), `.${basename(file.path)}.pinote-switch-${randomUUID()}.previous`);
       file.publishIntent = false;
     }
-    journal = { version: 1, complete: false, backup, service: before, files };
+    journal = { version: 1, complete: false, backup, service: before, originalDatabase, originalHost, originalPort, files };
     await atomic(join(paths.state, 'pending.json'), JSON.stringify(journal));
     await atomic(join(backup, 'manifest.json'), JSON.stringify(journal));
     progress('Backing up configuration, SQLite and saved Electron drafts…');
@@ -393,6 +471,10 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
         catch (error) { if (attempt >= 19) throw error; ready = 0; }
       }
     }
+    if (originalDatabase) {
+      const current = await databaseIdentity(options.database);
+      if (current.dev !== originalDatabase.dev || current.ino !== originalDatabase.ino) throw new Error('The database was replaced during the switch.');
+    }
     const committed: Journal = { ...journal, complete: true };
     await atomic(join(paths.state, 'pending.json'), JSON.stringify(committed));
     journal = committed; // This persisted record is the configuration commit point.
@@ -404,8 +486,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
   } catch (error) {
     if (journal && !journal.complete) {
       progress('Switch failed. Restoring the previous configuration…');
-      try { await rollback(env, journal, run); }
-      catch { throw new Error(`Automatic rollback could not finish. Keep ${paths.state}/pending.json and its backups; repair the configuration before retrying. The database was not restored or converted.`); }
+      await rollback(env, journal, dependencies, () => options);
     }
     throw error;
   } finally { release(); }
