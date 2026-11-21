@@ -1194,13 +1194,14 @@ try {
   await page.getByRole('article').filter({hasText:'Edited from Electron ☘'}).getByRole('button',{name:'Restore task',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
+  // The picker opens on the current local minute; compare wall-clock strings, which stay valid in a repeated DST hour.
+  const localMinute = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  const minuteBefore = localMinute();
   await selectTaskAction(page, added.id, 'Set reminder…');
   const when = page.getByLabel('When (local time)',{exact:true});
   assert.equal(await when.getAttribute('type'),'datetime-local');
-  // The picker opens on the current local minute.
-  const picked = await when.inputValue(), now = Date.now();
-  assert.match(picked,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
-  assert.ok(Math.abs(new Date(picked).getTime() - now) < 120000, picked);
+  const picked = await when.inputValue(), minuteAfter = localMinute();
+  assert.ok(picked === minuteBefore || picked === minuteAfter, `${picked} not in ${minuteBefore}..${minuteAfter}`);
   await when.fill('2099-01-01T12:00');
   await page.getByRole('button',{name:'Set reminder',exact:true}).click();
   await page.locator(`[data-id="${added.id}"]`).waitFor({state:'detached'});
