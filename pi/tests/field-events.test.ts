@@ -44,7 +44,9 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   let client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
   let changes = 0, errors = 0;
   const diagnostics: WatcherFailureLog[] = [];
-  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] })
+  const fieldWatchers = [{ path: handler, enabled: true }];
+  const saveFooter = (footer: unknown) => writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers, footer }));
+  const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers })
     .map((watcher) => watcher.path === handler ? { ...watcher, bundled: true, name: 'GitHub PR' } : watcher), path, noteCommand: command, changed: () => changes++, log: (failure) => { errors++; if (failure) diagnostics.push(failure); } });
   const forceDue = (field?: string) => {
     const db = new DatabaseSync(path);
@@ -54,7 +56,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     } finally { db.close(); }
   };
   try {
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers: [{ path: handler, enabled: true }], footer: { fields: [{ name: 'PR', format: '#<number>' }] } }));
+    await saveFooter({ fields: [{ name: 'PR', format: '#<number>' }] });
     let task = await note('agent', 'add', '--text=Watch PR');
     const update = async (fields: Record<string, string>, remove: string[] = []) => {
       task = await note('agent', 'get', String(task.id));
@@ -203,7 +205,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick();
     assert.ok(changes > 0);
 
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 1, fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
+    await saveFooter({ maxFields: 1, fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] });
     for (const value of ['Needs review', '[Review](https://forgejo.example/repo/pulls/42)', `Needs review\n${pr}`]) {
       await update({ PR: value });
       const legacyValue = await view();
@@ -227,7 +229,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     urls[3] = 'https://forgejo.example/git/example/repo/pulls/45';
     await update({ PRs: urls.map((url) => `[Review](${url})`).join('\n'), Next: 'Review all' });
     assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR'), 'Fresh bundled legacy alerts are not hidden before the plural job finishes');
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
+    await saveFooter({ maxFields: 2, fields: ['PR', 'Next'] });
     const batchResult = { state: 'multiple', items: urls.map((url, index) => ({ url,
       state: ['passing', 'failed', 'pending', 'merged', 'closed', 'error'][index],
       ...(index === 1 ? { notification: { key: 'pr-43-failed', message: 'CI failed' } } : {}),
@@ -246,11 +248,11 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       assert.ok(links.every((item, index) => item.text.includes(`#${42 + index}`) && !item.style?.strikethrough));
       assert.ok(multiple.footer!.some((item) => item.text.includes('Next: Review all')), 'PRs consume only one field slot');
     }
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] } }));
+    await saveFooter({ fields: [{ name: 'PR', label: '', format: '<value>', width: 1000 }] });
     const labeled = (await view()).footer!.filter((item) => item.url);
     assert.deepEqual(labeled.map((item) => item.url), urls);
     assert.ok(labeled.every((item) => item.text.includes('Review') && !item.text.includes('https://')), 'Legacy <value> formats preserve Markdown labels');
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
+    await saveFooter({ maxFields: 2, fields: ['PR', 'Next'] });
     assert.ok((await view()).watcherDiagnostics?.failures.some((failure) => failure.fields.includes('PRs')), 'Partial errors remain visible in terminal-only diagnostics');
     const partialContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
     assert.doesNotMatch(JSON.parse((partialContext.contents[0] as { text: string }).text).text, /"state":"error"/, 'Unavailable entries do not enter model observations');

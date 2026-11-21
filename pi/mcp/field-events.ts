@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { readConfigDocument } from '../footer-config.ts';
-import { discoverFieldWatchers, type FieldWatcher } from '../field-watchers.ts';
+import { discoverFieldWatchers, parseFieldWatchers, type FieldWatcher, type FieldWatcherConfig } from '../field-watchers.ts';
 import { parsePullRequests } from '../pull-requests.ts';
 
 const exec = promisify(execFile);
@@ -289,7 +289,7 @@ export class FieldAutomation {
   static open(options: RunnerOptions = {}): Promise<FieldAutomation> {
     return this.connect(options, options);
   }
-  /** Observe changes without acquiring a lease, reading watcher config or running commands. */
+  /** Observe changes without acquiring a lease or running commands. Reads honor the current explicit watcher config. */
   static async observe(options: StorageOptions & { onError?: () => void } = {}): Promise<FieldAutomation> {
     const automation = await this.connect(options);
     if (options.available) automation.available = options.available;
@@ -436,8 +436,20 @@ export class FieldAutomation {
     this.db.exec('BEGIN');
     try {
       const { watchers, active_until } = this.publication();
-      return work(watchers ? JSON.parse(watchers) as FieldWatcher[] : [], !this.watchers && active_until <= Date.now());
+      const published = watchers ? JSON.parse(watchers) as FieldWatcher[] : [];
+      return this.watchers ? work(published, false)
+        : work(this.authorizedWatchers(published), active_until <= Date.now());
     } finally { this.db.exec('ROLLBACK'); }
+  }
+  private authorizedWatchers(published: FieldWatcher[]): FieldWatcher[] {
+    if (!published.length) return [];
+    // The desktop may not have reconciled yet. Authorize from config only;
+    // discovery and executable checks do not belong in this read path.
+    let configured: FieldWatcherConfig[];
+    try { configured = parseFieldWatchers(readConfigDocument().value); }
+    catch { return []; }
+    return published.filter((watcher) => watcher.enabled === true && configured.some((entry) =>
+      entry.enabled && entry.path === watcher.path && entry.activation === watcher.activation));
   }
   /** Explicit selection/write owns alerts; background reads can only claim unowned tasks. */
   claim(taskId: number, contextId: string, replace = false): void {

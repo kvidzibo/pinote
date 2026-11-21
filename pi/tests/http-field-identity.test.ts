@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { FieldAutomation, fieldAutomationPath } from '../mcp/field-events.ts';
+import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../remote/protocol.ts';
 
 const exec = promisify(execFile);
@@ -78,11 +79,14 @@ const args = process.argv.slice(2);
   process.stdout.write(require('node:child_process').execFileSync(${JSON.stringify(note)}, args, {env}));
 })();
 `, { mode: 0o700 });
+    const profiles = [[a, 'Profile A'], [b, 'Profile B']];
+    const config = { fieldWatchers: profiles.map(([, text]) => ({ path: join(dir, `${text}.cjs`), enabled: true })) };
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify(config));
     const open = (data: string, text: string) => FieldAutomation.open({ database: database(data), noteCommand: note,
       noteEnv: { ...process.env, XDG_DATA_HOME: data },
-      watchers: () => [{ id: 'deploy', name: 'Deploy', enabled: true, bundled: false, path: join(dir, `${text}.cjs`) }],
+      watchers: () => discoverFieldWatchers(config).filter((watcher) => watcher.path === join(dir, `${text}.cjs`)),
     });
-    for (const [data, text] of [[a, 'Profile A'], [b, 'Profile B']]) {
+    for (const [data, text] of profiles) {
       const handler = join(dir, `${text}.cjs`);
       await writeFile(handler, `#!${process.execPath}\nrequire('node:fs').readFileSync(0);\nconsole.log(JSON.stringify({state:'failed', notification:{key:'failed', message:${JSON.stringify(text + ' failure')}}}));\n`, { mode: 0o700 });
       const task = await run(data, 'agent', 'add', `--text=${text}`);
@@ -123,7 +127,7 @@ const args = process.argv.slice(2);
       db.exec('COMMIT');
     } finally { db.close(); }
     await assert.rejects(access(from), { code: 'ENOENT' });
-    for (const [data, text] of [[a, 'Profile A'], [b, 'Profile B']]) {
+    for (const [data, text] of profiles) {
       const runner = await open(data, text);
       runners.push(runner);
       await runner.tick(); await runner.tick();

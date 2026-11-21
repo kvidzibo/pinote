@@ -246,7 +246,10 @@ test('HTTP observes desktop field results live without intake or execution, incl
 import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(calls)}, 'check\\n');
 console.log(JSON.stringify({state:'failed',notification:{key:'failed',message:'Desktop check failed'}}));`, { mode: 0o700 });
-    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers: [{ path: handler, enabled: true }] }));
+    const watcher = { path: handler, enabled: true };
+    const saveWatchers = (fieldWatchers: Array<typeof watcher & { activation?: string }>) =>
+      writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers }));
+    await saveWatchers([watcher]);
     let task = await command('agent', 'add', '--text=Desktop watcher');
     task = await command('agent', 'update', String(task.id), '--expected-updated-at', task.updated_at, '--set-json', '{"Deploy":"dev"}');
     assert.equal(fieldAutomationPath({ database }), fieldAutomationPath());
@@ -287,7 +290,8 @@ console.log(JSON.stringify({state:'failed',notification:{key:'failed',message:'D
     } finally { db.close(); }
 
     const starting = updates;
-    runner = await open(); runner.start();
+    runner = await open();
+    await runner.tick(); await runner.tick();
     const current = await nextView(starting, (view) => view.fieldNotifications?.length === 1);
     assert.notEqual(current.revision, before.revision);
     assert.equal(current.watcherDiagnostics?.logPath, runner.logPath);
@@ -297,6 +301,20 @@ console.log(JSON.stringify({state:'failed',notification:{key:'failed',message:'D
     assert.deepEqual((await read(meta('other'))).fieldNotifications, []);
     assert.deepEqual((await read(meta('first', [alert.id]))).fieldNotifications, []);
     assert.match((await resource('pinote://agent-context')).text, /Desktop check failed/);
+
+    // The desktop publication stays live but does not tick while config changes.
+    for (const [reason, watchers] of [
+      ['disabled', [{ ...watcher, enabled: false }]],
+      ['removed', []],
+      ['replaced', [{ ...watcher, path: join(dir, 'replacement.mjs') }]],
+      ['changed activation', [{ ...watcher, activation: '12345678-1234-1234-1234-123456789abc' }]],
+    ] as const) {
+      await saveWatchers([...watchers]);
+      assert.deepEqual((await read()).fieldNotifications, [], `No worker notification when ${reason}`);
+      assert.doesNotMatch((await resource('pinote://agent-context')).text, /Desktop check failed/, reason);
+    }
+    await saveWatchers([watcher]);
+    assert.equal((await read()).fieldNotifications?.[0]?.id, alert.id, 'Matching config exposes the unchanged publication');
 
     const stopping = updates;
     await runner.close(); runner = undefined;

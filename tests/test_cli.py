@@ -108,7 +108,8 @@ def test_help_and_version_have_no_side_effects(cli):
     assert "durable history" in cli("--help").stdout
     assert "pinote 0.26.0" in cli("--version").stdout
     assert json.loads(cli("--no-notify", "--database-identity").stdout) == {
-        "database": str(cli.database.resolve()), "lexicalDatabase": str(cli.database)
+        "database": str(cli.database.resolve()),
+        "lexicalDatabase": str(cli.database),
     }
     assert not cli.database.exists()
     assert not cli.log.exists()
@@ -128,7 +129,8 @@ def test_task_response_metadata_is_opt_in_and_uses_database_opened_through_alias
     cli.env.update(XDG_DATA_HOME=str(alias), PINOTE_TASK_RESPONSE="1")
     info = cli.database.stat()
     identity = {
-        "database": str(cli.database), "lexicalDatabase": str(alias / "pinote/notes.db"),
+        "database": str(cli.database),
+        "lexicalDatabase": str(alias / "pinote/notes.db"),
         "fileIdentity": f"{info.st_dev}:{info.st_ino}",
     }
     expected = {"pinoteTaskResponse": 1, "identity": identity}
@@ -138,8 +140,13 @@ def test_task_response_metadata_is_opt_in_and_uses_database_opened_through_alias
     assert start["identity"] == identity
     assert start["data"]["state"] == "in_progress"
     updated = read(
-        "agent", "update", "1", "--expected-updated-at", start["data"]["updated_at"],
-        "--set-json", '{"Deploy":"dev"}',
+        "agent",
+        "update",
+        "1",
+        "--expected-updated-at",
+        start["data"]["updated_at"],
+        "--set-json",
+        '{"Deploy":"dev"}',
     )
     assert updated["identity"] == identity
     assert updated["data"]["agent_notes"]["Deploy"] == "dev"

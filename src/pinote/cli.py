@@ -274,11 +274,14 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
     )
     lock = display_lock(paths) if needs_lock else nullcontext()
     task_response = os.environ.get("PINOTE_TASK_RESPONSE") == "1" and (
-        args.command == "agent" and args.agent_action != "tags"
-        or args.command == "list" and args.json
+        args.command == "agent"
+        and args.agent_action != "tags"
+        or args.command == "list"
+        and args.json
     )
     before = task_database_identity(paths.database) if task_response else None
     with lock, Store(paths.database) as store:
+
         def emit(data: object) -> None:
             if task_response:
                 # Verify the file around SQLite open/use, and check the opened path
@@ -286,7 +289,8 @@ def execute(args: argparse.Namespace, paths: Paths) -> int:
                 opened = store.connection.execute("PRAGMA database_list").fetchone()[2]
                 identity = (
                     before
-                    if before and opened == before["database"]
+                    if before
+                    and opened == before["database"]
                     and task_database_identity(paths.database) == before
                     else None
                 )
@@ -401,9 +405,14 @@ def main(argv: list[str] | None = None) -> int:
     paths = Paths.discover()
     try:
         if args.command == "database-identity":
-            print(json.dumps({
-                "database": str(paths.database.resolve()), "lexicalDatabase": str(paths.database),
-            }))
+            print(
+                json.dumps(
+                    {
+                        "database": str(paths.database.resolve()),
+                        "lexicalDatabase": str(paths.database),
+                    }
+                )
+            )
             return 0
         configure_logging(paths)
         return execute(args, paths)
