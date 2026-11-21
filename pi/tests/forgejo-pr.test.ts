@@ -96,6 +96,7 @@ globalThis.fetch = async (url, options) => {
   }
   const unchecked = run({ pages: [] }).output;
   assert.equal(unchecked.state, 'passing', 'A mergeable PR without CI awaits nothing');
+  assert.equal(unchecked.display?.color, 'success');
   assert.equal(unchecked.summary, 'PR #42 has no checks');
   assert.equal(run({ pages: [], pulls: [{ ...pr, mergeable: false }] }).output.state, 'pending');
   const unmergeable = run({ pulls: [{ ...pr, mergeable: false }] }).output;
