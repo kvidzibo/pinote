@@ -58,10 +58,13 @@ the service still listens and Pi reports the error on each request.
 With an existing standalone `pinote.service` on the same port, first finish any
 [backend switch](#switch-an-existing-installation) while that service is still
 running, then stop and disable it and reopen Electron.
+
 Bundled watchers are shipped inside the application; entries enabled from a
 previous `pi/watchers/` path keep running but are listed as **Custom**. Enable
 the bundled entries and remove the old ones to restore grouped PR alerts; still
-failing checks can alert once more after that change.
+failing checks can alert once more after that change. With more than 30 stored
+watchers, first remove the old bundled paths from `pi-note.json` (keep a backup):
+the two added entries would exceed the 32-watcher limit and stop watchers loading.
 
 The window is a compact, always-on-top utility window. Its utility type is the
 intended automatic-floating mechanism in i3, without additional rules. Although
