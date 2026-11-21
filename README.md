@@ -135,7 +135,8 @@ Host Pi ─┐
 VM Pi ───┘
 ```
 
-Run the service on the machine holding your notes; each Pi client gets native
+Pinote Electron hosts the service while it is open (or run it standalone on the
+machine holding your notes); each Pi client gets native
 task menus, footer status, suggestions and fresh selected-task context. Tasks,
 tags and Markdown handoff fields are shared, while task selection remains
 conversation-specific. The agent's file editing and other tools stay on its own

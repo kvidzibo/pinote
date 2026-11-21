@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.13.0) bundles the matching Node backend;
+The private `electron/` package (0.14.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -22,8 +22,8 @@ npm --prefix electron run setup
 npm --prefix electron start
 ```
 
-`setup` installs the locked backend build dependencies, builds its bundles, and
-explicitly downloads the locked Electron 45 binary; there is no Electron
+`setup` installs the locked backend and `pi/` service build dependencies, builds
+the backend bundles, and explicitly downloads the locked Electron 45 binary; there is no Electron
 postinstall download in this version. Dependencies have their own
 `electron/package-lock.json`. `start` rebuilds before launching.
 For development checks (including legacy Python and Pi service fixtures), see
@@ -34,8 +34,37 @@ Relative PATH entries are ignored; unsupported Node versions fail at startup.
 Node/Electron injection environment flags are cleared in backend children.
 `PINOTE_ELECTRON_BACKEND` remains an explicit trusted absolute executable override
 for compatibility and diagnostics; there is no automatic Python fallback.
-No service or network listener is started. Installation does not alter GTK startup,
-i3 rules, or user configuration.
+Installation does not alter GTK startup, i3 rules, or user configuration.
+
+## Task service
+
+Electron 0.14.0+ hosts the [Pinote HTTP service](../pi/mcp/README.md) for Pi
+clients, including field watchers, for exactly as long as the desktop is open.
+Closing Electron stops the listener and running watchers; Pi shows **Pinote
+disconnected** until it is reopened. Tasks changed meanwhile are picked up from
+the database on the next start.
+
+The service is configured by the desktop's environment, with the variables and
+defaults of the standalone service: a private token (`PINOTE_TOKEN` or the
+owner-only token file), `PINOTE_HOST`/`PINOTE_PORT` (default `127.0.0.1:8765`)
+and `PINOTE_NOTE_COMMAND` (default `note` on `PATH`; it must use the desktop's
+database). Watchers inherit the same environment, including any tokens they
+need. Service lines are written to the desktop's `app.log`.
+
+A missing token or busy port only disables the service: a busy port is named in
+the log, and the desktop stays usable. With a missing or outdated `note` CLI
+the service still listens and Pi reports the error on each request.
+
+With an existing standalone `pinote.service` on the same port, first finish any
+[backend switch](#switch-an-existing-installation) while that service is still
+running, then stop and disable it and reopen Electron.
+
+Bundled watchers are shipped inside the application; entries enabled from a
+previous `pi/watchers/` path keep running but are listed as **Custom**. Enable
+the bundled entries and remove the old ones to restore grouped PR alerts; still
+failing checks can alert once more after that change. With more than 30 stored
+watchers, first remove the old bundled paths from `pi-note.json` (keep a backup):
+the two added entries would exceed the 32-watcher limit and stop watchers loading.
 
 The window is a compact, always-on-top utility window. Its utility type is the
 intended automatic-floating mechanism in i3, without additional rules. Although

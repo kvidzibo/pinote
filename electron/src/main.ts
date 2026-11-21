@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
@@ -23,6 +24,13 @@ let activeMenu: Menu | undefined;
 let state = initialState();
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
+let service: Promise<{ close(): Promise<void> } | undefined> | undefined;
+let serviceStop: Promise<void> | undefined; let serviceStopped = false;
+// Bounded and never rejects: quitting must not hang on a client or watcher.
+const stopService = () => serviceStop ??= Promise.race([
+  Promise.resolve(service).then(started => started?.close()).catch(() => log('Pinote service did not stop cleanly.')),
+  new Promise<void>(done => setTimeout(done, 5000)),
+]).then(() => { serviceStopped = true; });
 let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
@@ -140,6 +148,16 @@ async function boot() {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying. GTK remains available.'; }
   }
   await app.whenReady();
+  // The task service and its watchers live exactly as long as this desktop.
+  service = (async () => {
+    try {
+      const { startPinoteHttpServer } = await import(pathToFileURL(join(bundles, 'service/http.mjs')).href);
+      return await startPinoteHttpServer({ logPath: logFile }) as { close(): Promise<void> };
+    } catch (error) {
+      log((error as NodeJS.ErrnoException).code === 'EADDRINUSE' ? 'Pinote service did not start: its port is already in use, possibly by a standalone Pinote service. The desktop remains usable.'
+        : 'Pinote service did not start; check its token, host and port. The desktop remains usable.');
+    }
+  })();
   const styleNonce = randomUUID();
   const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
   protocol.handle('pinote-app', async request => {
@@ -296,6 +314,11 @@ async function boot() {
   await window.loadURL(`${origin}/index.html`);
 }
 app.on('window-all-closed', () => app.quit());
-process.on('uncaughtException', () => { log('Unexpected Electron failure; check saved state before retrying.'); app.exit(1); });
+app.on('will-quit', event => {
+  if (!service || serviceStopped) return;
+  event.preventDefault();
+  void stopService().then(() => app.quit());
+});
+process.on('uncaughtException', () => { log('Unexpected Electron failure; check saved state before retrying.'); void stopService().then(() => app.exit(1)); });
 process.on('unhandledRejection', () => { log('Unexpected Electron operation failure; check saved state before retrying.'); });
-void boot().catch(error => { log(error instanceof Error ? error.message : 'Cannot start Pinote Electron'); app.exit(1); });
+void boot().catch(error => { log(error instanceof Error ? error.message : 'Cannot start Pinote Electron'); void stopService().then(() => app.exit(1)); });

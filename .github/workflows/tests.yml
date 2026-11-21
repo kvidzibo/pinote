@@ -173,10 +173,9 @@ jobs:
       - run: uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
       - run: uv pip install --python .venv-gui/bin/python -e '.[gui]'
       - run: npm --prefix backend ci --ignore-scripts --no-audit --no-fund
-      - run: npm --prefix pi ci --ignore-scripts --no-audit --no-fund
-      - run: npm --prefix pi run build:mcp
       - run: npm --prefix electron ci --ignore-scripts --no-audit --no-fund
       - run: npm --prefix electron run setup
+      - run: npm --prefix pi run build:mcp
       - name: Provision Chromium SUID sandbox on ephemeral runner
         run: |
           sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox
