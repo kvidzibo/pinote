@@ -21,10 +21,10 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy'] as const) {
+  for (const mode of ['success', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy', 'interpreter-shim'] as const) {
     // This optional kernel check requires unprivileged user/mount namespaces.
     if (mode === 'isolated-service' && !process.env.PINOTE_TEST_UNSHARE) continue;
-    const root = await mkdtemp(join(tmpdir(), "pinote switch-'"));
+    const root = await mkdtemp(join(tmpdir(), mode === 'interpreter-shim' ? 'pinote-shim-' : "pinote switch-'"));
     let injected: ReturnType<typeof spawn> | undefined;
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
@@ -36,11 +36,13 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       else await symlink(process.execPath, join(root, 'bin/node'));
       await mkdir(join(root, '.local/bin'), { recursive: true });
       const custom = join(root, 'old-note'); await writeFile(custom, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
-      const isPip = mode === 'pip' || mode === 'pip-lazy';
+      const isPip = mode === 'pip' || mode === 'pip-lazy' || mode === 'interpreter-shim';
       const old = isPip ? join(root, 'pip-note') : mode === 'user-wrapper' ? custom : resolve('../.venv/bin/note');
       if (isPip) {
         const entry = mode === 'pip' ? "from pinote.cli import main\nif __name__ == '__main__':" : "if __name__ == '__main__':\n    from pinote.cli import main";
-        await writeFile(old, `#!${resolve('../.venv/bin/python')}\n# -*- coding: utf-8 -*-\nimport re\nimport sys\n${entry}\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n`, { mode: 0o700 });
+        const interpreter = mode === 'interpreter-shim' ? join(root, 'bin/python') : resolve('../.venv/bin/python');
+        if (mode === 'interpreter-shim') await writeFile(interpreter, `#!/bin/sh\ntouch '${root}/shim-ran'\nexit 1\n`, { mode: 0o700 });
+        await writeFile(old, `#!${interpreter}\n# -*- coding: utf-8 -*-\nimport re\nimport sys\n${entry}\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n`, { mode: 0o700 });
       }
       if (mode === 'absent-variable') {
         env.PINOTE_NOTE_COMMAND = resolve('../backend/bin/note'); // Desktop-only override must NOT leak.
@@ -114,6 +116,11 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
+      if (mode === 'interpreter-shim') {
+        await assert.rejects(operation, /interpreter shim/);
+        await assert.rejects(lstat(join(root, 'shim-ran')), { code: 'ENOENT' });
+        assert.ok(!commands.includes('stop')); assert.equal(await readlink(cli), old); continue;
+      }
       if (mode === 'isolated-service') {
         await assert.rejects(operation, /filesystem|EACCES|EPERM/);
         assert.ok(!commands.includes('stop')); assert.equal(await readlink(cli), old); continue;

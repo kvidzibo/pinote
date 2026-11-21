@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants, closeSync, openSync, accessSync, statSync } from 'node:fs';
-import { access, chmod, link, lstat, stat, mkdir, readFile, readlink as readLinkBytes, realpath as realPathBytes, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, link, lstat, stat, mkdir, open, readFile, readlink as readLinkBytes, realpath as realPathBytes, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
@@ -208,9 +208,21 @@ async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.P
     .map(entry => 'import re\nimport sys\n' + entry + '\n' + pipTail);
   const first = text.split('\n')[0];
   const body = text.slice(first.length + 1).replace(/^# -\*- coding: utf-8 -\*-\n/, '').trim();
-  if (/^#!\/[^\r\n]*\/python(?:3(?:\.\d+)?)?$/.test(first) && (body === pythonBody || pipBodies.includes(body))) {
+  if (/^#!\/[^\s]*\/python(?:3(?:\.\d+)?)?$/.test(first) && (body === pythonBody || pipBodies.includes(body))) {
+    // Preserve the original venv path when invoking Python, but never run a
+    // script-based interpreter shim to discover which database it would use.
+    const interpreter = first.slice(2), binary = await realpath(interpreter);
+    const fd = await open(binary, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    try {
+      const info = await fd.stat();
+      const magic = Buffer.alloc(4);
+      if (!info.isFile() || !/^python(?:3(?:\.\d+)?)?$/.test(basename(binary)) ||
+          (await fd.read(magic, 0, 4, 0)).bytesRead !== 4 || !magic.equals(Buffer.from('\x7fELF'))) {
+        throw new Error('Automatic switching requires a native Python interpreter, not an interpreter shim.');
+      }
+    } finally { await fd.close(); }
     const code = 'import json,sys; from pathlib import Path; sys.path.__setitem__(0, str(Path(sys.argv[1]).parent)) if not sys.flags.safe_path else None; from pinote.paths import Paths; print(json.dumps(str(Paths.discover().database.resolve())))';
-    const database = JSON.parse(await run(first.slice(2), ['-c', code, path], env));
+    const database = JSON.parse(await run(interpreter, ['-c', code, path], env));
     if (typeof database !== 'string' || resolve(database) !== resolve(options.database)) throw new Error('The existing service CLI uses a different database; the switch was blocked.');
     return;
   }
