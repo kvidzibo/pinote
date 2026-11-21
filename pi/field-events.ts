@@ -37,7 +37,8 @@ export type FieldNotice = { id: string; taskId: number; field: string; message: 
 type Task = { id: number; state: string; updated_at: string; agent_notes: Record<string, string> };
 type Row = { job: string };
 type PRNoticeRow = { url: string; notification_key: string; id: string; message: string };
-const builtinPR = (watcher: FieldWatcher) => watcher.bundled && ['GitHub PR', 'Forgejo PR'].includes(watcher.name);
+// By name, not install location: the desktop's bundled copy and a package checkout are the same watcher.
+const builtinPR = (watcher: FieldWatcher) => ['GitHub PR', 'Forgejo PR'].includes(watcher.name);
 function prResults(watcher: FieldWatcher, field: string, value: string, result: FieldResult): FieldResult['items'] {
   if (field === 'PRs' && result.items) {
     const urls = new Set(parsePullRequests(value).map((item) => item.url));
@@ -49,7 +50,7 @@ function prResults(watcher: FieldWatcher, field: string, value: string, result: 
   }
 }
 // Released GitHub keys preserved owner/repository casing; GitHub treats it as insignificant.
-const prKey = (watcher: FieldWatcher, key: string) => watcher.bundled && watcher.name === 'GitHub PR'
+const prKey = (watcher: FieldWatcher, key: string) => watcher.name === 'GitHub PR'
   ? key.replace(/^pr:([^:]+):/, (_, repository: string) => `pr:${repository.toLowerCase()}:`) : key;
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
 
@@ -97,6 +98,7 @@ export class FieldAutomation {
   private watchers: () => FieldWatcher[];
   private enabled: FieldWatcher[] = [];
   private signature = '';
+  private stored?: string;
   private generation = 0;
   private invocation?: AbortController;
   private ticking = false;
@@ -107,8 +109,10 @@ export class FieldAutomation {
   private changed: () => void;
   private log: (failure?: WatcherFailureLog) => void;
   readonly path: string;
+  /** Touched by the scheduler's host whenever saved results change; lease renewals do not count. */
+  readonly changes: string;
   private constructor(db: DatabaseSync, path: string, watchers: () => FieldWatcher[], noteCommand: string, changed: () => void, log: (failure?: WatcherFailureLog) => void) {
-    this.db = db; this.path = path; this.watchers = watchers; this.noteCommand = noteCommand; this.changed = changed; this.log = log;
+    this.db = db; this.path = path; this.changes = join(dirname(path), 'changed'); this.watchers = watchers; this.noteCommand = noteCommand; this.changed = changed; this.log = log;
     db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
     try {
       const migrate = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fw_pr_notices'").get();
@@ -167,12 +171,17 @@ export class FieldAutomation {
       work(); this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  private reconcile(): void {
+  /** Readers only filter by their enabled watchers. Saved state is cleaned up by the
+   * scheduler alone (durable): a reader with another configuration must not erase it. */
+  private reconcile(durable = false): void {
     const enabled = this.watchers().filter((watcher) => watcher.enabled);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
     const signature = JSON.stringify(enabled.map((w) => [w.id, w.path]));
-    if (signature === this.signature) return;
-    this.generation++; this.invocation?.abort();
+    if (signature !== this.signature) {
+      this.generation++; this.invocation?.abort();
+      this.enabled = enabled; this.signature = signature; this.changed();
+    }
+    if (!durable || signature === this.stored) return;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       for (const row of this.db.prepare('SELECT id,path FROM fw_watchers').all()) {
@@ -186,7 +195,7 @@ export class FieldAutomation {
       for (const watcher of enabled) this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    this.enabled = enabled; this.signature = signature; this.drained = undefined; this.changed();
+    this.stored = signature; this.drained = undefined; this.changed();
   }
   private save(job: Job): void {
     this.db.prepare('INSERT INTO fw_jobs(watcher_id,task_id,field,job) VALUES (?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET job=excluded.job')
@@ -320,10 +329,10 @@ export class FieldAutomation {
       .run(this.owner, Date.now() + 90_000, Date.now(), this.owner).changes;
     if (!acquired) return;
     try {
-      this.reconcile();
+      this.reconcile(true);
       const generation = this.generation;
       const valid = () => {
-        this.reconcile();
+        this.reconcile(true);
         if (!this.leased() || generation !== this.generation || this.lifetime.signal.aborted) return false;
         // Many watchers can make intake longer than one lease; each bounded operation renews it.
         this.db.prepare('UPDATE fw_scheduler SET lease_until=? WHERE id=1 AND owner=?').run(Date.now() + 90_000, this.owner);
@@ -368,7 +377,7 @@ export class FieldAutomation {
       this.invocation = invocation;
       const abort = () => invocation.abort();
       this.lifetime.signal.addEventListener('abort', abort, { once: true });
-      const poll = setInterval(() => { try { this.reconcile(); } catch { invocation.abort(); } }, 100);
+      const poll = setInterval(() => { try { this.reconcile(true); } catch { invocation.abort(); } }, 100);
       try {
         result = await runFieldHandler(watcher.path, {
           version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,

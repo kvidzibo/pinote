@@ -89,6 +89,7 @@ test('independent durable watchers, ignored results, immediate disable/removal a
     assert.deepEqual(automation.statuses(task).map((s) => s.result.state), ['1']);
     configs = [configs[0]];
     assert.deepEqual(automation.notices(task, 'a'), []);
+    await automation.tick(); // The scheduler, not a reader, clears the disabled watchers' state.
     configs[0].enabled = true;
     assert.deepEqual(automation.notices(task, 'a'), [], 'old notices cannot reappear before new checks');
     await automation.tick(); await automation.tick();

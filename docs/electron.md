@@ -55,9 +55,9 @@ finish any [backend switch](#switch-an-existing-installation) while it is still
 running, then stop and disable it.
 
 Bundled watchers are shipped inside the application; entries enabled from a
-previous `pi/watchers/` path keep running but are listed as **Custom**. Enable
-the bundled entries and remove the old ones to restore grouped PR alerts; still
-failing checks can alert once more after that change. With more than 30 stored
+`pi/watchers/` path keep running, with the same grouped PR alerts, but are
+listed as **Custom**. After switching to the bundled entries, still failing
+checks can alert once more. With more than 30 stored
 watchers, first remove the old bundled paths from `pi-note.json` (keep a backup):
 the two added entries would exceed the 32-watcher limit and stop watchers loading.
 

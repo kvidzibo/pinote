@@ -20,7 +20,7 @@ import { parsePR } from './pr-url.ts';
 const CONTEXT = 'native-ui/context';
 const exec = promisify(execFile);
 const noteCommand = () => process.env.PINOTE_NOTE_COMMAND || 'note';
-const database = () => { const dataHome = process.env.XDG_DATA_HOME; return join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db'); };
+export const database = () => { const dataHome = process.env.XDG_DATA_HOME; return join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db'); };
 const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', 'external-link'].map((name) => [name, readFileSync(new URL(`./icons/${name}.txt`, import.meta.url), 'utf8').trim()]));
 const TaskId = z.number().int().positive().safe();
 const NewProposal = z.object({ text: z.string().min(1).refine((value) => [...value].length <= 4000, 'Task text exceeds 4000 characters'), tag: z.string().trim().min(1).max(64).optional() }).strict();
@@ -407,7 +407,7 @@ export interface EngineOptions { fieldAutomation?: FieldAutomation; watcherLogPa
 export function createPinoteEngine(options: EngineOptions = {}) {
 // Observe shared storage, including writes by the CLI, desktop and other Pi sessions.
 // Stat polling survives missing files and atomic config replacement.
-const paths = [database(), `${database()}-wal`, join(getAgentDir(), 'pi-note.json'), receiptDir(), ...(options.fieldAutomation ? [options.fieldAutomation.path] : [])];
+const paths = [database(), `${database()}-wal`, join(getAgentDir(), 'pi-note.json'), receiptDir(), ...(options.fieldAutomation ? [options.fieldAutomation.changes] : [])];
 let timer: ReturnType<typeof setTimeout> | undefined;
 let closed = false;
 const changed = () => {

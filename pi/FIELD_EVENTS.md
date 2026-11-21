@@ -35,7 +35,7 @@ footer style; alerts remain independent.
 disabled until explicitly enabled because the previous setting authorized only
 notifications, not automatic worker actions. Saving watchers removes the old key.
 
-The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PRs`
+The bundled [`watchers/github-pr.mjs`](watchers/github-pr.mjs) handles `PRs`
 and legacy `PR`, ignoring other fields. Keep it in its package directory so its
 shared parser remains available; add a separate executable for custom behavior.
 If customizing a copy of the package, make the watcher executable
@@ -238,7 +238,8 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   If a failure resolves while Pi is closed, it is not delivered later as a stale
   failure.
 - Newly enabled watchers reconstruct current fields from history independently.
-  Disabling/removing clears their automation state; enabling again checks afresh.
+  Disabling/removing clears their automation state once the desktop's scheduler
+  sees it (about a second while it is open); enabling again then checks afresh.
   Editing the same file affects its next invocation, not stopped checks.
   Restoring an older notes backup can invalidate the cursor: close the desktop and
   deliberately back up/reset its corresponding automation state before restarting.

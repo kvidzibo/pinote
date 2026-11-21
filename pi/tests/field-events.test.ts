@@ -353,8 +353,11 @@ test('idle ticks start no CLI process; a committed change is read on the next ti
     const jobs = () => { const db = new DatabaseSync(join(dir, 'state.db')); try { return db.prepare('SELECT count(*) AS jobs FROM fw_jobs').get()!.jobs; } finally { db.close(); } };
     assert.equal(jobs(), 1);
     for (let i = 0; i < 3; i++) await automation.tick(); // Run the check and settle again.
-    // Re-enabling between ticks resets the watcher's cursor: history is read again without a new commit.
-    enabled = false; automation.failures(); enabled = true; automation.failures();
+    // A reader never erases saved state; the scheduler does once a tick sees the watcher disabled.
+    enabled = false; assert.deepEqual(automation.failures(), []);
+    assert.equal(jobs(), 1);
+    // Re-enabling resets the watcher's cursor: history is read again without a new commit.
+    await automation.tick(); enabled = true;
     assert.equal(jobs(), 0);
     await automation.tick();
     assert.equal(jobs(), 1);

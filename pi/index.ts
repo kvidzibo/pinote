@@ -7,6 +7,7 @@ import { registerTaskEntries, PinoteUI, showStartupTask } from './extension/ui.t
 import { registerExit } from './extension/exit.ts';
 import { clean, editorText } from './extension/protocol.ts';
 import { taskCompleted } from './extension/completion.ts';
+import { database } from './engine.ts';
 
 // Only an accepted /new (previousSessionFile) may carry this process-local selection.
 // Reload/resume/fork restore branch entries, never this map or a folder-global store.
@@ -28,10 +29,10 @@ export default function pinote(pi: ExtensionAPI): void {
   // Never substitute a directory-global CLI selection when task storage is unavailable.
   pi.events.on('pinote:query-current', (data: unknown) => {
     if (!data || typeof data !== 'object') return;
-    const request = data as { signal?: AbortSignal; respond?: (reply: { handled: true; result: Promise<{ content: { type: 'text'; text: string }[] }> }) => void };
+    const request = data as { signal?: AbortSignal; respond?: (reply: { handled: true; result: Promise<{ content: { type: 'text'; text: string }[]; _meta: { 'pinote/database': string } }> }) => void };
     if (typeof request.respond !== 'function' || request.signal !== undefined && !(request.signal instanceof AbortSignal)) return;
-    // The reply keeps its published shape: the task as JSON text.
-    const result = session ? session.tool('get_current', {}, request.signal).then((task) => ({ content: [{ type: 'text' as const, text: JSON.stringify(task) }] }))
+    // The reply keeps its published shape: the task as JSON text, and the notes database it belongs to.
+    const result = session ? session.tool('get_current', {}, request.signal).then((task) => ({ content: [{ type: 'text' as const, text: JSON.stringify(task) }], _meta: { 'pinote/database': database() } }))
       : Promise.reject(new PinoteFailure());
     void result.catch(() => {});
     request.respond({ handled: true, result });

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { connectPeer } from '../extension/client.ts';
+import { FieldAutomation } from '../field-events.ts';
 
 test('a Pi session reads results and alerts saved by a scheduler in another process', { timeout: 40_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-watcher-host-'));
@@ -41,6 +42,16 @@ test('a Pi session reads results and alerts saved by a scheduler in another proc
       assert.ok(Date.now() < deadline, 'Saved watcher results must refresh open sessions');
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    // The idle scheduler keeps renewing its lease; that must not refresh sessions.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const settled = changes;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    assert.equal(changes, settled);
+    // A reader configured without this watcher hides its results but never erases them.
+    const other = await FieldAutomation.open({ watchers: () => [] });
+    try { assert.deepEqual(other.failures(), []); assert.deepEqual(other.statuses({ ...task, agent_notes: { Build: 'queued' } }), []); } finally { await other.close(); }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal((await peer.view(meta, signal) as { fieldNotifications?: unknown[] }).fieldNotifications?.length, 1);
   } finally {
     await peer.close();
     if (host.exitCode === null && host.signalCode === null) { const stopped = new Promise((resolve) => host.once('close', resolve)); host.kill('SIGTERM'); await stopped; }

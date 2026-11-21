@@ -55,6 +55,7 @@ test('default package loads through Pi and two sessions share real local notes',
     buses.get(first)!.emit('pinote:query-current', { signal: new AbortController().signal, respond: (reply: any) => { queried = reply.result; } });
     assert.ok(queried, 'Sibling extensions can query the current task');
     assert.equal(parsed(await queried).id, task.id);
+    assert.equal((await queried as any)._meta['pinote/database'], join(temp, 'data/pinote/notes.db'));
     assert.equal(parsed(await call(other, 'get_current', {}, otherCtx)), null);
     assert.equal(parsed(await call(other, 'get_task', { task_id: task.id }, otherCtx)).text, task.text);
     await assert.rejects(call(other, 'propose', { title: 'x'.repeat(61) }, otherCtx), /title/);
