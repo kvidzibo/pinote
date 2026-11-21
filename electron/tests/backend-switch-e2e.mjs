@@ -118,8 +118,8 @@ try {
   await page.screenshot({ path: join(root, 'backend-switched-narrow.png') });
   await writeFile(join(root, '.local/bin/note'), '#!/bin/sh\nexit 99\n');
   await page.getByRole('button', { name: 'Refresh backend settings' }).click();
-  await page.getByText(/user CLI or service still needs migration/).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isEnabled(), true);
+  await page.getByText(/desktop uses a custom CLI wrapper/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await page.screenshot({ path: join(root, 'backend-launcher-changed.png') });
   await page.keyboard.press('Escape');
   await page.getByRole('dialog', { name: 'Backend settings' }).waitFor({ state: 'detached' });
