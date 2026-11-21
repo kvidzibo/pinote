@@ -1,6 +1,6 @@
 {
   "name": "pinote-electron",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "description": "Isolated desktop frontend with Pinote's bundled Node backend",
@@ -10,7 +10,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "setup": "npm --prefix ../backend ci --ignore-scripts --no-audit --no-fund && npm --prefix ../backend run build && install-electron",
+    "setup": "npm --prefix ../backend ci --ignore-scripts --no-audit --no-fund && npm --prefix ../backend run build && npm --prefix ../pi ci --ignore-scripts --no-audit --no-fund && install-electron",
     "build": "node build.mjs",
     "check": "tsc --noEmit",
     "start": "npm run build && electron --class=pinote-electron dist/main.cjs",

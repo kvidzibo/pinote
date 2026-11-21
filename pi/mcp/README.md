@@ -4,6 +4,10 @@ Pinote runs independently of the MCP gateway. The [dedicated Pi extension](../RE
 connects directly over authenticated **MCP Streamable HTTP**, using `/mcp` for tools,
 resources, notifications and its native terminal UI. No browser UI is served.
 
+Pinote Electron 0.14.0+ [hosts this service](../../docs/electron.md#task-service)
+while the desktop is open. Run it standalone, as described here, only on machines
+without that desktop; never run both on one port.
+
 ## Build and run
 
 On the machine holding your notes, requires **Node.js 22.19+**, Linux `flock`
