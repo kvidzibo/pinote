@@ -56,8 +56,17 @@ inspects nor changes that unit. If a switch started by an earlier version is
 still pending, first let that version finish its recovery. Then stop and disable
 the unit and remove its leftover `pinote.service.d/90-node-backend.conf` drop-in.
 
-Watchers are enabled in Pi's `/pinote` settings, which list the pi-note package's
-own `watchers/` as **Bundled**; the desktop runs whichever executable path is
+Since Electron 0.19.0, **Menu → Watchers…** edits them: add a script, choose
+the task and field events it listens for, name its fields and fill in the
+[parameters it declares](../pi/FIELD_EVENTS.md#watcher-settings). Saving asks for
+confirmation, naming each enabled script and Forgejo instance, and applies to the
+next check. Settings that differ from a script's defaults need pi-note 0.48.0+ in Pi. The bundled **Worktree cleanup**
+watcher removes a completed task's clean Git worktree. Task events need the Node
+`note` 0.27.0+ CLI; with an older one they are skipped and field watchers keep running.
+
+Watchers can also be enabled in Pi's `/pinote` settings, which list the pi-note package's
+own `watchers/` as **Bundled**; the desktop lists its own copies as **Bundled**,
+hides one when a saved entry is a copy of it, and runs whichever executable path is
 saved. Entries saved by Electron 0.14 point at the copies inside the application:
 they keep running with the same grouped PR alerts and are listed as **Custom**.
 After switching entries, still failing checks can alert once more. With more

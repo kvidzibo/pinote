@@ -98,7 +98,7 @@ function popupMenu(request: MenuRequest, showBackend: boolean): Promise<MenuActi
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
     const menu = Menu.buildFromTemplate([
       item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
-      item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'),
+      item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('watchers', 'Watchers…', 'view-reveal'),
       ...showBackend ? [item('backend-settings', 'Switch to Node backend…', 'utilities-terminal')] : [], separator,
       item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
@@ -158,10 +158,12 @@ async function boot() {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying. GTK remains available.'; }
   }
   await app.whenReady();
+  const watcherHost = () => import(pathToFileURL(join(bundles, 'service/watcher-host.mjs')).href);
+  let watcherSaving = false;
   // Field watchers run exactly as long as this desktop; Pi sessions read their saved results.
   watchers = (async () => {
     try {
-      const { startFieldWatchers } = await import(pathToFileURL(join(bundles, 'service/watcher-host.mjs')).href);
+      const { startFieldWatchers } = await watcherHost();
       const started = await startFieldWatchers({ log: (event: string) => log(`Pinote field watchers: ${event}`) }) as { close(): Promise<void> };
       log('Pinote field watchers started');
       return { close: async () => { await started.close(); log('Pinote field watchers stopped'); } };
@@ -301,6 +303,28 @@ async function boot() {
       });
       tasks = work.then(() => {}, () => {});
       return work;
+    },
+    'watcher-settings': async () => (await watcherHost()).watcherSettings(),
+    'choose-watcher': async () => {
+      const result = await dialog.showOpenDialog(window!, { title: 'Add watcher script', properties: ['openFile'] });
+      return result.canceled || !result.filePaths[0] ? null : (await watcherHost()).describeWatcher(result.filePaths[0]);
+    },
+    // The running scheduler rereads pi-note.json: saved changes apply to its next check.
+    'save-watchers': async (_event, entries: unknown, raw: unknown) => {
+      if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing watchers.');
+      if (closing || watcherSaving || !Array.isArray(entries) || !(raw === null || typeof raw === 'string') || Buffer.byteLength(JSON.stringify([entries, raw])) > 2 * 1024 * 1024) throw new Error('Invalid watcher settings');
+      watcherSaving = true;
+      try {
+        // Validated first: the confirmation names every enabled script and each shared value, such as a
+        // Forgejo instance and the token variable sent to it.
+        const host = await watcherHost(), trusted: string[] = host.watcherSaveSummary(entries);
+        const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Save watcher settings?',
+          detail: trusted.length ? `Enabled watchers are trusted code, not sandboxed. They run with your permissions and credentials while Pinote is open:\n\n${trusted.join('\n')}` : 'No watcher will be enabled.',
+          buttons: ['Cancel', 'Save'], defaultId: 0, cancelId: 0 });
+        if (result.response !== 1) return false;
+        host.saveWatcherSettings(entries, raw);
+        return true;
+      } finally { watcherSaving = false; }
     },
     'choose-folder': async () => { const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0] ?? null; },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },

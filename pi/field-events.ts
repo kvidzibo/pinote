@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { readConfigDocument } from './footer-config.ts';
-import { discoverFieldWatchers, type FieldWatcher } from './field-watchers.ts';
+import { discoverFieldWatchers, TASK_EVENTS, type FieldWatcher } from './field-watchers.ts';
 import { parsePullRequests } from './pull-requests.js';
 import { notesVersion, RECHECK_MS } from './notes-version.ts';
 
@@ -18,6 +18,8 @@ const value = z.string().max(8192).nullable();
 const Event = z.object({ id: integer, taskId: integer.positive(), field,
   event: z.enum(['added', 'changed', 'removed']), value, previousValue: value }).strict();
 const Batch = z.object({ cursor: integer, events: z.array(Event).max(3200) }).strict();
+const TaskEventSchema = z.object({ id: integer, taskId: integer.positive(), event: z.enum(TASK_EVENTS), fields: z.record(z.string(), z.string()) }).strict();
+const TaskBatch = z.object({ cursor: integer, events: z.array(TaskEventSchema).max(1000) }).strict();
 const SingleFieldResult = z.object({
   state: z.string().min(1).max(64).optional(), summary: z.string().max(1000).optional(),
   display: z.object({ strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(),
@@ -30,7 +32,8 @@ export const FieldResult = SingleFieldResult.extend({
 export type FieldResult = z.infer<typeof FieldResult>;
 type FieldEvent = z.infer<typeof Event>;
 type Job = { watcherId: string; event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean };
-export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: number; field: string; reason: string; lastSuccess: string | null; retryAt: string };
+/** `field` is `task:<event>` for a task event, which is never retried. */
+export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: number; field: string; reason: string; lastSuccess: string | null; retryAt: string | null };
 class FieldHandlerFailure extends Error {}
 export type FieldStatus = { watcherId: string; field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
 export type FieldNotice = { id: string; taskId: number; field: string; message: string; receiptIds?: string[] };
@@ -53,6 +56,13 @@ function prResults(watcher: FieldWatcher, field: string, value: string, result: 
 const prKey = (watcher: FieldWatcher, key: string) => watcher.name === 'GitHub PR'
   ? key.replace(/^pr:([^:]+):/, (_, repository: string) => `pr:${repository.toLowerCase()}:`) : key;
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
+/** Saved results depend on these settings: changing them checks the watcher's fields afresh. */
+const settings = (watcher: FieldWatcher) => JSON.stringify([watcher.fieldEvents, watcher.fields, watcher.params]);
+/** A task watcher's enablement with its current settings; each starts at the history tail read once it appears. */
+const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
+type TaskEvent = { id: number; taskId: number; event: typeof TASK_EVENTS[number]; fields: Record<string, string> };
+const wantsTask = (watcher: FieldWatcher, event: TaskEvent) => watcher.taskEvents.includes(event.event)
+  && (!watcher.fields.length || watcher.fields.some((name) => Object.hasOwn(event.fields, name)));
 
 /** One bounded invocation, no shell. Kill the process group on cancellation/overflow. */
 export function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000): Promise<FieldResult> {
@@ -105,6 +115,12 @@ export class FieldAutomation {
   private notes = notesVersion();
   private drained?: string;
   private drainDue = 0;
+  // In memory only: task events run once, for changes made while this scheduler is running.
+  private taskCursor?: number;
+  private taskSince = new Map<string, number>();
+  private taskQueue: { subscription: string; event: TaskEvent }[] = [];
+  private taskTurn = true;
+  private taskEventsFailed = false;
   private noteCommand: string;
   private changed: () => void;
   private log: (failure?: WatcherFailureLog) => void;
@@ -118,12 +134,13 @@ export class FieldAutomation {
       const migrate = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fw_pr_notices'").get();
       db.exec(`
       CREATE TABLE IF NOT EXISTS fw_scheduler (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS fw_watchers (id TEXT PRIMARY KEY, path TEXT NOT NULL, cursor INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS fw_watchers (id TEXT PRIMARY KEY, path TEXT NOT NULL, cursor INTEGER NOT NULL DEFAULT 0, config TEXT NOT NULL DEFAULT '');
       CREATE TABLE IF NOT EXISTS fw_jobs (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
       CREATE TABLE IF NOT EXISTS owners (task_id INTEGER PRIMARY KEY, context_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS fw_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
       CREATE TABLE IF NOT EXISTS fw_pr_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, url TEXT NOT NULL, notification_key TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,url));
       INSERT OR IGNORE INTO fw_scheduler(id) VALUES (1);`);
+      if (!db.prepare("SELECT 1 FROM pragma_table_info('fw_watchers') WHERE name='config'").get()) db.exec("ALTER TABLE fw_watchers ADD COLUMN config TEXT NOT NULL DEFAULT ''");
       if (migrate) {
         const builtins = new Map(watchers().filter(builtinPR).map((watcher) => [watcher.id, watcher]));
         for (const row of db.prepare("SELECT job FROM fw_jobs WHERE field='PR'").all() as Row[]) {
@@ -174,25 +191,32 @@ export class FieldAutomation {
   /** Readers only filter by their enabled watchers. Saved state is cleaned up by the
    * scheduler alone (durable): a reader with another configuration must not erase it. */
   private reconcile(durable = false): void {
-    const enabled = this.watchers().filter((watcher) => watcher.enabled);
+    const enabled = this.watchers().filter((watcher) => watcher.enabled && !watcher.problem);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
-    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path]));
+    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.taskEvents, settings(w)]));
     if (signature !== this.signature) {
       this.generation++; this.invocation?.abort();
       this.enabled = enabled; this.signature = signature; this.changed();
+      // A subscription that ended takes its queued events with it: enabling it again starts afresh.
+      const current = new Set(enabled.filter((watcher) => watcher.taskEvents.length).map(subscription));
+      for (const key of this.taskSince.keys()) if (!current.has(key)) this.taskSince.delete(key);
+      this.taskQueue = this.taskQueue.filter((queued) => current.has(queued.subscription));
     }
     if (!durable || signature === this.stored) return;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      for (const row of this.db.prepare('SELECT id,path FROM fw_watchers').all()) {
-        if (!enabled.some((w) => w.id === row.id && w.path === row.path)) {
+      for (const row of this.db.prepare('SELECT id,path,config FROM fw_watchers').all()) {
+        const watcher = enabled.find((w) => w.id === row.id && w.path === row.path);
+        // Rows saved before watcher settings existed keep their results.
+        if (watcher && row.config === '') this.db.prepare('UPDATE fw_watchers SET config=? WHERE id=?').run(settings(watcher), row.id);
+        else if (!watcher || row.config !== settings(watcher)) {
           this.db.prepare('DELETE FROM fw_jobs WHERE watcher_id=?').run(row.id);
           this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=?').run(row.id);
           this.db.prepare('DELETE FROM fw_pr_notices WHERE watcher_id=?').run(row.id);
           this.db.prepare('DELETE FROM fw_watchers WHERE id=?').run(row.id);
         }
       }
-      for (const watcher of enabled) this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path);
+      for (const watcher of enabled) this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path,config) VALUES (?,?,?)').run(watcher.id, watcher.path, settings(watcher));
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.stored = signature; this.drained = undefined; this.changed();
@@ -350,12 +374,59 @@ export class FieldAutomation {
       }
       let drained = false;
       // Read event history only after notes.db or the watcher set (see reconcile) changed.
+      const subscribed = new Map(this.enabled.filter((watcher) => watcher.taskEvents.length).map((watcher) => [subscription(watcher), watcher]));
+      if (!subscribed.size) this.taskCursor = undefined;
+      let more = false;
       if (!this.enabled.length) { this.notes.close(); return; }
       const version = this.notes.read();
       let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
       // A settings reset removes a watcher's row: start it again from durable history.
-      for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path).changes) { intake = true; this.drained = undefined; }
-      for (const watcher of intake ? this.enabled : []) {
+      for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path,config) VALUES (?,?,?)').run(watcher.id, watcher.path, settings(watcher)).changes) { intake = true; this.drained = undefined; }
+      if (intake && subscribed.size) {
+        try {
+          // Without a cursor the CLI returns the current tail: history from before this start never runs.
+          const read = async (after?: number) => TaskBatch.parse(await this.note(['task-events', ...(after === undefined ? [] : ['--after', String(after)]), '--limit', '25']));
+          if (this.taskCursor === undefined || [...subscribed.keys()].some((key) => !this.taskSince.has(key))) {
+            const tail = (await read()).cursor;
+            if (!valid()) return;
+            for (const key of subscribed.keys()) if (!this.taskSince.has(key)) this.taskSince.set(key, tail);
+            this.taskCursor ??= tail;
+          }
+          // A full queue is dispatched first; the cursor keeps the rest.
+          if (this.taskQueue.length >= 64) more = true;
+          else {
+            const cursor = this.taskCursor, batch = await read(cursor);
+            if (!valid()) return;
+            if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
+            for (const event of batch.events) {
+              for (const [key, watcher] of subscribed) if (event.id > this.taskSince.get(key)! && wantsTask(watcher, event)) this.taskQueue.push({ subscription: key, event });
+            }
+            if (batch.cursor !== cursor) more = true;
+            this.taskCursor = batch.cursor;
+          }
+          this.taskEventsFailed = false;
+        } catch (error) {
+          if (this.lifetime.signal.aborted) throw error;
+          // A passing failure keeps the cursor, so changes made meanwhile still run. History that no longer
+          // reaches it (a replaced database) starts again from the tail rather than replaying.
+          if (/Invalid task event cursor|Cursor is ahead/.test(`${(error as Error).message} ${(error as { stderr?: unknown }).stderr ?? ''}`)) { this.taskCursor = undefined; this.taskSince.clear(); this.taskQueue = []; }
+          if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
+        }
+      }
+      // Task events run before field intake, so reading a new watcher's field history does not delay them,
+      // and take turns with field work, so a backlog of either cannot starve the other.
+      const queued = this.taskTurn ? this.taskQueue.shift() : undefined;
+      this.taskTurn = !queued;
+      if (queued) {
+        const watcher = subscribed.get(queued.subscription)!;
+        const { id, taskId, event, fields } = queued.event;
+        const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields });
+        if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId, field: `task:${event}`,
+          reason: 'error' in run && run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed', lastSuccess: null, retryAt: null });
+        return;
+      }
+      // A watcher without field events has no field history to read.
+      for (const watcher of intake ? this.enabled.filter((w) => w.fieldEvents.length) : []) {
         const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
         const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));
         if (!valid()) return;
@@ -364,7 +435,7 @@ export class FieldAutomation {
           this.transaction(() => {
             for (const event of batch.events) {
               this.clear(watcher.id, event.taskId, event.field);
-              this.save({ watcherId: watcher.id, event, due: Date.now(), attempts: 0 });
+              if (watcher.fieldEvents.includes(event.event) && (!watcher.fields.length || watcher.fields.includes(event.field))) this.save({ watcherId: watcher.id, event, due: Date.now(), attempts: 0 });
             }
             for (const taskId of new Set(batch.events.map((event) => event.taskId))) this.prunePRNotices(watcher.id, taskId);
             this.db.prepare('UPDATE fw_watchers SET cursor=? WHERE id=?').run(batch.cursor, watcher.id);
@@ -373,7 +444,7 @@ export class FieldAutomation {
         }
       }
       if (drained) { this.changed(); return; }
-      if (intake) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
+      if (intake && !more) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
       if (!job) return;
@@ -384,38 +455,25 @@ export class FieldAutomation {
       if (!valid()) return;
       const currentValue = task && ['active', 'in_progress'].includes(task.state) ? task.agent_notes[event.field] ?? null : null;
       if (event.value !== currentValue) { this.transaction(() => { this.clear(job.watcherId, event.taskId, event.field); this.prunePRNotices(job.watcherId, event.taskId); }); this.changed(); return; }
-      let result: FieldResult, retryAfterSeconds = 0;
-      const invocation = new AbortController();
-      this.invocation = invocation;
-      const abort = () => invocation.abort();
-      this.lifetime.signal.addEventListener('abort', abort, { once: true });
-      const poll = setInterval(() => { try { this.reconcile(true); } catch { invocation.abort(); } }, 100);
-      try {
-        result = await runFieldHandler(watcher.path, {
-          version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,
-          event: job.checkedAt ? 'check' : event.event, value: event.value, previousValue: event.previousValue,
-          ...(job.result ? { previousResult: job.result } : {}),
-        }, invocation.signal);
-        if (result.state === 'error') {
-          retryAfterSeconds = result.recheckAfterSeconds ?? 0;
-          throw new FieldHandlerFailure('Watcher reported unavailable data; check dependencies, authentication and connectivity');
-        }
-      } catch (error) {
-        if (!valid() || invocation.signal.aborted) return;
+      const run = await this.invoke(watcher, {
+        version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,
+        event: job.checkedAt ? 'check' : event.event, value: event.value, previousValue: event.previousValue,
+        ...(job.result ? { previousResult: job.result } : {}),
+      });
+      if (!valid() || !run) return;
+      if ('error' in run || run.result.state === 'error') {
+        const retryAfterSeconds = 'result' in run ? run.result.recheckAfterSeconds ?? 0 : 0;
         job.attempts++; job.stale = true;
         job.result ??= { state: 'error', summary: 'Field handler unavailable', display: { color: 'muted' } };
         job.due = Date.now() + Math.max(retryAfterSeconds, Math.min(3600, 30 * 2 ** Math.min(job.attempts - 1, 7))) * 1000;
         this.transaction(() => this.save(job)); this.changed();
         this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
-          reason: error instanceof FieldHandlerFailure ? error.message : 'Watcher check failed',
+          reason: 'result' in run ? 'Watcher reported unavailable data; check dependencies, authentication and connectivity'
+            : run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed',
           lastSuccess: job.checkedAt ?? null, retryAt: new Date(job.due).toISOString() });
         return;
       }
-      finally {
-        clearInterval(poll); this.lifetime.signal.removeEventListener('abort', abort);
-        if (this.invocation === invocation) this.invocation = undefined;
-      }
-      if (!valid() || invocation.signal.aborted) return;
+      const result = run.result;
       const latest = await this.note(['agent', 'get', String(event.taskId)]) as Task;
       if (!valid()) return;
       if (latest?.updated_at !== task?.updated_at) return; // Includes remove/re-add (ABA); next tick drains new events.
@@ -442,6 +500,22 @@ export class FieldAutomation {
     } finally {
       this.db.prepare('UPDATE fw_scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);
     }
+  }
+  /** One invocation with the watcher's parameters; undefined when settings changed or the scheduler closed meanwhile. */
+  private async invoke(watcher: FieldWatcher, input: Record<string, unknown>): Promise<{ result: FieldResult } | { error: unknown } | undefined> {
+    const invocation = new AbortController();
+    this.invocation = invocation;
+    const abort = () => invocation.abort();
+    this.lifetime.signal.addEventListener('abort', abort, { once: true });
+    const poll = setInterval(() => { try { this.reconcile(true); } catch { invocation.abort(); } }, 100);
+    let outcome: { result: FieldResult } | { error: unknown };
+    try { outcome = { result: await runFieldHandler(watcher.path, { ...input, params: watcher.params }, invocation.signal) }; }
+    catch (error) { outcome = { error }; }
+    finally {
+      clearInterval(poll); this.lifetime.signal.removeEventListener('abort', abort);
+      if (this.invocation === invocation) this.invocation = undefined;
+    }
+    return invocation.signal.aborted ? undefined : outcome;
   }
   async close(): Promise<void> {
     this.lifetime.abort(); clearTimeout(this.timer);

@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.47.0",
+  "version": "0.48.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
@@ -38,6 +38,7 @@
     "pull-requests.js",
     "pr-batch.js",
     "pr-url.js",
+    "forgejo-instances.js",
     "footer-config.ts",
     "config-path.js",
     "task-title.ts",

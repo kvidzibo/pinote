@@ -139,7 +139,7 @@ corresponding provider's watcher is enabled. Legacy `PR` values remain readable;
 are clickable. Other fields stay on the task only.
 See the [Pi extension](../pi/README.md) for `/pinote`, Settings actions, footer status, and tools.
 Optional [field watchers](../pi/FIELD_EVENTS.md) run trusted executables
-while the desktop is open; `note field-events` exposes bounded, read-only field history.
+while the desktop is open; `note field-events` and `note task-events` expose bounded, read-only field and task history.
 New sessions can continue locally; there is no automatic cross-machine sync.
 
 ### Scheduled reminders

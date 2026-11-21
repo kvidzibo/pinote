@@ -25,7 +25,7 @@ function processRequest(data: Buffer | string, args: string[] = []) {
 }
 test('handshake, help and version are side-effect free', async () => {
   const r = processRequest(JSON.stringify(request('handshake'))); assert.equal(r.status, 0); assert.equal(r.stderr, '');
-  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.26.0', protocol: 1, database: paths.database } });
+  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.27.0', protocol: 1, database: paths.database } });
   for (const flag of ['--help', '--version']) assert.equal(processRequest('', [flag]).status, 0);
   assert.equal(existsSync(paths.data), false); assert.equal(existsSync(paths.state), false);
   assert.equal((await respond(request('handshake'), paths)).ok, true);

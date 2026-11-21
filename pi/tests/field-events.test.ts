@@ -112,7 +112,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.equal(diagnostics[0].taskId, task.id);
     assert.equal(diagnostics[0].field, 'PR');
     assert.ok(diagnostics[0].lastSuccess);
-    assert.ok(Date.parse(diagnostics[0].retryAt) > Date.now());
+    assert.ok(Date.parse(diagnostics[0].retryAt!) > Date.now());
     assert.ok(!JSON.stringify(diagnostics).includes(pr), 'No field values or script output in diagnostics');
     const failureView = await view();
     assert.equal(failureView.watcherDiagnostics?.logPath, join(dir, 'app.log'));

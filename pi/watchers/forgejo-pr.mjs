@@ -5,44 +5,22 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAgentDir } from '../config-path.js';
+import { instanceURL, parseInstances } from '../forgejo-instances.js';
 import { checkPRBatch } from '../pr-batch.js';
 import { parsePullRequests } from '../pull-requests.js';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const errorResult = () => ({ state: 'error', summary: 'Unable to check Forgejo PR status', recheckAfterSeconds: 120 });
 const unsafe = /[\s\\\u0000-\u001f\u007f-\u009f]/u;
-const segment = /^[A-Za-z0-9_.-]+$/;
 const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i;
 const states = new Set(['pending', 'success', 'error', 'failure', 'warning', 'skipped']);
-
-function instanceURL(value) {
-  if (typeof value !== 'string' || value.length > 2048 || unsafe.test(value) || /[?#]/u.test(value)) throw new Error('Invalid URL');
-  const raw = /^https?:\/\/([^/]+)(\/.*)?$/.exec(value);
-  if (!raw || raw[1].includes('@')) throw new Error('Invalid URL');
-  const url = new URL(value);
-  const loopbackHTTP = url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol !== 'https:' && !loopbackHTTP || url.username || url.password) throw new Error('Invalid URL');
-  // Check the raw path before URL normalization can hide traversal.
-  const path = (raw[2] ?? '').replace(/\/$/, '');
-  if (path && path.slice(1).split('/').some((part) => !segment.test(part) || ['.', '..'].includes(part))) throw new Error('Invalid path');
-  return url;
-}
 
 async function instances() {
   let root;
   try { root = JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   if (!object(root)) throw new Error('Invalid configuration');
-  const entries = root.forgejoInstances === undefined ? [] : root.forgejoInstances;
-  if (!Array.isArray(entries) || entries.length > 32) throw new Error('Invalid instances');
-  const seen = new Set();
-  return entries.map((entry) => {
-    if (!object(entry) || Object.keys(entry).some((key) => !['url', 'tokenEnv'].includes(key))) throw new Error('Invalid instance');
-    const url = instanceURL(entry.url).href.replace(/\/$/, '');
-    if (seen.has(url) || entry.tokenEnv !== undefined && (typeof entry.tokenEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry.tokenEnv))) throw new Error('Invalid instance');
-    seen.add(url);
-    return { url, tokenEnv: entry.tokenEnv };
-  }).sort((a, b) => b.url.length - a.url.length);
+  return parseInstances(root.forgejoInstances === undefined ? [] : root.forgejoInstances);
 }
 
 function validatePR(pr) {

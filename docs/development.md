@@ -55,7 +55,7 @@ Electron's 1280×900 and 800×600 end-to-end runs use separate parallel jobs, ea
 with its own Xvfb and private D-Bus session. Each job runs the E2E scenario as two
 concurrent halves on separate Xvfb servers and D-Bus sessions: `--part=1` is the
 lifecycle/recovery sequence; `--part=2` holds the self-contained workflow checks,
-after the backend-switch check. Without `--part`, `tests/e2e.mjs` runs everything.
+after the backend-switch and Watchers settings checks. Without `--part`, `tests/e2e.mjs` runs everything.
 Type/unit checks run once in the 800×600 job; packaged-app validation runs once in
 the 1280×900 job. The packaged smoke test runs from a
 temporary working directory with a private PATH and no Python executable.

@@ -210,6 +210,18 @@ export class Store {
     return {cursor,events};
   }
   private safeTask(id:bigint):void { if(id>9007199254740991n) throw new NoteError('Task ID exceeds the safe integer range.'); }
+  /** Task-level history: one event per committed action, with the handoff fields held just before it. */
+  task_events(after:bigint|null=null,limit:number=256):{cursor:bigint;events:Row[]} {
+    const {cursor,rows}=this.eventPage(after,limit), events:Row[]=[];
+    const names:Record<string,string>={add:'created',edit:'edited',tag:'tagged',start:'started',done:'completed',rm:'removed',restore:'restored',schedule:'scheduled'};
+    for(const r of rows) {
+      const event=names[r.action];
+      if(!event||(r.action==='done'||r.action==='rm')&&r.state===r.previous_state) continue;
+      this.safeTask(r.note_id);
+      events.push({id:r.id,taskId:r.note_id,event,fields:JSON.parse(r.previous_agent_notes??r.agent_notes??'{}')});
+    }
+    return {cursor,events};
+  }
   field_events(after:bigint|null=null,limit:number=256):{cursor:bigint;events:Row[]} {
     const {cursor,rows}=this.eventPage(after,limit), events:Row[]=[];
     const actions=new Set(['agent','edit','tag','start','reset','done','rm','restore','schedule','remind']);

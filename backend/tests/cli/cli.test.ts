@@ -34,7 +34,7 @@ test('argument validation is exact for bigint IDs and bounded event cursors',()=
 });
 test('help/version/invalid input are side effect free',t=>{
   const f=fixture(t);
-  assert.equal(f.ok('--version'),'pinote 0.26.0\n');
+  assert.equal(f.ok('--version'),'pinote 0.27.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);
@@ -126,6 +126,8 @@ test('agent revisions, selection, prototype-safe fields, sessions and field pagi
   assert.equal(f.cli('agent','done','1','--expected-updated-at',old).status,1);
   const events=JSON.parse(f.ok('field-events','--after','0')); assert.equal(events.events.length,2);
   assert.equal(events.events[0].field,'PR');
+  const created=JSON.parse(f.ok('task-events','--after','0')).events[0];
+  assert.deepEqual([created.taskId,created.event,created.fields],[1,'created',{}]);
   task=JSON.parse(f.ok('agent','tag','1','--expected-updated-at',task.updated_at,'--clear'));
   assert.equal(task.tag,null);
   f.ok('agent','done','1','--expected-updated-at',task.updated_at);

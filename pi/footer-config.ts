@@ -2,7 +2,7 @@ import { getAgentDir } from "./config-path.js";
 import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { parseFieldWatchers, type FieldWatcherConfig } from "./field-watchers.ts";
+import { parseFieldWatchers, watcherEntries, type FieldWatcherConfig } from "./field-watchers.ts";
 
 export const defaultHandoffPrompt = "Read the current Pinote task. Summarize your understanding, but don’t start work yet.";
 export const defaultNewSessionPrompt = defaultHandoffPrompt;
@@ -143,15 +143,7 @@ export function loadFooterConfig(warn: (message: string) => void): FooterConfig 
 
 // Synchronous compare-and-replace: reject edits made while the settings dialog was open,
 // preserve unrelated keys, and never leave partial JSON behind.
-export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null, fieldWatchers?: FieldWatcherConfig[]) {
-  if (taskOfferPolicy !== undefined && !["always", "github-remote", "never"].includes(taskOfferPolicy)) throw new Error("Invalid taskOfferPolicy");
-  const checked = parseFooterConfig({ footer: config });
-  if (checked.bar == null) delete checked.bar;
-  const prompts = {
-    ...(handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) }),
-    ...(newSessionPrompt === undefined ? {} : { newSessionPrompt: parseNewSessionPrompt(newSessionPrompt) }),
-    ...(agentGuidance == null ? {} : { agentGuidance: parseAgentGuidance(agentGuidance) }),
-  };
+function replaceConfigDocument(expectedRaw: string | null, change: (root: Record<string, unknown>) => Record<string, unknown>): string {
   const directory = getAgentDir();
   mkdirSync(directory, { recursive: true });
   const path = join(directory, "pi-note.json");
@@ -166,16 +158,39 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("pi-note.json is a symlink. Edit its target manually rather than replacing the link.");
     const root = expectedRaw === null ? {} : JSON.parse(expectedRaw);
     if (!object(root)) throw new Error("Invalid pi-note configuration; expected an object.");
+    raw = `${JSON.stringify(change(root), null, 2)}\n`;
+    writeFileSync(temp, raw, { flag: "wx", mode: 0o600 });
+    renameSync(temp, path);
+  } finally { rmSync(temp, { force: true }); closeSync(descriptor); rmSync(lock, { force: true }); }
+  return raw;
+}
+export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null, fieldWatchers?: FieldWatcherConfig[]) {
+  if (taskOfferPolicy !== undefined && !["always", "github-remote", "never"].includes(taskOfferPolicy)) throw new Error("Invalid taskOfferPolicy");
+  const checked = parseFooterConfig({ footer: config });
+  if (checked.bar == null) delete checked.bar;
+  const prompts = {
+    ...(handoffPrompt === undefined ? {} : { handoffPrompt: parseHandoffPrompt(handoffPrompt) }),
+    ...(newSessionPrompt === undefined ? {} : { newSessionPrompt: parseNewSessionPrompt(newSessionPrompt) }),
+    ...(agentGuidance == null ? {} : { agentGuidance: parseAgentGuidance(agentGuidance) }),
+  };
+  const raw = replaceConfigDocument(expectedRaw, (root) => {
     if (agentGuidance === null) delete root.agentGuidance;
     if (fieldWatchers !== undefined) {
       root.fieldWatchers = parseFieldWatchers({ fieldWatchers });
       delete root.fieldHandler;
     }
-    raw = `${JSON.stringify({ ...root, ...prompts, ...(taskOfferPolicy === undefined ? {} : { taskOfferPolicy }), footer: checked }, null, 2)}\n`;
-    writeFileSync(temp, raw, { flag: "wx", mode: 0o600 });
-    renameSync(temp, path);
-  } finally { rmSync(temp, { force: true }); closeSync(descriptor); rmSync(lock, { force: true }); }
+    return { ...root, ...prompts, ...(taskOfferPolicy === undefined ? {} : { taskOfferPolicy }), footer: checked };
+  });
   return { config: checked, raw };
+}
+/** The desktop's Watchers settings: replaces the watcher list and the shared keys its scripts declare. */
+export function saveFieldWatchers(input: unknown, expectedRaw: string | null): string {
+  const { entries, shared } = watcherEntries(input);
+  return replaceConfigDocument(expectedRaw, (root) => {
+    delete root.fieldHandler;
+    for (const [key, value] of Object.entries(shared)) if (Array.isArray(value) && !value.length) delete root[key]; else root[key] = value;
+    return { ...root, fieldWatchers: entries };
+  });
 }
 
 export function effectiveFooterFields(config: FooterConfig, notes: Record<string, string> = {}): FooterField[] {

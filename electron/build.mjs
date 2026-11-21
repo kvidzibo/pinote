@@ -9,7 +9,8 @@ await cp('../backend/dist', 'dist/pinote-backend', { recursive: true });
 // The watcher scheduler and its bundled watchers run from real files beside the backend.
 const service = { bundle: true, platform: 'node', format: 'esm', target: 'node22', metafile: true,
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" } };
-const watchers = (await readdir('../pi/watchers')).filter(name => name.endsWith('.mjs'));
+const watcherFiles = await readdir('../pi/watchers');
+const watchers = watcherFiles.filter(name => name.endsWith('.mjs'));
 const [served, watched] = await Promise.all([
   build({ ...service, entryPoints: ['../pi/watcher-host.ts'], outfile: 'dist/pinote-backend/service/watcher-host.mjs' }),
   build({ ...service, banner: {}, entryPoints: watchers.map(name => `../pi/watchers/${name}`), outdir: 'dist/pinote-backend/service/watchers', outExtension: { '.js': '.mjs' } }),
@@ -20,6 +21,8 @@ const [served, watched] = await Promise.all([
   build({ entryPoints: ['src/renderer.ts'], outfile: 'dist/renderer.js', bundle: true, platform: 'browser', target: 'chrome132' }),
 ]);
 await Promise.all(watchers.map(name => chmod(`dist/pinote-backend/service/watchers/${name}`, 0o755)));
+// Parameter declarations are read from beside each script.
+await Promise.all(watcherFiles.filter(name => name.endsWith('.params.json')).map(name => cp(`../pi/watchers/${name}`, `dist/pinote-backend/service/watchers/${name}`)));
 await cp('src/index.html', 'dist/index.html');
 await cp('src/preview.html', 'dist/preview.html');
 await cp('src/style.css', 'dist/style.css');
