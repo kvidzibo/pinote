@@ -129,9 +129,16 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const sessions = [launchSession, custom.ctx.sessionManager.getSessionId()];
     assert.deepEqual(cli('agent', 'get', String(task.id))['pi-sessions'], sessions);
     const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
-    await custom.handlers.get('before_agent_start')!(event, custom.ctx);
-    assert.ok(event.systemPromptOptions.sections.pinote_remote.includes('pi-sessions'));
-    for (const id of sessions) assert.ok(event.systemPromptOptions.sections.pinote_remote.includes(id));
+    const { message } = await custom.handlers.get('before_agent_start')!(event, custom.ctx);
+    assert.equal(message.customType, 'pinote-context');
+    assert.equal(message.display, false);
+    const { service: contextService, text } = JSON.parse(message.content);
+    assert.equal(contextService, 'pinote');
+    assert.ok(text.includes('pi-sessions'));
+    for (const id of sessions) {
+      assert.ok(text.includes(id));
+      assert.ok(!event.systemPromptOptions.sections.pinote_remote.includes(id));
+    }
     const occupied = await open(current, [], 'startup', 'Keep my draft');
     assert.equal(occupied.editor.text, 'Keep my draft');
     assert.deepEqual(occupied.editor.writes, []);

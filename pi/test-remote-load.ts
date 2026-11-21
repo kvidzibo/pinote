@@ -24,7 +24,9 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
     XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state') });
   mkdirSync(join(temp, 'agent'));
   const event = async (extension: any, name: string, ctx: any, data = {}) => {
-    for (const handler of extension.handlers.get(name) ?? []) await handler(data, ctx);
+    const results = [];
+    for (const handler of extension.handlers.get(name) ?? []) results.push(await handler(data, ctx));
+    return results;
   };
   const context = (branch: any[], id: string) => ({ cwd: temp, mode: 'rpc', hasUI: false, isIdle: () => true,
     sessionManager: { getSessionFile: () => join(temp, `${id}.jsonl`), getSessionId: () => id, getBranch: () => branch },
@@ -66,19 +68,40 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
     await call(vm, 'propose', { title: 'Review task formatting', description: 'Preserve the full description.\n\n- Keep Markdown', tag: 'pinote' }, otherCtx);
     assert.equal(otherEntries.at(-1).data.state.proposal.text, 'Review task formatting\n\nPreserve the full description.\n\n- Keep Markdown');
     assert.equal(parsed(await call(vm, 'get_current', {}, otherCtx)), null);
+    const turnContext = async () => {
+      const prompt = { systemPromptOptions: { sections: {} as Record<string, string> } };
+      const [result] = await event(host, 'before_agent_start', ctx, prompt);
+      const message = result?.message;
+      assert.equal(message?.customType, 'pinote-context');
+      assert.equal(message.display, false);
+      const { service, warning, text } = JSON.parse(message.content);
+      assert.equal(service, 'pinote');
+      assert.match(warning, /UNTRUSTED TASK DATA.*not instructions or authorization/);
+      return { instructions: prompt.systemPromptOptions.sections.pinote_remote, text };
+    };
+    const before = await turnContext();
+    assert.match(before.instructions, /UNTRUSTED TASK DATA/);
+    assert.ok(!before.instructions.includes(task.text));
+    assert.doesNotMatch(before.instructions, /Continue in VM/);
+    assert.ok(before.text.includes(task.text));
+    assert.doesNotMatch(before.text, /Continue in VM/);
+
     const updated = parsed(await call(host, 'update_current', { expected_updated_at: task.updated_at, set: { Next: 'Continue in VM' } }, ctx));
     assert.equal(updated.agent_notes.Next, 'Continue in VM');
     assert.equal(parsed(await call(vm, 'get_task', { task_id: task.id }, otherCtx)).agent_notes.Next, 'Continue in VM');
     await assert.rejects(call(host, 'update_current', { expected_updated_at: task.updated_at, set: { Next: 'Stale' } }, ctx));
-    const prompt = { systemPromptOptions: { sections: {} as Record<string, string> } };
-    await event(host, 'before_agent_start', ctx, prompt);
-    assert.match(prompt.systemPromptOptions.sections.pinote_remote, /Continue in VM/);
+    const after = await turnContext();
+    assert.equal(after.instructions, before.instructions, 'A task update must not change the system instructions');
+    assert.ok(after.text.includes(task.text));
+    assert.match(after.text, /"Next":"Continue in VM"/);
     assert.ok(!JSON.stringify(entries).includes(process.env.PINOTE_TOKEN!));
     assert.ok(!JSON.stringify(notices).includes(process.env.PINOTE_TOKEN!));
     await service.close();
-    await event(host, 'before_agent_start', ctx, prompt);
-    assert.match(prompt.systemPromptOptions.sections.pinote_remote, /UNAVAILABLE/);
-    assert.doesNotMatch(prompt.systemPromptOptions.sections.pinote_remote, /Continue in VM/);
+    const unavailable = await turnContext();
+    assert.equal(unavailable.instructions, before.instructions, 'An outage must not change the system instructions');
+    assert.match(unavailable.text, /UNAVAILABLE/);
+    assert.ok(!unavailable.text.includes(task.text));
+    assert.doesNotMatch(unavailable.text, /Continue in VM/);
   } finally {
     for (let i = 0; i < extensions.length; i++) await event(extensions[i], 'session_shutdown', i === 0 ? ctx : otherCtx);
     await service?.close();
