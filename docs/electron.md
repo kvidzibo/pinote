@@ -53,9 +53,11 @@ need. Service lines are written to the desktop's `app.log`.
 
 A missing token or busy port only disables the service: a busy port is named in
 the log, and the desktop stays usable. With a missing or outdated `note` CLI
-the service still listens and Pi reports the error on each request. Stop and
-disable an existing standalone `pinote.service` using the same port before
-relying on Electron.
+the service still listens and Pi reports the error on each request.
+
+With an existing standalone `pinote.service` on the same port, first finish any
+[backend switch](#switch-an-existing-installation) while that service is still
+running, then stop and disable it and reopen Electron.
 Bundled watchers are shipped inside the application; entries enabled from a
 previous `pi/watchers/` path keep running but are listed as **Custom**. Enable
 the bundled entries and remove the old ones to restore grouped PR alerts; still
