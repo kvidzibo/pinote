@@ -238,6 +238,12 @@ async function probe(options: SwitchOptions, run: Run, env = options.env): Promi
   if (database !== resolve(options.database)) throw new Error('The new backend does not resolve to the same database; nothing will be switched.');
   return version;
 }
+export async function verifiedSwitchVersion(options: SwitchOptions, run: Run = runCommand): Promise<string> {
+  const targetVersion = await probe(options, run);
+  const version = (await run(options.node, [join(options.bundles, 'cli.mjs'), '--version'], options.env)).trim();
+  if (!/^\d+\.\d+\.\d+(?:[-+][\w.+-]+)?$/.test(targetVersion) || version !== `pinote ${targetVersion}`) throw new Error('Bundled CLI verification failed.');
+  return version;
+}
 export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']): void {
   if (!env.HOME || !isAbsolute(env.HOME)) throw new Error('Backend selection requires an absolute HOME independent of the working directory.');
   for (const key of keys) {
@@ -615,9 +621,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     if (await loadJournal(env)) throw new Error('An interrupted switch needs recovery; restart Pinote before trying again.');
     progress('Checking the bundled Node runtime and existing service…');
     const desktopDatabase = await databaseIdentity(options.database);
-    const targetVersion = await probe(options, run);
-    const version = (await run(options.node, [join(options.bundles, 'cli.mjs'), '--version'], env)).trim();
-    if (version !== `pinote ${targetVersion}`) throw new Error('Bundled CLI verification failed.');
+    const version = await verifiedSwitchVersion(options, run);
     const before = await switchableService(run, env);
     let serviceArguments: [string, string] | undefined, originalHost: string | undefined, originalPort: string | undefined;
     let originalDatabase: DatabaseIdentity | undefined;

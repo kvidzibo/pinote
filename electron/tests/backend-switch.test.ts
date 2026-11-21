@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { checkSwitchEnvironment, switchToNode, recoverBackendSwitch, preferredBackendEnvironment, processEnvironment, runCommand } from '../src/backend-switch.ts';
+import { verifiedSwitchVersion, checkSwitchEnvironment, switchToNode, recoverBackendSwitch, preferredBackendEnvironment, processEnvironment, runCommand } from '../src/backend-switch.ts';
 
 let bundles: string;
 before(async () => {
@@ -259,6 +259,9 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await operation;
         if (mode === 'success') {
           assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, dependencies.run), 'matches');
+          for (const broken of ['', 'pinote 0.0.0']) {
+            await assert.rejects(verifiedSwitchVersion({ env: desktopEnv, node: process.execPath, bundles, database }, (file, args, env, input) => args.includes('--version') ? Promise.resolve(broken) : runCommand(file, args, env, input)), /Bundled CLI verification failed/);
+          }
           await assert.rejects(checkSwitchEnvironment({ ...desktopEnv, XDG_DATA_HOME: join(root, 'different-desktop') }, bundles, database, dependencies.run), /same database/);
           const directPreview = (file: string, args: string[], env: NodeJS.ProcessEnv, input?: string) =>
             file === '/usr/bin/busctl' && args.at(-1) === 'ExecStartEx'
