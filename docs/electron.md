@@ -50,10 +50,11 @@ stop lines are written to the desktop's `app.log`; failed checks are detailed in
 `watchers.log` beside the watcher state. If watchers cannot start, the reason is
 logged and the desktop stays usable.
 
-A standalone `pinote.service` from earlier versions is no longer used: stop and
-disable it. Since Electron 0.16.0 the [backend switch](#switch-an-existing-installation)
-neither inspects nor changes that unit; remove its leftover
-`pinote.service.d/90-node-backend.conf` drop-in yourself.
+A standalone `pinote.service` from earlier versions is no longer used. Since
+Electron 0.16.0 the [backend switch](#switch-an-existing-installation) neither
+inspects nor changes that unit. If a switch started by an earlier version is
+still pending, first let that version finish its recovery. Then stop and disable
+the unit and remove its leftover `pinote.service.d/90-node-backend.conf` drop-in.
 
 Watchers are enabled in Pi's `/pinote` settings, which list the pi-note package's
 own `watchers/` as **Bundled**; the desktop runs whichever executable path is

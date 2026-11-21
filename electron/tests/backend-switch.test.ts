@@ -26,7 +26,7 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['python', 'node', 'rollback', 'interrupted', 'conflict', 'deletion', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'lossy-launcher', 'relative-home', 'pip', 'pip-lazy', 'interpreter-shim'] as const) {
+  for (const mode of ['python', 'node', 'rollback', 'interrupted', 'conflict', 'deletion', 'changed-after-install', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'lossy-launcher', 'relative-home', 'pip', 'pip-lazy', 'interpreter-shim'] as const) {
     const root = await mkdtemp(join(tmpdir(), mode === 'interpreter-shim' ? 'pinote-shim-' : "pinote switch-'"));
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), PATH: `${root}/bin:/usr/bin:/bin`, PINOTE_ELECTRON_BACKEND: join(root, 'python-backend') };
@@ -71,7 +71,10 @@ test('confirmed backend switching preserves data, rolls back failure and recover
             if (mode === 'deletion') rmSync(cli); // Owner deletion after publication must survive rollback.
             throw new Error('Injected verification failure');
           }
-          return runCommand(executable, args, childEnv, input);
+          const output = await runCommand(executable, args, childEnv, input);
+          // An owner edit after a passed verification must still block the commit.
+          if (executable === cli && mode === 'changed-after-install') writeFileSync(cli, '#!/bin/sh\nexit 99\n');
+          return output;
         },
       };
       const phases: string[] = [];
@@ -104,19 +107,20 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         const different = { ...env, PINOTE_ELECTRON_BACKEND: '/another/explicit/backend' };
         assert.equal((await preferredBackendEnvironment(different)).PINOTE_ELECTRON_BACKEND, different.PINOTE_ELECTRON_BACKEND);
       } else {
-        await assert.rejects(operation, mode === 'conflict' || mode === 'deletion' ? /rollback could not finish/ : mode === 'interrupted' ? /Injected interruption before rollback/ : /Injected verification failure/);
+        await assert.rejects(operation, mode === 'conflict' || mode === 'deletion' || mode === 'changed-after-install' ? /rollback could not finish/ : mode === 'interrupted' ? /Injected interruption before rollback/ : /Injected verification failure/);
         if (mode === 'interrupted') {
           assert.equal(JSON.parse(await readFile(pending, 'utf8')).complete, false);
           await recoverBackendSwitch(env, dependencies);
         }
         if (mode === 'conflict') assert.equal(await readFile(cli, 'utf8'), 'owner changed configuration');
         else if (mode === 'deletion') await assert.rejects(lstat(cli), { code: 'ENOENT' });
+        else if (mode === 'changed-after-install') assert.equal(await readFile(cli, 'utf8'), '#!/bin/sh\nexit 99\n');
         else assert.equal(await readlink(cli), old);
-        assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, env.PINOTE_ELECTRON_BACKEND);
+        if (mode !== 'changed-after-install') assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, env.PINOTE_ELECTRON_BACKEND);
       }
       await assert.rejects(lstat(join(root, 'config/systemd')), { code: 'ENOENT' });
       assert.deepEqual(await readFile(database), source, 'Switching and rollback never mutate or restore task data');
-      if (mode === 'conflict' || mode === 'deletion') assert.ok((await lstat(pending)).isFile());
+      if (mode === 'conflict' || mode === 'deletion' || mode === 'changed-after-install') assert.ok((await lstat(pending)).isFile());
       else await assert.rejects(lstat(pending), { code: 'ENOENT' });
       const backupRoot = join(root, 'state/pinote/backend-switch/backups');
       const backup = join(backupRoot, (await readdir(backupRoot))[0]);

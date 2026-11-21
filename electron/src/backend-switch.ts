@@ -169,11 +169,9 @@ async function verifyCLIEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute PATH.');
   if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on PATH.');
 }
-async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
+async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv, cli: string): Promise<string> {
   await verifyCLIEnvironment(env);
-  const command = env.PINOTE_NOTE_COMMAND || 'note';
-  if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The existing CLI must be an unambiguous absolute executable.');
-  const path = await realpath(command === 'note' ? executable(env, 'note') : command);
+  const path = await realpath(cli);
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > 8192) throw new Error('The existing CLI cannot be verified safely.');
   const text = utf8.decode(await readFile(path));
@@ -214,8 +212,8 @@ async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS
   // command may activate reminders or hide an XDG override inside the script.
   throw new Error('The existing note command is a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.');
 }
-async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv): Promise<string> {
-  const database = await existingCLIDatabase(options, run, env);
+async function verifyExistingCLI(options: SwitchOptions, run: Run, cli: string): Promise<string> {
+  const database = await existingCLIDatabase(options, run, options.env, cli);
   if (database !== resolve(options.database)) throw new Error('The existing CLI uses a different database; the switch was blocked.');
   return database;
 }
@@ -310,7 +308,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       files.push(await snapshot(target.path, target.text, target.mode, target.link));
     }
     if (files.some(file => file.path === paths.cli && file.kind !== 'missing')) {
-      await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: paths.cli });
+      await verifyExistingCLI(options, run, paths.cli);
     }
     const backup = join(paths.state, 'backups', randomUUID()); await safeDirectory(backup, true);
     for (const file of files) {
