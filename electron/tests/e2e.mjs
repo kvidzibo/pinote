@@ -410,6 +410,13 @@ try {
       assert.equal(page.isClosed(),false);
       assert.equal(app.process().exitCode,null,'Dismissing actions must not close Pinote');
     };
+    // The previous case removed a row and requested an asynchronous window fit.
+    // Measure the action toolbar in a settled viewport, not halfway through that fit
+    // or the scroll Playwright performs to reach a partially visible title.
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(420,360));
+    await page.waitForFunction(()=>window.innerWidth===420 && window.innerHeight===360);
+    await row.scrollIntoViewIfNeeded();
+    await title.click({button:'right',trial:true});
     const rowBox=await row.boundingBox();
     const serial=(await menuState()).serial;
     await title.click({button:'right'});

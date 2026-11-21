@@ -7,6 +7,7 @@ await mkdir('dist', { recursive: true });
 execFileSync(process.execPath, ['build.mjs'], { cwd: fileURLToPath(new URL('../backend/', import.meta.url)), stdio: 'inherit' });
 await cp('../backend/dist', 'dist/pinote-backend', { recursive: true });
 await Promise.all([
+  build({ entryPoints: ['src/backend-switch-guard.ts'], outfile: 'dist/pinote-backend/switch-guard.mjs', bundle: true, platform: 'node', format: 'esm', target: 'node22' }),
   build({ entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preview-preload.ts'], outfile: 'dist/preview-preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),

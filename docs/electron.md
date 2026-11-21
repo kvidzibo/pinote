@@ -17,12 +17,8 @@ editor autosave does not require Python.
 Run from the repository root:
 
 ```sh
-npm --prefix backend ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
-npm --prefix electron run check
-npm --prefix electron test
-npm --prefix electron run build
 npm --prefix electron start
 ```
 
@@ -30,6 +26,8 @@ npm --prefix electron start
 explicitly downloads the locked Electron 45 binary; there is no Electron
 postinstall download in this version. Dependencies have their own
 `electron/package-lock.json`. `start` rebuilds before launching.
+For development checks (including legacy Python and Pi service fixtures), see
+[Electron tests](development.md#electron-frontend). They are not required to launch.
 The build includes the backend bundle. At runtime it uses external `node` from
 absolute PATH directories, or a **trusted absolute Node executable** in `PINOTE_NODE`.
 Relative PATH entries are ignored; unsupported Node versions fail at startup.
@@ -73,9 +71,11 @@ the bundled CLI/bridge against the same database, then:
   injection require a manual switch. Launcher checks do not authenticate Python
   installations or their installed packages. The
   drop-in preserves service arguments/environment files and overrides the CLI
-  at execution, including an old command supplied by `EnvironmentFile`. At service
-  startup, `ExecStartPre` runs the installed CLI's `--version` under the unit's
-  own restrictions; an inaccessible or unusable launcher prevents startup.
+  at execution, including an old command supplied by `EnvironmentFile`. During
+  switching and rollback, a temporary unit command verifies the CLI and original
+  database identity inside the service environment before starting HTTP or its
+  watchers. The guard is removed after verification. Units with custom start
+  hooks require a manual switch.
 - Saves an explicit Node preference, restarts the previously running service,
   verifies its CLI/listener, and relaunches Electron.
 
