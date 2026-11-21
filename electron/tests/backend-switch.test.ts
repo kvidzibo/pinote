@@ -109,7 +109,7 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'no-service', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy', 'interpreter-shim', 'changed-after-start'] as const) {
+  for (const mode of ['success', 'no-service', 'fallback-db', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy', 'interpreter-shim', 'changed-after-start'] as const) {
     // This optional kernel check requires unprivileged user/mount namespaces.
     if (mode === 'isolated-service' && !process.env.PINOTE_TEST_UNSHARE) continue;
     const root = await mkdtemp(join(tmpdir(), mode === 'interpreter-shim' ? 'pinote-shim-' : "pinote switch-'"));
@@ -145,6 +145,14 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const database = join(root, 'data/pinote/notes.db');
       await runCommand(process.execPath, [join(bundles, 'cli.mjs'), '--no-notify', 'Keep all history and IDs'], env);
       const source = await readFile(database);
+      if (mode === 'fallback-db') {
+        await rm(cli);
+        const bin = join(root, 'fallback/bin'), dist = join(root, 'fallback/dist');
+        await mkdir(bin, { recursive: true }); await mkdir(dist);
+        await writeFile(join(bin, 'note'), await readFile(resolve('../backend/bin/note')), { mode: 0o700 });
+        await symlink(join(bin, 'note'), join(root, 'bin/note'));
+        await writeFile(join(dist, 'bridge.mjs'), `console.log(JSON.stringify({protocol:1,ok:true,result:{version:'test',database:${JSON.stringify(join(root, 'other.db'))}}}))`);
+      }
       if (mode === 'isolated-service') {
         injected = spawn('unshare', ['-Urmn', process.execPath, '-e', "process.stdout.write('ready');setInterval(()=>{},1000)"], { env, stdio: ['ignore', 'pipe', 'ignore'] });
         const first = await injected.stdout![Symbol.asyncIterator]().next();
@@ -172,7 +180,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           if (executable === '/usr/bin/busctl') return manager.property(args.at(-1)!, mode === 'unit-wrapper' ? custom : undefined);
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
-          if (action === 'show' && ['user-wrapper', 'lossy-launcher', 'no-service'].includes(mode)) return 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n';
+          if (action === 'show' && ['user-wrapper', 'lossy-launcher', 'no-service', 'fallback-db'].includes(mode)) return 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n';
           if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? manager.pid || injected?.pid || process.pid : 0}\n`;
           if (action === 'stop') { active = false; await manager.stop(); }
           if (action === 'daemon-reload') await manager.reload();
@@ -207,6 +215,13 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
+      if (mode === 'fallback-db') {
+        await assert.rejects(operation, /different database/);
+        await assert.rejects(lstat(cli), { code: 'ENOENT' });
+        await assert.rejects(lstat(join(root, 'config/pinote/backend.json')), { code: 'ENOENT' });
+        assert.deepEqual(await readFile(database), source);
+        continue;
+      }
       if (mode === 'changed-after-start') {
         await assert.rejects(operation, /rollback could not finish/);
         assert.equal(active, false);

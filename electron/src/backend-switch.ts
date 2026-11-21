@@ -267,12 +267,13 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
     serviceEnv = await processEnvironment(current.pid);
     await verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
   }
-  await verifyDesktopCommand(env);
+  const previous = await verifyDesktopCommand(env);
   const runtime = { node: nodeExecutable(env) };
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
   if (cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
+  if (previous && previous !== locations(env).cli) await verifyExistingCLI({ ...runtime, env, bundles, database }, run, { ...env, PINOTE_NOTE_COMMAND: previous }, 'desktop');
   if (!serviceEnv) return 'absent';
   await inspectCLI(runtime, serviceEnv, 'pinote.service');
   const options = { ...runtime, bundles, env, database };
@@ -294,18 +295,23 @@ async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentS
 }
 // Predict where a bare 'note' will resolve after publication, including a
 // currently missing launcher. Never replace a different command on PATH.
-async function verifyDesktopCommand(env: NodeJS.ProcessEnv): Promise<void> {
+async function verifyDesktopCommand(env: NodeJS.ProcessEnv): Promise<string | undefined> {
   const target = locations(env).cli;
+  let reachedTarget = false;
   for (const dir of (env.PATH || '').split(':')) {
     const candidate = join(dir, 'note');
-    if (candidate === target) return;
+    if (candidate === target) reachedTarget = true;
     try {
       await access(candidate, constants.X_OK);
-      if ((await stat(candidate)).isFile()) break;
+      if ((await stat(candidate)).isFile()) {
+        if (reachedTarget) return candidate;
+        break;
+      }
     } catch (error) {
       if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code || '')) throw error;
     }
   }
+  if (reachedTarget) return undefined; // No previous command; installation will create it.
   throw new Error('The desktop PATH must select ~/.local/bin/note. Put ~/.local/bin before other note installations and relaunch Pinote.');
 }
 const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
@@ -594,7 +600,6 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
   let journal: Journal | undefined;
   try {
     await verifyCLIEnvironment(env, 'desktop');
-    await verifyDesktopCommand(env);
     if (await loadJournal(env)) throw new Error('An interrupted switch needs recovery; restart Pinote before trying again.');
     progress('Checking the bundled Node runtime and existing service…');
     const desktopDatabase = await databaseIdentity(options.database);
@@ -622,6 +627,8 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       await safeDirectory(dirname(target.path));
       files.push(await snapshot(target.path, target.text, target.mode, target.link));
     }
+    const previous = await verifyDesktopCommand(env);
+    if (previous && previous !== paths.cli) await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: previous }, 'desktop');
     // This launcher is independently user-facing; the service may use another CLI.
     if (files.some(file => file.path === paths.cli && file.kind !== 'missing')) {
       await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: paths.cli }, 'desktop');
@@ -645,6 +652,8 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     progress('Installing the CLI and selecting the Node backend…');
+    if (await verifyDesktopCommand(env) !== previous) throw conflict();
+    if (previous && previous !== paths.cli) await verifyExistingCLI(options, run, { ...env, PINOTE_NOTE_COMMAND: previous }, 'desktop');
     for (const file of files) {
       if (!await originalMatches(file)) throw new Error('Configuration changed during preparation; nothing will be overwritten.');
       await install(file, () => atomic(join(paths.state, 'pending.json'), JSON.stringify(journal)));
