@@ -24,13 +24,16 @@ test('preflight without a user CLI checks the lock helper and service overrides 
   const child = spawn('/usr/bin/sleep', ['60'], { env: { ...env, LD_LIBRARY_PATH: root } });
   try {
     await once(child, 'spawn');
-    await writeFile(join(root, 'systemctl'), `#!/bin/sh\nprintf 'LoadState=loaded\\nActiveState=active\\nMainPID=${child.pid}\\n'\n`, { mode: 0o700 });
+    const preview = () => checkSwitchEnvironment(env, bundles, root, async file => {
+      assert.equal(file, '/usr/bin/systemctl');
+      return `LoadState=loaded\nActiveState=active\nMainPID=${child.pid}\n`;
+    });
     const flock = join(root, 'flock');
     await symlink('/usr/bin/true', flock);
-    await assert.rejects(checkSwitchEnvironment(env), /system flock on the desktop PATH/);
+    await assert.rejects(preview(), /system flock on the desktop PATH/);
     await assert.rejects(switchToNode({ env, node: env.PINOTE_NODE, database: root, bundles }, () => {}, { updateLock: join(root, 'locks/update.lock') }), /system flock on the desktop PATH/);
     await rm(flock); await symlink('/usr/bin/flock', flock);
-    await assert.rejects(checkSwitchEnvironment(env), error => error instanceof Error && error.message.includes('pinote.service environment sets LD_LIBRARY_PATH') && !error.message.includes(root));
+    await assert.rejects(preview(), error => error instanceof Error && error.message.includes('pinote.service environment sets LD_LIBRARY_PATH') && !error.message.includes(root));
   } finally { child.kill(); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -198,7 +201,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         }, wait: async () => {},
       };
       const phases: string[] = [];
-      const desktopEnv = mode === 'success' && process.env.PINOTE_TEST_SYSTEM_CUDA === '1' ? { ...env, LD_LIBRARY_PATH: '/usr/local/cuda/lib64' } : env;
+      const desktopEnv = { ...env, PINOTE_NODE: process.execPath };
+      if (mode === 'success' && process.env.PINOTE_TEST_SYSTEM_CUDA === '1') Object.assign(desktopEnv, { LD_LIBRARY_PATH: '/usr/local/cuda/lib64' });
       const operation = switchToNode({ env: desktopEnv, node: process.execPath, bundles, database }, text => {
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
@@ -232,6 +236,10 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       }
       if (mode === 'success' || mode === 'no-service' || isPip) {
         await operation;
+        if (mode === 'success') {
+          assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, dependencies.run), 'matches');
+          await assert.rejects(checkSwitchEnvironment(desktopEnv, bundles, join(root, 'other.db'), dependencies.run), /same database/);
+        }
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
         if (mode === 'no-service') await assert.rejects(lstat(dropin), { code: 'ENOENT' });
@@ -242,6 +250,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await assert.rejects(operation, mode === 'interrupted' || mode === 'conflict' || mode === 'deletion' ? /rollback could not finish/ : /Injected restart failure/);
         if (mode === 'interrupted') {
           assert.equal(active, false); fail = false;
+          await assert.rejects(recoverBackendSwitch({ ...env, LD_LIBRARY_PATH: root }, () => ({ node: process.execPath, bundles }), dependencies), /desktop environment sets LD_LIBRARY_PATH/);
           await recoverBackendSwitch(env, () => ({ node: process.execPath, bundles }), dependencies);
         }
         if (mode === 'conflict') assert.equal(await readFile(cli, 'utf8'), 'owner changed configuration');

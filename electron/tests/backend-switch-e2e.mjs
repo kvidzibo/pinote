@@ -20,7 +20,6 @@ for (const key of ['WAYLAND_DISPLAY', 'I3SOCK', 'ELECTRON_RUN_AS_NODE']) delete 
 // The simulated user installation must not inherit host loader overrides.
 for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key)) delete env[key];
 for (const path of ['bin', 'data', 'state', 'config', 'cache', 'runtime', '.local/bin']) await mkdir(join(root, path), { recursive: true, mode: 0o700 });
-await writeFile(join(root, 'bin/systemctl'), '#!/bin/sh\nprintf "LoadState=not-found\\nActiveState=inactive\\nMainPID=0\\n"\n', { mode: 0o700 });
 const marker = join(root, 'python-calls');
 await writeFile(env.PINOTE_ELECTRON_BACKEND, `#!/bin/sh\nprintf x >> '${marker}'\nexec '${resolve('../.venv/bin/pinote-electron-backend')}'\n`, { mode: 0o700 });
 const old = resolve('../.venv/bin/note');
@@ -36,6 +35,16 @@ const launch = async () => {
   const page = await app.firstWindow();
   await page.locator('.task-title').filter({ hasText: 'Existing task survives switch' }).waitFor();
   await app.evaluate(({ Menu }) => {
+    // Keep the production systemctl path pinned. Only the disposable test
+    // process simulates an absent service; no real service control is allowed.
+    const cp = process.getBuiltinModule('node:child_process');
+    const execFile = cp.execFile;
+    cp.execFile = function(file, args, ...rest) {
+      if (file !== '/usr/bin/systemctl') return execFile.call(this, file, args, ...rest);
+      if (args[1] !== 'show') throw new Error('Unexpected service control');
+      return execFile.call(this, '/usr/bin/printf', ['LoadState=not-found\\nActiveState=inactive\\nMainPID=0\\n'], ...rest);
+    };
+    process.getBuiltinModule('node:module').syncBuiltinESMExports();
     const popup = Menu.prototype.popup;
     Menu.prototype.popup = function(options) { globalThis.__switchMenu = this; return popup.call(this, options); };
   });

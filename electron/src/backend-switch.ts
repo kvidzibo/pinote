@@ -144,7 +144,7 @@ export async function hasBackendPreference(env: NodeJS.ProcessEnv): Promise<bool
   catch { return false; }
 }
 async function service(run: Run, env: NodeJS.ProcessEnv): Promise<Service> {
-  const text = await run(executable(env, 'systemctl'), ['--user', 'show', 'pinote.service', '--property=LoadState,ActiveState,MainPID', '--no-pager'], env);
+  const text = await run('/usr/bin/systemctl', ['--user', 'show', 'pinote.service', '--property=LoadState,ActiveState,MainPID', '--no-pager'], env);
   const values = Object.fromEntries(text.trim().split('\n').map(line => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; }));
   if (!['loaded', 'not-found'].includes(values.LoadState) || !['active', 'inactive', 'failed'].includes(values.ActiveState) || !/^\d+$/.test(values.MainPID || '')) throw new Error('The existing Pinote service is unavailable or changing state; retry when it has settled.');
   return { present: values.LoadState === 'loaded', active: values.ActiveState === 'active', pid: Number(values.MainPID) };
@@ -258,9 +258,9 @@ async function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: Environm
 }
 // Read-only preview. The installer repeats the checks against the actual
 // environments under its lock; a settings snapshot never authorizes a switch.
-export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<'absent' | 'matches' | 'different'> {
+export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: string, database: string, run: Run = runCommand): Promise<'absent' | 'matches' | 'different'> {
   await verifyCLIEnvironment(env, 'desktop');
-  const current = await switchableService(runCommand, env);
+  const current = await switchableService(run, env);
   let serviceEnv: NodeJS.ProcessEnv | undefined;
   if (current.active) {
     await verifyServiceContext(current.pid);
@@ -272,8 +272,12 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<'a
     if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
   if (cli) await inspectCLI(runtime, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
-  if (serviceEnv) await inspectCLI(runtime, serviceEnv, 'pinote.service');
-  return !serviceEnv ? 'absent' : serviceEnv.PINOTE_NOTE_COMMAND === locations(env).cli ? 'matches' : 'different';
+  if (!serviceEnv) return 'absent';
+  await inspectCLI(runtime, serviceEnv, 'pinote.service');
+  const options = { ...runtime, bundles, env, database };
+  if (serviceEnv.PINOTE_NOTE_COMMAND !== locations(env).cli || !await hasInstalledLauncher(options)) return 'different';
+  await probe(options, run, serviceEnv);
+  return 'matches';
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
@@ -436,7 +440,7 @@ export async function execGuardedService(bundles: string): Promise<void> {
     process.execve(args[0], args, env);
   } finally { clearTimeout(deadline); }
 }
-const controlService = (run: Run, env: NodeJS.ProcessEnv, action: string) => run(executable(env, 'systemctl'), action === 'daemon-reload' ? ['--user', action] : ['--user', action, 'pinote.service'], env);
+const controlService = (run: Run, env: NodeJS.ProcessEnv, action: string) => run('/usr/bin/systemctl', action === 'daemon-reload' ? ['--user', action] : ['--user', action, 'pinote.service'], env);
 const journalPath = (env: NodeJS.ProcessEnv) => join(locations(env).state, 'pending.json');
 const saveJournal = (env: NodeJS.ProcessEnv, journal: Journal) => atomic(journalPath(env), JSON.stringify(journal));
 async function removeGuard(journal: Journal): Promise<void> {
@@ -553,6 +557,7 @@ async function rollback(env: NodeJS.ProcessEnv, journal: Journal, dependencies: 
 }
 export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntime?: () => SwitchRuntime, dependencies: SwitchDependencies = {}): Promise<void> {
   if (!await loadJournal(env)) return;
+  await verifyCLIEnvironment(env, 'desktop');
   const release = await acquire(env, dependencies.updateLock);
   try {
     const journal = await loadJournal(env); if (!journal) return;
@@ -609,7 +614,7 @@ export async function switchToNode(options: SwitchOptions, progress: (message: s
     await atomic(join(paths.state, 'pending.json'), JSON.stringify(journal));
     await atomic(join(backup, 'manifest.json'), JSON.stringify(journal));
     progress('Backing up configuration, SQLite and saved Electron drafts…');
-    if (before.active) await run(executable(env, 'systemctl'), ['--user', 'stop', 'pinote.service'], env);
+    if (before.active) await controlService(run, env, 'stop');
     // SQLite's online backup API keeps a concurrent CLI writer from producing a
     // torn copy. The source is read-only; journal mode and schema are unchanged.
     await run(options.node, ['--input-type=module', '-e', "import{DatabaseSync,backup}from'node:sqlite';const db=new DatabaseSync(process.argv[1],{readOnly:true});try{await backup(db,process.argv[2]);}finally{db.close()}", options.database, join(backup, 'notes.db')], env);

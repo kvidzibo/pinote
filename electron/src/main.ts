@@ -228,7 +228,7 @@ async function boot() {
       try {
         const selected = await hasBackendPreference(process.env);
         let service: Awaited<ReturnType<typeof checkSwitchEnvironment>>;
-        try { service = await checkSwitchEnvironment(process.env); }
+        try { service = await checkSwitchEnvironment(process.env, bundles, database); }
         catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
         const switched = selected && service !== 'different' && await hasInstalledLauncher(switchOptions());
         const version = (await runCommand(switchRuntime().node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
@@ -240,7 +240,7 @@ async function boot() {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
       switchConfirming = true;
       try {
-        await checkSwitchEnvironment(process.env);
+        await checkSwitchEnvironment(process.env, bundles, database);
         if (closing) return false;
         switchRuntime(); // Verify the supported version only after the environment check.
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
