@@ -231,7 +231,7 @@ async function boot() {
         const selected = await hasBackendPreference(process.env);
         const switched = selected && await hasInstalledLauncher(options);
         if (!switched) {
-          try { await checkSwitchEnvironment(options.env); }
+          try { await checkSwitchEnvironment(options); }
           catch (error) { return { switched, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version }; }
         }
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
@@ -242,7 +242,7 @@ async function boot() {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
       switchConfirming = true;
       try {
-        await checkSwitchEnvironment(switchOptions().env);
+        await checkSwitchEnvironment(switchOptions());
         if (closing) return false;
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
           detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, replaces your ~/.local/bin/note command, and configures the existing pinote.service to use it. The service must be running to verify its database; no new service is installed or enabled.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. The existing service and Electron restart after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',

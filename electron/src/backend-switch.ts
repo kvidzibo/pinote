@@ -248,13 +248,18 @@ function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSou
 }
 // Read-only preview. The installer repeats the checks against the actual
 // environments under its lock; a settings snapshot never authorizes a switch.
-export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
+export async function checkSwitchEnvironment(options: SwitchOptions): Promise<void> {
+  const { env } = options;
+  executable(env, 'flock'); // Required for the installer lock, even without an existing CLI.
   const cli = await lstat(locations(env).cli).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error;
+    if (error.code !== 'ENOENT') throw new Error('Cannot inspect the desktop CLI launcher.');
   });
-  if (cli) await verifyCLIEnvironment(env, 'desktop');
+  if (cli) await inspectCLI(options, { ...env, PINOTE_NOTE_COMMAND: locations(env).cli }, 'desktop');
   const current = await service(runCommand, env);
-  if (current.active) await verifyCLIEnvironment(await processEnvironment(current.pid));
+  if (current.active) {
+    await verifyServiceContext(current.pid);
+    await inspectCLI(options, await processEnvironment(current.pid), 'pinote.service');
+  }
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
@@ -265,14 +270,28 @@ async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentS
   } catch { /* Missing or unresolvable flock is also unsafe. */ }
   throw new Error(`Automatic switching requires the system flock on the ${source} PATH.`);
 }
-async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<string> {
+const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
+async function inspectCLI(runtime: SwitchRuntime, env: NodeJS.ProcessEnv, source: EnvironmentSource) {
   await verifyCLIEnvironment(env, source);
   const command = env.PINOTE_NOTE_COMMAND || 'note';
-  if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error('The service CLI must be an unambiguous absolute executable.');
-  const path = await realpath(command === 'note' ? executable(env, 'note') : command);
-  const stat = await lstat(path);
-  if (!stat.isFile() || stat.size > 8192) throw new Error('The existing service CLI cannot be verified safely.');
-  const text = utf8.decode(await readFile(path));
+  if (command !== 'note' && (!isAbsolute(command) || command.split('/').includes('..'))) throw new Error(`The ${source} CLI must be an unambiguous absolute executable.`);
+  let path: string, text: string;
+  try {
+    path = await realpath(command === 'note' ? executable(env, 'note') : command);
+    const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.size > 8192) throw new Error();
+      const buf = Buffer.alloc(info.size + 1);
+      if ((await file.read(buf)).bytesRead !== info.size) throw new Error();
+      text = utf8.decode(buf.subarray(0, info.size));
+    } finally { await file.close(); }
+  } catch { throw new Error(`Cannot safely read the ${source} CLI launcher.`); }
+  if (text === nodeEntry && await realpath(executable(env, 'node')) !== await realpath(runtime.node)) throw new Error(`The ${source} CLI PATH selects a different Node runtime; automatic switching was blocked.`);
+  return { path, text };
+}
+async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<string> {
+  const { path, text } = await inspectCLI(runtime, env, source);
   const pythonBody = 'import sys\nfrom pinote.cli import main\nif __name__ == "__main__":\n    if sys.argv[0].endswith("-script.pyw"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(".exe"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())';
   // pip/pipx distlib launchers have shipped both import placements. Match
   // the entire generated body, without executing the wrapper.
@@ -300,15 +319,13 @@ async function existingCLIDatabase(runtime: SwitchRuntime, run: Run, env: NodeJS
     if (!databasePath(database)) throw new Error('Cannot verify the Python CLI database.');
     return database;
   }
-  const nodeEntry = "#!/usr/bin/env -S node --disable-warning=ExperimentalWarning\nconst [major, minor] = process.versions.node.split('.').map(Number);\nif (major < 22 || major === 22 && minor < 19) {\n  console.error('Pinote requires Node.js 22.19.0 or newer.'); process.exitCode = 1;\n} else {\n  await import('../dist/cli.mjs');\n}\n";
   if (text === nodeEntry) {
-    if (await realpath(executable(env, 'node')) !== await realpath(runtime.node)) throw new Error('The service CLI PATH selects a different Node runtime; automatic switching was blocked.');
     return (await probeBackend({ ...runtime, bundles: resolve(dirname(path), '../dist') }, run, env)).database;
   }
   if (text === launcher(runtime)) return (await probeBackend(runtime, run, env)).database;
   // Never execute an arbitrary wrapper to discover its database: even a read
   // command may activate reminders or hide an XDG override inside the script.
-  throw new Error('The existing service uses a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.');
+  throw new Error(`The ${source} uses a custom CLI wrapper. Automatic database verification is unavailable; keep it unchanged and review that wrapper before switching.`);
 }
 async function verifyExistingCLI(options: SwitchOptions, run: Run, env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<string> {
   const database = await existingCLIDatabase(options, run, env, source);
