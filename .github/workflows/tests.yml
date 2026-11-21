@@ -46,6 +46,8 @@ jobs:
       fail-fast: false
       matrix:
         node: ["22.19.0", "24"]
+        # Keep required check names: shard 1 runs the long engine scenario alone,
+        # shard 2 runs every other file.
         shard: [1, 2]
     defaults:
       run:
@@ -61,10 +63,14 @@ jobs:
         working-directory: .
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run check
-      - name: Test shard ${{ matrix.shard }}/2
+      - name: Test engine scenario
+        if: matrix.shard == 1
+        run: node --test --experimental-strip-types tests/engine.test.ts
+      - name: Test remaining files
+        if: matrix.shard == 2
         run: >-
-          node --test --experimental-strip-types --test-shard=${{ matrix.shard }}/2
-          tests/*.test.ts test-load.ts
+          node --test --experimental-strip-types
+          $(ls tests/*.test.ts test-load.ts | grep -vx tests/engine.test.ts)
       - run: npm pack --dry-run --ignore-scripts
         if: matrix.shard == 1
 
@@ -180,12 +186,24 @@ jobs:
           sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 electron/node_modules/electron/dist/chrome-sandbox
       - name: Type and unit checks
-        if: matrix.screen == '1280x900x24'
+        if: matrix.screen == '800x600x24'
         run: npm --prefix electron run check && npm --prefix electron test
+      # The lifecycle sequence (part 1) and the independent workflow checks (part 2)
+      # run concurrently, each on its own X server and private D-Bus session.
       - name: Isolated desktop checks
-        run: >-
-          xvfb-run -a -s '-screen 0 ${{ matrix.screen }}' dbus-run-session --
-          npm --prefix electron run test:e2e
+        working-directory: electron
+        env:
+          SCREEN: ${{ matrix.screen }}
+        run: |
+          npm run build
+          run() { xvfb-run -n "$1" -s "-screen 0 $SCREEN" dbus-run-session -- sh -c "$2" > "$RUNNER_TEMP/e2e-$1.log" 2>&1; }
+          run 101 'node tests/e2e.mjs --part=1' & lifecycle=$!
+          run 102 'node tests/backend-switch-e2e.mjs && node tests/e2e.mjs --part=2' & workflows=$!
+          status=0
+          wait "$lifecycle" || status=1
+          wait "$workflows" || status=1
+          for n in 101 102; do echo "--- e2e display :$n ---"; cat "$RUNNER_TEMP/e2e-$n.log"; done
+          exit "$status"
       - run: npm --prefix electron run package
         if: matrix.screen == '1280x900x24'
       - name: Provision packaged sandbox on ephemeral runner

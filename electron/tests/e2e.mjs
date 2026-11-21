@@ -11,6 +11,8 @@ const sourceValue = locator => locator.evaluate(node => node.querySelector('.cm-
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const handoffOnly = process.argv.includes('--handoff-only');
+const part = process.argv.find(arg => arg.startsWith('--part='))?.slice('--part='.length);
+assert.ok(part === undefined || ((part === '1' || part === '2') && !handoffOnly), 'Use --part=1 or --part=2 without --handoff-only');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
 const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
@@ -230,6 +232,8 @@ try {
   await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
   assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Work (101) ▶ 1','Empty filter (0)','Untagged (2)']);
   await page.keyboard.press('Escape');
+  // CI runs these self-contained workflow checks (part 2) beside the lifecycle sequence (part 1).
+  if (part !== '1') {
   // task393: allocation and keyboard focus with the complete benchmark dataset.
   {
     const filter = page.locator('#toolbar button').filter({has:page.locator('img[src*="view-filter-symbolic"]')});
@@ -881,6 +885,8 @@ try {
     call('transition',{id,revision:started.updated_at,state:'in_progress',action:'rm'});
     await row.waitFor({state:'detached'});
   }
+  }
+  if (part !== '2') {
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Electron lifecycle ☘\nsecond line');
   await page.keyboard.press('Enter');
   await page.locator('.task-title').filter({hasText:/^Electron lifecycle ☘$/}).waitFor();
@@ -1750,6 +1756,7 @@ try {
     await close();
     assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
   } finally { await chmod(stateDir,0o700); }
+  }
   console.log(`Electron UI validation artifacts: ${root}`);
   }
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }

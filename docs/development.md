@@ -41,18 +41,23 @@ on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK 
 against the built wheel (including its bundled stylesheet and isolated i3 placement).
 GTK regressions also exercise manual window moves during geometry synchronization.
 
-Pi tests run in two file-level shards on each supported Node version (22.19.0
-and 24), including both unit and real-loader tests. Type checks run on both, and the
-package dry-run runs once per Node version. To reproduce one shard
-in `pi/` (use `2/2` for the other):
+Pi tests run in two jobs on each supported Node version (22.19.0 and 24): shard 1
+runs the long `tests/engine.test.ts` scenario alone; shard 2 runs every other unit
+and real-loader test. Type checks run on both, and the package dry-run runs once per
+Node version. To reproduce them in `pi/`:
 
 ```sh
-node --test --experimental-strip-types --test-shard=1/2 tests/*.test.ts test-load.ts
+node --test --experimental-strip-types tests/engine.test.ts
+node --test --experimental-strip-types $(ls tests/*.test.ts test-load.ts | grep -vx tests/engine.test.ts)
 ```
 
 Electron's 1280×900 and 800×600 end-to-end runs use separate parallel jobs, each
-with its own Xvfb and private D-Bus session. Type/unit checks and packaged-app
-validation run once, in the 1280×900 job. The packaged smoke test runs from a
+with its own Xvfb and private D-Bus session. Each job runs the E2E scenario as two
+concurrent halves on separate Xvfb servers and D-Bus sessions: `--part=1` is the
+lifecycle/recovery sequence; `--part=2` holds the self-contained workflow checks,
+after the backend-switch check. Without `--part`, `tests/e2e.mjs` runs everything.
+Type/unit checks run once in the 800×600 job; packaged-app validation runs once in
+the 1280×900 job. The packaged smoke test runs from a
 temporary working directory with a private PATH and no Python executable.
 Pass an unpacked app directory to `test:package` for relocation checks; copying
 CI's root-owned SUID sandbox helper would lose its ownership, so CI tests it in place. No tests or display sizes are dropped;
