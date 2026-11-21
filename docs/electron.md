@@ -51,9 +51,11 @@ and `PINOTE_NOTE_COMMAND` (default `note` on `PATH`; it must use the desktop's
 database). Watchers inherit the same environment, including any tokens they
 need. Service lines are written to the desktop's `app.log`.
 
-A missing token, unavailable `note` CLI or busy port only disables the service:
-the reason is logged and the desktop stays usable. Stop and disable an existing
-standalone `pinote.service` using the same port before relying on Electron.
+A missing token or busy port only disables the service: a busy port is named in
+the log, and the desktop stays usable. With a missing or outdated `note` CLI
+the service still listens and Pi reports the error on each request. Stop and
+disable an existing standalone `pinote.service` using the same port before
+relying on Electron.
 Bundled watchers are shipped inside the application; entries enabled from a
 previous `pi/watchers/` path keep running but are listed as **Custom**. Enable
 the bundled entries and remove the old ones to restore grouped PR alerts; still
