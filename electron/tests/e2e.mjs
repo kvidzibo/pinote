@@ -17,7 +17,7 @@ const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 // Keep the desktop's embedded service off: no personal token, settings or listener.
 for (const name of ['PINOTE_TOKEN','PINOTE_TOKEN_FILE','PINOTE_HOST','PINOTE_PORT','PINOTE_ALLOWED_HOSTS','PINOTE_NOTE_COMMAND']) delete env[name];
-env.PI_CODING_AGENT_DIR=join(root,'pi-agent');
+Object.assign(env,{PI_CODING_AGENT_DIR:join(root,'pi-agent'),PINOTE_NOTE_COMMAND:join(root,'no-note')});
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
 const faultFile=join(root,'backend-fault');
 const slowAddMarker=join(root,'slow-add-dispatched');
@@ -1308,11 +1308,12 @@ try {
   }
   // Use the real service and native-client protocol on the same temporary data while GTK is running.
   Object.assign(process.env,env,{PINOTE_NOTE_COMMAND:resolve('../backend/bin/note'),PI_CODING_AGENT_DIR:join(root,'pi-agent')});
+  delete process.env.PINOTE_ALLOWED_HOSTS;
   const piRequire=createRequire(resolve('../pi/package.json'));
   const { Client }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/index.js'));
   const { StreamableHTTPClientTransport }=await import(piRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
   const { startPinoteHttpServer }=await import('../../pi/dist-mcp/mcp/http.js');
-  service=await startPinoteHttpServer({token:'isolated-electron-test-token-'.repeat(3),port:0,logPath:join(root,'service.log')});
+  service=await startPinoteHttpServer({token:'isolated-electron-test-token-'.repeat(3),host:'127.0.0.1',port:0,logPath:join(root,'service.log')});
   client=new Client({name:'electron-coexistence-test',version:'1'});
   await client.connect(new StreamableHTTPClientTransport(new URL(service.url),{requestInit:{headers:{Authorization:`Bearer ${'isolated-electron-test-token-'.repeat(3)}`}}}));
   const task=call('snapshot',{view:'active'}).notes.find(n=>n.id===first);
