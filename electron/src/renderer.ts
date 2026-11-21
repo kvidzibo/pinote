@@ -980,8 +980,7 @@ function recoverDrafts(): void {
 }
 function schedule(task: Task): void {
   const modal = layer(`Reminder for task ${task.id}`, 'schedule', task.id);
-  modal.panel.append(el('p', 'Enter local time as YYYY-MM-DD HH:MM. For ambiguous daylight-saving times, append an explicit offset (for example +02:00). The backend validates your exact input.'));
-  const when = field('When (local time)', task.remind_at ? localInput(task.remind_at) : ''); modal.panel.append(when.wrapper);
+  const when = field('When (local time)', localInput(task.remind_at ?? new Date())); when.input.type = 'datetime-local'; modal.panel.append(when.wrapper);
   const bar = controls(modal.panel);
   bar.append(button('save', 'Set reminder', async () => {
     const result = await call('schedule', { ...target(task), when: when.input.value });
@@ -990,9 +989,9 @@ function schedule(task: Task): void {
   if (task.state === 'scheduled') bar.append(button('reset', 'Release reminder now', async () => { const result = await call('transition', { ...target(task), action: 'restore', state: task.state }); if (result) { modal.close(); await refresh(); } }, readonly));
   when.input.focus();
 }
-function localInput(value: string): string {
+function localInput(value: string | Date): string {
   const date = new Date(value); const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 type TagMode = 'creation' | 'filter' | 'task';

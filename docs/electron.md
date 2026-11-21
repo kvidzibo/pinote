@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.16.1) bundles the matching Node backend;
+The private `electron/` package (0.17.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -254,6 +254,9 @@ Kitty launching uses the existing backend integration and its prerequisites;
 see [GTK controls](gui.md). Tab titles omit leading
 Markdown heading markers (`# ` through `###### `) before the 30-character limit;
 tags and saved task text stay unchanged. The frontend does not send Dunst notifications.
+**Set reminder…** opens a local date-time picker preset to the current minute, or
+to the existing reminder time. Daylight-saving times that are skipped or repeated
+are rejected; choose another time or use `note schedule` with an explicit offset.
 Due reminders activate on backend refresh, not through a new alarm service.
 
 ## Shared tasks, separate UI state, and recovery
