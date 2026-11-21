@@ -1,0 +1,4 @@
+{
+  "fieldEvents": ["added", "changed", "removed"],
+  "fields": ["PRs", "PR"]
+}

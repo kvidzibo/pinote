@@ -4,7 +4,8 @@ import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result,
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
-import type { BackendSettings, PreviewData } from './protocol';
+import type { BackendSettings, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
+import { FIELD_EVENTS, TASK_EVENTS } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -71,7 +72,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'edit' || l.kind === 'backend-settings') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'watchers' || l.kind === 'edit' || l.kind === 'backend-settings') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -206,7 +207,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
-    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'edit' || kind === 'backend-settings') fitWindow();
+    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'watchers' || kind === 'edit' || kind === 'backend-settings') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
@@ -281,6 +282,7 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'manage-tags': manageTags(); break;
     case 'task-actions': configureTaskActions(); break;
     case 'composer-settings': configureComposer(); break;
+    case 'watchers': configureWatchers(); break;
     case 'backend-settings': configureBackend(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
@@ -1190,6 +1192,189 @@ function manageTags(selected?: string): void {
     }
   });
   modal.update = draw; draw(); search.focus(); fitWindow();
+}
+function configureWatchers(): void {
+  const existing = layers.find(l => l.kind === 'watchers'); if (existing) { existing.panel.focus(); return; }
+  const modal = layer('Watchers', 'watchers'); modal.panel.classList.add('manage-tags', 'watchers');
+  const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar'), editor = el('div', undefined, 'tag-editor watcher-editor');
+  const searchBar = el('div', undefined, 'tag-search'), search = el('input');
+  search.type = 'search'; search.placeholder = 'Find watcher…'; search.setAttribute('aria-label', 'Find watcher');
+  const count = el('p', undefined, 'tag-hint'), list = el('div', undefined, 'tag-list scroll');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Watchers');
+  const footer = el('div', undefined, 'watcher-footer'), status = el('p', 'Loading watchers…', 'tag-hint'); status.setAttribute('role', 'status');
+  let settings: WatcherSettings | undefined, draft: Watcher[] = [], selected: string | undefined, busy = false, note = '';
+  let refreshEditor = () => {};
+  const empty = (value: WatcherValue | undefined) => value === undefined || value === '' || Array.isArray(value) && !value.length;
+  // Rows left blank in a list are not saved.
+  const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
+    params: Object.fromEntries(Object.entries(w.params).map(([key, value]) => [key, Array.isArray(value) ? value.filter(row => Object.keys(row).length) : value] as const).filter(([, value]) => !empty(value))) });
+  const dirty = () => !!settings && JSON.stringify(draft.map(entry)) !== JSON.stringify(settings.watchers.map(entry));
+  const problem = (w: Watcher) => {
+    const missing = w.spec.find(param => param.required && empty(entry(w).params[param.key]));
+    return missing ? `Needs parameter: ${missing.label}` : w.problem && !/^(Needs|Invalid) parameter/.test(w.problem) ? w.problem : undefined;
+  };
+  const failure = (error: unknown) => message(error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const load = async () => {
+    try {
+      settings = await api.watcherSettings(); draft = structuredClone(settings.watchers);
+      if (!draft.some(w => w.id === selected)) selected = draft[0]?.id;
+    } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${failure(error)}`; }
+    draw();
+  };
+  const add = button('add', 'Add watcher script…', async () => {
+    if (!settings || busy) return;
+    try {
+      const chosen = await api.chooseWatcher(); if (!chosen) return;
+      const known = draft.find(w => w.path === chosen.path);
+      if (!known && draft.length >= 32) { note = 'At most 32 watchers can be configured.'; draw(); return; }
+      if (!known) draft.push(chosen);
+      selected = (known ?? chosen).id; note = ''; search.value = '';
+    } catch (error) { note = failure(error); }
+    draw();
+  });
+  const revert = button('reset', 'Discard unsaved watcher changes', () => { if (!settings || busy) return; draft = structuredClone(settings.watchers); note = ''; draw(); });
+  const save = button('save', 'Save watcher settings…', async () => {
+    if (!settings || busy || !dirty()) return;
+    busy = true; update();
+    try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); } }
+    catch (error) { note = failure(error); }
+    finally { busy = false; update(); }
+  });
+  searchBar.append(search, add); sidebar.append(searchBar, count, list, el('p', 'Trusted code, not sandboxed. Runs while Pinote is open.', 'tag-hint'));
+  footer.append(status, revert, save); layout.append(sidebar, editor); modal.panel.append(layout, footer);
+  const checks = (title: string, names: readonly string[], chosen: string[]) => {
+    const group = el('div', undefined, 'watcher-events'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', title);
+    for (const name of names) {
+      const label = el('label', undefined, 'setting-toggle'), input = el('input'); input.type = 'checkbox'; input.checked = chosen.includes(name);
+      input.addEventListener('change', () => {
+        // Keep the declared order whatever the click order.
+        const next = names.filter(n => n === name ? input.checked : chosen.includes(n)); chosen.splice(0, chosen.length, ...next); update();
+      });
+      label.append(input, el('span', name)); group.append(label);
+    }
+    return [el('p', title, 'tag-editor-label'), group];
+  };
+  const parameter = (w: Watcher, param: WatcherParam): HTMLElement => {
+    const box = el('div', undefined, 'watcher-param'), current = w.params[param.key];
+    const set = (value: WatcherValue | undefined) => { if (value === undefined) delete w.params[param.key]; else w.params[param.key] = value; update(); };
+    const title = `${param.label}${param.required ? ' *' : ''}`;
+    if (param.type === 'boolean') {
+      const label = el('label', undefined, 'setting-toggle'), input = el('input'); input.type = 'checkbox'; input.checked = current === true;
+      input.addEventListener('change', () => set(input.checked)); label.append(input, el('span', title)); box.append(label);
+    } else if (param.type === 'select') {
+      const label = el('label', title), select = el('select');
+      for (const option of ['', ...param.options ?? []]) { const node = el('option', option || 'Select…'); node.value = option; select.append(node); }
+      select.value = typeof current === 'string' && param.options?.includes(current) ? current : '';
+      select.addEventListener('change', () => set(select.value || undefined)); label.append(select); box.append(label);
+    } else if (param.type === 'list') {
+      const rows = Array.isArray(current) ? current : [];
+      box.append(el('p', title, 'tag-editor-label'));
+      rows.forEach((row, index) => {
+        const line = el('div', undefined, 'watcher-row');
+        for (const column of param.columns ?? []) {
+          const input = el('input'); input.value = row[column.key] ?? ''; input.placeholder = column.label; input.setAttribute('aria-label', `${column.label} ${index + 1}`);
+          input.addEventListener('input', () => { if (input.value) row[column.key] = input.value; else delete row[column.key]; set(rows); });
+          line.append(input);
+        }
+        line.append(button('trash', `Remove ${param.label} row ${index + 1}`, () => { rows.splice(index, 1); set(rows); draw(); }));
+        box.append(line);
+      });
+      const more = el('div', undefined, 'watcher-row');
+      more.append(button('add', `Add ${param.label} row`, () => { if (rows.length < 64) { rows.push({}); set(rows); draw(); } }), el('span', `Add to ${param.label}`, 'tag-hint'));
+      box.append(more);
+    } else {
+      const line = el('div', undefined, 'watcher-row'), named = field(title, current === undefined ? '' : String(current));
+      if (param.type === 'number') named.input.type = 'number';
+      named.input.addEventListener('input', () => {
+        const value = named.input.value;
+        set(value === '' ? undefined : param.type === 'number' ? Number.isFinite(Number(value)) ? Number(value) : undefined : value);
+      });
+      line.append(named.wrapper);
+      if (param.type === 'directory') line.append(button('folder', `Choose ${param.label}`, async () => {
+        const chosen = await api.chooseFolder(); if (chosen === null) return;
+        named.input.value = chosen; set(chosen);
+      }));
+      box.append(line);
+    }
+    if (param.help) box.append(el('p', param.help, 'tag-hint'));
+    return box;
+  };
+  const drawEditor = (w?: Watcher) => {
+    editor.replaceChildren(); refreshEditor = () => {};
+    if (!w) { editor.append(el('p', settings ? 'Select a watcher, or add a script with +.' : '', 'empty')); return; }
+    const issue = el('p', undefined, 'watcher-problem'), toggle = el('label', undefined, 'setting-toggle'), enabled = el('input');
+    enabled.type = 'checkbox'; toggle.append(enabled, el('span', 'Enabled while Pinote is open'));
+    enabled.addEventListener('change', () => { w.enabled = enabled.checked; update(); });
+    refreshEditor = () => {
+      const text = problem(w); issue.textContent = text ?? ''; issue.hidden = !text;
+      enabled.checked = w.enabled; enabled.disabled = busy || !!text && !w.enabled;
+    };
+    const chips = el('div', undefined, 'watcher-chips'), input = el('input'), options = el('datalist');
+    options.id = 'watcher-field-names'; input.setAttribute('list', options.id); input.placeholder = 'Add field…'; input.setAttribute('aria-label', 'Add field');
+    for (const name of settings?.fieldNames ?? []) if (!w.fields.includes(name)) { const option = el('option'); option.value = name; options.append(option); }
+    const addField = () => {
+      const name = input.value.normalize('NFC').trim();
+      if (!name || name.length > 128 || w.fields.length >= 64) return;
+      if (!w.fields.includes(name)) w.fields.push(name);
+      draw(); editor.querySelector<HTMLInputElement>('.watcher-chips input')?.focus();
+    };
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addField(); } });
+    // Choosing a suggestion fills the input without a key press.
+    input.addEventListener('change', addField);
+    for (const name of w.fields) {
+      const chip = el('span', name, 'watcher-chip');
+      chip.append(button('close', `Remove field ${name}`, () => { w.fields.splice(w.fields.indexOf(name), 1); draw(); }));
+      chips.append(chip);
+    }
+    chips.append(input, options);
+    editor.append(el('h3', w.name), el('p', `${w.bundled ? 'Bundled' : 'Custom'} · ${w.path}`, 'tag-hint watcher-path'), issue, toggle,
+      ...checks('Task events', TASK_EVENTS, w.taskEvents), ...checks('Field events', FIELD_EVENTS, w.fieldEvents),
+      el('p', 'Fields', 'tag-editor-label'), chips,
+      el('p', 'Field events: only these fields. Task events: only tasks that have one. Empty: all.', 'tag-hint'));
+    if (w.spec.length) editor.append(el('p', 'Parameters', 'tag-editor-label'), ...w.spec.map(param => parameter(w, param)));
+    if (!w.bundled) {
+      const danger = el('div', undefined, 'tag-danger'), explanation = el('div');
+      explanation.append(el('p', 'Remove watcher', 'tag-editor-label'), el('p', 'The script file is kept.', 'tag-hint'));
+      danger.append(explanation, button('trash', 'Remove watcher', () => { draft.splice(draft.indexOf(w), 1); selected = draft[0]?.id; draw(); }));
+      editor.append(danger);
+    }
+    refreshEditor();
+  };
+  // Without rebuilding controls: typing must keep its focus.
+  const update = () => {
+    for (const row of list.querySelectorAll<HTMLElement>('[data-watcher]')) {
+      const w = draft.find(item => item.id === row.dataset.watcher); if (!w) continue;
+      const state = problem(w) ? 'needs a parameter' : w.enabled ? 'enabled' : 'disabled';
+      row.querySelector('.watcher-dot')!.className = `watcher-dot ${problem(w) ? 'warn' : w.enabled ? 'on' : 'off'}`;
+      row.title = `${w.name}: ${state}`; row.setAttribute('aria-label', row.title);
+    }
+    refreshEditor();
+    status.textContent = dirty() ? 'Unsaved changes. Saving asks for confirmation.' : note;
+    save.disabled = revert.disabled = busy || !dirty(); add.disabled = busy || !settings;
+  };
+  const draw = () => {
+    const query = search.value.trim().toLocaleLowerCase(), matches = draft.filter(w => w.name.toLocaleLowerCase().includes(query));
+    count.textContent = query ? `${matches.length} of ${draft.length} watchers` : `Watchers · ${draft.length} / 32`;
+    const focused = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.watcher : undefined;
+    list.replaceChildren();
+    for (const w of matches) {
+      const b = button('preview', w.name, () => { selected = w.id; draw(); });
+      b.replaceChildren(el('span', undefined, 'watcher-dot'), el('span', w.name));
+      b.className = `tag-choice${selected === w.id ? ' chosen' : ''}`; b.dataset.watcher = w.id; b.setAttribute('aria-pressed', String(selected === w.id));
+      list.append(b); if (focused === w.id) b.focus();
+    }
+    if (!matches.length && settings) list.append(el('p', draft.length ? 'No matching watchers.' : 'No watchers. Use + to add a script.', 'empty'));
+    drawEditor(draft.find(w => w.id === selected)); update();
+  };
+  search.addEventListener('input', draw);
+  list.addEventListener('keydown', e => {
+    const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); buttons[(index + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+    }
+  });
+  draw(); search.focus(); fitWindow(); void load();
 }
 function auxiliary(view: 'archive' | 'scheduled'): void {
   const existing = layers.find(l => l.kind === view); if (existing) { existing.panel.focus(); return; }

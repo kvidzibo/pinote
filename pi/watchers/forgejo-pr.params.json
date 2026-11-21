@@ -1,0 +1,17 @@
+{
+  "fieldEvents": ["added", "changed", "removed"],
+  "fields": ["PRs", "PR"],
+  "params": [
+    {
+      "key": "instances",
+      "label": "Instances",
+      "type": "list",
+      "columns": [
+        { "key": "url", "label": "Base URL" },
+        { "key": "tokenEnv", "label": "Token env variable" }
+      ],
+      "configKey": "forgejoInstances",
+      "help": "Trusted instance base URLs. Tokens stay in the desktop's environment."
+    }
+  ]
+}

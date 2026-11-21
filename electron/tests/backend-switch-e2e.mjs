@@ -76,7 +76,7 @@ try {
   await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).click();
   await closed;
   const calls = await readFile(marker, 'utf8');
-  const cli = spawnSync(join(root, '.local/bin/note'), ['--version'], { env, encoding: 'utf8' }); assert.equal(cli.status, 0, cli.stderr); assert.match(cli.stdout, /^pinote 0\.26\.0/);
+  const cli = spawnSync(join(root, '.local/bin/note'), ['--version'], { env, encoding: 'utf8' }); assert.equal(cli.status, 0, cli.stderr); assert.match(cli.stdout, /^pinote 0\.27\.0/);
   const backupRoot = join(root, 'state/pinote/backend-switch/backups');
   assert.equal((await readdir(backupRoot)).length, 1);
   page = await launch();

@@ -124,6 +124,29 @@ textarea { resize: none; line-height: 1.5; }
 .task-editor .edit-tag { min-width: 32px; max-width: 45%; gap: 7px; padding: 6px 8px; background: #35445b; border-color: #66758b; }
 .edit-tag > span:first-of-type { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tag-chevron { color: #b6bfce; }
+/* The list and editor scroll between the header and the save bar. */
+.watchers > .tag-layout { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.watchers .tag-list { max-height: none; overflow: visible; }
+.watcher-editor { display: flex; flex-direction: column; gap: 8px; }
+.watchers .watcher-editor h3 { margin: 0; }
+.watcher-editor > .tag-editor-label { margin-top: 8px; }
+.watcher-path { user-select: text; }
+.watcher-problem { color: #e5b567; }
+.watcher-events { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.watcher-events label { min-width: 92px; }
+.watcher-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; background: #1c212a; border: 1px solid #4b5563; border-radius: 4px; padding: 3px; }
+.watchers .watcher-chips input { flex: 1; width: auto; min-width: 90px; border: 0; background: transparent; padding: 4px; }
+.watcher-chip { display: inline-flex; align-items: center; gap: 2px; background: #35445b; border-radius: 4px; padding-left: 6px; }
+.watchers .watcher-chip button { min-width: 22px; min-height: 22px; padding: 2px; border-color: transparent; background: transparent; }
+.watcher-param { display: flex; flex-direction: column; gap: 5px; }
+.watcher-row { display: flex; align-items: flex-end; gap: 6px; min-width: 0; }
+.watcher-row > input, .watcher-row > label { flex: 1; min-width: 0; }
+.watchers select { width: 100%; }
+.watcher-dot { width: 8px; height: 8px; flex-shrink: 0; border: 1px solid #66758b; border-radius: 50%; }
+.watcher-dot.on { background: #a6e3a1; border-color: #a6e3a1; }
+.watcher-dot.warn { background: #e5b567; border-color: #e5b567; }
+.watcher-footer { display: flex; align-items: center; gap: 8px; flex-shrink: 0; border-top: 1px solid #414b5b; padding-top: 8px; }
+.watcher-footer p { flex: 1; min-width: 0; }
 .edit-text { flex: 1 1 auto; width: 100%; min-height: 80px; overflow: auto; }
 .task-editor > .warning { flex-shrink: 0; font-size: 11px; }
 .edit-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }

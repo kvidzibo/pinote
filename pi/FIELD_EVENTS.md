@@ -1,13 +1,19 @@
 # Field watchers
 
-Independently enabled executables run for task-field changes. Since pi-note
+Independently enabled executables run for task-field and task changes. Since pi-note
 **0.47.0**, the [Pinote desktop](../docs/electron.md#field-watchers) runs them while
 it is open; Pi sessions read the saved results and receive the alerts. Pi itself
-never runs watchers, and no extra daemon is installed. Requires **note 0.25.0+**.
+never runs watchers, and no extra daemon is installed. Requires **note 0.25.0+**
+(task events: **0.27.0+**).
 
 ## Enable
 
-Open **Settings → Footer fields → Watchers**. The fixed package `watchers/` folder
+In the desktop (Electron 0.19.0+), open **Menu → Watchers…**: choose a script,
+tick the task and field events it listens for, name its fields and fill in the
+parameters it declares. See [Watcher settings](#watcher-settings).
+
+In Pi, open **Settings → Footer fields → Watchers** to enable, add or remove
+watchers; events, fields and parameters are edited in the desktop only. The fixed package `watchers/` folder
 is scanned for executable `.mjs` files; discovery never executes or enables them.
 Enable **GitHub PR** or **Forgejo PR**, or add a custom absolute executable path
 and enable it separately. Every change requires review and confirmation.
@@ -23,6 +29,9 @@ The corresponding `pi-note.json` setting is:
   ]
 }
 ```
+
+Entries can also carry `taskEvents`, `fieldEvents`, `fields` and `params`; see
+[Watcher settings](#watcher-settings).
 
 Restart the desktop and `/reload` Pi once after upgrading.
 Subsequent watcher changes apply live. Disable a watcher to stop checks and hide
@@ -57,6 +66,94 @@ Alerts are grouped only when every included PR fits the message budget. PRs aler
 PR numbers and URLs, within the notification budget. Checks repeat every 60
 seconds until all entries are closed/merged; merging never completes the task.
 Passing means reported checks passed, not that all review/protection rules passed.
+
+## Watcher settings
+
+Each watcher entry in `pi-note.json` can hold its own settings. Missing keys use
+the script's declared defaults.
+
+```json
+{
+  "path": "/absolute/path/deploy-status.mjs",
+  "enabled": true,
+  "taskEvents": ["completed"],
+  "fieldEvents": ["changed"],
+  "fields": ["Deploy"],
+  "params": { "environment": "production", "timeout": 30 }
+}
+```
+
+- `taskEvents`: any of `created`, `edited`, `tagged`, `started`, `completed`,
+  `removed`, `restored`, `scheduled`. Default: none.
+- `fieldEvents`: any of `added`, `changed`, `removed`. Default: all three for a
+  script without a parameter file, otherwise what the file declares.
+- `fields`: for field events, the only fields that start the script; for task
+  events, the task must have at least one of them. Empty means every field and task.
+  The desktop suggests the configured footer fields; any name is accepted.
+- `params`: values for the parameters the script declares, sent as `params` with
+  every event.
+
+Changing `fieldEvents`, `fields` or `params` checks that watcher's current fields
+afresh, like disabling and enabling it; still failing checks can alert once more.
+
+### Parameter file
+
+A script declares its name, defaults and parameters in `<script name>.params.json`
+beside it (`deploy-status.mjs` → `deploy-status.params.json`). The file is read,
+never executed. All keys are optional:
+
+```json
+{
+  "name": "Deploy status",
+  "taskEvents": ["completed"],
+  "fieldEvents": ["changed"],
+  "fields": ["Deploy"],
+  "params": [
+    { "key": "environment", "label": "Environment", "type": "select",
+      "options": ["staging", "production"], "required": true },
+    { "key": "timeout", "label": "Timeout seconds", "type": "number", "default": 30 },
+    { "key": "recovery", "label": "Notify on recovery", "type": "boolean", "default": true }
+  ]
+}
+```
+
+Parameter `type` is `string`, `number`, `boolean`, `select` (with `options`),
+`directory` (an absolute path) or `list` (rows of text `columns`, each with a
+`key` and `label`). `help` adds a hint. A watcher with a missing `required`
+parameter or an invalid parameter file cannot be enabled and does not run. At
+most 32 parameters; the file is limited to 64 KiB. A custom script cannot take
+the name of a bundled PR watcher.
+
+### Task events
+
+Task events are delivered once, only for changes made while the desktop is
+running and the watcher is enabled. Earlier history is never replayed: a task
+completed while the desktop was closed triggers nothing later. A failed
+invocation is logged and not retried, and its result is not shown or sent to Pi;
+the script does its work itself. The input replaces `field`, `value` and
+`previousValue` with the task's handoff fields as they were just before the event:
+
+```json
+{
+  "version": 1,
+  "scope": "task",
+  "eventId": "9123",
+  "event": "completed",
+  "taskId": 505,
+  "fields": { "Worktree": "/tmp/pinote-505-watchers" },
+  "params": { "dir": "/tmp" }
+}
+```
+
+### Worktree cleanup
+
+The bundled **Worktree cleanup** watcher runs when a task is completed in Pi, the
+desktop or the CLI, for tasks that have a `Worktree` field. It runs
+`git worktree remove` on that path when it lies inside the **Worktrees directory**
+parameter (default `/tmp`). Git refuses changed or untracked files, locked
+worktrees and the main working tree; nothing is forced, no branch is deleted and
+the directory is never scanned. It is disabled until you enable it and needs `git`
+on the desktop's `PATH`.
 
 ## Forgejo PRs
 
@@ -106,8 +203,10 @@ triggering a potentially false conflict alert. GitHub conflict alerts are unchan
 Checks run every 60 seconds. Legacy `PR` API/configuration errors retry after
 120 seconds; partial `PRs` batch errors retry with the field's 60-second check.
 
-To support another field, add another executable using the contract below. Each
-watcher receives all field events and returns `{}` for fields it does not handle.
+To support another field, add another executable using the contract below. A
+watcher receives the field events selected in its [settings](#watcher-settings)
+and returns `{}` for fields it does not handle. The desktop's Watchers settings
+edit `forgejoInstances` as the Forgejo watcher's **Instances** parameter.
 
 ## Script contract
 
@@ -124,7 +223,8 @@ are untrusted data; never interpolate them into shell commands.
   "taskId": 402,
   "field": "PR",
   "value": "https://github.com/owner/repo/pull/123",
-  "previousValue": null
+  "previousValue": null,
+  "params": {}
 }
 ```
 
@@ -270,4 +370,6 @@ scans up to N durable rows, advancing even across unrelated events. Limits are
 
 Persist the **returned cursor**, not just the last emitted field ID. Cursors must
 be nonnegative safe integers and cannot be ahead of current history. This command
-does not execute handlers. `note events` lists task completions the same way.
+does not execute handlers. `note events` lists task completions the same way, and
+`note task-events` (0.27.0+) lists task changes as
+`{"id":124,"taskId":402,"event":"completed","fields":{"PR":"…"}}`.

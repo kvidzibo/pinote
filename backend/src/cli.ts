@@ -7,7 +7,7 @@ import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDispl
 import * as markdown from './markdown.ts';
 import * as notify from './notify.ts';
 
-const COMMANDS = new Set(['add', 'list', 'done', 'start', 'rm', 'restore', 'history', 'events', 'field-events', 'show', 'import', 'export', 'schedule', 'reminders', 'agent']);
+const COMMANDS = new Set(['add', 'list', 'done', 'start', 'rm', 'restore', 'history', 'events', 'field-events', 'task-events', 'show', 'import', 'export', 'schedule', 'reminders', 'agent']);
 const MUTATIONS = new Set(['add', 'done', 'start', 'rm', 'restore', 'import', 'schedule']);
 class ArgumentError extends Error {}
 export function positive_id(value: string): bigint {
@@ -63,7 +63,7 @@ export function arguments_(input: string[]): Arguments {
   const allowed = new Set<string>(args.command === 'agent' ? [] : ['--no-notify']);
   const values = new Set<string>();
   const allowValue = (...names: string[]) => { for (const name of names) { allowed.add(name); values.add(name); } };
-  if (['events', 'field-events'].includes(args.command)) allowValue('--after', '--limit');
+  if (['events', 'field-events', 'task-events'].includes(args.command)) allowValue('--after', '--limit');
   if (['list', 'export'].includes(args.command)) allowed.add('--all');
   if (args.command === 'list') allowed.add('--json');
   if (args.command === 'agent') {
@@ -195,7 +195,7 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
     const store = new Store(paths.database);
     try {
       if (needsLock) store.activate_due();
-      else if (!['events', 'field-events'].includes(args.command) && store.has_due()) await withDisplayLock(paths, true, () => { store.activate_due(); });
+      else if (!['events', 'field-events', 'task-events'].includes(args.command) && store.has_due()) await withDisplayLock(paths, true, () => { store.activate_due(); });
       switch (args.command) {
         case 'agent': execute_agent(args, store); break;
         case 'add': print(`Added note ${store.add(args.text!.join(' '))}.`); break;
@@ -220,6 +220,7 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
         }
         case 'events': print(jsonStringify(store.completion_events(args.after, args.limit))); break;
         case 'field-events': print(jsonStringify(store.field_events(args.after, args.limit))); break;
+        case 'task-events': print(jsonStringify(store.task_events(args.after, args.limit))); break;
         case 'history': {
           const events = store.history(args.id);
           for (const event of events) {
@@ -263,6 +264,7 @@ function help(args: Arguments): string {
     history: 'show timestamped activity, optionally for one note\n  [id]  positive note ID',
     events: 'read bounded task-completion events as JSON\n  --after CURSOR\n  --limit LIMIT  1–1000 (default: 256)',
     'field-events': 'read bounded active field changes as JSON\n  --after CURSOR\n  --limit LIMIT  1–1000 (default: 256)',
+    'task-events': 'read bounded task changes (created, edited, tagged, started, completed, removed, restored, scheduled) as JSON\n  --after CURSOR\n  --limit LIMIT  1–1000 (default: 256)',
     show: 'show or reopen the desktop reminder', import: 'import a Markdown file once, without changing it\n  path  Markdown file',
     export: 'write active notes as Markdown to stdout\n  --all  include active/in-progress/done notes',
     schedule: 'schedule a reminder for a note\n  id\n  when  local time or ISO time, e.g. "2030-01-02 09:30"',

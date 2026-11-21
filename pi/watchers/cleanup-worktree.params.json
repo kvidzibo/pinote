@@ -1,0 +1,15 @@
+{
+  "name": "Worktree cleanup",
+  "taskEvents": ["completed"],
+  "fields": ["Worktree"],
+  "params": [
+    {
+      "key": "dir",
+      "label": "Worktrees directory",
+      "type": "directory",
+      "default": "/tmp",
+      "required": true,
+      "help": "Removes only the completed task's clean, unlocked worktree inside it."
+    }
+  ]
+}

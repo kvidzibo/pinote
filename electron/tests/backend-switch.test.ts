@@ -105,7 +105,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       }
       if (mode === 'python' || mode === 'node' || isPip) {
         await operation;
-        assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
+        assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.27\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
         const different = { ...env, PINOTE_ELECTRON_BACKEND: '/another/explicit/backend' };
         assert.equal((await preferredBackendEnvironment(different)).PINOTE_ELECTRON_BACKEND, different.PINOTE_ELECTRON_BACKEND);

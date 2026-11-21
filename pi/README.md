@@ -264,7 +264,8 @@ edits; grouped alerts never hide another PR's pending failure.
 ### Field watchers
 
 Open **Settings → Fields → Watchers** to enable bundled watchers or add a
-trusted executable. Files in the packaged `watchers/` folder are discovered
+trusted executable. Events, fields and script parameters are edited in the
+desktop's **Watchers…** settings. Files in the packaged `watchers/` folder are discovered
 automatically, but remain disabled until enabled explicitly.
 
 Pi never runs watchers itself. The [Pinote desktop](../docs/electron.md#field-watchers)

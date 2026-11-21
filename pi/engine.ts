@@ -229,7 +229,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       confirm: 'Add this trusted watcher file to shared fieldWatchers (disabled)?' });
     for (const watcher of config.watchers) {
       controls.push({ id: `watcher:${watcher.id}`, label: watcher.name, kind: 'toggle', value: watcher.enabled,
-        description: `${watcher.bundled ? 'Bundled' : 'Custom'} · ${watcher.path}`,
+        description: `${watcher.bundled ? 'Bundled' : 'Custom'} · ${watcher.path}${watcher.problem ? ` · ${watcher.problem}; set it in the desktop's Watchers settings` : ''}`,
         confirm: `Change this shared watcher?\n${watcher.path}\nEnabling executes trusted code with the desktop user’s permissions and credentials. Its alerts automatically trigger the owning Pi worker to investigate and fix the current task. Disabling stops checks and hides its results.` });
       if (!watcher.bundled) action(`remove-watcher:${watcher.id}`, `Remove ${watcher.name}`, { icon: icons.cross,
         description: watcher.path, confirm: `Remove this watcher from shared settings? The file and task values are retained.\n${watcher.path}` });
@@ -488,7 +488,7 @@ return {
     let guidance: string | null | undefined;
     let watchers: FieldWatcherConfig[] | undefined, reset: string | undefined;
     if (action === 'add-watcher' || action.startsWith('watcher:') || action.startsWith('remove-watcher:')) {
-      watchers = before.config.watchers.map(({ path, enabled }) => ({ path, enabled }));
+      watchers = before.config.watchers.map(({ config }) => ({ ...config }));
       if (action === 'add-watcher') {
         const entry = parseFieldWatchers({ fieldWatchers: [{ path: z.string().parse(value), enabled: false }] })[0];
         validateWatcherExecutable(entry.path);

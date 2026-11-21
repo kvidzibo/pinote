@@ -67,6 +67,10 @@ test('agent validation, literal protected labels, sessions, selections and field
  let cursor=0n; const events:any[]=[]; while(cursor<s.history().at(-1)!.id) {const p=s.field_events(cursor,1); assert(p.cursor>cursor); events.push(...p.events); cursor=p.cursor;}
  assert.equal(events.length,15); assert.equal(events[0].field,'10'); assert.equal(events[5].event,'removed'); assert.equal(events[10].event,'added');
  assert.equal(s.completion_events(0n).events.length,1);
+ const taskEvents=s.task_events(0n).events.filter((e:any)=>e.taskId===n.id);
+ assert.deepEqual(taskEvents.slice(-3).map((e:any)=>e.event),['completed','removed','restored']);
+ assert.deepEqual(taskEvents.at(-3)!.fields,s.get(n.id).agent_notes,'completion carries the fields held before it');
+ assert.deepEqual(s.task_events(),{cursor,events:[]});
  assert.deepEqual(s.field_events(),{cursor,events:[]});
  for(const a of [-1n,9007199254740992n,1 as any,true as any,cursor+1n]) assert.throws(()=>s.field_events(a),/Cursor/);
  for(const l of [0,1001,1.5,true as any]) assert.throws(()=>s.completion_events(0n,l),/Limit/);
