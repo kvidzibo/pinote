@@ -81,7 +81,7 @@ Electron uses the Node backend and the existing task database, with no Python
 requirement or data conversion. GTK remains available separately; installing or
 building Electron does not change desktop startup/configuration. Requires Node.js
 22.19+. **Menu → Backend settings… → Switch to Node backend** can explicitly
-switch an existing CLI/service/desktop installation, with backups and rollback.
+switch an existing CLI/desktop installation, with backups and rollback.
 See [Electron installation, switching, and limitations](docs/electron.md).
 Its add-task input and task editor style Markdown source and assist title/bullet
 newlines. Only Linux/X11/i3 is a validation target; pixel-for-pixel GTK parity is not promised.

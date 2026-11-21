@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.14.1) bundles the matching Node backend;
+The private `electron/` package (0.16.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -50,9 +50,10 @@ stop lines are written to the desktop's `app.log`; failed checks are detailed in
 `watchers.log` beside the watcher state. If watchers cannot start, the reason is
 logged and the desktop stays usable.
 
-A standalone `pinote.service` from earlier versions is no longer used: first
-finish any [backend switch](#switch-an-existing-installation) while it is still
-running, then stop and disable it.
+A standalone `pinote.service` from earlier versions is no longer used: stop and
+disable it. Since Electron 0.16.0 the [backend switch](#switch-an-existing-installation)
+neither inspects nor changes that unit; remove its leftover
+`pinote.service.d/90-node-backend.conf` drop-in yourself.
 
 Watchers are enabled in Pi's `/pinote` settings, which list the pi-note package's
 own `watchers/` as **Bundled**; the desktop runs whichever executable path is
@@ -78,32 +79,17 @@ the bundled CLI/bridge against the same database, then:
 
 - Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
 - Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
-- Adds a user override for the **existing** `pinote.service`; no service is created
-  or enabled. A present service must be running with the documented direct Node
-  HTTP command from its project working directory and the same trusted Node
-  executable used by Electron; the actual process executable is checked, not
-  just its command line. The service PATH must contain only absolute entries and
-  resolve `flock` to the system utility. PATH entries and home/XDG paths used for
-  switching must not contain `..`; HOME must be absolute so the service and
-  desktop cannot resolve it from different directories. Startup also rejects parent components in HOME,
-  XDG_CONFIG_HOME and XDG_STATE_HOME before reading preferences or recovery data.
-  An isolated service filesystem, root, credentials, user or network namespace
-  requires a manual switch. The original CLI's database is checked before
-  stopping the service. The user CLI being replaced is checked separately, even
-  without a service. An active service also requires `busctl` to verify its actual
-  unit command. Standard direct-Python uv and pip/pipx entry points are
-  recognized when their shebang selects a trusted native Python installation.
-  Interpreter shims, shell wrappers (including long-shebang shims), and runtime
-  injection require a manual switch. Launcher checks do not authenticate Python
-  installations or their installed packages. The
-  drop-in preserves service arguments/environment files and overrides the CLI
-  at execution, including an old command supplied by `EnvironmentFile`. During
-  switching and rollback, a temporary unit command verifies the CLI and original
-  database identity inside the service environment before starting HTTP or its
-  watchers. The guard is removed after verification. Units with custom start
-  hooks require a manual switch.
-- Saves an explicit Node preference, restarts the previously running service,
-  verifies its CLI/listener, and relaunches Electron.
+  An existing command is first checked to use the same database. Standard
+  direct-Python uv and pip/pipx entry points are recognized when their shebang
+  selects a trusted native Python installation. Interpreter shims, shell wrappers
+  (including long-shebang shims), and runtime injection require a manual switch.
+  Launcher checks do not authenticate Python installations or their installed
+  packages. PATH must contain only absolute entries and resolve `flock` to the
+  system utility. PATH entries and home/XDG paths used for switching must not
+  contain `..`; HOME must be absolute. Startup also rejects parent components in
+  HOME, XDG_CONFIG_HOME and XDG_STATE_HOME before reading preferences or recovery
+  data.
+- Saves an explicit Node preference and relaunches Electron.
 
 No downloads, administrator access, model requests or database conversion occur
 when clicking Switch. Normal desktop updates must first install this app version;
@@ -111,7 +97,7 @@ its `setup` now also prepares the backend for the existing desktop updater.
 Keep the installed application's directory stable: the CLI launcher follows its
 bundled resources, so subsequent updates replace both runtimes together.
 **Refresh backend settings** checks the saved desktop preference and the installed
-user CLI. It does not report the live service state.
+user CLI.
 
 The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
 `~/.config/pinote/backend.json`). It overrides only the exact backend override
@@ -121,10 +107,10 @@ environments remain available, but are not used by the selected Node runtime.
 
 Backups and interrupted-switch recovery are under
 `$XDG_STATE_HOME/pinote/backend-switch` (default `~/.local/state/pinote/backend-switch`).
-On failure, rollback restores configuration and verifies that the restarted service
-uses its original database. If it cannot verify that database, it stops the service
-and retains the recovery journal. Task data is **never** automatically restored or converted. Interrupted rollback
-is recovered on the next launch. Concurrent configuration edits are not overwritten:
+On failure, rollback restores configuration. Task data is **never** automatically
+restored or converted. Interrupted rollback is recovered on the next launch; one
+started by Electron 0.15 or earlier with a `pinote.service` present must be
+finished with that version. Concurrent configuration edits are not overwritten:
 if recovery cannot finish, preserve `pending.json` and the private backups for repair.
 Original configuration inodes are also kept beside their paths as hidden
 `.NAME.pinote-switch-*.previous` files; interrupted rollback can retain matching
@@ -133,8 +119,8 @@ Deleted targets are not recreated. If a previously existing target disappears
 after publication intent, recovery stops for manual repair rather than guessing.
 An originally absent target that is absent again already matches its backup;
 rollback leaves it absent without requiring repair.
-A busy updater, unsafe paths, a stopped/transitioning service, a different service
-database, or an unsupported/nonlocal listener blocks the switch rather than guessing.
+A busy updater, unsafe paths, or an existing CLI on a different database blocks
+the switch rather than guessing.
 
 ## Controls and deliberate differences
 

@@ -13,7 +13,6 @@ const watchers = (await readdir('../pi/watchers')).filter(name => name.endsWith(
 const [served, watched] = await Promise.all([
   build({ ...service, entryPoints: ['../pi/watcher-host.ts'], outfile: 'dist/pinote-backend/service/watcher-host.mjs' }),
   build({ ...service, banner: {}, entryPoints: watchers.map(name => `../pi/watchers/${name}`), outdir: 'dist/pinote-backend/service/watchers', outExtension: { '.js': '.mjs' } }),
-  build({ entryPoints: ['src/backend-switch-guard.ts'], outfile: 'dist/pinote-backend/switch-guard.mjs', bundle: true, platform: 'node', format: 'esm', target: 'node22' }),
   build({ entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preview-preload.ts'], outfile: 'dist/preview-preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
