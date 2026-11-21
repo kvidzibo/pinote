@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, access, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -208,6 +208,118 @@ const output = require('node:child_process').execFileSync(${JSON.stringify(comma
   } finally {
     await Promise.allSettled(readers.map((reader) => reader.cancel()));
     await service.close();
+    names.forEach((name, i) => { if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i]; });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('HTTP observes desktop field results live without intake or execution, including across desktop restarts', { timeout: 25_000 }, async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { DatabaseSync } = await import('node:sqlite');
+  const { ResourceListChangedNotificationSchema } = await import('@modelcontextprotocol/sdk/types.js');
+  const { FieldAutomation, fieldAutomationPath } = await import('../mcp/field-events.ts');
+  const { ViewSchema } = await import('../remote/protocol.ts');
+  const exec = promisify(execFile);
+  const dir = await mkdtemp(join(tmpdir(), 'pinote-http-fields-'));
+  const names = ['PINOTE_NOTE_COMMAND', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PI_CODING_AGENT_DIR'];
+  const previous = names.map((name) => process.env[name]);
+  const note = fileURLToPath(new URL('../../backend/bin/note', import.meta.url));
+  const front = join(dir, 'http-note.cjs'), verified = join(dir, 'desktop-note.cjs');
+  const handler = join(dir, 'watcher.mjs'), calls = join(dir, 'calls'), intake = join(dir, 'http-intake');
+  const token = 'field-http-secret-'.repeat(3);
+  const dataAlias = join(dir, 'data-alias');
+  Object.assign(process.env, { PINOTE_NOTE_COMMAND: front, XDG_DATA_HOME: dataAlias, XDG_STATE_HOME: dir, PI_CODING_AGENT_DIR: pathToFileURL(dir).href });
+  const command = async (...args: string[]) => JSON.parse((await exec(note, ['--no-notify', ...args])).stdout);
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const { startPinoteHttpServer } = await import('../mcp/http.ts');
+  let service: Awaited<ReturnType<typeof startPinoteHttpServer>> | undefined;
+  let runner: Awaited<ReturnType<typeof FieldAutomation.open>> | undefined;
+  const client = new Client({ name: 'field-http-test', version: '1' });
+  try {
+    await symlink(dir, dataAlias);
+    const database = join(dir, 'pinote', 'notes.db');
+    assert.equal(fieldAutomationPath({ database }), fieldAutomationPath(), 'The DB alias resolves consistently before notes.db exists');
+    const forward = `process.stdout.write(require('node:child_process').execFileSync(${JSON.stringify(note)}, process.argv.slice(2)));`;
+    await writeFile(front, `#!${process.execPath}\nif (process.argv.includes('field-events')) require('node:fs').writeFileSync(${JSON.stringify(intake)}, '');\n${forward}`, { mode: 0o700 });
+    await writeFile(verified, `if (process.env.VERIFIED_ELECTRON_CLI !== 'yes') process.exit(1);\n${forward}`);
+    await writeFile(handler, `#!${process.execPath}
+import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(calls)}, 'check\\n');
+console.log(JSON.stringify({state:'failed',notification:{key:'failed',message:'Desktop check failed'}}));`, { mode: 0o700 });
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ fieldWatchers: [{ path: handler, enabled: true }] }));
+    let task = await command('agent', 'add', '--text=Desktop watcher');
+    task = await command('agent', 'update', String(task.id), '--expected-updated-at', task.updated_at, '--set-json', '{"Deploy":"dev"}');
+    assert.equal(fieldAutomationPath({ database }), fieldAutomationPath());
+    const open = () => FieldAutomation.open({ database, noteCommand: process.execPath, noteArgs: [verified],
+      noteEnv: { ...process.env, VERIFIED_ELECTRON_CLI: 'yes' } });
+    service = await startPinoteHttpServer({ token, port: 0, logPath: join(dir, 'http.log') });
+    const stream = new Promise<void>((resolve) => {
+      service!.listener.on('request', (req) => { if (req.method === 'GET' && req.url === '/mcp') resolve(); });
+    });
+    let updates = 0;
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => { updates++; });
+    await client.connect(new StreamableHTTPClientTransport(new URL(service.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+    await stream;
+    const meta = (conversationId = 'first', fieldReceipts: string[] = []) => ({ 'native-ui/context': { conversationId, fieldReceipts, state: { selectedId: task.id } },
+      'native-ui/features': { fieldEvents: true, fieldWatchers: true, watcherDiagnostics: true } });
+    const resource = async (uri: string, context = meta()) => {
+      const { contents } = await client.readResource({ uri, _meta: context });
+      return JSON.parse((contents[0] as { text: string }).text);
+    };
+    const read = async (context = meta()) => ViewSchema.parse(await resource('pinote://ui', context));
+    const nextView = async (after: number, predicate: (view: Awaited<ReturnType<typeof read>>) => boolean) => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (updates > after) {
+          const view = await read();
+          if (predicate(view)) return view;
+        }
+        await pause(25);
+      }
+      throw new Error('No live field refresh matching expected state');
+    };
+    const before = await read(); // Claim before Electron has ever opened the DB.
+    assert.deepEqual(before.fieldNotifications, []);
+    const db = new DatabaseSync(fieldAutomationPath());
+    try {
+      assert.equal(db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id)?.context_id, 'first');
+      assert.equal(db.prepare("SELECT 1 FROM sqlite_master WHERE name='fw_scheduler'").get(), undefined);
+    } finally { db.close(); }
+
+    const starting = updates;
+    runner = await open(); runner.start();
+    const current = await nextView(starting, (view) => view.fieldNotifications?.length === 1);
+    assert.notEqual(current.revision, before.revision);
+    assert.equal(current.watcherDiagnostics?.logPath, runner.logPath);
+    const alert = current.fieldNotifications![0];
+    assert.equal(alert.message, 'Desktop check failed');
+    assert.equal(alert.triggerWorker, true);
+    assert.deepEqual((await read(meta('other'))).fieldNotifications, []);
+    assert.deepEqual((await read(meta('first', [alert.id]))).fieldNotifications, []);
+    assert.match((await resource('pinote://agent-context')).text, /Desktop check failed/);
+
+    const stopping = updates;
+    await runner.close(); runner = undefined;
+    const offline = await nextView(stopping, (view) => view.fieldNotifications?.length === 0);
+    assert.notEqual(offline.revision, current.revision);
+    assert.doesNotMatch((await resource('pinote://agent-context')).text, /Desktop check failed/);
+    assert.deepEqual(offline.watcherDiagnostics?.failures, [], 'offline is not a handler failure');
+
+    const restarting = updates;
+    runner = await open(); runner.start();
+    const resumed = await nextView(restarting, (view) => view.fieldNotifications?.length === 1);
+    assert.equal(resumed.fieldNotifications![0].id, alert.id);
+    assert.deepEqual((await read(meta('first', [alert.id]))).fieldNotifications, []);
+    assert.equal((await command('agent', 'get', String(task.id))).updated_at, task.updated_at);
+    assert.equal(await readFile(calls, 'utf8'), 'check\n', 'terminal result was not rerun on restart');
+    const edit = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: task.updated_at, set: { Deploy: 'dev' } }, _meta: meta('other') });
+    assert.equal(edit.isError ?? false, false);
+    assert.deepEqual((await read()).fieldNotifications, [], 'An explicit write reclaims the task from its first viewer');
+    assert.equal((await read(meta('other'))).fieldNotifications?.[0]?.id, alert.id);
+    await assert.rejects(access(intake), { code: 'ENOENT' });
+  } finally {
+    await runner?.close(); await client.close(); await service?.close();
     names.forEach((name, i) => { if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i]; });
     await rm(dir, { recursive: true, force: true });
   }

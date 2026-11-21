@@ -1,14 +1,12 @@
 # Field watchers
 
-pi-note **0.40.0+** with **note 0.24.0+** runs independently enabled executables for
-task-field changes on the **HTTP service machine**. No extra daemon or Pi-local
-watcher is installed. The local-only extension and stdio service do not run watchers.
+Pinote Electron **0.14.0+** runs enabled field watchers while the desktop is open. The HTTP service (pi-note **0.47.0+**) delivers their results to Pi but never launches watcher scripts. Use the same user, database and XDG state directory for both processes. Upgrade both together; stop the old service runner before starting the new desktop.
 
 ## Enable
 
 Open **Settings → Footer fields → Watchers**. The fixed package `watchers/` folder
 is scanned for executable `.mjs` files; discovery never executes or enables them.
-Enable **GitHub PR** or **Forgejo PR**, or add a custom absolute executable path on the service
+Enable **GitHub PR** or **Forgejo PR**, or add a custom absolute executable path on the Electron
 machine and enable it separately. Every change requires review and confirmation.
 Watchers are trusted code, not sandboxed; enabling authorizes their alerts to
 trigger the owning worker to investigate and fix the task within existing permissions.
@@ -34,13 +32,12 @@ footer style; alerts remain independent.
 disabled until explicitly enabled because the previous setting authorized only
 notifications, not automatic worker actions. Saving watchers removes the old key.
 
-The bundled [`watchers/github-pr.mjs`](../watchers/github-pr.mjs) handles `PRs`
+The bundled [`watchers/github-pr.mjs`](../../watchers/github-pr.mjs) handles `PRs`
 and legacy `PR`, ignoring other fields. Keep it in its package directory so its
 shared parser remains available; add a separate executable for custom behavior.
 If customizing a copy of the package, make the watcher executable
 (`chmod u+x`), and ensure authenticated `gh` and Node 22.19+ are on the
-**service's** PATH. For systemd, follow the [service PATH setup](README.md#run-continuously);
-using an absolute Node path in `ExecStart` alone is insufficient for the watcher's
+**desktop's** PATH. An absolute Node path used to launch the service is insufficient for the watcher's
 `#!/usr/bin/env node` interpreter. `PRs` accepts one GitHub or Forgejo PR URL or Markdown link
 per line (optional `- ` bullets), deduplicating up to 64 valid links. Each number
 keeps its own link and status: green passing, red failed/conflicting, amber pending,
@@ -62,7 +59,7 @@ Passing means reported checks passed, not that all review/protection rules passe
 
 ## Forgejo PRs
 
-With pi-note **0.42.0+**, configure trusted instances in the **service machine's**
+With pi-note **0.42.0+**, configure trusted instances in the **desktop user's**
 `pi-note.json` (in `PI_CODING_AGENT_DIR`, default `~/.pi/agent`), then enable
 **Forgejo PR** in Watchers:
 
@@ -77,17 +74,17 @@ With pi-note **0.42.0+**, configure trusted instances in the **service machine's
 `url` is an HTTPS instance base URL, optionally including its installation subpath
 or port; it is not a repository or API URL. HTTP is also accepted for numeric
 loopback hosts `127.0.0.1` and `[::1]` only. At most 32 instances are allowed.
-`tokenEnv` names a service environment variable holding a read-only API token
+`tokenEnv` names an Electron environment variable holding a read-only API token
 (with repository read access for private repositories). Omit it for anonymous
 public access. Never put tokens in task fields, URLs or `pi-note.json`. Node must
-be on the service's PATH; `gh` is not needed. Source checkouts require
+be on Electron's PATH; `gh` is not needed. Source checkouts require
 `npm --prefix pi run build:mcp` before running the executable.
 
 For a local repository such as
 `http://127.0.0.1:3000/tomas/production-deploy`, configure the instance base
-`http://127.0.0.1:3000`, not the repository path. Loopback refers to the **service
+`http://127.0.0.1:3000`, not the repository path. Loopback refers to the **Electron
 machine**, not the Pi client. A sign-in-required instance needs `tokenEnv` even
-for repository reads; set that variable in the existing service's environment.
+for repository reads; set that variable in Electron's launch environment.
 
 Set `PRs` to `https://forgejo.example/owner/repo/pulls/123` or, for that local
 instance, `http://127.0.0.1:3000/tomas/production-deploy/pulls/123`, one URL or
@@ -97,8 +94,8 @@ one URL/link. Only explicitly configured instance URLs receive requests; credent
 to that instance, and API redirects are rejected. Both bundled watchers ignore
 other providers' links, so they can be enabled together. Displaying a PR link or
 formatting `<number>` does not authorize network access. After changing instances,
-toggle the Forgejo watcher off/on to rescan existing fields. Restart the existing
-service when changing its environment; no additional service is needed.
+toggle the Forgejo watcher off/on to rescan existing fields. Restart Electron
+when changing its environment; no additional service is needed.
 
 Forgejo checks the current head's latest commit statuses across all pages, including
 Forgejo Actions jobs published as commit statuses. Failures trigger the owning
@@ -180,14 +177,12 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 
 ## Delivery and reliability
 
-- The service stores its history cursor, scheduled checks, results and alert owner
+- Electron stores its history cursor, scheduled checks, results and alert owner
   under `$XDG_STATE_HOME/pinote/field-events/<database-path-hash>/state.db` (default
   state home: `~/.local/state`). Keep this private and local, like `notes.db`.
   Watcher cursors, jobs and notices are independent; alert ownership is shared.
   It uses Node's built-in SQLite API; Node 22 may print its experimental warning.
-- Monitoring continues without an open Pi session while the HTTP service runs.
-  Deadlines survive restarts. A lease prevents overlapping normal execution by
-  competing service processes; run one service/configuration per notes database.
+- Monitoring requires an open Electron app, not an open Pi session. Deadlines survive restarts. The HTTP service observes shared SQLite results; it does not take over when Electron exits.
 - Initial activation reconstructs fields from durable history. Intake scans at
   most 25 history rows per tick and coalesces superseded pending changes before
   execution. This is a **current-field automation API**, not a lossless audit hook:
@@ -195,7 +190,7 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   field snapshots cannot be reconstructed.
 - In Pi's interactive terminal, execution failures produce one grouped notice:
   `Pinote watchers failing: GitHub PR [PR], Deploy [Build, URL].`
-  It points to the actual service log on the **service machine**. Health is
+  The notice links to `watchers.log` beside the automation database. Health is
   service-wide, grouped by watcher and affected field across tasks; long field
   lists show an additional count. Notices appear on connection and when the
   failure set changes, not on every retry. A final notice clears the failure set
@@ -241,13 +236,13 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - Newly enabled watchers reconstruct current fields from history independently.
   Disabling/removing clears their automation state; enabling again checks afresh.
   Editing the same file affects its next invocation, not stopped checks.
-  Restoring an older notes backup can invalidate the cursor: stop the service and
+  Restoring an older notes backup can invalidate the cursor: stop Electron and the service, then
   deliberately back up/reset its corresponding automation state before restarting.
 
-Handlers run with the service user's permissions and inherited environment,
+Handlers run with the desktop user's permissions and inherited environment,
 including available credentials. They are trusted code, **not sandboxed**. The
 human-confirmed Watchers UI can configure executable paths; agent tools cannot.
-The existing service log records each failed invocation with timestamp, watcher
+The Electron log records each failed invocation with timestamp, watcher
 name/ID, task ID, field name, a fixed safe reason, last successful check and next
 retry. Reasons distinguish missing executables/interpreters, permissions, exit
 failures (including interpreter/PATH exit 127), timeouts, output limits, invalid

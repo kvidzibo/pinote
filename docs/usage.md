@@ -139,7 +139,7 @@ corresponding provider's watcher is enabled. Legacy `PR` values remain readable;
 are clickable. Other fields stay on the task only.
 See the [Pi extension](../pi/README.md) for `/pinote`, Settings actions, footer status, and tools.
 Optional [field-event automations](../pi/mcp/FIELD_EVENTS.md) run one trusted handler
-on the HTTP service; `note field-events` exposes bounded, read-only field history.
+while Electron is open; `note field-events` exposes bounded, read-only field history.
 New sessions can continue locally; there is no automatic cross-machine sync.
 
 ### Scheduled reminders

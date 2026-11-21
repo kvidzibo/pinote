@@ -87,9 +87,7 @@ rotation requires restarting the service and updating client credentials.
 
 A [systemd user-unit template](../deploy/pinote.service) is included. Replace its
 absolute checkout and Node paths. Set its `Environment=PATH=…` Node-bin directory
-to the directory containing that Node executable; also include `gh`'s directory if
-outside the listed system directories. An absolute Node path in `ExecStart` starts
-the service but does not put Node on the PATH inherited by watcher scripts.
+to the directory containing that Node executable. Watchers inherit Electron’s environment, not the unit’s.
 Review the unit before installation. Store the environment file outside the
 repository with mode `0600`:
 
@@ -103,8 +101,8 @@ PINOTE_LOG_PATH=/absolute/path/to/private/state/pinote/app.log
 
 Set `PINOTE_NOTE_COMMAND` to the absolute CLI path. If `service.env` also sets
 `PATH`, it overrides the unit's value: provide the complete list of directories,
-including Node and watcher tools. Systemd does not expand `$PATH` or `~` here and
-does not load shell startup files. The service user must authenticate `gh`.
+including Node. Systemd does not expand `$PATH` or `~` here and
+does not load shell startup files. Authenticate `gh` for the desktop user if using the GitHub watcher.
 
 Install the reviewed unit under your user systemd directory, then:
 
@@ -162,16 +160,16 @@ Xvfb and private D-Bus; never point them at personal data.
 
 Manage `fieldWatchers` in **Settings → Footer fields → Watchers**. Bundled files
 are discovered disabled; trusted custom executables can be added and enabled.
-Independent checks survive restarts and settings apply live, without another daemon.
+Electron owns execution and must be open on the same database and state directory. The HTTP service observes results; it never runs scripts.
 Both PR watchers check each supported URL in `PRs` independently (one URL/link
 per line; legacy `PR` remains supported). Footer numbers are green for passing
 CI, red for failures/conflicts, amber for pending checks, and accent (default
 purple) for merged PRs, without strikethrough. Closed/unavailable PRs are neutral.
 Forgejo requires explicitly configured HTTPS or numeric-loopback HTTP instances
-and service-side API tokens; ambiguous mergeability remains pending, not a
+and desktop-side API tokens; ambiguous mergeability remains pending, not a
 conflict alert. The owning worker is alerted to failed CI/conflicts. With
 pi-note 0.41.1+ on both sides, failed watcher executions produce grouped
-terminal-only notices pointing to the service log; retries do not spam the
+terminal-only notices pointing to the desktop watcher log; retries do not spam the
 terminal or trigger model turns. Requires note 0.25.0+. Review the
 [watcher contract and safeguards](FIELD_EVENTS.md) before enabling trusted code.
 

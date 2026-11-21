@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, lstatSync, openSync, closeSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { appendFileSync, mkdirSync, lstatSync, openSync, closeSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
@@ -85,57 +85,149 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
   });
 }
 
-/** Service-owned durable scheduler. A SQLite lease fences competing HTTP processes. */
+type StorageOptions = {
+  /** Verified absolute notes.db identity. Omit for the default XDG notes database. */
+  database?: string;
+  /** Override the automation state file, not notes.db. Both sides must use the same path. */
+  path?: string;
+  changed?: () => void;
+};
+type RunnerOptions = StorageOptions & {
+  watchers?: () => FieldWatcher[];
+  noteCommand?: string;
+  /** CLI prefix argv and verified environment, e.g. a bundled script invoked by Node. */
+  noteArgs?: readonly string[];
+  noteEnv?: NodeJS.ProcessEnv;
+  log?: (failure?: WatcherFailureLog) => void;
+};
+type Publication = { revision: number; active_until: number; watchers: string };
+const leaseMs = 90_000;
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+// Match the desktop's resolved identity, including an XDG directory alias or
+// a not-yet-created notes database when HTTP starts first.
+function canonicalDatabase(path: string, links = 0): string {
+  try { return utf8.decode(realpathSync.native(path, { encoding: 'buffer' })); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  let target: string | undefined;
+  try { target = utf8.decode(readlinkSync(path, { encoding: 'buffer' })); }
+  catch (error) { if (!['ENOENT', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+  const parent = dirname(path);
+  if (target !== undefined) {
+    if (links >= 40) throw new Error('Too many notes database symlinks');
+    return canonicalDatabase(isAbsolute(target) ? target : `${parent}/${target}`, links + 1);
+  }
+  return parent === path ? path : join(canonicalDatabase(parent, links), basename(path));
+}
+
+export function fieldAutomationPath(options: Pick<StorageOptions, 'database' | 'path'> = {}): string {
+  if (options.path !== undefined) return options.path;
+  const dataHome = process.env.XDG_DATA_HOME;
+  const database = options.database ?? `${dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share')}/pinote/notes.db`;
+  if (!isAbsolute(database)) throw new Error('Expected an absolute notes database identity');
+  const namespace = createHash('sha256').update(canonicalDatabase(database)).digest('hex').slice(0, 16);
+  const stateHome = process.env.XDG_STATE_HOME;
+  return join(stateHome && isAbsolute(stateHome) ? stateHome : join(homedir(), '.local/state'), 'pinote/field-events', namespace, 'state.db');
+}
+
+/** Electron owns execution; HTTP observes committed results and writes only conversation claims. */
 export class FieldAutomation {
   private db: DatabaseSync;
   private owner = randomUUID();
   private lifetime = new AbortController();
   private timer?: ReturnType<typeof setTimeout>;
   private work?: Promise<void>;
-  private watchers: () => FieldWatcher[];
+  private observation?: ReturnType<typeof setInterval>;
+  private closing?: Promise<void>;
+  private started = false;
+  private watchers?: () => FieldWatcher[];
   private enabled: FieldWatcher[] = [];
   private signature = '';
   private generation = 0;
   private invocation?: AbortController;
   private ticking = false;
   private noteCommand: string;
+  private noteArgs: readonly string[];
+  private noteEnv?: NodeJS.ProcessEnv;
   private changed: () => void;
   private log: (failure?: WatcherFailureLog) => void;
-  private constructor(db: DatabaseSync, watchers: () => FieldWatcher[], noteCommand: string, changed: () => void, log: (failure?: WatcherFailureLog) => void) {
-    this.db = db; this.watchers = watchers; this.noteCommand = noteCommand; this.changed = changed; this.log = log;
+  readonly logPath: string;
+  private constructor(db: DatabaseSync, path: string, changed: () => void, runner?: RunnerOptions) {
+    this.db = db; this.changed = changed;
+    this.watchers = runner && (runner.watchers ?? (() => discoverFieldWatchers(readConfigDocument().value)));
+    this.noteCommand = runner?.noteCommand ?? process.env.PINOTE_NOTE_COMMAND ?? 'note';
+    this.noteArgs = runner?.noteArgs ?? [];
+    this.noteEnv = runner?.noteEnv;
+    this.logPath = join(dirname(path), 'watchers.log');
+    this.log = (failure) => {
+      const message = failure ? `watcher check failed ${JSON.stringify(failure)}` : 'field automation check failed; will retry';
+      try { appendFileSync(this.logPath, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 }); } catch { /* Logging must not stop the scheduler. */ }
+      runner?.log?.(failure);
+    };
     db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
     try {
-      const migrate = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fw_pr_notices'").get();
+      // Early claims work even before Electron has launched. Only the runner
+      // initializes scheduler state and migrates legacy results.
       db.exec(`
-      CREATE TABLE IF NOT EXISTS fw_scheduler (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS fw_watchers (id TEXT PRIMARY KEY, path TEXT NOT NULL, cursor INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS fw_jobs (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
       CREATE TABLE IF NOT EXISTS owners (task_id INTEGER PRIMARY KEY, context_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS fw_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
-      CREATE TABLE IF NOT EXISTS fw_pr_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, url TEXT NOT NULL, notification_key TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,url));
-      INSERT OR IGNORE INTO fw_scheduler(id) VALUES (1);`);
-      if (migrate) {
-        const builtins = new Map(watchers().filter(builtinPR).map((watcher) => [watcher.id, watcher]));
-        for (const row of db.prepare("SELECT job FROM fw_jobs WHERE field='PR'").all() as Row[]) {
-          const job = JSON.parse(row.job) as Job, notification = job.result?.notification;
-          const urls = parsePullRequests(job.event.value ?? undefined);
-          const receipt = db.prepare("SELECT id FROM fw_notices WHERE watcher_id=? AND task_id=? AND field='PR'")
-            .get(job.watcherId, job.event.taskId) as { id: string } | undefined;
-          const watcher = builtins.get(job.watcherId);
-          if (watcher && !job.result?.items && notification && urls.length === 1 && receipt) {
-            db.prepare('INSERT OR IGNORE INTO fw_pr_notices(watcher_id,task_id,url,notification_key,id,message) VALUES (?,?,?,?,?,?)')
-              .run(job.watcherId, job.event.taskId, urls[0].url, prKey(watcher, notification.key), receipt.id, notification.message);
-          }
-        }
-      }
+      CREATE TABLE IF NOT EXISTS fw_publication (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL DEFAULT 0,
+        owner TEXT, active_until INTEGER NOT NULL DEFAULT 0, watchers TEXT NOT NULL DEFAULT '');
+      INSERT OR IGNORE INTO fw_publication(id) VALUES (1);
+      CREATE TRIGGER IF NOT EXISTS fw_claim_insert AFTER INSERT ON owners BEGIN
+        UPDATE fw_publication SET revision=revision+1 WHERE id=1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS fw_claim_update AFTER UPDATE ON owners WHEN OLD.context_id<>NEW.context_id BEGIN
+        UPDATE fw_publication SET revision=revision+1 WHERE id=1;
+      END;`);
+      if (this.watchers) this.initializeRunner(this.watchers);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  static async open(options: { watchers?: () => FieldWatcher[]; path?: string; noteCommand?: string; changed?: () => void; log?: (failure?: WatcherFailureLog) => void } = {}): Promise<FieldAutomation> {
-    const dataHome = process.env.XDG_DATA_HOME;
-    const database = join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), '.local/share'), 'pinote/notes.db');
-    const namespace = createHash('sha256').update(database).digest('hex').slice(0, 16);
-    const path = options.path ?? join(process.env.XDG_STATE_HOME || join(homedir(), '.local/state'), 'pinote/field-events', namespace, 'state.db');
+  private initializeRunner(watchers: () => FieldWatcher[]): void {
+    const db = this.db;
+    const migrate = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fw_pr_notices'").get();
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS fw_scheduler (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS fw_watchers (id TEXT PRIMARY KEY, path TEXT NOT NULL, cursor INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS fw_jobs (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
+    CREATE TABLE IF NOT EXISTS fw_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, field TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,field));
+    CREATE TABLE IF NOT EXISTS fw_pr_notices (watcher_id TEXT NOT NULL, task_id INTEGER NOT NULL, url TEXT NOT NULL, notification_key TEXT NOT NULL, id TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(watcher_id,task_id,url));
+    INSERT OR IGNORE INTO fw_scheduler(id) VALUES (1);`);
+    if (migrate) {
+      const builtins = new Map(watchers().filter(builtinPR).map((watcher) => [watcher.id, watcher]));
+      for (const row of db.prepare("SELECT job FROM fw_jobs WHERE field='PR'").all() as Row[]) {
+        const job = JSON.parse(row.job) as Job, notification = job.result?.notification;
+        const urls = parsePullRequests(job.event.value ?? undefined);
+        const receipt = db.prepare("SELECT id FROM fw_notices WHERE watcher_id=? AND task_id=? AND field='PR'")
+          .get(job.watcherId, job.event.taskId) as { id: string } | undefined;
+        const watcher = builtins.get(job.watcherId);
+        if (watcher && !job.result?.items && notification && urls.length === 1 && receipt) {
+          db.prepare('INSERT OR IGNORE INTO fw_pr_notices(watcher_id,task_id,url,notification_key,id,message) VALUES (?,?,?,?,?,?)')
+            .run(job.watcherId, job.event.taskId, urls[0].url, prKey(watcher, notification.key), receipt.id, notification.message);
+        }
+      }
+    }
+  }
+  static open(options: RunnerOptions = {}): Promise<FieldAutomation> {
+    return this.connect(options, options);
+  }
+  /** Observe changes without acquiring a lease, reading watcher config or running commands. */
+  static async observe(options: StorageOptions & { onError?: () => void } = {}): Promise<FieldAutomation> {
+    const automation = await this.connect(options);
+    let last: string;
+    try { last = automation.observationKey(); }
+    catch (error) { await automation.close(); throw error; }
+    automation.observation = setInterval(() => {
+      try {
+        const current = automation.observationKey();
+        if (current !== last) { last = current; automation.changed(); }
+      } catch { options.onError?.(); }
+    }, 1000);
+    automation.observation.unref();
+    return automation;
+  }
+  private static async connect(options: StorageOptions, runner?: RunnerOptions): Promise<FieldAutomation> {
+    const path = fieldAutomationPath(options);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const directory = lstatSync(dirname(path));
     if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077)) throw new Error('Unsafe field automation directory');
@@ -144,11 +236,12 @@ export class FieldAutomation {
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error('Unsafe field automation database');
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(path);
-    try { return new FieldAutomation(db, options.watchers ?? (() => discoverFieldWatchers(readConfigDocument().value)), options.noteCommand ?? process.env.PINOTE_NOTE_COMMAND ?? 'note', options.changed ?? (() => {}), options.log ?? (() => {})); }
+    try { return new FieldAutomation(db, path, options.changed ?? (() => {}), runner); }
     catch (error) { db.close(); throw error; }
   }
   private async note(args: string[]): Promise<unknown> {
-    const { stdout } = await exec(this.noteCommand, ['--no-notify', ...args], { signal: this.lifetime.signal, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout } = await exec(this.noteCommand, [...this.noteArgs, '--no-notify', ...args],
+      { env: this.noteEnv, signal: this.lifetime.signal, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
     return JSON.parse(stdout);
   }
   private leased(): boolean {
@@ -158,17 +251,21 @@ export class FieldAutomation {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (!this.leased()) throw new Error('Field scheduler lease expired');
-      work(); this.db.exec('COMMIT');
+      work();
+      this.db.exec('UPDATE fw_publication SET revision=revision+1 WHERE id=1; COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   private reconcile(): void {
+    this.lifetime.signal.throwIfAborted();
+    if (!this.watchers || !this.leased()) throw new Error('Field scheduler lease expired');
     const enabled = this.watchers().filter((watcher) => watcher.enabled);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
-    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path]));
-    if (signature === this.signature) return;
-    this.generation++; this.invocation?.abort();
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    const signature = JSON.stringify(enabled);
+    if (signature !== this.signature) {
+      this.generation++; this.invocation?.abort();
+    }
+    const changed = signature !== this.publication().watchers;
+    if (changed) this.transaction(() => {
       for (const row of this.db.prepare('SELECT id,path FROM fw_watchers').all()) {
         if (!enabled.some((w) => w.id === row.id && w.path === row.path)) {
           this.db.prepare('DELETE FROM fw_jobs WHERE watcher_id=?').run(row.id);
@@ -178,10 +275,12 @@ export class FieldAutomation {
         }
       }
       for (const watcher of enabled) this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path);
-      this.db.exec('COMMIT');
-    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    this.enabled = enabled; this.signature = signature; this.changed();
+      this.db.prepare('UPDATE fw_publication SET watchers=? WHERE id=1').run(signature);
+    });
+    this.enabled = enabled; this.signature = signature;
+    if (changed) this.changed();
   }
+
   private save(job: Job): void {
     this.db.prepare('INSERT INTO fw_jobs(watcher_id,task_id,field,job) VALUES (?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET job=excluded.job')
       .run(job.watcherId, job.event.taskId, job.event.field, JSON.stringify(job));
@@ -215,36 +314,58 @@ export class FieldAutomation {
     this.db.prepare('DELETE FROM fw_pr_notices WHERE watcher_id=? AND task_id=? AND url NOT IN (SELECT value FROM json_each(?))')
       .run(watcherId, taskId, JSON.stringify(urls));
   }
+  private publication(): Publication {
+    return this.db.prepare('SELECT revision,active_until,watchers FROM fw_publication WHERE id=1').get() as Publication;
+  }
+  private observationKey(): string {
+    const { revision, active_until } = this.publication();
+    return `${revision}:${active_until > Date.now()}`;
+  }
+  private read<T>(work: (watchers: FieldWatcher[], offline: boolean) => T): T {
+    // One SQLite snapshot for the published catalog, jobs, notices and claim owner.
+    this.db.exec('BEGIN');
+    try {
+      const { watchers, active_until } = this.publication();
+      return work(watchers ? JSON.parse(watchers) as FieldWatcher[] : [], !this.watchers && active_until <= Date.now());
+    } finally { this.db.exec('ROLLBACK'); }
+  }
   /** Explicit selection/write owns alerts; background reads can only claim unowned tasks. */
   claim(taskId: number, contextId: string, replace = false): void {
+    if (!replace && this.db.prepare('SELECT 1 FROM owners WHERE task_id=?').get(taskId)) return;
     this.db.prepare(replace
-      ? 'INSERT INTO owners(task_id,context_id) VALUES (?,?) ON CONFLICT(task_id) DO UPDATE SET context_id=excluded.context_id'
+      ? 'INSERT INTO owners(task_id,context_id) VALUES (?,?) ON CONFLICT(task_id) DO UPDATE SET context_id=excluded.context_id WHERE context_id<>excluded.context_id'
       : 'INSERT OR IGNORE INTO owners(task_id,context_id) VALUES (?,?)').run(taskId, contextId);
   }
   statuses(task: Task): FieldStatus[] {
-    this.reconcile();
-    return this.enabled.flatMap((watcher) => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=?').all(watcher.id, task.id) as Row[]).flatMap(({ job: raw }) => {
+    return this.read((watchers, offline) => this.taskStatuses(task, watchers, offline));
+  }
+  private taskStatuses(task: Task, watchers: FieldWatcher[], offline: boolean): FieldStatus[] {
+    return watchers.flatMap((watcher) => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=?').all(watcher.id, task.id) as Row[]).flatMap(({ job: raw }) => {
       const job = JSON.parse(raw) as Job;
       if (job.event.value === null || job.event.value !== task.agent_notes[job.event.field] || !job.result || Object.keys(job.result).length === 0) return [];
-      return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: job.stale ?? false }];
+      return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: offline || (job.stale ?? false) }];
     }));
   }
-  /** Service-wide health, separate from task results and worker alerts. */
+  /** Watcher failures, independent of desktop liveness and worker alerts. */
   failures() {
-    this.reconcile();
-    return this.enabled.flatMap((watcher) => {
+    return this.read((watchers) => watchers.flatMap((watcher) => {
       const fields = [...new Set((this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=?').all(watcher.id) as Row[])
         .map(({ job }) => JSON.parse(job) as Job).filter((job) => (job.stale || job.result?.items?.some((item) => item.state === 'error')) && job.event.value !== null).map((job) => job.event.field))].sort();
       return fields.length ? [{ watcherId: watcher.id, name: watcher.name.slice(0, 256), fields: fields.slice(0, 8), moreFields: Math.max(0, fields.length - 8) }] : [];
-    });
+    }));
   }
   notices(task: Task, contextId: string, receipts: readonly string[] = [], grouped = false): FieldNotice[] {
     this.claim(task.id, contextId);
-    const owner = this.db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id);
-    if (owner?.context_id !== contextId) return [];
-    const received = new Set(receipts), statuses = this.statuses(task);
+    return this.read((watchers, offline) => {
+      const owner = this.db.prepare('SELECT context_id FROM owners WHERE task_id=?').get(task.id);
+      if (offline || owner?.context_id !== contextId || !watchers.length) return [];
+      return this.taskNotices(task, watchers, receipts, grouped);
+    });
+  }
+  private taskNotices(task: Task, watchers: FieldWatcher[], receipts: readonly string[], grouped: boolean): FieldNotice[] {
+    const received = new Set(receipts), statuses = this.taskStatuses(task, watchers, false);
     const managed = new Set<string>(), result: FieldNotice[] = [];
-    for (const watcher of this.enabled) {
+    for (const watcher of watchers) {
       const observations = new Map<string, { field: string; item: NonNullable<FieldResult['items']>[number] }>();
       const ordered = statuses.filter((status) => status.watcherId === watcher.id && !status.stale)
         .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? '') || Number(b.field === 'PRs') - Number(a.field === 'PRs'));
@@ -288,17 +409,23 @@ export class FieldAutomation {
     return result.slice(0, 64);
   }
   start(): void {
+    if (!this.watchers) throw new Error('Field automation observer cannot schedule watchers');
+    this.lifetime.signal.throwIfAborted();
+    if (this.started) return;
+    this.started = true;
     const schedule = () => {
       if (this.lifetime.signal.aborted) return;
       let delay = 1000;
-      this.work = this.tick().catch(() => { delay = 30_000; this.log(); }).finally(() => {
-        this.work = undefined;
+      void this.tick().catch(() => {
+        if (!this.lifetime.signal.aborted) { delay = 30_000; this.log(); }
+      }).finally(() => {
         if (!this.lifetime.signal.aborted) { this.timer = setTimeout(schedule, delay); this.timer.unref(); }
       });
     };
     schedule();
   }
   tick(): Promise<void> {
+    if (!this.watchers) return Promise.reject(new Error('Field automation observer cannot schedule watchers'));
     if (this.ticking) return this.work ?? Promise.resolve();
     this.ticking = true;
     const work = this.performTick().finally(() => { this.ticking = false; if (this.work === work) this.work = undefined; });
@@ -308,17 +435,24 @@ export class FieldAutomation {
   private async performTick(): Promise<void> {
     this.lifetime.signal.throwIfAborted();
     const acquired = this.db.prepare('UPDATE fw_scheduler SET owner=?, lease_until=? WHERE id=1 AND (lease_until<=? OR owner=?)')
-      .run(this.owner, Date.now() + 90_000, Date.now(), this.owner).changes;
+      .run(this.owner, Date.now() + leaseMs, Date.now(), this.owner).changes;
     if (!acquired) return;
     try {
+      // A new runner first checks for history accumulated during downtime,
+      // even if the previous runner's publication has not yet expired.
+      this.db.prepare(`UPDATE fw_publication SET active_until=0 WHERE id=1 AND owner<>? AND active_until>0
+        AND EXISTS(SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?)`)
+        .run(this.owner, this.owner, Date.now());
       this.reconcile();
       const generation = this.generation;
       const valid = () => {
+        if (this.lifetime.signal.aborted || !this.leased()) return false;
         this.reconcile();
-        if (!this.leased() || generation !== this.generation || this.lifetime.signal.aborted) return false;
+        if (generation !== this.generation) return false;
         // Many watchers can make intake longer than one lease; each bounded operation renews it.
-        this.db.prepare('UPDATE fw_scheduler SET lease_until=? WHERE id=1 AND owner=?').run(Date.now() + 90_000, this.owner);
-        return true;
+        const now = Date.now();
+        return Boolean(this.db.prepare('UPDATE fw_scheduler SET lease_until=? WHERE id=1 AND owner=? AND lease_until>?')
+          .run(now + leaseMs, this.owner, now).changes);
       }
       let drained = false;
       for (const watcher of this.enabled) {
@@ -338,6 +472,12 @@ export class FieldAutomation {
           drained = true;
         }
       }
+      // After downtime, don't expose cached notices as current until intake
+      // reaches the tail (including same-value remove/re-add events).
+      const now = Date.now();
+      this.db.prepare(`UPDATE fw_publication SET owner=?, active_until=? WHERE id=1
+        AND (?=0 OR active_until>?) AND EXISTS(SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?)`)
+        .run(this.owner, now + leaseMs, Number(drained), now, this.owner, now);
       if (drained) { this.changed(); return; }
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
@@ -408,9 +548,14 @@ export class FieldAutomation {
       this.db.prepare('UPDATE fw_scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);
     }
   }
-  async close(): Promise<void> {
-    this.lifetime.abort(); clearTimeout(this.timer);
-    await this.work;
-    this.db.close();
+  close(): Promise<void> {
+    return this.closing ??= (async () => {
+      this.lifetime.abort(); clearTimeout(this.timer); clearInterval(this.observation);
+      try {
+        // Active subprocesses are deliberately cancelled during shutdown.
+        await this.work?.catch(() => {});
+        if (this.watchers) this.db.prepare('UPDATE fw_publication SET active_until=0 WHERE id=1 AND owner=?').run(this.owner);
+      } finally { this.db.close(); }
+    })();
   }
 }

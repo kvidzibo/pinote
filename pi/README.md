@@ -284,10 +284,10 @@ Alerts are acknowledged per PR, including across legacy/plural aliases and list
 edits. Updated clients group alerts without hiding another PR's pending failure.
 Update/restart the existing service and `/reload` Pi after upgrading.
 
-### Field watchers (pi-note 0.40.0+)
+### Field watchers
 
 Open **Settings → Fields → Watchers** to enable bundled watchers or add a
-trusted executable on the service machine. Files in the packaged `watchers/`
+trusted executable on the desktop machine. Electron runs the checks only while open; the HTTP service delivers results to Pi. Files in the packaged `watchers/`
 folder are discovered automatically, but remain disabled until enabled explicitly.
 Each watcher handles task-field changes and scheduled checks independently.
 
@@ -296,9 +296,9 @@ failed CI or merge conflicts. Repeated unchanged failures are deduplicated; busy
 workers wait until idle and recheck current state before acting. Merged PRs retain
 their links without strikethrough. Polling stops once all PRs handled by a watcher
 in a field are closed or merged; tasks are not completed. GitHub requires
-authenticated `gh`, Node and **note 0.25.0+** on the service.
+authenticated `gh`, Node and **note 0.25.0+** on the desktop.
 The **Forgejo PR** watcher supports configured HTTPS instances (or numeric
-loopback HTTP) and service-side API tokens without `gh`; it alerts on failed CI
+loopback HTTP) and desktop-side API tokens without `gh`; it alerts on failed CI
 and styles merged/closed PRs. Ambiguous Forgejo mergeability remains pending,
 not a conflict alert. Both providers support multiple independent PRs.
 See [setup, configuration, script contract and safeguards](mcp/FIELD_EVENTS.md).

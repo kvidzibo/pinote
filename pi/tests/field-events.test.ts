@@ -40,7 +40,8 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   const note = async (...args: string[]) => JSON.parse((await exec(command, ['--no-notify', ...args])).stdout);
   const setMode = (value: unknown) => writeFile(mode, JSON.stringify(value));
   const callLog = async () => (await readFile(calls, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-  let automation: FieldAutomation | undefined, client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
+  let automation: FieldAutomation | undefined, observer: FieldAutomation | undefined;
+  let client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
   let changes = 0, errors = 0;
   const diagnostics: WatcherFailureLog[] = [];
   const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] })
@@ -82,7 +83,17 @@ else {delete result.wait; console.log(JSON.stringify(result));}
 
     // Actual MCP resources use the same durable status, without changing the URL/task revision.
     const { createPinoteServer } = await import('../mcp/core.ts');
-    server = createPinoteServer({ fieldAutomation: automation, watcherLogPath: join(dir, 'app.log') });
+    observer = await FieldAutomation.observe({ path });
+    assert.throws(() => observer!.start(), /observer cannot schedule/);
+    await assert.rejects(observer.tick(), /observer cannot schedule/);
+    const clock = new DatabaseSync(path);
+    try { clock.exec('UPDATE fw_publication SET active_until=1'); } finally { clock.close(); }
+    assert.equal(observer.statuses(task)[0].stale, true, 'An expired runner leaves a stale cached result');
+    assert.deepEqual(observer.notices(task, 'session-a'), []);
+    assert.equal(automation.statuses(task)[0].stale, false, 'Observing expiry does not modify the cached job');
+    await automation.tick();
+    assert.deepEqual(observer.notices(task, 'session-a'), notices, 'Rejoining restores the same receipt');
+    server = createPinoteServer({ fieldAutomation: observer, watcherLogPath: observer.logPath });
     client = new Client({ name: 'field-test', version: '1' });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(b); await client.connect(a);
@@ -121,10 +132,13 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.ok(Date.parse(diagnostics[0].retryAt) > Date.now());
     assert.ok(!JSON.stringify(diagnostics).includes(pr), 'No field values or script output in diagnostics');
     const failureView = await view();
-    assert.equal(failureView.watcherDiagnostics?.logPath, join(dir, 'app.log'));
+    assert.equal(failureView.watcherDiagnostics?.logPath, automation.logPath);
+    const failureLog = await readFile(automation.logPath, 'utf8');
+    assert.match(failureLog, /Invalid watcher JSON or result schema/);
+    assert.ok(!failureLog.includes(pr));
     assert.deepEqual(failureView.watcherDiagnostics?.failures[0].fields, ['PR']);
     const staleContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
-    assert.doesNotMatch((staleContext.contents[0] as { text: string }).text, /Field automation results|Invalid watcher|app\.log/);
+    assert.doesNotMatch((staleContext.contents[0] as { text: string }).text, /Field automation results|Invalid watcher|watchers\.log/);
     assert.deepEqual(automation.notices(task, 'session-a'), []);
     await setMode({ state: 'error' }); forceDue(); await automation.tick();
     assert.equal(automation.statuses(task)[0].stale, true);
@@ -331,7 +345,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await writeFile(sleeper, '#!/usr/bin/env node\nsetInterval(()=>{},1000);\n', { mode: 0o700 });
     await assert.rejects(runFieldHandler(sleeper, {}, new AbortController().signal, 50));
   } finally {
-    await client?.close(); await server?.close(); await automation?.close();
+    await client?.close(); await server?.close(); await observer?.close(); await automation?.close();
     names.forEach((name, index) => { if (previous[index] === undefined) delete process.env[name]; else process.env[name] = previous[index]; });
     await rm(dir, { recursive: true, force: true });
   }

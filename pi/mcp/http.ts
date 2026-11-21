@@ -61,9 +61,9 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   if (configuredHosts?.some((value) => !/^(?:\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+)(?::[0-9]+)?$/.test(value))) throw new Error('Invalid allowed HTTP authority');
   let allowedHosts = new Set(configuredHosts);
   const fieldListeners = new Set<() => void>();
-  const fieldAutomation = await FieldAutomation.open({
+  const fieldAutomation = await FieldAutomation.observe({
     changed: () => { for (const listener of fieldListeners) listener(); },
-    log: (failure) => log(failure ? `watcher check failed ${JSON.stringify(failure)}` : 'field automation check failed; will retry'),
+    onError: () => log('field observation failed'),
   });
   const reject = (res: ServerResponse, status: number) => { res.writeHead(status, { 'Content-Type': 'text/plain' }); res.end(`${status}\n`); };
   const single = (req: IncomingMessage, name: string) => {
@@ -124,7 +124,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
         const entry: Session = { transport, server: undefined!, busy: 0, streams: 0, touched: Date.now() };
         entry.server = createPinoteServer({
           fieldAutomation,
-          watcherLogPath: logPath,
+          watcherLogPath: fieldAutomation.logPath,
           onFieldChange: (listener) => { fieldListeners.add(listener); return () => { fieldListeners.delete(listener); }; },
           onError: () => log('protocol or notification failed'),
           onBusy: (delta) => { entry.busy += delta; entry.touched = Date.now(); },
@@ -151,8 +151,7 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
   listener.headersTimeout = 10_000;
   try {
     await new Promise<void>((ok, fail) => { listener.once('error', fail); listener.listen(port, host, () => { listener.off('error', fail); ok(); }); });
-  } catch (error) { await fieldAutomation?.close(); await events.close(); throw error; }
-  fieldAutomation?.start();
+  } catch (error) { await fieldAutomation.close(); await events.close(); throw error; }
   const address = listener.address();
   if (!address || typeof address === 'string') throw new Error('Missing HTTP address');
   const authority = `${isIP(host) === 6 ? `[${host}]` : host}:${address.port}`;
@@ -178,10 +177,13 @@ export async function startPinoteHttpServer(options: PinoteHttpOptions = {}) {
     const force = setTimeout(() => listener.closeAllConnections(), 3000);
     try {
       await events.close();
-      await fieldAutomation?.close();
       await Promise.allSettled([...all].map((session) => session.server.close()));
       await closed;
-    } finally { clearTimeout(force); log('stopped'); }
+    } finally {
+      clearTimeout(force);
+      await fieldAutomation.close();
+      log('stopped');
+    }
   })();
   return { listener, url: `http://${authority}/mcp`, close };
 }
@@ -201,7 +203,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.once('SIGINT', () => stop());
   } catch {
     // Startup exceptions can contain paths or third-party data: do not print them.
-    const line = 'Pinote HTTP startup failed; check token, listener and writable log configuration\n';
+    const line = 'Pinote HTTP startup failed; check token, listener and writable state/log configuration\n';
     process.stdout.write(line);
     try { appendFileSync(resolve(process.env.PINOTE_LOG_PATH ?? 'app.log'), line, { mode: 0o600 }); } catch { /* An unwritable log can itself be the startup failure. */ }
     process.exitCode = 1;
