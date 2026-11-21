@@ -20,12 +20,13 @@ const requests = []; const pulls = {};
 globalThis.fetch = async (url, options) => {
   requests.push({url, headers:options.headers, redirect:options.redirect, timed:!!options.signal});
   writeFileSync(process.env.REQUESTS_FILE, JSON.stringify(requests));
-  const repo = /\\/repos\\/owner\\/([^/]+)\\//.exec(url)?.[1] ?? 'repo';
+  const repo = /\\/repos\\/owner\\/([^/]+)/.exec(url)?.[1] ?? 'repo';
   const scenario = { ...defaults, ...defaults.routes?.[repo] };
   if (scenario.fail) throw new Error('SECRET credential');
   if (scenario.httpStatus) return new Response('SECRET credential', {status:scenario.httpStatus});
   if (scenario.oversize) return new Response('x'.repeat(1024 * 1024 + 1));
   if (scenario.raw !== undefined) return new Response(scenario.raw);
+  if (/\\/repos\\/owner\\/[^/]+$/.test(url)) return new Response(JSON.stringify(scenario.repository ?? {has_actions:false}));
   const page = /[?&]page=(\\d+)/.exec(url)?.[1];
   const body = page ? scenario.pages[Number(page)-1] ?? {statuses:null,total_count:0} : scenario.pulls[Math.min((pulls[repo] = (pulls[repo] ?? -1) + 1),scenario.pulls.length-1)];
   return new Response(JSON.stringify(body));
@@ -94,7 +95,18 @@ globalThis.fetch = async (url, options) => {
     assert.equal(run({ pages: [page([{ ...check, status }])] }).output.state,
       ['error', 'failure', 'warning'].includes(status) ? 'failed' : status === 'pending' ? 'pending' : 'passing');
   }
-  assert.equal(run({ pages: [] }).output.state, 'pending');
+  const unchecked = run({ pages: [] });
+  assert.equal(unchecked.output.state, 'passing', 'A mergeable PR awaits nothing where Actions is disabled');
+  assert.equal(unchecked.output.display?.color, 'success');
+  assert.equal(unchecked.output.summary, 'PR #42 has no checks');
+  assert.equal(unchecked.requests.at(-1)?.url, `${base}/api/v1/repos/owner/repo`);
+  const unreported = run({ pages: [], repository: { has_actions: true } }).output;
+  assert.equal(unreported.state, 'pending', 'Enabled Actions has yet to report');
+  assert.equal(unreported.summary, 'PR #42 checks pending');
+  assert.equal(run({ pages: [], repository: {} }).output.state, 'error');
+  const blocked = run({ pages: [], pulls: [{ ...pr, mergeable: false }] });
+  assert.equal(blocked.output.state, 'pending');
+  assert.ok(blocked.requests.every((r) => !r.url.endsWith('/owner/repo')), 'Only a mergeable PR without statuses reads the repository');
   const unmergeable = run({ pulls: [{ ...pr, mergeable: false }] }).output;
   assert.equal(unmergeable.state, 'pending');
   assert.equal(unmergeable.display?.color, 'warning');
@@ -159,7 +171,7 @@ globalThis.fetch = async (url, options) => {
   const routes = {
     passing: {},
     failed: { pages: [page([{ ...check, status: 'failure' }])] },
-    pending: { pages: [] },
+    pending: { pages: [page([{ ...check, status: 'pending' }])] },
     merged: { pulls: [{ state: 'closed', merged: true }] },
     closed: { pulls: [{ state: 'closed', merged: false }] },
     broken: { fail: true },
