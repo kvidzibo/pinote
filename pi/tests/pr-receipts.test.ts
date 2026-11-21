@@ -9,6 +9,8 @@ import { FieldAutomation } from '../mcp/field-events.ts';
 test('per-PR receipts retain an undelivered failure across alias recovery, restart and list edits', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-pr-receipts-'));
   const path = join(dir, 'state.db'), data = join(dir, 'data.json'), mode = join(dir, 'mode.json');
+  // The fake CLI has no notes.db; never watch the developer's real one for changes.
+  const dataHome = process.env.XDG_DATA_HOME; process.env.XDG_DATA_HOME = dir;
   const note = join(dir, 'note.mjs'), watcher = join(dir, 'watcher.mjs');
   const a = 'https://github.com/example/repo/pull/1', b = 'https://github.com/example/repo/pull/2';
   const c = 'https://github.com/example/repo/pull/3';
@@ -100,5 +102,6 @@ import {readFileSync} from 'node:fs';const event=JSON.parse(readFileSync(0,'utf8
     assert.deepEqual(automation.notices(task, 'owner', [oldId]), []);
   } finally {
     await automation?.close(); await rm(dir, { recursive: true, force: true });
+    if (dataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = dataHome;
   }
 });

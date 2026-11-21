@@ -336,3 +336,42 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('idle ticks start no CLI process; a committed change is read on the next tick', { timeout: 30_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pinote-idle-'));
+  const names = ['XDG_DATA_HOME', 'XDG_STATE_HOME'];
+  const previous = names.map((n) => process.env[n]);
+  Object.assign(process.env, { XDG_DATA_HOME: dir, XDG_STATE_HOME: dir });
+  const real = fileURLToPath(new URL('../../backend/bin/note', import.meta.url));
+  const command = join(dir, 'note'), handler = join(dir, 'handler.mjs'), log = join(dir, 'cli.log');
+  await writeFile(command, `#!/bin/sh\necho "$2" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o700 });
+  await writeFile(handler, '#!/usr/bin/env node\nconsole.log("{}");\n', { mode: 0o700 });
+  const note = async (...args: string[]) => JSON.parse((await exec(real, ['--no-notify', ...args])).stdout);
+  const reads = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter((line) => line === 'field-events').length;
+  let enabled = true;
+  const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: command,
+    watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled }] }) });
+  try {
+    let task = await note('agent', 'add', '--text=Idle');
+    for (let i = 0; i < 3; i++) await automation.tick(); // Drain history, then settle.
+    const settled = await reads();
+    assert.ok(settled > 0);
+    for (let i = 0; i < 5; i++) await automation.tick();
+    assert.equal(await reads(), settled);
+    task = await note('agent', 'update', String(task.id), '--expected-updated-at', task.updated_at, '--set-json', '{"Build":"1"}');
+    await automation.tick();
+    assert.equal(await reads(), settled + 1);
+    const jobs = () => { const db = new DatabaseSync(join(dir, 'state.db')); try { return db.prepare('SELECT count(*) AS jobs FROM fw_jobs').get()!.jobs; } finally { db.close(); } };
+    assert.equal(jobs(), 1);
+    for (let i = 0; i < 3; i++) await automation.tick(); // Run the check and settle again.
+    // Re-enabling between ticks resets the watcher's cursor: history is read again without a new commit.
+    enabled = false; automation.failures(); enabled = true; automation.failures();
+    assert.equal(jobs(), 0);
+    await automation.tick();
+    assert.equal(jobs(), 1);
+  } finally {
+    await automation.close();
+    names.forEach((n, i) => { if (previous[i] === undefined) delete process.env[n]; else process.env[n] = previous[i]; });
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -186,6 +186,11 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   Watcher cursors, jobs and notices are independent; alert ownership is shared.
   It uses Node's built-in SQLite API; Node 22 may print its experimental warning.
 - Monitoring continues without an open Pi session while the HTTP service runs.
+- With pi-note 0.46.2+, the service reads field and completion history only after
+  `notes.db` changes (checked in-process each second) and at least once a minute,
+  rather than starting the CLI every second. It watches the default
+  `$XDG_DATA_HOME/pinote/notes.db`: a `PINOTE_NOTE_COMMAND` wrapper selecting
+  another database delays new events by up to a minute.
   Deadlines survive restarts. A lease prevents overlapping normal execution by
   competing service processes; run one service/configuration per notes database.
 - Initial activation reconstructs fields from durable history. Intake scans at

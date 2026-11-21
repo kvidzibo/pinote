@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { readConfigDocument } from '../footer-config.ts';
 import { discoverFieldWatchers, type FieldWatcher } from '../field-watchers.ts';
 import { parsePullRequests } from '../pull-requests.ts';
+import { notesVersion, RECHECK_MS } from './notes-version.ts';
 
 const exec = promisify(execFile);
 const integer = z.number().int().nonnegative().safe();
@@ -98,6 +99,9 @@ export class FieldAutomation {
   private generation = 0;
   private invocation?: AbortController;
   private ticking = false;
+  private notes = notesVersion();
+  private drained?: string;
+  private drainDue = 0;
   private noteCommand: string;
   private changed: () => void;
   private log: (failure?: WatcherFailureLog) => void;
@@ -180,7 +184,7 @@ export class FieldAutomation {
       for (const watcher of enabled) this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path) VALUES (?,?)').run(watcher.id, watcher.path);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    this.enabled = enabled; this.signature = signature; this.changed();
+    this.enabled = enabled; this.signature = signature; this.drained = undefined; this.changed();
   }
   private save(job: Job): void {
     this.db.prepare('INSERT INTO fw_jobs(watcher_id,task_id,field,job) VALUES (?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET job=excluded.job')
@@ -321,7 +325,11 @@ export class FieldAutomation {
         return true;
       }
       let drained = false;
-      for (const watcher of this.enabled) {
+      // Read event history only after notes.db or the watcher set (see reconcile) changed.
+      if (!this.enabled.length) { this.notes.close(); return; }
+      const version = this.notes.read();
+      const intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
+      for (const watcher of intake ? this.enabled : []) {
         const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
         const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));
         if (!valid()) return;
@@ -339,6 +347,7 @@ export class FieldAutomation {
         }
       }
       if (drained) { this.changed(); return; }
+      if (intake) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
       if (!job) return;
@@ -411,6 +420,7 @@ export class FieldAutomation {
   async close(): Promise<void> {
     this.lifetime.abort(); clearTimeout(this.timer);
     await this.work;
+    this.notes.close();
     this.db.close();
   }
 }
