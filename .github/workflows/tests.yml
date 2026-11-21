@@ -60,11 +60,11 @@ jobs:
       - run: npm --prefix backend ci --ignore-scripts --no-audit --no-fund && npm --prefix backend run build
         working-directory: .
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run build:mcp && npm run check
+      - run: npm run check
       - name: Test shard ${{ matrix.shard }}/2
         run: >-
           node --test --experimental-strip-types --test-shard=${{ matrix.shard }}/2
-          tests/*.test.ts test-load.ts test-remote-load.ts
+          tests/*.test.ts test-load.ts
       - run: npm pack --dry-run --ignore-scripts
         if: matrix.shard == 1
 
@@ -175,7 +175,6 @@ jobs:
       - run: npm --prefix backend ci --ignore-scripts --no-audit --no-fund
       - run: npm --prefix electron ci --ignore-scripts --no-audit --no-fund
       - run: npm --prefix electron run setup
-      - run: npm --prefix pi run build:mcp
       - name: Provision Chromium SUID sandbox on ephemeral runner
         run: |
           sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox

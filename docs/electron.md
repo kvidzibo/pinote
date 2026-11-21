@@ -36,28 +36,23 @@ Node/Electron injection environment flags are cleared in backend children.
 for compatibility and diagnostics; there is no automatic Python fallback.
 Installation does not alter GTK startup, i3 rules, or user configuration.
 
-## Task service
+## Field watchers
 
-Electron 0.14.0+ hosts the [Pinote HTTP service](../pi/mcp/README.md) for Pi
-clients, including field watchers, for exactly as long as the desktop is open.
-Closing Electron stops the listener and running watchers; Pi shows **Pinote
-disconnected** until it is reopened. Tasks changed meanwhile are picked up from
-the database on the next start.
+Electron 0.15.0+ runs [field watchers](../pi/FIELD_EVENTS.md) for exactly as long
+as the desktop is open; it no longer hosts an HTTP service. Pi sessions read tasks
+directly and pick up watcher results and alerts from the shared watcher state.
+Closing Electron stops running watchers; tasks changed meanwhile are picked up
+from the database on the next start.
 
-The service is configured by the desktop's environment, with the variables and
-defaults of the standalone service: a private token (`PINOTE_TOKEN` or the
-owner-only token file), `PINOTE_HOST`/`PINOTE_PORT` (default `127.0.0.1:8765`)
-and `PINOTE_NOTE_COMMAND` (default `note` on `PATH`; it must use the desktop's
-database). Watchers inherit the same environment, including any tokens they
-need. Service lines are written to the desktop's `app.log`.
+Watchers use the desktop's environment: `PINOTE_NOTE_COMMAND` (default `note` on
+`PATH`; it must use the desktop's database) and any tokens they need. Start and
+stop lines are written to the desktop's `app.log`; failed checks are detailed in
+`watchers.log` beside the watcher state. If watchers cannot start, the reason is
+logged and the desktop stays usable.
 
-A missing token or busy port only disables the service: a busy port is named in
-the log, and the desktop stays usable. With a missing or outdated `note` CLI
-the service still listens and Pi reports the error on each request.
-
-With an existing standalone `pinote.service` on the same port, first finish any
-[backend switch](#switch-an-existing-installation) while that service is still
-running, then stop and disable it and reopen Electron.
+A standalone `pinote.service` from earlier versions is no longer used: first
+finish any [backend switch](#switch-an-existing-installation) while it is still
+running, then stop and disable it.
 
 Bundled watchers are shipped inside the application; entries enabled from a
 previous `pi/watchers/` path keep running but are listed as **Custom**. Enable

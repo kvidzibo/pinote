@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Same personal configuration location in Pi and the standalone MCP process.
+// Same personal configuration location in Pi, the desktop and watchers.
 export function getAgentDir(): string {
   let path = process.env.PI_CODING_AGENT_DIR;
   if (!path) return join(homedir(), '.pi', 'agent');

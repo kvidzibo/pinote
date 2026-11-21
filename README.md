@@ -124,35 +124,22 @@ For Electron's controls and configurable task rows, see the [Electron guide](doc
 For full commands, Markdown import/export, and scheduling rules, see the
 [CLI and data guide](docs/usage.md).
 
-### Pi integration: shared host/VM tasks
+### Pi integration
 
-The [pi-note extension](pi/README.md) connects directly to a
-[standalone Pinote HTTP service](pi/mcp/README.md), without an MCP gateway.
+The [pi-note extension](pi/README.md) gives each Pi session native task menus,
+footer status, suggestions and fresh selected-task context. It reads and writes
+the local notes through the `note` CLI; no service, token or network listener is
+involved. Tasks, tags and Markdown handoff fields are shared with the desktop and
+other sessions, while task selection remains conversation-specific.
 
-```text
-Host Pi ─┐
-         ├─ HTTPS → Pinote service → shared notes
-VM Pi ───┘
-```
-
-Pinote Electron hosts the service while it is open (or run it standalone on the
-machine holding your notes); each Pi client gets native
-task menus, footer status, suggestions and fresh selected-task context. Tasks,
-tags and Markdown handoff fields are shared, while task selection remains
-conversation-specific. The agent's file editing and other tools stay on its own
-machine. Neither Python nor a database mount is needed on VM clients.
-
-Install the client with `pi install npm:pi-note` or `pi install ./pi`, configure
-the service endpoint and private bearer token, then open **`/pinote`**.
+Install it with `pi install npm:pi-note` or `pi install ./pi`, then open **`/pinote`**.
 Completion preserves the conversation and draft, except that completing the
 launched task in a dedicated **Start in Kitty…** session exits Pi and closes its
-tab. Completion never runs Git commands. A service restart preserves notes;
-clients reconnect without replaying writes.
+tab. Completion never runs Git commands.
 
-Requires Pi 1.4.0+ and Node.js 22.19+; the service uses the Node `note` CLI.
-Use HTTPS or a trusted private VPN, never a public unauthenticated listener.
-The existing [local-only CLI extension](pi/LOCAL.md) remains available explicitly;
-load only one Pinote extension. Existing gateway users should follow the
+Requires Pi 1.4.0+, Node.js 22.19+ and the Node `note` CLI on PATH. Pinote
+Electron runs optional [field watchers](pi/FIELD_EVENTS.md) while it is open.
+Users of the former HTTP service should follow the
 [migration steps](pi/README.md#migration).
 
 ## Important constraints

@@ -7,11 +7,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../mcp/field-events.ts';
+import { connectEngine } from './host.ts';
+import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
-import { ViewSchema } from '../remote/protocol.ts';
+import { ViewSchema } from '../extension/protocol.ts';
 
 const exec = promisify(execFile);
 // This end-to-end case runs many real CLI subprocesses; allow slower CI runners.
@@ -40,7 +39,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
   const note = async (...args: string[]) => JSON.parse((await exec(command, ['--no-notify', ...args])).stdout);
   const setMode = (value: unknown) => writeFile(mode, JSON.stringify(value));
   const callLog = async () => (await readFile(calls, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-  let automation: FieldAutomation | undefined, client: Client | undefined, server: ReturnType<typeof import('../mcp/core.ts')['createPinoteServer']> | undefined;
+  let automation: FieldAutomation | undefined, client: ReturnType<typeof connectEngine> | undefined;
   let changes = 0, errors = 0;
   const diagnostics: WatcherFailureLog[] = [];
   const open = () => FieldAutomation.open({ watchers: () => discoverFieldWatchers({ fieldWatchers: [{ path: handler, enabled: true }] })
@@ -80,29 +79,24 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     forceDue(); await automation.tick();
     assert.deepEqual(automation.notices(task, 'session-a'), notices, 'identical failure has a stable receipt ID');
 
-    // Actual MCP resources use the same durable status, without changing the URL/task revision.
-    const { createPinoteServer } = await import('../mcp/core.ts');
-    server = createPinoteServer({ fieldAutomation: automation, watcherLogPath: join(dir, 'app.log') });
-    client = new Client({ name: 'field-test', version: '1' });
-    const [a, b] = InMemoryTransport.createLinkedPair();
-    await server.connect(b); await client.connect(a);
+    // Views and agent context use the same durable status, without changing the URL/task revision.
+    client = connectEngine({ fieldAutomation: automation, watcherLogPath: join(dir, 'app.log') });
     const meta = (feature = true, selectedId: number | null = task.id) => ({ 'native-ui/context': { conversationId: 'session-a', state: { selectedId } }, 'native-ui/features': { fieldEvents: feature, watcherDiagnostics: feature, footerNativeActions: true } });
     const view = async (feature = true, selectedId: number | null = task.id) => {
-      const resource = await client!.readResource({ uri: 'pinote://ui', _meta: meta(feature, selectedId) });
-      return ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
+      return ViewSchema.parse(JSON.parse(await client!.readView(meta(feature, selectedId))));
     };
-    const agentContext = async () => (await client!.readResource({ uri: 'pinote://agent-context', _meta: meta() })).contents;
+    const agentContext = () => client!.readContext(meta());
     const beforeRecheck = await agentContext();
-    assert.match(JSON.stringify(beforeRecheck), /CI failed/);
+    assert.match(beforeRecheck, /CI failed/);
     const beforeCheckTime = automation.statuses(task)[0].checkedAt;
     forceDue(); await automation.tick();
     assert.notEqual(automation.statuses(task)[0].checkedAt, beforeCheckTime);
     assert.deepEqual(await agentContext(), beforeRecheck, 'an unchanged recheck must not append a prompt update');
     assert.equal((await view()).fieldNotifications?.length, 1);
-    const acknowledged = await client.readResource({ uri: 'pinote://ui', _meta: {
+    const acknowledged = await client.readView({
       ...meta(), 'native-ui/context': { ...meta()['native-ui/context'], fieldReceipts: notices.map((notice) => notice.id) },
-    } });
-    assert.deepEqual(ViewSchema.parse(JSON.parse((acknowledged.contents[0] as { text: string }).text)).fieldNotifications, []);
+    });
+    assert.deepEqual(ViewSchema.parse(JSON.parse(acknowledged)).fieldNotifications, []);
     assert.deepEqual((await view(true, null)).fieldNotifications, []);
     const legacy = await view(false);
     assert.equal(legacy.fieldNotifications, undefined);
@@ -123,8 +117,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     const failureView = await view();
     assert.equal(failureView.watcherDiagnostics?.logPath, join(dir, 'app.log'));
     assert.deepEqual(failureView.watcherDiagnostics?.failures[0].fields, ['PR']);
-    const staleContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
-    assert.doesNotMatch((staleContext.contents[0] as { text: string }).text, /Field automation results|Invalid watcher|app\.log/);
+    assert.doesNotMatch(await agentContext(), /Field automation results|Invalid watcher|app\.log/);
     assert.deepEqual(automation.notices(task, 'session-a'), []);
     await setMode({ state: 'error' }); forceDue(); await automation.tick();
     assert.equal(automation.statuses(task)[0].stale, true);
@@ -137,8 +130,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       'Previously cached merged PRs use the theme accent without strikethrough');
     assert.ok(merged.footer!.some((item) => item.url === pr), 'link stays clickable');
     assert.deepEqual(merged.fieldNotifications, []);
-    const context = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
-    assert.match((context.contents[0] as { text: string }).text, /merged/);
+    assert.match(await agentContext(), /merged/);
     const unchanged = await note('agent', 'get', String(task.id));
     assert.equal(unchanged.updated_at, task.updated_at);
     assert.equal(unchanged.agent_notes.PR, pr);
@@ -204,10 +196,9 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await automation.tick(); forceDue();
     for (let index = 0; index < 3; index++) await automation.tick();
     for (const native of [false, true]) {
-      const resource = await client.readResource({ uri: 'pinote://ui', _meta: {
+      const multiple = ViewSchema.parse(JSON.parse(await client.readView({
         ...meta(), 'native-ui/features': { fieldEvents: true, footerNativeActions: native },
-      } });
-      const multiple = ViewSchema.parse(JSON.parse((resource.contents[0] as { text: string }).text));
+      })));
       const links = multiple.footer!.filter((item) => item.url);
       assert.deepEqual(links.map((item) => item.url), urls, 'Legacy duplicate is displayed once');
       assert.deepEqual(links.map((item) => item.style?.color), ['success', 'error', 'warning', 'accent', 'muted', 'muted']);
@@ -220,8 +211,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     assert.ok(labeled.every((item) => item.text.includes('Review') && !item.text.includes('https://')), 'Legacy <value> formats preserve Markdown labels');
     await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 2, fields: ['PR', 'Next'] } }));
     assert.ok((await view()).watcherDiagnostics?.failures.some((failure) => failure.fields.includes('PRs')), 'Partial errors remain visible in terminal-only diagnostics');
-    const partialContext = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
-    assert.doesNotMatch(JSON.parse((partialContext.contents[0] as { text: string }).text).text, /"state":"error"/, 'Unavailable entries do not enter model observations');
+    assert.doesNotMatch(await agentContext(), /"state":"error"/, 'Unavailable entries do not enter model observations');
     assert.equal(task.agent_notes.PR, pr, 'Legacy values are preserved without migrating task data');
     await update({ PR: urls[1] }); // Both fields now contain the same failing PR.
     await automation.tick(); forceDue();
@@ -266,8 +256,8 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     const oldClientNotices = (await view()).fieldNotifications!.filter((notice) => notice.field === 'PRs');
     assert.equal(oldClientNotices.length, 2);
     assert.ok(oldClientNotices.every((notice) => !notice.receiptIds), 'Older clients receive individual compatible notices');
-    const groupedResource = await client.readResource({ uri: 'pinote://ui', _meta: { ...meta(), 'native-ui/features': { ...meta()['native-ui/features'], fieldReceiptGroups: true } } });
-    const groupedNotices = ViewSchema.parse(JSON.parse((groupedResource.contents[0] as { text: string }).text)).fieldNotifications!.filter((notice) => notice.field === 'PRs');
+    const groupedResource = await client.readView({ ...meta(), 'native-ui/features': { ...meta()['native-ui/features'], fieldReceiptGroups: true } });
+    const groupedNotices = ViewSchema.parse(JSON.parse(groupedResource)).fieldNotifications!.filter((notice) => notice.field === 'PRs');
     assert.equal(groupedNotices.length, 1);
     assert.deepEqual(new Set(groupedNotices[0].receiptIds), new Set(oldClientNotices.map((notice) => notice.id)), 'Opted-in clients get one group with every independent receipt');
     await setMode({ state: 'passing', recheckAfterSeconds: 10 }); forceDue('PR'); await automation.tick();
@@ -319,8 +309,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await setMode({ state: 'passing', summary: 's'.repeat(1000), notification: { key: 'large', message: 'n'.repeat(1000) } });
     await automation.tick();
     for (let index = 0; index < 33; index++) await automation.tick();
-    const largeResource = await client.readResource({ uri: 'pinote://agent-context', _meta: meta() });
-    const largeContext = JSON.parse((largeResource.contents[0] as { text: string }).text).text;
+    const largeContext = await agentContext();
     assert.ok(largeContext.length <= 64_000);
     assert.match(largeContext, /"omitted":[1-9]/);
     assert.ok(largeContext.includes('v'.repeat(900)), 'complete field values remain in task context');
@@ -331,7 +320,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await writeFile(sleeper, '#!/usr/bin/env node\nsetInterval(()=>{},1000);\n', { mode: 0o700 });
     await assert.rejects(runFieldHandler(sleeper, {}, new AbortController().signal, 50));
   } finally {
-    await client?.close(); await server?.close(); await automation?.close();
+    await client?.close(); await automation?.close();
     names.forEach((name, index) => { if (previous[index] === undefined) delete process.env[name]; else process.env[name] = previous[index]; });
     await rm(dir, { recursive: true, force: true });
   }

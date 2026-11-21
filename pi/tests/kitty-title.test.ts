@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { getKeybindings } from '@earendil-works/pi-tui';
-import { RemoteUI } from '../remote/ui.ts';
-import type { NativeView } from '../remote/protocol.ts';
+import { PinoteUI } from '../extension/ui.ts';
+import type { NativeView } from '../extension/protocol.ts';
 
 test('only acknowledged task acceptance renames the originating Kitty tab, best effort', async () => {
   initTheme('dark', false);
@@ -24,7 +24,7 @@ test('only acknowledged task acceptance renames the originating Kitty tab, best 
     action: async () => { if (failAction) throw new Error('Uncertain write'); session.view = next; return {}; },
     refresh: async () => {},
   };
-  const ui = new RemoteUI({ exec: async (...args: any[]) => {
+  const ui = new PinoteUI({ exec: async (...args: any[]) => {
     calls.push(args);
     if (failExec) throw new Error('Private transport error');
     return { code: 0, stdout: '', stderr: '' };

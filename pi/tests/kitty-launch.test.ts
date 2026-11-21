@@ -8,8 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { getKeybindings } from '@earendil-works/pi-tui';
-import pinoteRemote from '../remote.ts';
-import type { startPinoteHttpServer } from '../mcp/http.ts';
+import pinote from '../index.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 test('GUI launch consent selects exactly one revision, persists, and never replaces or replays', async () => {
@@ -18,9 +17,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
   const original = { ...process.env };
   delete process.env.KITTY_LISTEN_ON; // No live terminal controls in the mocked UI test.
   const clients: { handlers: Map<string, Function>; ctx: any; entries: any[]; notices: string[] }[] = [];
-  let service: Awaited<ReturnType<typeof startPinoteHttpServer>> | undefined;
   Object.assign(process.env, {
-    PINOTE_TOKEN: 'isolated-kitty-launch-token-0123456789',
     PINOTE_NOTE_COMMAND: join(root, 'backend/bin/note'), PI_CODING_AGENT_DIR: join(temp, 'agent'),
     XDG_DATA_HOME: join(temp, 'data'), XDG_STATE_HOME: join(temp, 'state'),
   });
@@ -47,7 +44,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
       events: { on() {}, emit() {} }, registerTool() {}, registerCommand: (name: string, command: any) => commands.set(name, command), registerShortcut() {}, registerEntryRenderer() {},
       appendEntry: (customType: string, data: unknown) => entries.push({ type: 'custom', customType, data }),
     };
-    pinoteRemote(pi);
+    pinote(pi);
     assert.equal(process.env.PINOTE_LAUNCH_TASK, undefined);
     const editor = { text: draft, writes: [] as string[] };
     const ctx: any = { cwd: temp, mode, hasUI: mode === 'tui', isIdle: () => idle, shutdown: () => { shutdowns++; },
@@ -60,7 +57,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
             component = factory({ terminal: { rows: 40, columns: 120 }, requestRender() {} },
               { fg: (_color: string, text: string) => text }, getKeybindings(), resolve);
             component.render(120);
-            if (!component.handleInput) return; // Loader resolves only after real remote work.
+            if (!component.handleInput) return; // Loader resolves only after real task work.
             const choice = choices.shift() as string | undefined;
             if (choice === undefined) { component.handleInput('\x1b'); return; }
             for (let i = 0; i < 80; i++) {
@@ -89,9 +86,6 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     return client;
   };
   try {
-    const { startPinoteHttpServer } = await import('../mcp/http.ts');
-    service = await startPinoteHttpServer({ port: 0, logPath: join(temp, 'app.log') });
-    process.env.PINOTE_URL = service.url;
     const task = cli('agent', 'add', '--text=Kitty launch target\n\n- A **Markdown** detail beyond the title.\n\n```python\nif ready:\n\tprocess()\n```');
     const request = { task_id: task.id, updated_at: task.updated_at, prompt: 'is task clear?' };
     const stale = await open({ ...request, updated_at: 'stale-revision' });
@@ -200,11 +194,9 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal(cli('agent', 'get', String(replacement.id)).state, 'done');
 
     const saved = JSON.stringify(clients.map((client) => client.entries));
-    assert.ok(!saved.includes(process.env.PINOTE_TOKEN!));
     assert.ok(!saved.includes('is task clear?') && !saved.includes('Clarify scope'));
   } finally {
     for (const client of clients) await client.handlers.get('session_shutdown')!({}, client.ctx);
-    await service?.close();
     for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
     Object.assign(process.env, original);
     rmSync(temp, { recursive: true, force: true });

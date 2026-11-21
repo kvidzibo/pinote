@@ -5,7 +5,6 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 dist/
-/pi/dist-mcp/
 /electron/out/
 /electron/test-results/
 /electron/playwright-report/

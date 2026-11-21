@@ -42,13 +42,12 @@ against the built wheel (including its bundled stylesheet and isolated i3 placem
 GTK regressions also exercise manual window moves during geometry synchronization.
 
 Pi tests run in two file-level shards on each supported Node version (22.19.0
-and 24), including both unit and real-loader tests. Each shard builds MCP before
-testing; type checks run on both, and the package dry-run runs once per Node
-version without rebuilding. To reproduce one shard after `npm run build:mcp`
+and 24), including both unit and real-loader tests. Type checks run on both, and the
+package dry-run runs once per Node version. To reproduce one shard
 in `pi/` (use `2/2` for the other):
 
 ```sh
-node --test --experimental-strip-types --test-shard=1/2 tests/*.test.ts test-load.ts test-remote-load.ts
+node --test --experimental-strip-types --test-shard=1/2 tests/*.test.ts test-load.ts
 ```
 
 Electron's 1280×900 and 800×600 end-to-end runs use separate parallel jobs, each
@@ -78,14 +77,14 @@ libraries. End-to-end tests additionally need `xvfb-run`, `dbus-run-session`,
 `xauth`, `i3-wm`, `xdotool`, and ImageMagick's `import` command (`imagemagick`
 on Debian/Ubuntu) for native-menu screenshots. System Python with `python3-gi` and
 `gir1.2-gtk-3.0` is needed for GTK coexistence coverage. The Electron scenario
-also uses the real Pi HTTP service/client without making model requests.
+also saves agent updates through the real CLI without making model requests.
 
 ```sh
 npm --prefix backend ci --ignore-scripts
 uv sync --locked                 # legacy reference only, not Electron's backend
 uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
 uv pip install --python .venv-gui/bin/python -e '.[gui]'
-npm --prefix pi ci --ignore-scripts && npm --prefix pi run build:mcp
+npm --prefix pi ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c 'npm --prefix electron run check && npm --prefix electron test && npm --prefix electron run test:e2e'
@@ -134,11 +133,10 @@ GTK is loaded only when launching its GUI. Both implementations preserve the sam
 schema, history and display lock. Electron bundles its bridge outside ASAR and
 uses a separately installed supported Node runtime.
 
-`pi/` is the independently versioned `pi-note` npm package. Its default extension
-connects directly to the standalone Pinote HTTP service; only that service calls
-`note`, never SQLite directly. The explicit local-only compatibility extension also
-uses `note`. Tests use the checkout's own `backend/bin/note` and exercise real Pi
-loading and HTTP/stdio connections against temporary data. The full CI suite runs
+`pi/` is the independently versioned `pi-note` npm package. Its extension
+reads and writes tasks in-process through `note`, never SQLite directly; watcher
+scheduling only reads the database's change counter. Tests use the checkout's own
+`backend/bin/note` and exercise real Pi loading against temporary data. The full CI suite runs
 once per pull request update. On pushes to `main`, the publish workflow calls that
 same suite once before publishing; there is no
 standalone push-triggered test run. The [package README](../pi/README.md#development-and-releases)

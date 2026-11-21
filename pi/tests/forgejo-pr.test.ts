@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { FieldResult } from '../mcp/field-events.ts';
+import { FieldResult } from '../field-events.ts';
 
 test('Forgejo executable trusts configured instances only and checks complete current-head statuses', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'forgejo-watcher-'));

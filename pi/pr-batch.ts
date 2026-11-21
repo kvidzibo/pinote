@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { FieldResult } from './mcp/field-events.ts';
+import type { FieldResult } from './field-events.ts';
 
 type Request = { url: string; number: string; label?: string };
 type Result = Omit<FieldResult, 'items'>;
