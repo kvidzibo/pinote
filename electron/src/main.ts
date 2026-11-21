@@ -5,8 +5,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Backend } from './backend.ts';
-import { backendCommand } from './backend-command.ts';
-import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
+import { backendCommand, nodeExecutable } from './backend-command.ts';
+import { DatabaseMismatch, checkSwitchEnvironment, hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, switchToNode, verifiedSwitchVersion, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { initialState } from './protocol.ts';
 import type { MenuAction, MenuRequest } from './protocol.ts';
@@ -118,7 +118,7 @@ async function boot() {
   if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(2[3-9]|[3-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.23.0+ with protocol 1.');
   const database = identity.database;
   let switchRequested = false, switchConfirming = false;
-  const switchOptions = () => ({ ...switchRuntime(), env: process.env, database });
+  const switchOptions = (node = nodeExecutable(process.env)) => ({ bundles, node, env: process.env, database });
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
   dataDir = join(dirname(identity.database), 'electron');
   const profile = join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', hash);
@@ -226,19 +226,28 @@ async function boot() {
     'load-state': () => structuredClone(state),
     'backend-settings': async () => {
       try {
-        const options = switchOptions();
-        const version = (await runCommand(options.node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
         const selected = await hasBackendPreference(process.env);
-        const switched = selected && await hasInstalledLauncher(options);
+        let service: Awaited<ReturnType<typeof checkSwitchEnvironment>>;
+        try { service = await checkSwitchEnvironment(process.env, bundles, database); }
+        catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the switch environment.', version: '' }; }
+        const version = await verifiedSwitchVersion(switchOptions(switchRuntime().node));
+        if (!command.args.length && service === 'matches') return { switched: false, canSwitch: false, detail: 'Your CLI and service already use Node. Remove the desktop diagnostic backend override and relaunch Pinote to use the bundled desktop backend.', version };
+        let installed: boolean;
+        try { installed = await hasInstalledLauncher(switchOptions()); }
+        catch (error) { return { switched: false, canSwitch: false, detail: error instanceof Error ? error.message : 'Cannot verify the installed launcher.', version: '' }; }
+        const switched = command.args.length > 0 && service !== 'different' && installed;
         return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
-          detail: switched ? 'Node is selected for the desktop. The user CLI matches this installation.' : selected ? 'Node is selected for the desktop, but the installed user CLI is missing or different. Check your CLI and service configuration before switching again.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
-      } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
+          detail: switched ? `The desktop and user CLI use Node. ${service === 'matches' ? 'The running service uses the same CLI.' : 'No Pinote service is installed.'}` : selected ? 'Node is selected for the desktop, but the user CLI or service still needs migration.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI and service configuration to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
+      } catch (error) { return { switched: false, canSwitch: false, detail: error instanceof DatabaseMismatch ? error.message : 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
     },
     'switch-backend': async () => {
       if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
       switchConfirming = true;
       try {
-        switchOptions();
+        if (await checkSwitchEnvironment(process.env, bundles, database) === 'matches') return false; // Already managed; never reinstall its drop-in.
+        if (closing) return false;
+        await verifiedSwitchVersion(switchOptions(switchRuntime().node));
+        if (closing) return false;
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
           detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, replaces your ~/.local/bin/note command, and configures the existing pinote.service to use it. The service must be running to verify its database; no new service is installed or enabled.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. The existing service and Electron restart after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',
           buttons: ['Cancel', 'Switch to Node backend'], defaultId: 0, cancelId: 0 });
@@ -285,7 +294,7 @@ async function boot() {
       if (switchRequested) {
         try {
           if (readonly || state.warning) throw new Error('Resolve the saved-state warning before switching backends.');
-          await switchToNode(switchOptions(), text => window?.webContents.send('backend-switch-progress', text));
+          await switchToNode(switchOptions(switchRuntime().node), text => window?.webContents.send('backend-switch-progress', text));
           app.relaunch();
         } catch (error) { switchRequested = false; throw error; }
       }

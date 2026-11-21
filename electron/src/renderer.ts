@@ -313,7 +313,7 @@ function configureBackend(): void {
   const modal = layer('Backend settings', 'backend-settings');
   const status = el('p', 'Loading backend settings…');
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-  modal.panel.append(status, el('p', 'Switch to the Node backend after native confirmation. Pending edits and drafts are saved before closing, and backups are kept. The same database is used; no data conversion is needed. Pinote relaunches after a successful switch.'));
+  modal.panel.append(status, el('p', 'One confirmation switches the desktop, your note command, and any existing Pinote service to Node. Pinote verifies the same database, saves drafts and backups, then relaunches.'));
   let settings: BackendSettings | undefined, loading = false;
   const update = () => {
     start.disabled = !settings || settings.switched || !settings.canSwitch || readonly || closing || backendSwitchBusy || loading;

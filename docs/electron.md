@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.13.0) bundles the matching Node backend;
+The private `electron/` package (0.13.1) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -47,11 +47,22 @@ Icons are bundled rather than taken from the host icon theme.
 
 After updating/building this Electron version, open **Menu → Backend settings…**
 and use **Switch to Node backend** (play icon). A native confirmation defaults to
-Cancel. The operation saves pending edits and drafts, verifies external Node and
+Cancel. This is one migration for the desktop, user CLI, and existing service.
+Desktop backend and CLI probes inherit the desktop's library search path; service
+checks use the service's own environment. Use a desktop environment you trust.
+If a runtime override prevents database verification, settings identifies the
+variable (not its value) and whether it belongs to the desktop or service before
+closing. Relaunch the affected process without the override if appropriate;
+otherwise keep the current backend until its database can be verified manually.
+The operation saves pending edits and drafts, verifies external Node and
 the bundled CLI/bridge against the same database, then:
 
 - Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
 - Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
+  The desktop PATH must select that command; Pinote will not overwrite another
+  installation earlier on PATH. If a previously missing launcher now takes
+  precedence, existing Bash sessions may need `hash -r` or a new shell to
+  discard their cached location of the old command.
 - Adds a user override for the **existing** `pinote.service`; no service is created
   or enabled. A present service must be running with the documented direct Node
   HTTP command from its project working directory and the same trusted Node
@@ -85,7 +96,8 @@ its `setup` now also prepares the backend for the existing desktop updater.
 Keep the installed application's directory stable: the CLI launcher follows its
 bundled resources, so subsequent updates replace both runtimes together.
 **Refresh backend settings** checks the saved desktop preference and the installed
-user CLI. It does not report the live service state.
+user CLI. It also checks that any running service selects that CLI, and reports
+a stopped service rather than treating the installation as fully switched. It does not continuously monitor service status.
 
 The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
 `~/.config/pinote/backend.json`). It overrides only the exact backend override

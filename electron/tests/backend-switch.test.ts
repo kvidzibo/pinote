@@ -3,12 +3,12 @@ import { once } from 'node:events';
 import { after, before, test } from 'node:test';
 import { build } from 'esbuild';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rename, rm, lstat, readdir } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rename, rm, lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, processEnvironment, runCommand } from '../src/backend-switch.ts';
+import { verifiedSwitchVersion, checkSwitchEnvironment, switchToNode, recoverBackendSwitch, preferredBackendEnvironment, processEnvironment, runCommand } from '../src/backend-switch.ts';
 
 let bundles: string;
 before(async () => {
@@ -17,6 +17,25 @@ before(async () => {
   await build({ entryPoints: ['src/backend-switch-guard.ts'], outfile: join(bundles, 'switch-guard.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node22' });
 });
 after(async () => { if (bundles) await rm(bundles, { recursive: true, force: true }); });
+
+test('preflight without a user CLI checks the lock helper and service overrides before Node discovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pinote-preflight-'));
+  const env = { HOME: root, PATH: root, PINOTE_NODE: join(root, 'missing-node') };
+  const child = spawn('/usr/bin/sleep', ['60'], { env: { ...env, LD_LIBRARY_PATH: root } });
+  try {
+    await once(child, 'spawn');
+    const preview = () => checkSwitchEnvironment(env, bundles, root, async file => {
+      assert.equal(file, '/usr/bin/systemctl');
+      return `LoadState=loaded\nActiveState=active\nMainPID=${child.pid}\n`;
+    });
+    const flock = join(root, 'flock');
+    await symlink('/usr/bin/true', flock);
+    await assert.rejects(preview(), /system flock on the desktop PATH/);
+    await assert.rejects(switchToNode({ env, node: env.PINOTE_NODE, database: root, bundles }, () => {}, { updateLock: join(root, 'locks/update.lock') }), /system flock on the desktop PATH/);
+    await rm(flock); await symlink('/usr/bin/flock', flock);
+    await assert.rejects(preview(), error => error instanceof Error && error.message.includes('pinote.service environment sets LD_LIBRARY_PATH') && !error.message.includes(root));
+  } finally { child.kill(); await rm(root, { recursive: true, force: true }); }
+});
 
 // The double runs the effective, daemon-reloaded ExecStart with one snapshot
 // of the unit environment. The disposable HTTP entry opens a listener and
@@ -90,7 +109,7 @@ test('startup never uses a sibling preference or journal through symlink/..', as
 });
 
 test('confirmed backend switching preserves data, rolls back failure and recovers an interrupted rollback', async () => {
-  for (const mode of ['success', 'no-service', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy', 'interpreter-shim', 'changed-after-start'] as const) {
+  for (const mode of ['success', 'no-service', 'fallback-db', 'rollback', 'interrupted', 'wrapper', 'conflict', 'absent-variable', 'deletion', 'deletion-new', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'lossy-launcher', 'relative-home', 'isolated-service', 'pip', 'pip-lazy', 'interpreter-shim', 'changed-after-start'] as const) {
     // This optional kernel check requires unprivileged user/mount namespaces.
     if (mode === 'isolated-service' && !process.env.PINOTE_TEST_UNSHARE) continue;
     const root = await mkdtemp(join(tmpdir(), mode === 'interpreter-shim' ? 'pinote-shim-' : "pinote switch-'"));
@@ -126,6 +145,14 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const database = join(root, 'data/pinote/notes.db');
       await runCommand(process.execPath, [join(bundles, 'cli.mjs'), '--no-notify', 'Keep all history and IDs'], env);
       const source = await readFile(database);
+      if (mode === 'fallback-db') {
+        await rm(cli);
+        const bin = join(root, 'fallback/bin'), dist = join(root, 'fallback/dist');
+        await mkdir(bin, { recursive: true }); await mkdir(dist);
+        await writeFile(join(bin, 'note'), await readFile(resolve('../backend/bin/note')), { mode: 0o700 });
+        await symlink(join(bin, 'note'), join(root, 'bin/note'));
+        await writeFile(join(dist, 'bridge.mjs'), `console.log(JSON.stringify({protocol:1,ok:true,result:{version:'test',database:${JSON.stringify(join(root, 'other.db'))}}}))`);
+      }
       if (mode === 'isolated-service') {
         injected = spawn('unshare', ['-Urmn', process.execPath, '-e', "process.stdout.write('ready');setInterval(()=>{},1000)"], { env, stdio: ['ignore', 'pipe', 'ignore'] });
         const first = await injected.stdout![Symbol.asyncIterator]().next();
@@ -153,7 +180,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
           if (executable === '/usr/bin/busctl') return manager.property(args.at(-1)!, mode === 'unit-wrapper' ? custom : undefined);
           if (!executable.endsWith('/systemctl')) return runCommand(executable, args, childEnv, input);
           const action = args[1]; commands.push(action);
-          if (action === 'show' && ['user-wrapper', 'lossy-launcher', 'no-service'].includes(mode)) return 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n';
+          if (action === 'show' && ['user-wrapper', 'lossy-launcher', 'no-service', 'fallback-db'].includes(mode)) return 'LoadState=not-found\nActiveState=inactive\nMainPID=0\n';
           if (action === 'show') return `LoadState=loaded\nActiveState=${active ? 'active' : 'inactive'}\nMainPID=${active ? manager.pid || injected?.pid || process.pid : 0}\n`;
           if (action === 'stop') { active = false; await manager.stop(); }
           if (action === 'daemon-reload') await manager.reload();
@@ -182,10 +209,25 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         }, wait: async () => {},
       };
       const phases: string[] = [];
-      const operation = switchToNode({ env, node: process.execPath, bundles, database }, text => {
+      const desktopEnv = { ...env, PATH: `${root}/.local/bin:${env.PATH}`, PINOTE_NODE: process.execPath };
+      if (mode === 'success') Object.assign(desktopEnv, { LD_LIBRARY_PATH: root });
+      if (mode === 'fallback-db') {
+        assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, async (file, args, env, input) => {
+          assert.equal(file, '/usr/bin/systemctl', 'Preview never executes the fallback installation');
+          return dependencies.run(file, args, env, input);
+        }), 'absent');
+      }
+      const operation = switchToNode({ env: desktopEnv, node: process.execPath, bundles, database }, text => {
         phases.push(text);
         if (mode === 'conflict' && text.startsWith('Installing')) { rmSync(cli); writeFileSync(cli, 'owner changed configuration', { mode: 0o700 }); }
       }, dependencies);
+      if (mode === 'fallback-db') {
+        await assert.rejects(operation, /different database/);
+        await assert.rejects(lstat(cli), { code: 'ENOENT' });
+        await assert.rejects(lstat(join(root, 'config/pinote/backend.json')), { code: 'ENOENT' });
+        assert.deepEqual(await readFile(database), source);
+        continue;
+      }
       if (mode === 'changed-after-start') {
         await assert.rejects(operation, /rollback could not finish/);
         assert.equal(active, false);
@@ -209,15 +251,39 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         continue;
       }
       if (['wrapper', 'absent-variable', 'service-wrapper', 'service-script', 'loader', 'node-wrapper', 'relative-path', 'missing-flock', 'unit-wrapper', 'user-wrapper', 'relative-home'].includes(mode)) {
-        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : mode.startsWith('service-') || mode === 'unit-wrapper' ? /documented direct Node HTTP/ : /custom CLI wrapper/);
+        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute pinote\.service PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /pinote\.service environment sets LD_PRELOAD/ : mode.startsWith('service-') || mode === 'unit-wrapper' ? /documented direct Node HTTP/ : /custom CLI wrapper/);
         assert.equal(active, true); assert.ok(!commands.includes('stop'));
         assert.deepEqual(await readFile(database), source); continue;
       }
       if (mode === 'success' || mode === 'no-service' || isPip) {
         await operation;
+        if (mode === 'success') {
+          assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, dependencies.run), 'matches');
+          for (const broken of ['', 'pinote 0.0.0']) {
+            await assert.rejects(verifiedSwitchVersion({ env: desktopEnv, node: process.execPath, bundles, database }, (file, args, env, input) => args.includes('--version') ? Promise.resolve(broken) : runCommand(file, args, env, input)), /Bundled CLI verification failed/);
+          }
+          await assert.rejects(checkSwitchEnvironment({ ...desktopEnv, XDG_DATA_HOME: join(root, 'different-desktop') }, bundles, database, dependencies.run), /same database/);
+          const directPreview = (file: string, args: string[], env: NodeJS.ProcessEnv, input?: string) =>
+            file === '/usr/bin/busctl' && args.at(-1) === 'ExecStartEx'
+              ? Promise.resolve(JSON.stringify({type:'a(sasasttttuii)', data:[[process.execPath,[process.execPath,script],[]]]}))
+              : dependencies.run(file, args, env, input);
+          assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, directPreview), 'different');
+          await chmod(cli, 0o755);
+          await assert.rejects(checkSwitchEnvironment(desktopEnv, bundles, database, dependencies.run), /already managed/);
+          await chmod(cli, 0o700);
+          await assert.rejects(checkSwitchEnvironment(desktopEnv, bundles, join(root, 'other.db'), dependencies.run), /same database/);
+        }
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
         assert.equal((await preferredBackendEnvironment(env)).PINOTE_ELECTRON_BACKEND, undefined);
-        if (mode === 'no-service') await assert.rejects(lstat(dropin), { code: 'ENOENT' });
+        if (mode === 'no-service') {
+          await assert.rejects(lstat(dropin), { code: 'ENOENT' });
+          const state = join(env.XDG_STATE_HOME!, 'pinote/backend-switch');
+          const [id] = await readdir(join(state, 'backups'));
+          const pending = join(state, 'pending.json');
+          await writeFile(pending, await readFile(join(state, 'backups', id, 'manifest.json')), { mode: 0o600 });
+          await recoverBackendSwitch({ ...env, PYTHONNOUSERSITE: '1', PATH: '.' }, undefined, dependencies);
+          await assert.rejects(lstat(pending), { code: 'ENOENT' });
+        }
         else assert.match(await readFile(dropin, 'utf8'), /ExecStart=:\/usr\/bin\/env /);
         const different = { ...env, PINOTE_ELECTRON_BACKEND: '/another/explicit/backend' };
         assert.equal((await preferredBackendEnvironment(different)).PINOTE_ELECTRON_BACKEND, different.PINOTE_ELECTRON_BACKEND);
@@ -225,6 +291,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await assert.rejects(operation, mode === 'interrupted' || mode === 'conflict' || mode === 'deletion' ? /rollback could not finish/ : /Injected restart failure/);
         if (mode === 'interrupted') {
           assert.equal(active, false); fail = false;
+          await assert.rejects(recoverBackendSwitch({ ...env, LD_PRELOAD: 'blocked' }, () => ({ node: process.execPath, bundles }), dependencies), /desktop environment sets LD_PRELOAD/);
           await recoverBackendSwitch(env, () => ({ node: process.execPath, bundles }), dependencies);
         }
         if (mode === 'conflict') assert.equal(await readFile(cli, 'utf8'), 'owner changed configuration');
@@ -259,7 +326,7 @@ test('systemd guards forward and recovery starts before HTTP sees an edited Envi
     const root = await mkdtemp(join(tmpdir(), 'pinote-switch-profile-'));
     let unit: Awaited<ReturnType<typeof unitDouble>> | undefined;
     try {
-      const env = { HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_STATE_HOME: join(root, 'state'), XDG_DATA_HOME: join(root, 'profile-a'), PATH: `${root}/bin:/usr/bin:/bin` };
+      const env = { HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_STATE_HOME: join(root, 'state'), XDG_DATA_HOME: join(root, 'profile-a'), PATH: `${root}/.local/bin:${root}/bin:/usr/bin:/bin` };
       const profileB = join(root, 'profile-b');
       const database = join(env.XDG_DATA_HOME, 'pinote/notes.db'), databaseB = join(profileB, 'pinote/notes.db');
       const runtime = { node: process.execPath, bundles }, old = resolve('../backend/bin/note');
