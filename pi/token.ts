@@ -8,7 +8,7 @@ export function pinoteToken(env: NodeJS.ProcessEnv = process.env): string {
   if (token === undefined) {
     let fd: number | undefined;
     try {
-      fd = openSync(env.PINOTE_TOKEN_FILE ?? join(getAgentDir(), 'pinote-token'), constants.O_RDONLY | constants.O_NOFOLLOW);
+      fd = openSync(env.PINOTE_TOKEN_FILE ?? join(getAgentDir(), 'pinote-token'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const stat = fstatSync(fd);
       if (!stat.isFile() || stat.size > 4096 || (stat.mode & 0o077) !== 0 || process.getuid && stat.uid !== process.getuid()) throw new Error();
       token = readFileSync(fd, 'utf8').trim();

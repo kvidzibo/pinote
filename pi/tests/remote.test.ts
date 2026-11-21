@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -66,6 +67,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     chmodSync(file, 0o644);
     assert.throws(() => remoteConfig({ PINOTE_TOKEN_FILE: file }), /owner-only/);
     assert.throws(() => remoteConfig({ PINOTE_TOKEN: `${token} ` }), /non-whitespace/);
+    // A writerless FIFO is rejected instead of blocking the caller (the desktop hosts the service).
+    execFileSync('mkfifo', ['-m', '600', join(dir, 'fifo')]);
+    assert.throws(() => remoteConfig({ PINOTE_TOKEN_FILE: join(dir, 'fifo') }), /owner-only/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
