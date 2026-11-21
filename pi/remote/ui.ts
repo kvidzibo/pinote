@@ -1,7 +1,7 @@
-import { type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
+import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { Container, Markdown, Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
-import { clean, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
+import { clean, cleanUnbounded, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
 import { RemoteSession } from './session.ts';
 import { remoteMenu, type MenuState } from './menu.ts';
@@ -280,8 +280,31 @@ export class RemoteUI {
   }
 }
 
-/** Historical TUI-only preview entries remain readable after upgrading. */
-export function registerPreview(pi: ExtensionAPI): void {
+const STARTUP_TASK = 'pinote-startup-task';
+
+export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, session: RemoteSession): Promise<void> {
+  const id = session.view?.state.selectedId;
+  if (ctx.mode !== 'tui' || typeof id !== 'number') return;
+  const current = session.current();
+  try {
+    const result = await session.tool('get_current', {});
+    const content = result.content.find((item) => item.type === 'text');
+    const task = JSON.parse(content?.text ?? 'null');
+    if (current() && session.view?.state.selectedId === id && task?.id === id && typeof task.text === 'string')
+      pi.appendEntry(STARTUP_TASK, { id, text: cleanUnbounded(task.text) });
+  } catch {
+    if (current()) ctx.ui.notify('Pinote: could not display the selected task text.', 'warning');
+  }
+}
+export function registerTaskEntries(pi: ExtensionAPI): void {
+  pi.registerEntryRenderer<{ id: number; text: string }>(STARTUP_TASK, (entry, _options, theme) => {
+    if (!entry.data || !Number.isSafeInteger(entry.data.id) || entry.data.id < 1 || typeof entry.data.text !== 'string') return;
+    const card = new Container();
+    card.addChild(new Text(theme.fg('accent', `Task #${entry.data.id}`), 0, 0));
+    card.addChild(new Markdown(cleanUnbounded(entry.data.text), 0, 0, getMarkdownTheme()));
+    return card;
+  });
+  // Historical TUI-only preview entries remain readable after upgrading.
   pi.registerEntryRenderer<{ title: string; text: string }>('pinote-remote-preview', (entry, _options, theme) =>
     new Text(`${theme.fg('accent', line(entry.data?.title ?? 'Pinote preview'))}\n\n${clean(entry.data?.text ?? '')}`, 0, 0));
 }

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { remoteConfig, RemoteFailure } from './remote/client.ts';
 import { ENTRY_TYPE, RemoteSession, type SavedState } from './remote/session.ts';
 import { registerTools } from './remote/tools.ts';
-import { registerPreview, RemoteUI } from './remote/ui.ts';
+import { registerTaskEntries, RemoteUI, showStartupTask } from './remote/ui.ts';
 import { registerRemoteExit } from './remote/exit.ts';
 import { clean, editorText } from './remote/protocol.ts';
 import { taskCompleted } from './remote/completion.ts';
@@ -23,7 +23,7 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
   delete process.env.PINOTE_LAUNCH_TASK; // Never inherit consent into another Pi process or /reload.
   const getSession = () => { if (!session) throw new RemoteFailure(); return session; };
   registerTools(pi, getSession);
-  registerPreview(pi);
+  registerTaskEntries(pi);
   // Trusted local extensions can read this conversation's task without a model turn.
   // Never substitute a directory-global CLI selection when the remote service is unavailable.
   pi.events.on('pinote:query-current', (data: unknown) => {
@@ -105,6 +105,7 @@ export default function pinoteRemote(pi: ExtensionAPI): void {
         }
       }
       if (reason === 'new' && previous) transfers.delete(previous);
+      if (reason === 'new' || (launch && session.view?.state.selectedId === launch.task_id)) await showStartupTask(pi, ctx, session);
     } catch (error) {
       // Configuration messages are fixed strings; transport response bodies are never shown.
       ctx.ui.notify(error instanceof RemoteFailure ? error.message : 'Pinote unavailable or launch task changed: check the service, task revision and private token configuration. Use /pinote to select manually; launch requests are never retried.', 'warning');

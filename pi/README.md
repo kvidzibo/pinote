@@ -112,7 +112,7 @@ current session open. `/quit` exits without completing.
 
 Reload/resume restores the active branch's selection. Starting a new session
 without completing retains the selection; completing starts it unselected.
-Unrelated fresh launches start unselected.
+A GUI task launch or `/new` with a retained selection shows `Task #<id>` and the full task Markdown in the Pi transcript. This display entry is not sent to the model. Unrelated fresh launches start unselected.
 Changing endpoints starts a separate selection namespace. Unsaved Pi sessions
 cannot guarantee selection persistence.
 
