@@ -1,7 +1,7 @@
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Container, Markdown, Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
-import { clean, cleanUnbounded, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
+import { clean, cleanMarkdown, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
 import { RemoteFailure } from './client.ts';
 import { RemoteSession } from './session.ts';
 import { remoteMenu, type MenuState } from './menu.ts';
@@ -291,7 +291,7 @@ export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, s
     const content = result.content.find((item) => item.type === 'text');
     const task = JSON.parse(content?.text ?? 'null');
     if (current() && session.view?.state.selectedId === id && task?.id === id && typeof task.text === 'string')
-      pi.appendEntry(STARTUP_TASK, { id, text: cleanUnbounded(task.text) });
+      pi.appendEntry(STARTUP_TASK, { id, text: cleanMarkdown(task.text) });
   } catch {
     if (current()) ctx.ui.notify('Pinote: could not display the selected task text.', 'warning');
   }
@@ -301,7 +301,7 @@ export function registerTaskEntries(pi: ExtensionAPI): void {
     if (!entry.data || !Number.isSafeInteger(entry.data.id) || entry.data.id < 1 || typeof entry.data.text !== 'string') return;
     const card = new Container();
     card.addChild(new Text(theme.fg('accent', `Task #${entry.data.id}`), 0, 0));
-    card.addChild(new Markdown(cleanUnbounded(entry.data.text), 0, 0, getMarkdownTheme()));
+    card.addChild(new Markdown(cleanMarkdown(entry.data.text), 0, 0, getMarkdownTheme()));
     return card;
   });
   // Historical TUI-only preview entries remain readable after upgrading.

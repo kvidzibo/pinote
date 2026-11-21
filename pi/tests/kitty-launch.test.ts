@@ -92,7 +92,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const { startPinoteHttpServer } = await import('../mcp/http.ts');
     service = await startPinoteHttpServer({ port: 0, logPath: join(temp, 'app.log') });
     process.env.PINOTE_URL = service.url;
-    const task = cli('agent', 'add', '--text=Kitty launch target\n\n- A **Markdown** detail beyond the title.');
+    const task = cli('agent', 'add', '--text=Kitty launch target\n\n- A **Markdown** detail beyond the title.\n\n```python\nif ready:\n\tprocess()\n```');
     const request = { task_id: task.id, updated_at: task.updated_at, prompt: 'is task clear?' };
     const stale = await open({ ...request, updated_at: 'stale-revision' });
     assert.ok(stale.notices.length);

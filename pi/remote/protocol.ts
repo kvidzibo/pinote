@@ -59,8 +59,13 @@ export function clean(text: string): string {
 
 /** Preserve long generated preview lines while still stripping terminal controls. */
 export function cleanUnbounded(text: string): string {
+  return cleanMarkdown(text).replace(/\t/g, '');
+}
+
+/** Markdown indentation can include tabs; strip terminal controls before parsing. */
+export function cleanMarkdown(text: string): string {
   return text.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
 }
 /** Make significant whitespace and controls explicit in operator disclosures. */
 export const literal = (value: unknown) => (JSON.stringify(value) ?? '(unset)')
