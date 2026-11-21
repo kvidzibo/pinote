@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { after, before, test } from 'node:test';
 import { build } from 'esbuild';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rename, rm, lstat, readdir } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile, symlink, readlink, rename, rm, lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
@@ -264,6 +264,9 @@ test('confirmed backend switching preserves data, rolls back failure and recover
               ? Promise.resolve(JSON.stringify({type:'a(sasasttttuii)', data:[[process.execPath,[process.execPath,script],[]]]}))
               : dependencies.run(file, args, env, input);
           assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, directPreview), 'different');
+          await chmod(cli, 0o755);
+          await assert.rejects(checkSwitchEnvironment(desktopEnv, bundles, database, dependencies.run), /already managed/);
+          await chmod(cli, 0o700);
           await assert.rejects(checkSwitchEnvironment(desktopEnv, bundles, join(root, 'other.db'), dependencies.run), /same database/);
         }
         assert.match(await runCommand(cli, ['--version'], env), /^pinote 0\.26\.0/);
