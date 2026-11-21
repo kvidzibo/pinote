@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAgentDir } from '../config-path.js';
 import { instanceURL, parseInstances } from '../forgejo-instances.js';
-import { checkPRBatch } from '../pr-batch.js';
+import { checkPRBatch, withInterval } from '../pr-batch.js';
 import { parsePullRequests } from '../pull-requests.js';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -52,7 +52,7 @@ export async function handleFieldEvent(event) {
   // Preserve legacy validation before loading configuration.
   try { instanceURL(raw); } catch { return {}; }
   const request = matchRequest(raw, await instances());
-  return request ? checkPR(request) : {};
+  return request ? withInterval(event, await checkPR(request)) : {};
 }
 
 function matchRequest(raw, trusted) {

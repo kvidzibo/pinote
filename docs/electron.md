@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.19.0) bundles the matching Node backend;
+The private `electron/` package (0.19.1) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 

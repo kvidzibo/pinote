@@ -80,6 +80,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(failure.state, 'failed', 'Server-capped pages and per-page totals cannot hide a later failure');
   assert.equal(failure.display?.color, 'error');
   assert.equal(failure.recheckAfterSeconds, 60);
+  assert.equal(run(failureScenario, { params: { interval: 300 } }).output.recheckAfterSeconds, 300, 'The interval setting replaces the default');
   assert.equal(run(failureScenario, { previousResult: failure }).output.notification?.key, failure.notification?.key);
   assert.notEqual(run(failureScenario, { value: value.replace('forgejo.example', 'other.example') },
     [{ url: base.replace('forgejo.example', 'other.example') }]).output.notification?.key, failure.notification?.key);
@@ -180,6 +181,7 @@ globalThis.fetch = async (url, options) => {
     run(routes.failed, { value: batchURLs[1] }).output.notification?.key, 'Batch failure retains single-PR identity');
   assert.equal(batch.output.items?.[5].recheckAfterSeconds, 120);
   assert.equal(batch.output.recheckAfterSeconds, 60);
+  assert.equal(run({ routes }, { field: 'PRs', value: batchValue, params: { interval: 300 } }).output.recheckAfterSeconds, 300);
   assert.ok(batch.output.notification);
   assert.ok(batch.requests.every((request) => request.url.startsWith(`${base}/api/v1/repos/owner/`)
     && Object.keys(routes).some((repo) => request.url.startsWith(`${base}/api/v1/repos/owner/${repo}/`))

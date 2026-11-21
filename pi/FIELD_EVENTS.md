@@ -63,8 +63,8 @@ aliases. New failures and confirmed recovery followed by failure alert again;
 adding/removing other URLs does not repeat acknowledged failures. Edited fields
 still require fresh checks. Legacy-only custom watchers keep independent alerts.
 Alerts are grouped only when every included PR fits the message budget. PRs alerts include
-PR numbers and URLs, within the notification budget. Checks repeat every 60
-seconds until all entries are closed/merged; merging never completes the task.
+PR numbers and URLs, within the notification budget. Checks repeat at the
+watcher's [check interval](#forgejo-prs) (60 seconds by default) until all entries are closed/merged; merging never completes the task.
 Passing means reported checks passed, not that all review/protection rules passed.
 
 ## Watcher settings
@@ -207,8 +207,11 @@ No reported statuses means pending, not passing. Passing describes reported CI
 only, not approvals or branch protection. Forgejo's boolean `mergeable=false`
 can also mean checking, an error or a draft, so it remains pending rather than
 triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
-Checks run every 60 seconds. Legacy `PR` API/configuration errors retry after
-120 seconds; partial `PRs` batch errors retry with the field's 60-second check.
+Since pi-note 0.49.0, both PR watchers have a **Check interval (seconds)**
+parameter (`interval`, default 60), set separately for each in the desktop's
+Watchers settings. Values outside 10–86,400 use the nearest limit. Legacy `PR`
+API/configuration errors retry after 120 seconds; partial `PRs` batch errors
+retry with the field's regular check.
 
 To support another field, add another executable using the contract below. A
 watcher receives the field events selected in its [settings](#watcher-settings)
