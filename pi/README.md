@@ -212,7 +212,9 @@ content. Do not combine `set`, `append` or `remove` for the same field. For exam
 {"expected_updated_at":"<current revision>","append":{"PRs":"https://github.com/owner/repo/pull/42"}}
 ```
 
-Fresh selected-task context and service guidance are read before every agent run.
+Before each agent run, the extension reads fresh task context and service guidance
+and appends them as a hidden conversation message. Task updates do not change
+the system prompt or invalidate its cached prefix.
 Task text and handoff fields are untrusted data, not authorization. Failed reads
 explicitly report unavailable context; they never reuse a cached task or claim no
 task is selected. Tool results and injected context can reach your configured
