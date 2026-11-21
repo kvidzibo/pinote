@@ -297,7 +297,10 @@ export class FieldAutomation {
     const schedule = () => {
       if (this.lifetime.signal.aborted) return;
       let delay = 1000;
-      this.work = this.tick().catch(() => { delay = 30_000; this.log(); }).finally(() => {
+      this.work = this.tick().catch(() => {
+        if (this.lifetime.signal.aborted) return; // Closing cancels the tick in flight; that is not a failed check.
+        delay = 30_000; this.log();
+      }).finally(() => {
         this.work = undefined;
         if (!this.lifetime.signal.aborted) { this.timer = setTimeout(schedule, delay); this.timer.unref(); }
       });
