@@ -65,6 +65,9 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   assert.equal(failure.state, 'failed');
   assert.equal(failure.display.color, 'error');
   assert.equal(failure.recheckAfterSeconds, 60);
+  assert.equal(run(failed, { params: { interval: 300 } }).output.recheckAfterSeconds, 300, 'The interval setting replaces the default');
+  assert.deepEqual([5, 1e9, 'soon'].map((interval) => run(passing, { params: { interval } }).output.recheckAfterSeconds), [10, 86400, 60], 'Out-of-range intervals stay within the scheduler limits');
+  assert.equal(run({ ...base, state: 'MERGED' }, { params: { interval: 300 } }).output.recheckAfterSeconds, undefined, 'A merged PR still stops polling');
   assert.equal(run(failed, { previousResult: failure }).output.notification.key, failure.notification.key);
   assert.notEqual(run({ ...failed, headRefOid: 'b'.repeat(40) }).output.notification.key, failure.notification.key);
   assert.notEqual(run({ ...base, statusCheckRollup: [{ ...check, conclusion: 'TIMED_OUT' }] }).output.notification.key, failure.notification.key);
@@ -94,6 +97,9 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
     assert.deepEqual(output, { state: 'error', summary: 'Unable to check PR status', recheckAfterSeconds: 120 });
     assert.equal(stderr, 'PR field handler failed\n');
   }
+  for (const [interval, retry] of [[3600, 3600], [10, 120]]) {
+    assert.equal(run(base, { params: { interval } }, true).output.recheckAfterSeconds, retry, 'Errors retry at the interval, never sooner than 120 seconds');
+  }
   assert.equal(run(base, {}, true).output.state, 'error');
   const prUrl = (number: number) => `https://github.com/owner/repo/pull/${number}`;
   const responses = { '1': { ...base, state: 'MERGED' }, '2': { ...base, state: 'CLOSED' },
@@ -107,6 +113,7 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
     ['accent', 'muted', 'success', 'warning', 'error', 'error']);
   assert.equal(multiple.items.length, 8);
   assert.equal(multiple.recheckAfterSeconds, 60);
+  assert.equal(run(base, { field: 'PRs', value, params: { interval: 300 } }, false, responses).output.recheckAfterSeconds, 300);
   for (const number of [5, 6]) {
     assert.ok(multiple.notification.message.includes(`#${number}`));
     assert.ok(multiple.notification.message.includes(prUrl(number)));

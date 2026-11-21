@@ -1,4 +1,13 @@
 {
   "fieldEvents": ["added", "changed", "removed"],
-  "fields": ["PRs", "PR"]
+  "fields": ["PRs", "PR"],
+  "params": [
+    {
+      "key": "interval",
+      "label": "Check interval (seconds)",
+      "type": "number",
+      "default": 60,
+      "help": "Time between status checks of an open PR, 10 to 86400 seconds."
+    }
+  ]
 }

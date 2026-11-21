@@ -81,6 +81,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(failure.state, 'failed', 'Server-capped pages and per-page totals cannot hide a later failure');
   assert.equal(failure.display?.color, 'error');
   assert.equal(failure.recheckAfterSeconds, 60);
+  assert.equal(run(failureScenario, { params: { interval: 300 } }).output.recheckAfterSeconds, 300, 'The interval setting replaces the default');
   assert.equal(run(failureScenario, { previousResult: failure }).output.notification?.key, failure.notification?.key);
   assert.notEqual(run(failureScenario, { value: value.replace('forgejo.example', 'other.example') },
     [{ url: base.replace('forgejo.example', 'other.example') }]).output.notification?.key, failure.notification?.key);
@@ -134,6 +135,7 @@ globalThis.fetch = async (url, options) => {
     assert.deepEqual(output, { state: 'error', summary: 'Unable to check Forgejo PR status', recheckAfterSeconds: 120 });
     assert.equal(stderr, 'Forgejo PR field handler failed\n');
   }
+  assert.equal(run({ fail: true }, { params: { interval: 3600 } }).output.recheckAfterSeconds, 3600, 'Errors retry at a longer interval');
   for (const origin of ['http://forgejo.example', 'http://localhost:3000', 'http://localhost.localdomain:3000',
     'http://127.0.0.2:3000', 'http://192.168.1.1:3000', 'http://[::2]:3000', 'http://127.0.0.1.evil:3000']) {
     const { output, requests } = run({}, {}, [{ url: origin }]);
@@ -192,6 +194,7 @@ globalThis.fetch = async (url, options) => {
     run(routes.failed, { value: batchURLs[1] }).output.notification?.key, 'Batch failure retains single-PR identity');
   assert.equal(batch.output.items?.[5].recheckAfterSeconds, 120);
   assert.equal(batch.output.recheckAfterSeconds, 60);
+  assert.equal(run({ routes }, { field: 'PRs', value: batchValue, params: { interval: 300 } }).output.recheckAfterSeconds, 300);
   assert.ok(batch.output.notification);
   assert.ok(batch.requests.every((request) => request.url.startsWith(`${base}/api/v1/repos/owner/`)
     && Object.keys(routes).some((repo) => request.url.startsWith(`${base}/api/v1/repos/owner/${repo}/`))

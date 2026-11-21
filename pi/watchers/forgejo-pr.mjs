@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAgentDir } from '../config-path.js';
 import { instanceURL, parseInstances } from '../forgejo-instances.js';
-import { checkPRBatch } from '../pr-batch.js';
+import { checkPRBatch, withInterval } from '../pr-batch.js';
 import { parsePullRequests } from '../pull-requests.js';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -52,7 +52,7 @@ export async function handleFieldEvent(event) {
   // Preserve legacy validation before loading configuration.
   try { instanceURL(raw); } catch { return {}; }
   const request = matchRequest(raw, await instances());
-  return request ? checkPR(request) : {};
+  return request ? withInterval(event, await checkPR(request)) : {};
 }
 
 function matchRequest(raw, trusted) {
@@ -146,15 +146,16 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  let event;
   try {
     let input = '';
     for await (const chunk of process.stdin) {
       input += chunk;
       if (Buffer.byteLength(input) > 1024 * 1024) throw new Error('Input too large');
     }
-    process.stdout.write(`${JSON.stringify(await handleFieldEvent(JSON.parse(input)))}\n`);
+    process.stdout.write(`${JSON.stringify(await handleFieldEvent(event = JSON.parse(input)))}\n`);
   } catch {
     process.stderr.write('Forgejo PR field handler failed\n');
-    process.stdout.write(`${JSON.stringify(errorResult())}\n`);
+    process.stdout.write(`${JSON.stringify(withInterval(event, errorResult()))}\n`);
   }
 }
