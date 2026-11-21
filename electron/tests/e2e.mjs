@@ -215,6 +215,8 @@ try {
   assert.ok(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences().sandbox));
   assert.equal(await page.locator('#pinned .task-row').count(),1);
   assert.equal(await page.locator('#ordinary .task-row').count(),2);
+  // The idle resource sample runs once, in the shorter part 2.
+  if (part !== '1') {
   const resources = await app.evaluate(({app})=>app.getAppMetrics().reduce((r,p)=>({rssKiB:r.rssKiB+p.memory.workingSetSize,cpuPercent:r.cpuPercent+p.cpu.percentCPUUsage}),{rssKiB:0,cpuPercent:0}));
   const gtkRSS=Number(spawnSync('ps',['-o','rss=','-p',String(gtk.pid)],{encoding:'utf8'}).stdout.trim());
   const scan=performance.now(); for(let i=0;i<5;i++)call('snapshot',{view:'active'});
@@ -226,6 +228,7 @@ try {
   const hz=Number(spawnSync('getconf',['CLK_TCK'],{encoding:'utf8'}).stdout.trim()), seconds=(performance.now()-at)/1000;
   const measurement={datasetTasks:103,coldStartToTasksMs:Math.round(taskReadyMs),electronReportedRSSKiB:resources.rssKiB,gtkRSSKiB:gtkRSS,backendSnapshotMeanMs:snapshotMean,electronIdleCPUPercent:+((after.electron-before.electron)/hz/seconds*100).toFixed(2),gtkIdleCPUPercent:+((after.gtk-before.gtk)/hz/seconds*100).toFixed(2)};
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
+  }
   assert.ok(await page.locator('img[src]').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
   await page.screenshot({path:join(root,'checklist.png')});
   assert.equal(await page.getByRole('button',{name:'Add task (Enter)',exact:true}).count(),0);
@@ -884,6 +887,12 @@ try {
     await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
     call('transition',{id,revision:started.updated_at,state:'in_progress',action:'rm'});
     await row.waitFor({state:'detached'});
+  }
+  if (part === '2') {
+    // Part 1 checks these invariants later, in its own processes.
+    assert.equal(gtk.exitCode,null,'GTK must coexist without exiting');
+    assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
+    assert.deepEqual(pageErrors,[]);
   }
   }
   if (part !== '2') {
