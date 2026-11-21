@@ -210,7 +210,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       };
       const phases: string[] = [];
       const desktopEnv = { ...env, PATH: `${root}/.local/bin:${env.PATH}`, PINOTE_NODE: process.execPath };
-      if (mode === 'success' && process.env.PINOTE_TEST_SYSTEM_CUDA === '1') Object.assign(desktopEnv, { LD_LIBRARY_PATH: '/usr/local/cuda/lib64' });
+      if (mode === 'success') Object.assign(desktopEnv, { LD_LIBRARY_PATH: root });
       if (mode === 'fallback-db') {
         assert.equal(await checkSwitchEnvironment(desktopEnv, bundles, database, async (file, args, env, input) => {
           assert.equal(file, '/usr/bin/systemctl', 'Preview never executes the fallback installation');
@@ -283,7 +283,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         await assert.rejects(operation, mode === 'interrupted' || mode === 'conflict' || mode === 'deletion' ? /rollback could not finish/ : /Injected restart failure/);
         if (mode === 'interrupted') {
           assert.equal(active, false); fail = false;
-          await assert.rejects(recoverBackendSwitch({ ...env, LD_LIBRARY_PATH: root }, () => ({ node: process.execPath, bundles }), dependencies), /desktop environment sets LD_LIBRARY_PATH/);
+          await assert.rejects(recoverBackendSwitch({ ...env, LD_PRELOAD: 'blocked' }, () => ({ node: process.execPath, bundles }), dependencies), /desktop environment sets LD_PRELOAD/);
           await recoverBackendSwitch(env, () => ({ node: process.execPath, bundles }), dependencies);
         }
         if (mode === 'conflict') assert.equal(await readFile(cli, 'utf8'), 'owner changed configuration');

@@ -6,7 +6,6 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { trustedCudaLibraryPath } from './cuda-library-path.ts';
 import { backendEnvironment, nodeExecutable } from './backend-command.ts';
 
 // Only main-process values enter this installer. No renderer-supplied paths,
@@ -36,7 +35,9 @@ function locations(env: NodeJS.ProcessEnv) {
 }
 export async function runCommand(executable: string, args: string[], env: NodeJS.ProcessEnv, input?: string, timeout = 60000): Promise<string> {
   return new Promise((ok, fail) => {
-    const child = execFile(executable, args, { env: backendEnvironment(env), timeout, maxBuffer: limit, encoding: 'buffer' }, (error, stdout) => {
+    const childEnv = backendEnvironment(env);
+    if (executable === '/usr/bin/systemctl' || executable === '/usr/bin/busctl') delete childEnv.LD_LIBRARY_PATH;
+    const child = execFile(executable, args, { env: childEnv, timeout, maxBuffer: limit, encoding: 'buffer' }, (error, stdout) => {
       if (error) fail(new Error(`Backend switch command failed: ${executable.split('/').at(-1)} ${args[0] || ''}.`));
       else { try { ok(utf8.decode(stdout)); } catch (err) { fail(err); } }
     });
@@ -252,13 +253,11 @@ export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_D
   }
 }
 type EnvironmentSource = 'desktop' | 'pinote.service';
-async function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource): Promise<void> {
-  const keys = Object.keys(env).filter(key => env[key] && runtimeInjection(key));
-  if (!keys.length) return;
-  // Run the old and new CLI probes with the real desktop library path. Never
-  // infer the old CLI's database from a probe in a sanitized environment.
-  const key = keys.find(key => key !== 'LD_LIBRARY_PATH') || 'LD_LIBRARY_PATH';
-  if (key === 'LD_LIBRARY_PATH' && source === 'desktop' && await trustedCudaLibraryPath(env[key]!)) return;
+function verifyRuntimeEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource): void {
+  // Probe desktop runtimes in the user's own library environment. The service
+  // is independently verified and must not inherit the desktop's settings.
+  const key = Object.keys(env).find(key => env[key] && runtimeInjection(key) && !(source === 'desktop' && key === 'LD_LIBRARY_PATH'));
+  if (!key) return;
   const name = /^[A-Z0-9_]{1,80}$/.test(key) ? key : 'a custom runtime variable';
   const action = source === 'desktop' ? 'Relaunch Pinote without this setting' : 'Review the service environment and restart it without this setting';
   throw new Error(`The ${source} environment sets ${name}. ${action}, or verify the database and switch manually.`);
@@ -272,7 +271,7 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
   if (current.active) {
     await verifyServiceContext(current.pid);
     serviceEnv = await processEnvironment(current.pid);
-    await verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
+    verifyRuntimeEnvironment(serviceEnv, 'pinote.service');
   }
   const previous = await verifyDesktopCommand(env);
   const runtime = { bundles, node: nodeExecutable(env) };
@@ -303,7 +302,7 @@ export async function checkSwitchEnvironment(env: NodeJS.ProcessEnv, bundles: st
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv, source: EnvironmentSource = 'pinote.service'): Promise<void> {
   verifySwitchPaths(env);
-  await verifyRuntimeEnvironment(env, source);
+  verifyRuntimeEnvironment(env, source);
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error(`Automatic switching requires an unambiguous absolute ${source} PATH.`);
   try {
     if (await realpath(executable(env, 'flock')) === await realpath('/usr/bin/flock')) return;
@@ -432,7 +431,7 @@ async function acquire(env: NodeJS.ProcessEnv, updateLock = `/tmp/pi-extension-u
       // A short helper acquires the shared open-file-description lock, retained
       // by this process. Other subprocesses never inherit these descriptors.
       await new Promise<void>((ok, fail) => {
-        const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '3'], { env: backendEnvironment(env), timeout: 5000, stdio: ['ignore', 'ignore', 'ignore', fd] });
+        const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '3'], { env: { ...backendEnvironment(env), LD_LIBRARY_PATH: undefined }, timeout: 5000, stdio: ['ignore', 'ignore', 'ignore', fd] });
         child.once('error', fail);
         child.once('close', code => code === 0 ? ok() : fail(new Error('An update or desktop operation is running; retry after it finishes.')));
       });
@@ -616,7 +615,7 @@ export async function recoverBackendSwitch(env: NodeJS.ProcessEnv, trustedRuntim
 }
 export async function switchToNode(options: SwitchOptions, progress: (message: string) => void, dependencies: SwitchDependencies = {}): Promise<void> {
   const { env } = options;
-  await verifyRuntimeEnvironment(env, 'desktop');
+  verifyRuntimeEnvironment(env, 'desktop');
   verifySwitchPaths(env);
   const paths = locations(env), run = dependencies.run || runCommand;
   const release = await acquire(env, dependencies.updateLock);

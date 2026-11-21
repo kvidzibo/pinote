@@ -60,20 +60,21 @@ const settings = async page => {
 };
 try {
   for (let i = 0; i < 100; i++) { if (spawnSync('i3-msg', ['-s', join(root, 'i3.sock'), '-t', 'get_tree'], { env, stdio: 'ignore' }).status === 0) break; await new Promise(ok => setTimeout(ok, 20)); }
-  env.LD_LIBRARY_PATH = root;
+  env.PYTHONNOUSERSITE = '1';
   env.PINOTE_NODE = join(root, 'missing-node'); // Even Node discovery must not mask the override.
   let page = await launch();
   await settings(page);
-  await page.getByText(/desktop environment sets LD_LIBRARY_PATH/).waitFor();
+  await page.getByText(/desktop environment sets PYTHONNOUSERSITE/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await page.screenshot({ path: join(root, 'backend-switch-blocked.png') });
-  await app.evaluate((_, node) => { delete process.env.LD_LIBRARY_PATH; process.env.PINOTE_NODE = node; process.env.PATH += ':.'; }, process.execPath);
+  await app.evaluate((_, node) => { delete process.env.PYTHONNOUSERSITE; process.env.PINOTE_NODE = node; process.env.PATH += ':.'; }, process.execPath);
   await page.getByRole('button', { name: 'Refresh backend settings' }).click();
   await page.getByText(/absolute desktop PATH/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Switch to Node backend', exact: true }).isDisabled(), true);
   await app.close();
-  if (process.env.PINOTE_TEST_SYSTEM_CUDA === '1') env.LD_LIBRARY_PATH = '/usr/local/cuda/lib64';
-  else delete env.LD_LIBRARY_PATH;
+  delete env.PYTHONNOUSERSITE;
+  env.LD_LIBRARY_PATH = join(root, 'lib');
+  await mkdir(env.LD_LIBRARY_PATH);
   env.PINOTE_NODE = process.execPath;
   page = await launch();
   await page.getByRole('textbox', { name: 'Add a task…', exact: true }).fill('Draft kept across backend switch');

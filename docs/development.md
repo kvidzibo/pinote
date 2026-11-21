@@ -103,10 +103,8 @@ native binary) without lifecycle scripts. Unit tests exercise real CLI bundles
 with injected service control, including failed restart/rollback recovery. The E2E
 command also runs the Backend settings switch with temporary HOME/XDG data and a
 fake absent service, checking confirmation cancellation, draft preservation,
-relaunch, and bypass of the old Python override. On a machine with a system CUDA
-installation at `/usr/local/cuda/lib64`, set `PINOTE_TEST_SYSTEM_CUDA=1` for the
-Electron unit and E2E commands to test the full switch with the real desktop
-library path and unchanged service environment. No live service is changed.
+relaunch, and bypass of the old Python override. The switch tests use a temporary
+desktop library path and do not change any live service.
 The end-to-end harness uses its own HOME/XDG directories, private i3 configuration
 and socket, and clears inherited real i3/Kitty sockets. Always use Xvfb and a
 private D-Bus session, never the actual desktop. Test screenshots stay in temporary

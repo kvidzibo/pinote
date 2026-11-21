@@ -47,11 +47,9 @@ Icons are bundled rather than taken from the host icon theme.
 
 After updating/building this Electron version, open **Menu → Backend settings…**
 and use **Switch to Node backend** (play icon). A native confirmation defaults to
-Cancel. This is one migration for the desktop, user CLI, and existing service. A desktop
-using the standard administrator-installed CUDA library directory
-(`/usr/local/cuda/lib64` as the sole `LD_LIBRARY_PATH` entry) needs no special
-launch command. Pinote checks the directory and its contents before running the
-old and new CLI checks with that same environment; CUDA settings are not changed.
+Cancel. This is one migration for the desktop, user CLI, and existing service.
+Desktop backend and CLI probes inherit the desktop's library search path; service
+checks use the service's own environment. Use a desktop environment you trust.
 If a runtime override prevents database verification, settings identifies the
 variable (not its value) and whether it belongs to the desktop or service before
 closing. Relaunch the affected process without the override if appropriate;
