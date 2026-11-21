@@ -12,7 +12,7 @@ default switch; local validation measurements are not performance guarantees.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
 libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.16.0) bundles the matching Node backend;
+The private `electron/` package (0.17.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -83,7 +83,11 @@ the bundled CLI/bridge against the same database, then:
   An existing command is first checked to use the same database. Standard
   direct-Python uv and pip/pipx entry points are recognized when their shebang
   selects a trusted native Python installation. Interpreter shims, shell wrappers
-  (including long-shebang shims), and runtime injection require a manual switch.
+  (including long-shebang shims), and runtime injection require a manual switch:
+  `LD_PRELOAD` and other `LD_*` loader settings, `PYTHON*`, `NODE_OPTIONS`,
+  `GCONV_PATH` or `GLIBC_TUNABLES` in the desktop environment block this check,
+  and the error names the variable. `LD_LIBRARY_PATH` (for example from a CUDA
+  profile) and other `NODE_*` or `ELECTRON_*` settings do not.
   Launcher checks do not authenticate Python installations or their installed
   packages. PATH must contain only absolute entries and resolve `flock` to the
   system utility. PATH entries and home/XDG paths used for switching must not
