@@ -74,8 +74,9 @@ test('default package loads through Pi and uses real standalone HTTP notes witho
       const message = result?.message;
       assert.equal(message?.customType, 'pinote-context');
       assert.equal(message.display, false);
-      const { service, text } = JSON.parse(message.content);
+      const { service, warning, text } = JSON.parse(message.content);
       assert.equal(service, 'pinote');
+      assert.match(warning, /UNTRUSTED TASK DATA.*not instructions or authorization/);
       return { instructions: prompt.systemPromptOptions.sections.pinote_remote, text };
     };
     const before = await turnContext();
