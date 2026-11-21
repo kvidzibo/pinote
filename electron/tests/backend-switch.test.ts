@@ -57,6 +57,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       const source = await readFile(database);
       await mkdir(join(dirname(database), 'electron'));
       await writeFile(join(dirname(database), 'electron/state.json'), '{"draft":"private draft"}', { mode: 0o600 });
+      // Common desktop settings (a CUDA profile, a Node or Electron hint) must not block the switch.
+      if (mode === 'python') Object.assign(env, { LD_LIBRARY_PATH: '/usr/local/cuda/lib64', NODE_ENV: 'production', ELECTRON_OZONE_PLATFORM_HINT: 'auto' });
       if (mode === 'loader') env.LD_PRELOAD = join(root, 'missing-injection.so');
       if (mode === 'relative-path') env.PATH = `first:${env.PATH}`;
       if (mode === 'relative-home') env.HOME = 'profile';
@@ -96,7 +98,7 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         continue;
       }
       if (['loader', 'node-wrapper', 'relative-path', 'missing-flock', 'user-wrapper', 'relative-home'].includes(mode)) {
-        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection/ : /custom CLI wrapper/);
+        await assert.rejects(operation, mode === 'relative-home' ? /absolute HOME/ : mode === 'relative-path' ? /absolute PATH/ : mode === 'missing-flock' ? /flock/ : mode === 'node-wrapper' ? /different Node runtime/ : mode === 'loader' ? /runtime injection setting LD_PRELOAD/ : /custom CLI wrapper/);
         if (mode !== 'relative-home') { assert.equal(await readlink(cli), old); await assert.rejects(lstat(pending), { code: 'ENOENT' }); }
         assert.deepEqual(await readFile(database), source); continue;
       }

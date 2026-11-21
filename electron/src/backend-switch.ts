@@ -165,7 +165,11 @@ export function verifySwitchPaths(env: NodeJS.ProcessEnv, keys = ['HOME', 'XDG_D
 }
 async function verifyCLIEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
   verifySwitchPaths(env);
-  if (Object.keys(env).some(key => env[key] && runtimeInjection(key))) throw new Error('Custom runtime injection settings require manual database verification.');
+  // NODE_*/ELECTRON_* never reach a child (backendEnvironment), and LD_LIBRARY_PATH
+  // only adds library directories, as CUDA and similar system profiles do. Other
+  // loader or Python settings can change which code answers the database probe.
+  const blocked = Object.keys(env).sort().find(key => env[key] && runtimeInjection(key) && !/^(NODE_|ELECTRON_)/.test(key) && key !== 'LD_LIBRARY_PATH');
+  if (blocked) throw new Error(`The runtime injection setting ${blocked} requires manual database verification; start Pinote without it to switch.`);
   if (!env.PATH || env.PATH.split(':').some(path => !isAbsolute(path) || path.split('/').includes('..'))) throw new Error('Automatic switching requires an unambiguous absolute PATH.');
   if (await realpath(executable(env, 'flock')) !== await realpath('/usr/bin/flock')) throw new Error('Automatic switching requires the system flock on PATH.');
 }
