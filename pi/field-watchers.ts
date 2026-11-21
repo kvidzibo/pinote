@@ -88,6 +88,10 @@ function paramProblem(param: WatcherParam, current: WatcherValue | undefined): s
     : typeof current === 'string';
   return valid ? undefined : `Invalid parameter: ${param.label}`;
 }
+/** What a watcher uses for keys its saved entry leaves out. Scripts without a declaration keep receiving every field event. */
+const defaults = (manifest: z.infer<typeof Manifest> | undefined) => ({
+  taskEvents: manifest?.taskEvents ?? [], fieldEvents: manifest?.fieldEvents ?? (manifest ? [] : [...FIELD_EVENTS]), fields: manifest?.fields ?? [],
+});
 export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatcher[] {
   const stored = parseFieldWatchers(root);
   const bundled = new Set<string>();
@@ -110,28 +114,36 @@ export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatch
       problem ??= paramProblem(param, params[param.key]);
     }
     const file = basename(config.path);
-    return { ...config, id: createHash('sha256').update(config.path).digest('hex'), bundled: bundled.has(config.path), config, spec, params,
+    return { ...defaults(manifest), ...config, id: createHash('sha256').update(config.path).digest('hex'), bundled: bundled.has(config.path), config, spec, params,
       // A custom script cannot take a built-in watcher's name, which selects PR alert handling.
       name: names[file] ?? (manifest?.name && !Object.values(names).includes(manifest.name) ? manifest.name : basename(file, '.mjs')),
-      taskEvents: config.taskEvents ?? manifest?.taskEvents ?? [],
-      // Scripts without a declaration keep receiving every field event.
-      fieldEvents: config.fieldEvents ?? manifest?.fieldEvents ?? (manifest ? [] : [...FIELD_EVENTS]),
-      fields: config.fields ?? manifest?.fields ?? [], ...(problem ? { problem } : {}) };
+      ...(problem ? { problem } : {}) };
   });
 }
-/** Entries to save for edited watchers: validated against each script's declaration; shared keys are returned separately. */
+/** Entries to save for edited watchers: validated against each script's declaration; shared keys are returned separately.
+ * Settings equal to the script's defaults are left out, so untouched entries stay readable by versions without them. */
 export function watcherEntries(input: unknown): { entries: FieldWatcherConfig[]; shared: Record<string, WatcherValue> } {
   const shared: Record<string, WatcherValue> = {};
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const entries = parseFieldWatchers({ fieldWatchers: input }).map((entry) => {
-    const read = readManifest(entry.path), spec = typeof read === 'object' ? read.params ?? [] : [];
+    const read = readManifest(entry.path), manifest = typeof read === 'object' ? read : undefined;
     const params = { ...entry.params };
-    for (const param of spec) {
+    for (const param of manifest?.params ?? []) {
       const problem = paramProblem(param, params[param.key]);
       if (entry.enabled && problem) throw new Error(problem);
-      if (param.configKey) { shared[param.configKey] = rows.parse(params[param.key] ?? []); delete params[param.key]; }
+      if (param.configKey) {
+        const value = rows.parse(params[param.key] ?? []);
+        if (shared[param.configKey] !== undefined && !same(shared[param.configKey], value)) throw new Error(`${param.label} differs between watchers sharing ${param.configKey}`);
+        shared[param.configKey] = value;
+      }
+      if (param.configKey || same(params[param.key], param.default)) delete params[param.key];
     }
     if (entry.enabled) { if (typeof read === 'string') throw new Error(read); validateWatcherExecutable(entry.path); }
-    return { ...entry, params };
+    const saved: FieldWatcherConfig = { path: entry.path, enabled: entry.enabled };
+    for (const [key, value] of Object.entries(defaults(manifest)) as [keyof ReturnType<typeof defaults>, string[]][]) {
+      if (entry[key] && !same(entry[key], value)) Object.assign(saved, { [key]: entry[key] });
+    }
+    return Object.keys(params).length ? { ...saved, params } : saved;
   });
   return { entries, shared };
 }

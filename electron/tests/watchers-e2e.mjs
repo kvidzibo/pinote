@@ -87,7 +87,8 @@ try {
   await capture('watchers-cleanup-760');
   await saveAll();
   const cleanup = (await saved()).fieldWatchers.find(entry=>entry.path.endsWith('cleanup-worktree.mjs'));
-  assert.deepEqual([cleanup.enabled,cleanup.taskEvents,cleanup.fieldEvents,cleanup.fields,cleanup.params],[true,['completed'],[],['Worktree'],{dir:worktrees}]);
+  assert.deepEqual(cleanup,{path:cleanup.path,enabled:true,params:{dir:worktrees}},'Only settings that differ from the script defaults are written');
+  assert.ok((await saved()).fieldWatchers.every(entry=>entry.path===cleanup.path || Object.keys(entry).join()==='path,enabled'),'Untouched entries stay readable by earlier versions');
   assert.match((await app.evaluate(()=>globalThis.__confirmations)).at(-1),/trusted code, not sandboxed[\s\S]*cleanup-worktree\.mjs/);
   assert.equal((await saved()).handoffPrompt,'Keep me','Unrelated settings are preserved');
 
@@ -117,7 +118,7 @@ try {
   await capture('watchers-custom-760');
   await saveAll();
   assert.deepEqual((await saved()).fieldWatchers.find(entry=>entry.path===custom),
-    {path:custom,enabled:true,taskEvents:['completed'],fieldEvents:['changed'],fields:['Deploy'],params:{environment:'production',timeout:45,recovery:true}});
+    {path:custom,enabled:true,taskEvents:['completed'],fields:['Deploy'],params:{environment:'production',timeout:45}});
   const task = withField('Deploy',{Deploy:'1',Other:'x'});
   const changed = note('agent','update',String(task.id),'--expected-updated-at',task.updated_at,'--set-json',JSON.stringify({Deploy:'2',Other:'y'}));
   const received = async () => existsSync(calls) ? (await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line)) : [];
@@ -139,6 +140,7 @@ try {
   await capture('watchers-forgejo-760');
   await saveAll();
   assert.deepEqual((await saved()).forgejoInstances,[{url:'https://forgejo.example',tokenEnv:'FORGEJO_TOKEN'},{url:'http://127.0.0.1:3000'}],'A blank row is not saved');
+  assert.match((await app.evaluate(()=>globalThis.__confirmations)).at(-1),/forgejoInstances: \{"url":"https:\/\/forgejo\.example","tokenEnv":"FORGEJO_TOKEN"\}\nforgejoInstances: \{"url":"http:\/\/127\.0\.0\.1:3000"\}/,'The confirmation names where each token variable is sent');
 
   // Removing a custom watcher keeps its file; narrow windows stay usable.
   await list.getByRole('button',{name:/^Deploy status:/}).click();
@@ -151,6 +153,12 @@ try {
   await saveAll();
   assert.equal((await saved()).fieldWatchers.some(entry=>entry.path===custom),false);
   assert.ok(existsSync(custom));
+  // A save refused because Pi changed the file meanwhile says so, although the draft is still unsaved.
+  await list.getByRole('button',{name:/^GitHub PR:/}).click();
+  await dialog.getByRole('group',{name:'Field events',exact:true}).getByRole('checkbox',{name:'removed',exact:true}).uncheck();
+  await writeFile(settingsFile,`${await readFile(settingsFile,'utf8')}\n`);
+  await save.click();
+  await status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true}).waitFor();
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');
 } catch (error) {

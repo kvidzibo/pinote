@@ -1202,7 +1202,7 @@ function configureWatchers(): void {
   const count = el('p', undefined, 'tag-hint'), list = el('div', undefined, 'tag-list scroll');
   list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Watchers');
   const footer = el('div', undefined, 'watcher-footer'), status = el('p', 'Loading watchers…', 'tag-hint'); status.setAttribute('role', 'status');
-  let settings: WatcherSettings | undefined, draft: Watcher[] = [], selected: string | undefined, busy = false, note = '';
+  let settings: WatcherSettings | undefined, draft: Watcher[] = [], selected: string | undefined, busy = false, note = '', error = '';
   let refreshEditor = () => {};
   const empty = (value: WatcherValue | undefined) => value === undefined || value === '' || Array.isArray(value) && !value.length;
   // Rows left blank in a list are not saved.
@@ -1226,18 +1226,17 @@ function configureWatchers(): void {
     try {
       const chosen = await api.chooseWatcher(); if (!chosen) return;
       const known = draft.find(w => w.path === chosen.path);
-      if (!known && draft.length >= 32) { note = 'At most 32 watchers can be configured.'; draw(); return; }
+      if (!known && draft.length >= 32) { error = 'At most 32 watchers can be configured.'; update(); return; }
       if (!known) draft.push(chosen);
-      selected = (known ?? chosen).id; note = ''; search.value = '';
-    } catch (error) { note = failure(error); }
-    draw();
+      selected = (known ?? chosen).id; note = ''; search.value = ''; draw();
+    } catch (reason) { error = failure(reason); update(); }
   });
   const revert = button('reset', 'Discard unsaved watcher changes', () => { if (!settings || busy) return; draft = structuredClone(settings.watchers); note = ''; draw(); });
   const save = button('save', 'Save watcher settings…', async () => {
     if (!settings || busy || !dirty()) return;
-    busy = true; update();
+    busy = true; error = ''; update();
     try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); } }
-    catch (error) { note = failure(error); }
+    catch (reason) { error = failure(reason); }
     finally { busy = false; update(); }
   });
   searchBar.append(search, add); sidebar.append(searchBar, count, list, el('p', 'Trusted code, not sandboxed. Runs while Pinote is open.', 'tag-hint'));
@@ -1256,7 +1255,14 @@ function configureWatchers(): void {
   };
   const parameter = (w: Watcher, param: WatcherParam): HTMLElement => {
     const box = el('div', undefined, 'watcher-param'), current = w.params[param.key];
-    const set = (value: WatcherValue | undefined) => { if (value === undefined) delete w.params[param.key]; else w.params[param.key] = value; update(); };
+    const set = (value: WatcherValue | undefined) => {
+      for (const target of param.configKey ? draft : [w]) {
+        const key = target === w ? param.key : target.spec.find(other => other.configKey === param.configKey)?.key;
+        if (!key) continue;
+        if (value === undefined) delete target.params[key]; else target.params[key] = target === w ? value : structuredClone(value);
+      }
+      update();
+    };
     const title = `${param.label}${param.required ? ' *' : ''}`;
     if (param.type === 'boolean') {
       const label = el('label', undefined, 'setting-toggle'), input = el('input'); input.type = 'checkbox'; input.checked = current === true;
@@ -1349,11 +1355,14 @@ function configureWatchers(): void {
       row.title = `${w.name}: ${state}`; row.setAttribute('aria-label', row.title);
     }
     refreshEditor();
-    status.textContent = dirty() ? 'Unsaved changes. Saving asks for confirmation.' : note;
+    // A failed save stays visible until the next attempt or selection.
+    status.textContent = error || (dirty() ? 'Unsaved changes. Saving asks for confirmation.' : note);
+    status.classList.toggle('watcher-problem', !!error);
     save.disabled = revert.disabled = busy || !dirty(); add.disabled = busy || !settings;
   };
   const draw = () => {
     const query = search.value.trim().toLocaleLowerCase(), matches = draft.filter(w => w.name.toLocaleLowerCase().includes(query));
+    error = '';
     count.textContent = query ? `${matches.length} of ${draft.length} watchers` : `Watchers · ${draft.length} / 32`;
     const focused = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.watcher : undefined;
     list.replaceChildren();

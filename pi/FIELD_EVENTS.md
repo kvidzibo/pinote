@@ -70,7 +70,10 @@ Passing means reported checks passed, not that all review/protection rules passe
 ## Watcher settings
 
 Each watcher entry in `pi-note.json` can hold its own settings. Missing keys use
-the script's declared defaults.
+the script's declared defaults; the desktop writes only settings that differ from
+them. Entries with these keys need pi-note 0.48.0+ and Electron 0.19.0+: earlier
+versions reject them and stop loading watchers, so update both before changing
+settings.
 
 ```json
 {
@@ -152,8 +155,8 @@ desktop or the CLI, for tasks that have a `Worktree` field. It runs
 `git worktree remove` on that path when it lies inside the **Worktrees directory**
 parameter (default `/tmp`). Git refuses changed or untracked files, locked
 worktrees and the main working tree; nothing is forced, no branch is deleted and
-the directory is never scanned. It is disabled until you enable it and needs `git`
-on the desktop's `PATH`.
+the directory is never scanned. The recorded path is used exactly as saved. It is
+disabled until you enable it and needs `git` on the desktop's `PATH`.
 
 ## Forgejo PRs
 

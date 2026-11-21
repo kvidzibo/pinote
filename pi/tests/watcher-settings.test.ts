@@ -83,10 +83,19 @@ test('watcher settings save validated entries and the shared keys their scripts 
   assert.throws(() => saveFieldWatchers([{ ...entries[1], bad: true }], raw), /Invalid field watcher/);
   const saved = JSON.parse(saveFieldWatchers(entries, raw));
   assert.deepEqual(saved, { handoffPrompt: 'Keep', forgejoInstances: [{ url: 'http://127.0.0.1:3000' }], fieldWatchers: [
-    { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: {} },
+    { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'] },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: '/tmp' } },
   ] });
   assert.throws(() => saveFieldWatchers(entries, raw), /changed while settings were open/);
+  // Settings equal to the script's defaults are not written: versions without them reject unknown keys.
+  const untouched = discoverFieldWatchers({}).filter((watcher) => watcher.bundled).map(({ path, enabled, taskEvents, fieldEvents, fields, params }) => ({ path, enabled, taskEvents, fieldEvents, fields, params }));
+  const current = readConfigDocument().raw;
+  assert.deepEqual(JSON.parse(saveFieldWatchers(untouched, current)).fieldWatchers, untouched.map(({ path }) => ({ path, enabled: false })));
+  // One shared value cannot be saved with two different contents.
+  const copy = join(dir, 'forgejo-pr.mjs');
+  writeFileSync(copy, '#!/bin/sh\n', { mode: 0o700 });
+  writeFileSync(join(dir, 'forgejo-pr.params.json'), JSON.stringify({ params: [{ key: 'hosts', label: 'Hosts', type: 'list', columns: [{ key: 'url', label: 'URL' }], configKey: 'forgejoInstances' }] }));
+  assert.throws(() => saveFieldWatchers([entries[0], { path: copy, enabled: false, params: { hosts: [{ url: 'https://other.example' }] } }], readConfigDocument().raw), /differs between watchers sharing forgejoInstances/);
 });
 
 test('worktree cleanup removes only a clean linked worktree inside the configured directory', async (t) => {
@@ -105,8 +114,47 @@ test('worktree cleanup removes only a clean linked worktree inside the configure
     assert.notEqual((await complete(path, event)).state, 'removed');
     assert.ok(existsSync(path), `${path} is kept`);
   }
+  mkdirSync(join(inside, 'clean '));
+  assert.equal((await complete(join(inside, 'clean '))).state, 'kept', 'The recorded path is used exactly');
+  assert.ok(existsSync(join(inside, 'clean')));
   assert.equal((await complete(join(inside, 'clean'))).state, 'removed');
   assert.equal(existsSync(join(inside, 'clean')), false);
   assert.match(git('branch', '--list', 'clean').toString(), /clean/, 'The branch is kept');
   assert.equal((await complete(join(inside, 'clean'))).state, 'kept', 'A repeated event is harmless');
+});
+
+test('task events survive a failed read, skip field history and respect settings changed before dispatch', async (t) => {
+  const dir = profile(t), note = join(dir, 'note.mjs'), state = join(dir, 'history.json'), requests = join(dir, 'requests.log');
+  const handler = join(dir, 'task.mjs'), calls = join(dir, 'calls.jsonl');
+  writeFileSync(note, `#!${process.execPath}
+import fs from 'node:fs';
+const args = process.argv.slice(2), state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+fs.appendFileSync(${JSON.stringify(requests)}, args[1] + '\\n');
+if (state.fail) process.exit(1);
+const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined;
+console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [] : state.events.filter((event) => event.id > after) }));`, { mode: 0o700 });
+  writeFileSync(handler, `#!${process.execPath}\nimport fs from 'node:fs';fs.appendFileSync(${JSON.stringify(calls)},fs.readFileSync(0,'utf8')+'\\n');console.log('{}');`, { mode: 0o700 });
+  writeFileSync(join(dir, 'task.params.json'), JSON.stringify({ taskEvents: ['completed'], fields: ['Worktree'] }));
+  const history = (value: Record<string, unknown>) => writeFileSync(state, JSON.stringify(value));
+  const completed = (id: number) => ({ id, taskId: id, event: 'completed', fields: { Worktree: `/tmp/${id}` } });
+  let entry: Record<string, unknown> = { path: handler, enabled: true }, failures = 0;
+  const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, log: () => { failures++; },
+    watchers: () => discoverFieldWatchers({ fieldWatchers: [entry] }) });
+  t.after(() => automation.close());
+  const delivered = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line).eventId) : [];
+
+  history({ tail: 5, events: [completed(5)] });
+  await automation.tick();
+  history({ tail: 6, events: [completed(6)], fail: true });
+  await automation.tick();
+  assert.deepEqual([delivered(), failures], [[], 1]);
+  history({ tail: 6, events: [completed(6)] });
+  await automation.tick();
+  assert.deepEqual(delivered(), ['6'], 'A change made during a failed read still runs');
+  history({ tail: 8, events: [completed(7), completed(8)] });
+  await automation.tick();
+  entry = { ...entry, fields: ['Other'] };
+  await automation.tick(); await automation.tick();
+  assert.deepEqual(delivered(), ['6', '7'], 'A queued task no longer selected by Fields does not run');
+  assert.ok(!readFileSync(requests, 'utf8').includes('field-events'), 'A watcher without field events reads no field history');
 });

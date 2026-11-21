@@ -73,7 +73,9 @@ export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
 export type WatcherValue = string | number | boolean | Record<string, string>[];
 export type WatcherParam = { key: string; label: string; type: 'string' | 'number' | 'boolean' | 'select' | 'directory' | 'list';
-  options?: string[]; columns?: { key: string; label: string }[]; required?: boolean; help?: string };
+  options?: string[]; columns?: { key: string; label: string }[]; required?: boolean; help?: string;
+  /** The value is one shared setting: every watcher declaring the same key shows and saves the same value. */
+  configKey?: string };
 export type WatcherEntry = { path: string; enabled: boolean; taskEvents: string[]; fieldEvents: string[]; fields: string[]; params: Record<string, WatcherValue> };
 /** A script with its effective settings; `spec` is what its parameter file declares. */
 export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; problem?: string };

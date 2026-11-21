@@ -311,12 +311,14 @@ async function boot() {
       if (closing || watcherSaving || !Array.isArray(entries) || !(raw === null || typeof raw === 'string') || Buffer.byteLength(JSON.stringify([entries, raw])) > 2 * 1024 * 1024) throw new Error('Invalid watcher settings');
       watcherSaving = true;
       try {
-        const enabled = entries.filter(entry => entry?.enabled === true).map(entry => String(entry.path));
+        // Validated first: the confirmation names every enabled script and each shared value, such as a
+        // Forgejo instance and the token variable sent to it.
+        const host = await watcherHost(), trusted: string[] = host.watcherSaveSummary(entries);
         const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Save watcher settings?',
-          detail: enabled.length ? `Enabled watchers are trusted code, not sandboxed. They run with your permissions and credentials while Pinote is open:\n\n${enabled.join('\n')}` : 'No watcher will be enabled.',
+          detail: trusted.length ? `Enabled watchers are trusted code, not sandboxed. They run with your permissions and credentials while Pinote is open:\n\n${trusted.join('\n')}` : 'No watcher will be enabled.',
           buttons: ['Cancel', 'Save'], defaultId: 0, cancelId: 0 });
         if (result.response !== 1) return false;
-        (await watcherHost()).saveWatcherSettings(entries, raw);
+        host.saveWatcherSettings(entries, raw);
         return true;
       } finally { watcherSaving = false; }
     },

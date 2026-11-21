@@ -18,8 +18,8 @@ const value = z.string().max(8192).nullable();
 const Event = z.object({ id: integer, taskId: integer.positive(), field,
   event: z.enum(['added', 'changed', 'removed']), value, previousValue: value }).strict();
 const Batch = z.object({ cursor: integer, events: z.array(Event).max(3200) }).strict();
-const TaskEvent = z.object({ id: integer, taskId: integer.positive(), event: z.enum(TASK_EVENTS), fields: z.record(z.string(), z.string()) }).strict();
-const TaskBatch = z.object({ cursor: integer, events: z.array(TaskEvent).max(1000) }).strict();
+const TaskEventSchema = z.object({ id: integer, taskId: integer.positive(), event: z.enum(TASK_EVENTS), fields: z.record(z.string(), z.string()) }).strict();
+const TaskBatch = z.object({ cursor: integer, events: z.array(TaskEventSchema).max(1000) }).strict();
 const SingleFieldResult = z.object({
   state: z.string().min(1).max(64).optional(), summary: z.string().max(1000).optional(),
   display: z.object({ strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(),
@@ -58,6 +58,9 @@ const prKey = (watcher: FieldWatcher, key: string) => watcher.name === 'GitHub P
 const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)} ${url}: ${message}`;
 /** Saved results depend on these settings: changing them checks the watcher's fields afresh. */
 const settings = (watcher: FieldWatcher) => JSON.stringify([watcher.fieldEvents, watcher.fields, watcher.params]);
+type TaskEvent = { id: number; taskId: number; event: typeof TASK_EVENTS[number]; fields: Record<string, string> };
+const wantsTask = (watcher: FieldWatcher, event: TaskEvent) => watcher.taskEvents.includes(event.event)
+  && (!watcher.fields.length || watcher.fields.some((name) => Object.hasOwn(event.fields, name)));
 
 /** One bounded invocation, no shell. Kill the process group on cancellation/overflow. */
 export function runFieldHandler(handler: string, input: unknown, signal: AbortSignal, timeoutMs = 30_000): Promise<FieldResult> {
@@ -112,7 +115,7 @@ export class FieldAutomation {
   private drainDue = 0;
   // In memory only: task events run once, for changes made while this scheduler is running.
   private taskCursor?: number;
-  private taskQueue: { watcherId: string; event: z.infer<typeof TaskEvent> }[] = [];
+  private taskQueue: { watcherId: string; event: TaskEvent }[] = [];
   private taskEventsFailed = false;
   private noteCommand: string;
   private changed: () => void;
@@ -378,20 +381,32 @@ export class FieldAutomation {
           const cursor = this.taskCursor;
           if (cursor !== undefined && (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor))) throw new Error('Invalid task event cursor');
           for (const event of cursor === undefined ? [] : batch.events) {
-            for (const watcher of this.enabled) {
-              if (watcher.taskEvents.includes(event.event) && (!watcher.fields.length || watcher.fields.some((name) => Object.hasOwn(event.fields, name)))) this.taskQueue.push({ watcherId: watcher.id, event });
-            }
+            for (const watcher of this.enabled) if (wantsTask(watcher, event)) this.taskQueue.push({ watcherId: watcher.id, event });
           }
           if (cursor !== undefined && batch.cursor !== cursor) drained = true;
           this.taskCursor = batch.cursor; this.taskEventsFailed = false;
         } catch (error) {
           if (this.lifetime.signal.aborted) throw error;
-          // Start again from the tail rather than replay: needs a note CLI with task-events.
-          this.taskCursor = undefined;
+          // A passing failure keeps the cursor, so changes made meanwhile still run. History that no longer
+          // reaches it (a replaced database) starts again from the tail rather than replaying.
+          if (/Invalid task event cursor|Cursor is ahead/.test(`${(error as Error).message} ${(error as { stderr?: unknown }).stderr ?? ''}`)) this.taskCursor = undefined;
           if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
         }
       }
-      for (const watcher of intake ? this.enabled : []) {
+      // Before field intake: reading a new watcher's field history must not delay a live task event.
+      const queued = this.taskQueue.shift();
+      if (queued) {
+        // Settings may have changed since intake.
+        const watcher = this.enabled.find((w) => w.id === queued.watcherId && wantsTask(w, queued.event));
+        if (!watcher) return;
+        const { id, taskId, event, fields } = queued.event;
+        const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields });
+        if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId, field: `task:${event}`,
+          reason: 'error' in run && run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed', lastSuccess: null, retryAt: null });
+        return;
+      }
+      // A watcher without field events has no field history to read.
+      for (const watcher of intake ? this.enabled.filter((w) => w.fieldEvents.length) : []) {
         const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
         const batch = Batch.parse(await this.note(['field-events', '--after', String(state.cursor), '--limit', '25']));
         if (!valid()) return;
@@ -410,16 +425,6 @@ export class FieldAutomation {
       }
       if (drained) { this.changed(); return; }
       if (intake) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
-      const queued = this.taskQueue.shift();
-      if (queued) {
-        const watcher = this.enabled.find((w) => w.id === queued.watcherId && w.taskEvents.includes(queued.event.event));
-        if (!watcher) return;
-        const { id, taskId, event, fields } = queued.event;
-        const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields });
-        if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId, field: `task:${event}`,
-          reason: 'error' in run && run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed', lastSuccess: null, retryAt: null });
-        return;
-      }
       const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
       const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
       if (!job) return;

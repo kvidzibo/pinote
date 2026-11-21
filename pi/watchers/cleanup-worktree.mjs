@@ -13,7 +13,8 @@ const kept = (reason) => ({ state: 'kept', summary: `Worktree kept: ${reason}` }
 
 export async function handleTaskEvent(event) {
   if (event?.scope !== 'task' || event.event !== 'completed') return {};
-  const recorded = event.fields?.Worktree?.trim(), directory = event.params?.dir;
+  // The exact recorded value: a repaired path could name another worktree.
+  const recorded = event.fields?.Worktree, directory = event.params?.dir;
   if (typeof recorded !== 'string' || !isAbsolute(recorded)) return {};
   if (typeof directory !== 'string' || !isAbsolute(directory)) return kept('no worktrees directory is configured');
   let path, root;

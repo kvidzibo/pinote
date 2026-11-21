@@ -499,6 +499,7 @@ return {
         if (action.startsWith('remove-watcher:')) { watchers = watchers.filter((item) => item.path !== watcher.path); reset = watcher.id; }
         else {
           const enabled = z.boolean().parse(value);
+          if (enabled && watcher.problem) throw new Error(`${watcher.problem}. Set it in the desktop's Watchers settings before enabling.`);
           if (enabled) validateWatcherExecutable(watcher.path); else reset = watcher.id;
           watchers.find((item) => item.path === watcher.path)!.enabled = enabled;
         }

@@ -1,7 +1,7 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { FieldAutomation } from './field-events.ts';
-import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable } from './field-watchers.ts';
+import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, watcherEntries, type FieldWatcher } from './field-watchers.ts';
 import { footerCatalog, parseFooterConfig, readConfigDocument } from './footer-config.ts';
 
 /** Run the field-watcher scheduler for as long as the hosting process (the desktop) lives.
@@ -24,19 +24,26 @@ export async function startFieldWatchers(options: { log?: (event: string) => voi
   return { logPath, close: () => automation.close() };
 }
 
-/** The desktop's Watchers settings. An unsaved bundled script is hidden when a saved entry has the same name:
- * entries saved by Pi point at the package's own copy of that watcher. */
+/** The desktop's Watchers settings. An unsaved bundled script is hidden when a saved entry is a copy of it (same
+ * file name and declared parameters): entries saved by Pi point at the package's own copy of that watcher. */
 export function watcherSettings() {
   const { raw, value } = readConfigDocument();
   const saved = new Set(parseFieldWatchers(value).map((entry) => entry.path));
   const all = discoverFieldWatchers(value);
-  const watchers = all.filter((watcher) => saved.has(watcher.path) || !all.some((other) => saved.has(other.path) && other.name === watcher.name))
+  const copy = (a: FieldWatcher, b: FieldWatcher) => basename(a.path) === basename(b.path) && JSON.stringify(a.spec) === JSON.stringify(b.spec);
+  const watchers = all.filter((watcher) => saved.has(watcher.path) || !all.some((other) => saved.has(other.path) && copy(other, watcher)))
     .map(({ config, ...watcher }) => watcher);
   let fieldNames: string[] = [];
   try { fieldNames = footerCatalog(parseFooterConfig(value)).map((field) => field.name); } catch { /* Invalid footer settings: no suggestions. */ }
   return { raw, watchers, fieldNames };
 }
 export { saveFieldWatchers as saveWatcherSettings } from './footer-config.ts';
+/** What saving these entries will trust, for the desktop's confirmation: enabled scripts and the shared values they are given. */
+export function watcherSaveSummary(input: unknown): string[] {
+  const { entries, shared } = watcherEntries(input);
+  return [...entries.filter((entry) => entry.enabled).map((entry) => entry.path),
+    ...Object.entries(shared).flatMap(([key, value]) => Array.isArray(value) ? value.map((row) => `${key}: ${JSON.stringify(row)}`) : [])];
+}
 /** A script chosen in the desktop but not saved yet, with the defaults its parameter file declares. */
 export function describeWatcher(path: string) {
   validateWatcherExecutable(path);
