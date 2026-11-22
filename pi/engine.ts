@@ -25,12 +25,14 @@ const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', '
 const TaskId = z.number().int().positive().safe();
 const NewProposal = z.object({ text: z.string().min(1).refine((value) => [...value].length <= 4000, 'Task text exceeds 4000 characters'), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const ExistingProposal = z.object({ task_id: TaskId }).strict();
+// Matches the backend's tag rules, so an accepted suggestion cannot fail on its tag.
+const InputTag = z.string().trim().min(1).max(64).refine((value) => !/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value), 'tag must be a single line without control characters').optional();
 const ProposalInput = z.union([
-  z.object({ title: z.string(), description: z.string().optional(), tag: NewProposal.shape.tag }).strict()
+  z.object({ title: z.string(), description: z.string().optional(), tag: InputTag }).strict()
     .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) })),
   ExistingProposal,
 ]);
-const LaterInput = z.object({ title: z.string(), description: z.string().refine((value) => value.trim() !== '', 'description must be nonblank'), tag: NewProposal.shape.tag }).strict()
+const LaterInput = z.object({ title: z.string(), description: z.string().refine((value) => value.trim() !== '', 'description must be nonblank'), tag: InputTag }).strict()
   .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) }));
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
 const Context = z.object({ conversationId: z.string().min(1).max(256), piSessionId: z.string().max(256).regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/).optional(), contextId: z.string().min(1).max(256).optional(), fieldReceipts: z.array(z.string().uuid()).max(4096).optional(), state: z.object({
@@ -288,10 +290,12 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     footer.push({ text: `${icons.add} `, action: 'proposal:accept', ...(secondary ? { secondaryAction: 'proposal:dismiss' } : {}), width: 3 });
     footer.push({ text: `${suggestion!.tag ? `[${suggestion!.tag}] ` : ''}${taskTitle(suggestion!.text).slice(0, 2000)}`, action: 'proposal:preview', ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
   } else footer.push({ text: 'Pinote · no task', width: config.config.titleWidth });
+  // A pending future task keeps two footer slots after the fields.
+  const slots = later ? 126 : 128;
   let fieldCount = 0;
   if (task) {
     for (const field of footerDisplayFields(config.config, fields(config.config, task.agent_notes))) {
-      if (fieldCount >= config.config.maxFields || footer.length >= 128) break;
+      if (fieldCount >= config.config.maxFields || footer.length >= slots) break;
       const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
       const legacy = field.name === 'PRs' ? task.agent_notes.PR : undefined;
       const legacyRemainder = (legacy ?? '').split(/\r?\n/).filter((line) => !parsePullRequests(line).length).join('\n');
@@ -299,7 +303,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       let room = field.width ?? config.config.fieldWidth;
       if (prs.length) {
         for (const [index, pr] of prs.entries()) {
-          if (room <= 0 || footer.length >= 128) break;
+          if (room <= 0 || footer.length >= slots) break;
           const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
             .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url))
             .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? ''));
@@ -323,7 +327,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
         fieldCount++;
         if (!legacyExtra || room < 3) continue;
       }
-      if (footer.length >= 128) break;
+      if (footer.length >= slots) break;
       // Preserve custom legacy text/links alongside valid plural URLs, using
       // the same field slot and the group's remaining column budget.
       let raw: string | undefined = task.agent_notes[field.name];
@@ -342,7 +346,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
         ?? (field.name === 'PRs' ? data.fieldStatuses.find((item) => item.field === 'PR') : undefined);
       const style = features.fieldEvents && status ? { ...(status.result.display ?? {}), ...(status.stale ? { color: 'muted' as const } : {}) } : undefined;
       if (features.footerNativeActions) {
-        if (footer.length + (target ? 2 : 1) > 128) break;
+        if (footer.length + (target ? 2 : 1) > slots) break;
         // Clip before splitting: each field still consumes one field slot, and
         // the icon (including its space) shares the field's cell budget.
         const icon = target ? ` ${icons['external-link']}` : '';
@@ -353,7 +357,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       if (!prs.length) fieldCount++;
     }
   }
-  if (later && footer.length <= 126) {
+  if (later) {
     // Fullscreen hosts keep these visible when the title and fields fill the row.
     const keep = features.footerNativeActions ? { keep: true as const } : {};
     footer.push({ text: ' · ', width: 3, ...keep });

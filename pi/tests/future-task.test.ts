@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -35,6 +35,7 @@ test('a future task is previewed and added without starting it or replacing the 
     assert.equal((await call('suggest_later', { title: 'x'.repeat(61) })).isError, true);
     assert.equal((await call('suggest_later', { task_id: selectedId })).isError, true, 'Only new tasks can be suggested for later');
     for (const description of [undefined, '', ' \n']) assert.equal((await call('suggest_later', { title: 'No details', description })).isError, true, 'A description is required');
+    assert.equal((await call('suggest_later', { title: 'Bad tag', description: 'Details', tag: 'a\nb' })).isError, true, 'The backend would reject this tag on acceptance');
     assert.equal((await call('suggest_later', { title: 'Old idea', description: 'Details' })).isError, undefined);
     const replaced = await read();
     assert.equal((await call('suggest_later', { title: 'Retry flaky e2e', description: '- Wait for the ready event', tag: 'ci' })).isError, undefined);
@@ -64,10 +65,18 @@ test('a future task is previewed and added without starting it or replacing the 
     assert.equal(dismissed.view.state.later, null);
     assert.ok(dismissed.view.footer.every((item: any) => !item.action?.startsWith('later:')));
     assert.equal((await cli('list', '--all', '--json')).length, tasks.length, 'Dismissal creates nothing');
-    // Also offered when nothing is selected, alongside a regular suggestion.
-    await act(await read(), 'clear');
-    await call('propose', { title: 'Start now' });
+    // 63 linked fields would fill the 128-item footer; the suggestion keeps its two slots.
+    const names = Array.from({ length: 63 }, (_, index) => `F${index}`);
+    await writeFile(join(dir, 'pi-note.json'), JSON.stringify({ footer: { maxFields: 64, fields: names.map((name) => ({ name, label: '', format: '<value>', link: true })) } }));
+    const current = JSON.parse((await call('get_current')).content[0].text);
+    assert.equal((await call('update_current', { expected_updated_at: current.updated_at, set: Object.fromEntries(names.map((name) => [name, `https://example.com/${name}`])) })).isError, undefined);
     await call('suggest_later', { title: 'Do later', description: 'Details' });
+    view = await read();
+    assert.equal(view.footer.length, 128);
+    assert.equal(view.footer.at(-1).action, 'later:preview');
+    // Also offered when nothing is selected, alongside a regular suggestion.
+    await act(view, 'clear');
+    await call('propose', { title: 'Start now' });
     view = await read();
     assert.deepEqual(view.footer.filter((item: any) => item.action).map((item: any) => item.action), ['proposal:preview', 'later:preview']);
   } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
