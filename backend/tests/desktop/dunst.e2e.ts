@@ -2,7 +2,7 @@
 // starts its own D-Bus session. Run: xvfb-run -a npm --prefix backend run test:desktop
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -25,11 +25,16 @@ async function desktop(t: TestContext) {
   // Absolute even for a relative TMPDIR: the CLI ignores relative XDG paths.
   const root = resolve(mkdtempSync(join(tmpdir(), 'pinote-dunst-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state') };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'),
+    XDG_RUNTIME_DIR: join(root, 'runtime') };
+  mkdirSync(env.XDG_RUNTIME_DIR!, { mode: 0o700 }); // dbus-daemon writes its transient services here
   delete env.WAYLAND_DISPLAY;
   delete env.DBUS_SESSION_BUS_ADDRESS;
   // Never the caller's session bus, however this file is invoked.
-  const bus = spawn('dbus-daemon', ['--session', '--nofork', `--address=unix:path=${join(root, 'bus')}`, '--print-address=1'],
+  // D-Bus address values percent-escape every byte outside this set.
+  const socket = Array.from(Buffer.from(join(root, 'bus')), byte => /[-\w/.\\*]/.test(String.fromCharCode(byte))
+    ? String.fromCharCode(byte) : `%${byte.toString(16).padStart(2, '0')}`).join('');
+  const bus = spawn('dbus-daemon', ['--session', '--nofork', `--address=unix:path=${socket}`, '--print-address=1'],
     { env, stdio: ['ignore', 'pipe', 'inherit'] });
   t.after(() => { bus.kill('SIGTERM'); });
   env.DBUS_SESSION_BUS_ADDRESS = await new Promise<string>((ready, failed) => {
