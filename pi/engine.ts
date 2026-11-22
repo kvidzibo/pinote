@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
@@ -80,18 +80,16 @@ function boundedState(state: State): State {
   if (JSON.stringify(state).length > 8192) throw new Error('Proposal exceeds the host state budget; shorten it');
   return state;
 }
-// Executables that already reported a supported version. Replacing the CLI or
-// changing what PATH resolves to checks again; a failed check is not remembered.
+// Absolute executables that already reported a supported version, by file
+// identity: a replaced CLI is checked again, and a failed check is not remembered.
+// A name resolved through PATH is checked on every call.
 const supported = new Set<string>();
 async function executable(command: string): Promise<string | null> {
-  const candidates = command.includes('/') ? [command] : (process.env.PATH ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, command));
-  for (const candidate of candidates) {
-    try {
-      const stat = await fs.stat(candidate);
-      if (stat.isFile() && stat.mode & 0o111) return [await fs.realpath(candidate), stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
-    } catch { /* Not this PATH entry. */ }
-  }
-  return null; // Never remembered; running it reports the actual error.
+  if (!isAbsolute(command)) return null;
+  try {
+    const stat = await fs.stat(command);
+    return [await fs.realpath(command), stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+  } catch { return null; } // Running it reports the actual error.
 }
 async function note(args: string[], signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();

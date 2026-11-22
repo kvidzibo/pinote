@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectEngine } from './host.ts';
 
-test('an unsupported note is rejected until upgraded; a supported one is checked once until replaced', async (t) => {
+test('an unsupported note is rejected until upgraded; a supported absolute one is checked once until replaced', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'pinote-version-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const command = join(dir, 'note'), version = join(dir, 'version'), log = join(dir, 'log');
@@ -33,4 +33,10 @@ console.log(args[0] === '--version' ? ${reported} : '[]');
   await rename(join(dir, 'older'), command);
   assert.match((await tags()).content[0].text, /Pinote requires note 0\.25\.0\+/);
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n'), [...calls, '--version']);
+  // A name resolved through PATH is not remembered: what it resolves to can change.
+  await install(command, `'pinote 0.25.0'`);
+  Object.assign(process.env, { PINOTE_NOTE_COMMAND: 'note', PATH: `${dir}:${process.env.PATH}` });
+  await writeFile(log, '');
+  for (let call = 0; call < 2; call++) assert.equal((await tags()).content[0].text, '[]');
+  assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n'), ['--version', '--no-notify agent tags', '--version', '--no-notify agent tags']);
 });
