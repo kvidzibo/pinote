@@ -35,7 +35,7 @@ test('a future task is previewed and added without starting it or replacing the 
     assert.equal((await call('suggest_later', { title: 'x'.repeat(61) })).isError, true);
     assert.equal((await call('suggest_later', { task_id: selectedId })).isError, true, 'Only new tasks can be suggested for later');
     for (const description of [undefined, '', ' \n']) assert.equal((await call('suggest_later', { title: 'No details', description })).isError, true, 'A description is required');
-    assert.equal((await call('suggest_later', { title: 'Bad tag', description: 'Details', tag: 'a\nb' })).isError, true, 'The backend would reject this tag on acceptance');
+    for (const tag of ['a\nb', ' ', 'a'.repeat(63) + '\u0958']) assert.equal((await call('suggest_later', { title: 'Bad tag', description: 'Details', tag })).isError, true, 'The backend would reject this tag on acceptance');
     assert.equal((await call('suggest_later', { title: 'Old idea', description: 'Details' })).isError, undefined);
     const replaced = await read();
     assert.equal((await call('suggest_later', { title: 'Retry flaky e2e', description: '- Wait for the ready event', tag: 'ci' })).isError, undefined);

@@ -26,7 +26,8 @@ const TaskId = z.number().int().positive().safe();
 const NewProposal = z.object({ text: z.string().min(1).refine((value) => [...value].length <= 4000, 'Task text exceeds 4000 characters'), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const ExistingProposal = z.object({ task_id: TaskId }).strict();
 // Matches the backend's tag rules, so an accepted suggestion cannot fail on its tag.
-const InputTag = z.string().trim().min(1).max(64).refine((value) => !/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value), 'tag must be a single line without control characters').optional();
+const InputTag = z.string().refine((value) => !/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value), 'tag must be a single line without control characters')
+  .transform((value) => value.trim().normalize('NFC')).refine((value) => value !== '' && [...value].length <= 64, 'tag must be 1–64 characters').optional();
 const ProposalInput = z.union([
   z.object({ title: z.string(), description: z.string().optional(), tag: InputTag }).strict()
     .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) })),
