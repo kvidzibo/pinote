@@ -79,7 +79,10 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: electron/package-lock.json
+          cache-dependency-path: |
+            electron/package-lock.json
+            backend/package-lock.json
+            pi/package-lock.json
       - name: Install isolated desktop test prerequisites
         run: >-
           sudo apt-get update && sudo apt-get install -y
@@ -87,8 +90,8 @@ jobs:
           libgtk-3-0t64 libnss3 libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64
           libcups2t64 libdrm2 libgbm1 libxcomposite1 libxdamage1 libxfixes3
           libxrandr2 libxkbcommon0
-      - run: npm --prefix backend ci --ignore-scripts --no-audit --no-fund
       - run: npm --prefix electron ci --ignore-scripts --no-audit --no-fund
+      # Also installs and builds backend/ and installs pi/.
       - run: npm --prefix electron run setup
       - name: Provision Chromium SUID sandbox on ephemeral runner
         run: |
@@ -97,8 +100,8 @@ jobs:
       - name: Type and unit checks
         if: matrix.screen == '800x600x24'
         run: npm --prefix electron run check && npm --prefix electron test
-      # The lifecycle sequence (part 1) and the independent workflow checks (part 2)
-      # run concurrently, each on its own X server and private D-Bus session.
+      # The lifecycle sequence (part 1), the workflow checks (part 2) and the editor
+      # sequence (part 3) run concurrently, each on its own X server and private D-Bus session.
       - name: Isolated desktop checks
         working-directory: electron
         env:
@@ -107,11 +110,13 @@ jobs:
           npm run build
           run() { xvfb-run -n "$1" -s "-screen 0 $SCREEN" dbus-run-session -- sh -c "$2" > "$RUNNER_TEMP/e2e-$1.log" 2>&1; }
           run 101 'node tests/e2e.mjs --part=1' & lifecycle=$!
-          run 102 'node tests/backend-switch-e2e.mjs && node tests/watchers-e2e.mjs && node tests/e2e.mjs --part=2' & workflows=$!
+          run 102 'node tests/backend-switch-e2e.mjs && node tests/e2e.mjs --part=2' & workflows=$!
+          run 103 'node tests/watchers-e2e.mjs && node tests/e2e.mjs --part=3' & editor=$!
           status=0
           wait "$lifecycle" || status=1
           wait "$workflows" || status=1
-          for n in 101 102; do echo "--- e2e display :$n ---"; cat "$RUNNER_TEMP/e2e-$n.log"; done
+          wait "$editor" || status=1
+          for n in 101 102 103; do echo "--- e2e display :$n ---"; cat "$RUNNER_TEMP/e2e-$n.log"; done
           exit "$status"
       - run: npm --prefix electron run package
         if: matrix.screen == '1280x900x24'

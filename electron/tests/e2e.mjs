@@ -12,7 +12,7 @@ assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a pr
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const handoffOnly = process.argv.includes('--handoff-only');
 const part = process.argv.find(arg => arg.startsWith('--part='))?.slice('--part='.length);
-assert.ok(part === undefined || ((part === '1' || part === '2') && !handoffOnly), 'Use --part=1 or --part=2 without --handoff-only');
+assert.ok(part === undefined || (['1', '2', '3'].includes(part) && !handoffOnly), 'Use --part=1, --part=2 or --part=3 without --handoff-only');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
 const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
 const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
@@ -56,7 +56,12 @@ const progress = call('add',{text:'Check X11, CLI and Pi coexistence',tag:'Work'
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
 call('transition',{id:t.id,revision:t.updated_at,state:t.state,action:'start'});
 call('add',{text:'Review drafts, reminders and archive',tag:null});
-for(let index=0;index<(handoffOnly ? 0 : 100);index++) call('add',{text:`Benchmark task ${index}`,tag:'Work'});
+if (!handoffOnly) {
+  // Filler rows through the backend's own store in this process: one bridge process per row took seconds.
+  const { Store } = await import('../../backend/src/store.ts');
+  const store = new Store(join(env.XDG_DATA_HOME, 'pinote/notes.db'));
+  try { for(let index=0;index<100;index++) store.add(`Benchmark task ${index}`,{tag:'Work'}); } finally { store.close(); }
+}
 let wm, app;
 const logs=[]; const pageErrors=[];
 // Observe the real main-process menu without replacing native popup behavior.
@@ -197,8 +202,8 @@ try {
   assert.ok(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences().sandbox));
   assert.equal(await page.locator('#pinned .task-row').count(),1);
   assert.equal(await page.locator('#ordinary .task-row').count(),2);
-  // The idle resource sample runs once, in the shorter part 2.
-  if (part !== '1') {
+  // The idle resource sample runs once, in part 2.
+  if (part === undefined || part === '2') {
   const resources = await app.evaluate(({app})=>app.getAppMetrics().reduce((r,p)=>({rssKiB:r.rssKiB+p.memory.workingSetSize,cpuPercent:r.cpuPercent+p.cpu.percentCPUUsage}),{rssKiB:0,cpuPercent:0}));
   const scan=performance.now(); for(let i=0;i<5;i++)call('snapshot',{view:'active'});
   const snapshotMean=Math.round((performance.now()-scan)/5);
@@ -216,8 +221,9 @@ try {
   await page.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();
   assert.deepEqual(await page.locator('.tag-choice span').allTextContents(),['Work (101) ▶ 1','Empty filter (0)','Untagged (2)']);
   await page.keyboard.press('Escape');
-  // CI runs these self-contained workflow checks (part 2) beside the lifecycle sequence (part 1).
-  if (part !== '1') {
+  // CI runs these self-contained workflow checks (part 2) and the editor sequence (part 3)
+  // beside the lifecycle sequence (part 1).
+  if (part === undefined || part === '2') {
   // task393: allocation and keyboard focus with the complete benchmark dataset.
   {
     const filter = page.locator('#toolbar button').filter({has:page.locator('img[src*="view-filter-symbolic"]')});
@@ -898,7 +904,7 @@ try {
   const added = call('snapshot',{view:'active'}).notes.find(n=>n.text.startsWith('Electron lifecycle'));
   // One integrated Markdown source regression: real textbox keys, undo, paste,
   // storage, compact title, reload and explicit draft copy.
-  {
+  if (part !== '3') {
     const checkBulletIndent = async (textbox, name) => {
       const source = '# Indentation\n- Parent\n- Child';
       await textbox.fill(source); await textbox.press('Control+End');
@@ -1029,8 +1035,8 @@ try {
   await page.keyboard.press('Control+Enter');
   await page.locator('.task-title').filter({hasText:/^Edited from Electron ☘$/}).waitFor();
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).text,'Edited from Electron ☘\nkeeps ID and history');
-  // Autosave owns a revision chain across typing, tag changes and detached editors.
-  {
+  // Part 3. Autosave owns a revision chain across typing, tag changes and detached editors.
+  if (part !== '1') {
     const original='Edited from Electron ☘\nkeeps ID and history';
     const snapshot=()=>call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id);
     const editDialog=page.getByRole('dialog',{name:`Edit task ${added.id}`,exact:true});
@@ -1190,6 +1196,11 @@ try {
     await text.fill(original); await saved();
     await page.keyboard.press('Escape');
   }
+  if (part === '3') {
+    // Part 1 checks these invariants later, in its own processes.
+    assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
+    assert.deepEqual(pageErrors,[]);
+  } else {
   await selectTaskAction(page, added.id, 'Start');
   await page.waitForFunction(id => document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'), added.id);
   // Queue a refresh behind completion so clearing busy renders the old snapshot.
@@ -1773,6 +1784,7 @@ try {
     await close();
     assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
   } finally { await chmod(stateDir,0o700); }
+  }
   }
   console.log(`Electron UI validation artifacts: ${root}`);
   }

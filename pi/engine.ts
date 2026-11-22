@@ -80,13 +80,28 @@ function boundedState(state: State): State {
   if (JSON.stringify(state).length > 8192) throw new Error('Proposal exceeds the host state budget; shorten it');
   return state;
 }
+// Absolute executables that already reported a supported version, by file
+// identity: a replaced CLI is checked again, and a failed check is not remembered.
+// A name resolved through PATH is checked on every call.
+const supported = new Set<string>();
+async function executable(command: string): Promise<string | null> {
+  if (!isAbsolute(command)) return null;
+  try {
+    const stat = await fs.stat(command);
+    return [await fs.realpath(command), stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+  } catch { return null; } // Running it reports the actual error.
+}
 async function note(args: string[], signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
   const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
-  const version = (await exec(noteCommand(), ['--version'], options)).stdout.trim();
-  const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote requires note 0.25.0+');
-  return (await exec(noteCommand(), ['--no-notify', ...args], options)).stdout;
+  const command = noteCommand(), identity = await executable(command);
+  if (identity === null || !supported.has(identity)) {
+    const version = (await exec(command, ['--version'], options)).stdout.trim();
+    const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
+    if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote requires note 0.25.0+');
+    if (identity !== null) supported.add(identity);
+  }
+  return (await exec(command, ['--no-notify', ...args], options)).stdout;
 }
 async function selected(state: State, signal: AbortSignal): Promise<Task | null> {
   if (!state.selectedId) return null;
