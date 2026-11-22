@@ -1,6 +1,6 @@
 # CLI, reminders, and data
 
-[Quickstart](../README.md) · [CLI and data](usage.md) · [GTK and desktop](gui.md) · [Development](development.md)
+[Quickstart](../README.md) · [CLI and data](usage.md) · [Electron](electron.md) · [Development](development.md)
 
 Run checkout-relative commands from the repository root.
 
@@ -32,10 +32,9 @@ transfer, `(cd backend && npm pack)` produces a tarball containing the CLI and
 bundled backend. No Python runtime or database conversion is needed.
 
 The legacy Python CLI remains available through `uv tool install .` / `pipx install .`
-for GTK compatibility; it shares the same schema-8 database and lock. Be explicit
-about executable paths when both CLIs are installed. GTK still requires Python 3.11+
-and GTK bindings; see [GUI setup](gui.md). Neither installer changes desktop startup
-or existing reminders.
+and serves as a compatibility reference. It shares the same schema-8 database and
+lock. Be explicit about executable paths when both CLIs are installed. Neither
+installer changes desktop startup or existing reminders.
 
 For a CLI-only Python install without uv or pipx, use a dedicated virtual environment:
 
@@ -125,16 +124,17 @@ is omitted from Markdown exports. Remote Pi selection supplies the ID automatica
 
 Use the returned `updated_at` for guarded starts, updates, tagging, and completion; a stale revision fails
 without changing anything. Fields are retained as history snapshots and displayed
-under `## Agent` in terminal listings and the GTK Markdown preview. The task editor
-edits only task text, leaving agent fields intact. Fields also remain visible as
-literal text in the archive/reminders. Completion, removal and scheduling clear
-project selections; restoring does not silently reselect tasks.
+under `## Agent` in terminal listings and in the Agent section of Electron's
+preview and expanded Archive and Scheduled reminders entries. Editing task text
+leaves fields intact; use **Agent fields** to edit them separately in Electron.
+Completion, removal and scheduling clear project selections; restoring does not
+silently reselect tasks.
 
 The existing `list --json` format is unchanged; use `agent get` for handoff data.
 `PRs` shows multiple GitHub or Forgejo PR links in the Pi footer, one URL or
 Markdown link per line, with independent CI/merge status colours when the
 corresponding provider's watcher is enabled. Legacy `PR` values remain readable; see
-[multiple PRs](../pi/README.md#multiple-prs-pi-note-0430).
+[multiple PRs](../pi/README.md#multiple-prs).
 `Bar`, one field label per line, shows those fields as Markdown text; links in them
 are clickable. Other fields stay on the task only.
 See the [Pi extension](../pi/README.md) for `/pinote`, Settings actions, footer status, and tools.
@@ -149,23 +149,15 @@ the active list and stays in the separate reminders list until due. Reminders ar
 one-shot: when due they return as unchecked active tasks with the same ID, text,
 tag, and history. Scheduling an in-progress task clears its progress.
 
-In the GUI, use **right-click note text → Set reminder…**, choose a calendar date
-and 24-hour time, then click **Set reminder**. **Bottom menu → Reminders…** shows
-scheduled notes, earliest first, with their full text and local trigger time.
-**Change time…** reschedules a reminder; **Move to main** cancels its timer and
-returns it immediately. Closing the reminders window does not stop timers.
-The main list's tag filter still applies when a reminder returns. Due reminders show
-an **amber bell** on the main list, including after restarting the GUI. Hover over it
-to see how long ago it was due, such as **Due 2 hours ago** (or **Due just now**).
-This updates automatically and uses the original due time, even if delivered late.
-The bell stays through edits and progress changes, until the task is completed,
-deleted, or scheduled again. **Move to main** cancels the timer without adding a bell.
+In Electron, use **Set reminder…** from a task's actions to choose a local date
+and time. **Menu → Scheduled reminders** lists scheduled tasks and their trigger
+times. Use **Change reminder time** to reschedule or **Release reminder now** to
+return a task early. The checklist's tag filter still applies when a reminder returns.
 
-While the GUI is open, due reminders return on its next poll (about one second).
-If pinote is closed or the computer is asleep, missed reminders return when the
-GUI next opens/resumes or a `note` command runs. There is **no new background
-service, wake-up alarm, or automatic Dunst notification** for timers; keep the GUI
-open for automatic delivery to the main list. GUI-triggered changes do not refresh Dunst.
+Due reminders return when Electron refreshes, including after it next opens or
+resumes, or when a `note` command runs. There is **no background service,
+wake-up alarm, or automatic Dunst notification** for timers. Electron changes
+do not refresh Dunst.
 
 CLI equivalents: `note schedule ID "YYYY-MM-DD HH:MM"`, `note reminders`, and
 `note restore ID` to bring one back early. `note rm ID` archives a scheduled note
@@ -194,6 +186,17 @@ Data is committed **before** notification delivery. If Dunst is missing or
 unavailable, mutations still succeed (exit 0) with a warning. `note show` returns
 1 on notification failure. Validation/storage errors return 1; CLI syntax errors
 return 2. Do not repeat an add just because desktop delivery failed.
+
+#### Desktop login
+
+To show the Dunst reminder at i3 login, replace any old reminder startup command with:
+
+```i3
+exec --no-startup-id /home/your-user/.local/bin/note show
+```
+
+Use the actual absolute path from `command -v note`. Pinote does not edit i3
+configuration. See the [Electron launch guide](electron.md#install-and-launch-from-a-checkout).
 
 ## Import existing reminders
 
@@ -235,22 +238,8 @@ IDs, tags, scheduled times, agent fields, project selections, or history.
 
 - Notes/history, agent fields and per-directory selections: `$XDG_DATA_HOME/pinote/notes.db`
   (default `~/.local/share/pinote/notes.db`).
-- Unfinished GUI input: `gui-draft.txt` beside `notes.db`, private to the current
-  user and separate from tasks/history. It is saved about every 250 ms while editing
-  and flushed on normal close; an abrupt termination may lose the latest edits.
-  Draft read/write errors appear in the GUI and log. Drafts are plain text, not encrypted.
-- Existing-task edit drafts: `gui-edit-drafts/ID.json` beside `notes.db`, private to
-  the current user. They retain the original task revision and edited text, separately
-  from tasks/history. Saved about every 250 ms and flushed on close; Save or Discard
-  clears that task's draft. Restarting preserves drafts, including empty text and
-  whitespace; abrupt termination may lose the latest edits. Drafts are not encrypted.
-- GUI tag filter: `gui-filter.json` beside `notes.db`, private to the current user.
-  Saved when changed and flushed on close; this is separate from the new-task tag selection.
-- GUI window dimensions: `gui-window-size.json` beside `notes.db`, saved when changed
-  and flushed on close.
-- Viewed agent updates: `gui-agent-read.json` beside `notes.db`, private to the current
-  user. It stores viewed event IDs, not task content, and is saved after viewing and
-  flushed on close. Losing this file makes existing agent updates unread again.
+- Electron drafts and UI state: `electron/state.json` beside `notes.db`; window
+  geometry: `electron/window.json`. See [Electron state and recovery](electron.md#shared-tasks-separate-ui-state-and-recovery).
 - Display lock: the same data directory. Mutations and notifications are
   serialized so an older process cannot overwrite a newer display.
 - Logs/warnings/unexpected failures: stdout and
@@ -265,13 +254,33 @@ Data stays local; pinote has no network calls or telemetry. Notifications are
 sent to your desktop daemon and may also remain in Dunst's own history, so avoid
 secrets in notes. Database and exports are not encrypted.
 
-For a complete backup, close the GUI, stop running `note` commands, and copy
-`notes.db` plus `gui-draft.txt`, `gui-edit-drafts/`, `gui-filter.json`,
-`gui-agent-read.json`, and `gui-window-size.json` if present;
-restore them while pinote is stopped.
+For a complete task and desktop state backup, close Electron, stop running `note`
+commands, and copy `notes.db` plus the `electron/` directory beside it if present.
+Restore them while pinote is stopped.
 Do not copy a live database mid-write. Keep personal data and exports out of Git.
 If storing copies inside a checkout, use its ignored `exports/` and `backups/`
 directories. Databases, draft caches, logs, local `MEMORY.md`/`REMINDER.md`,
 environment files, and key files are also ignored.
 Arbitrarily named exports elsewhere are not automatically protected; inspect
 staged files before publishing. Uninstalling the tool does not delete data.
+
+### Upgrading for scheduled reminders
+
+Back up `notes.db` first. Update every installation that opens the database,
+including Electron and the CLI used by Pi. `note` versions before 0.25.0 cannot read schema 8.
+
+The first database open upgrades schema 1–7 to **8** atomically, retaining note
+IDs, timestamps, tags, reminders, history, and import markers. Tasks from schema
+1 or 2 start untagged. Schema 5 stores tags separately, including unused tags.
+Schema 6 adds agent fields (initially empty), history snapshots, and per-directory
+Pi task selections. Schema 7 adds optional tag folders (initially unset), and
+schema 8 adds persistent Pi session IDs (initially empty).
+
+Edits and tag changes retain the task ID and record old/new values in history;
+`note history ID` shows them. Editing a task does not replace historical text.
+
+For existing GTK users: `pinote-gui` was removed in 0.26.0. Electron uses the
+same database; switching desktops requires no data conversion. Electron does not
+read GTK's unsaved input or edit drafts (`gui-draft.txt`, `gui-edit-drafts/` beside
+`notes.db`): save unfinished edits before upgrading, or copy their text from
+those files.

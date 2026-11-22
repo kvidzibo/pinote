@@ -1,4 +1,4 @@
-"""One-request, GTK-free JSON boundary for the optional Electron frontend."""
+"""One-request JSON boundary for the Electron frontend."""
 
 from __future__ import annotations
 

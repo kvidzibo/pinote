@@ -1,4 +1,4 @@
-"""The optional frontend's data boundary is testable without GTK."""
+"""The frontend data boundary."""
 
 from __future__ import annotations
 

@@ -1,18 +1,16 @@
-# Experimental Electron frontend
+# Electron desktop frontend
 
-[Quickstart](../README.md) · [Development and tests](development.md#electron-frontend) · [GTK fallback](gui.md)
+[Quickstart](../README.md) · [CLI and data](usage.md) · [Electron](electron.md) · [Development](development.md)
 
-Electron uses the Node backend; Python is not required. GTK remains available
-as a separate legacy frontend, sharing the same database. This does not change
-your installed desktop startup. Only Linux/X11/i3 is a validation target.
-Resource use is substantially higher than GTK. Trial it before considering a
-default switch; local validation measurements are not performance guarantees.
+Electron is Pinote's desktop frontend. It uses the Node backend; Python is not
+required. Only Linux/X11/i3 is a validation target; local validation is not a
+performance guarantee.
 
 ## Install and launch from a checkout
 
-Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date` for local reminders, and desktop
-libraries for Electron (including GTK 3, not Python GTK bindings).
-The private `electron/` package (0.19.2) bundles the matching Node backend;
+Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
+for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
+The private `electron/` package (0.19.3) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -34,7 +32,7 @@ Relative PATH entries are ignored; unsupported Node versions fail at startup.
 Node/Electron injection environment flags are cleared in backend children.
 `PINOTE_ELECTRON_BACKEND` remains an explicit trusted absolute executable override
 for compatibility and diagnostics; there is no automatic Python fallback.
-Installation does not alter GTK startup, i3 rules, or user configuration.
+Installation does not change desktop login startup, i3 rules, or user configuration.
 
 ## Field watchers
 
@@ -117,8 +115,7 @@ user CLI.
 The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
 `~/.config/pinote/backend.json`). It overrides only the exact backend override
 replaced during confirmation, including the old Python-forcing desktop launcher;
-a different explicit diagnostic override still works. GTK and its Python
-environments remain available, but are not used by the selected Node runtime.
+a different explicit diagnostic override still works.
 
 Backups and interrupted-switch recovery are under
 `$XDG_STATE_HOME/pinote/backend-switch` (default `~/.local/state/pinote/backend-switch`).
@@ -137,7 +134,7 @@ rollback leaves it absent without requiring repair.
 A busy updater, unsafe paths, or an existing CLI on a different database blocks
 the switch rather than guessing.
 
-## Controls and deliberate differences
+## Controls
 
 Task rows stay single-line and compact. Subtle separators span the text/tag area;
 a light hover highlight follows the whole row without moving it or replacing
@@ -259,28 +256,64 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   task actions use inline toolbars and the bottom menu uses a native popup menu,
   not centered panels.
   Folder selection and recovery confirmation can also use native dialogs.
-  The eye is a configurable Preview action. These are deliberate differences,
-  not a promise of pixel-for-pixel GTK parity.
+- **Set reminder…** opens a local date-time picker preset to the current minute, or
+  to the existing reminder time. Daylight-saving times that are skipped or repeated
+  are rejected; choose another time or use `note schedule` with an explicit offset.
+  Due reminders activate on backend refresh, not through a new alarm service.
+  Electron does not send Dunst notifications.
 
-**Start in Kitty…** saves the task as in progress and updates its row/actions
-before launching, after a folder is confirmed. Cancelling folder selection changes
-nothing. If launching fails, the task stays in progress; check for a tab before retrying.
+### Start in Kitty
 
-Kitty launching uses the existing backend integration and its prerequisites;
-see [GTK controls](gui.md). Tab titles omit leading
-Markdown heading markers (`# ` through `###### `) before the 30-character limit;
-tags and saved task text stay unchanged. The frontend does not send Dunst notifications.
-**Set reminder…** opens a local date-time picker preset to the current minute, or
-to the existing reminder time. Daylight-saving times that are skipped or repeated
-are rejected; choose another time or use `note schedule` with an explicit offset.
-Due reminders activate on backend refresh, not through a new alarm service.
+**Start in Kitty…** uses the tag's default folder if available, or opens a directory
+chooser. Cancelling changes nothing. Electron saves the task as in progress and
+updates its row before launching; on failure, progress is retained. Check for a
+new tab or window before retrying.
+
+The Node backend requires `kitty` and `pi` in absolute `PATH` directories. To
+reuse Kitty, enable socket remote control (`allow_remote_control socket-only`)
+and point `KITTY_LISTEN_ON` at its socket. Without that variable, Pinote searches
+for same-user Kitty instances on the same X11 display at `unix:@mykitty-<pid>`
+(`listen_on unix:@mykitty`). If the explicit address is unreachable, launch fails.
+If discovery finds no reachable instance, Pinote opens a new window without
+restoring saved tabs. It names the tab from the first line of the task, stripping a
+leading Markdown heading marker and taking up to 30 characters, plus a `[tag]`
+prefix if tagged. Saved text and tags are unchanged.
+
+Pi needs the [pi-note extension](../pi/README.md) and a `note` CLI using the same
+database. The launch passes the task ID, revision, and an optional editor draft.
+Pi does not select the task if the revision no longer matches. Launching does
+not submit a prompt or complete the task.
+
+## Configuration
+
+The Node backend reads `$XDG_CONFIG_HOME/pinote/config.toml` (default
+`~/.config/pinote/config.toml`). The defaults are:
+
+```toml
+[gui]
+max_visible_notes = 10
+markdown_preview = true
+kitty_start_prompt = "is task clear?"
+```
+
+- `max_visible_notes` is a positive integer. It caps the row count used to
+  calculate the checklist's automatic height, with a cap of at least two rows.
+  It does not hide tasks or override a manually sized window.
+- `markdown_preview` is a boolean. Set it to `false` to show task text and agent
+  field values literally in the floating preview and expanded Archive and Scheduled
+  reminders entries. It does not change saved text or editor styling.
+- `kitty_start_prompt` is an editable draft for an empty Pi input, not a submitted
+  prompt. Set it to `""` to disable prefilling. It accepts up to 4000 characters;
+  tabs and newlines are allowed, but other terminal controls are not.
+
+Missing configuration uses the defaults. Invalid configuration reports an error;
+Pinote does not create or overwrite the file.
 
 ## Shared tasks, separate UI state, and recovery
 
-GTK, CLI, Pi, and Electron share `notes.db` and the display lock and may run
-alongside each other. Electron does not copy tasks into a separate frontend
-database. Each frontend refreshes external changes; stale saves are refused. Roll back by closing Electron and reopening
-GTK; task data needs no conversion.
+Electron, the CLI, and Pi share `notes.db` and the display lock. Electron refreshes
+external changes and refuses stale saves. There is no separate desktop database
+or data conversion.
 
 Restarting restores the new-task tag (including Untagged), tag filters, composer
 and private edit drafts, collapsed state, list scroll positions, saved task-action
@@ -298,15 +331,14 @@ Session data and `app.log` live under `<state>/pinote/electron/<databasehash>/`;
 early startup errors use `<state>/pinote/electron/app.log`. `<data>` and `<state>` use
 absolute XDG overrides or the usual `~/.local/share` and `~/.local/state` defaults.
 Draft content is capped at 1 MiB, with separate bounded space for recovery warnings.
-Drafts and logs are local, **not encrypted**. Include Electron state in backups
-alongside the [existing database/GTK backup files](usage.md#data-privacy-and-backup),
-with GUIs closed and writes stopped.
+Drafts and logs are local, **not encrypted**. Include Electron state in
+[database backups](usage.md#data-privacy-and-backup), with Electron closed and writes stopped.
 
 Unreadable/corrupt draft state opens read-only and is not overwritten. Close
 Electron, back up the original `electron/state.json`, and repair it while
-preserving recoverable drafts; do not discard it as a generic reset. GTK remains
-available. An uncertain write blocks further writes and is **never automatically
-retried**. Inspect saved tasks and any new Kitty tab first, then use the explicit
+preserving recoverable drafts; do not discard it as a generic reset.
+An uncertain write blocks further writes and is **never automatically retried**.
+Inspect saved tasks and any new Kitty tab first, then use the explicit
 “I checked saved tasks; enable writes” action and confirmation to acknowledge it.
 Acknowledgement does not replay the operation. If the renderer fails and recovery
 cannot be saved, a native dialog keeps the app alive to retry or copy recovered

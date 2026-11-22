@@ -36,7 +36,7 @@ function call(operation, params) {
 }
 call('create_tag',{name:'Work',folder:null});
 call('create_tag',{name:'Empty filter',folder:null});
-const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **GTK** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
+const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **CLI** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;
 const sessions = ['a1234567-89ab-4cde-8fab-0123456789ab', 'session_' + '0123456789abcdef'.repeat(15)];
 const handoffFields = { Summary: 'Saved **summary**', Next: 'Run the focused checks', Risks: '<script>window.compromised=true</script>' };
 if (handoffOnly) {
@@ -52,12 +52,12 @@ if (handoffOnly) {
   const task = call('snapshot', { view: 'active' }).notes.find(n => n.id === first);
   cli(['agent', 'update', String(first), '--expected-updated-at', task.updated_at, '--set-json', JSON.stringify(handoffFields)]);
 }
-const progress = call('add',{text:'Check GTK, CLI and Pi coexistence',tag:'Work'}).id;
+const progress = call('add',{text:'Check X11, CLI and Pi coexistence',tag:'Work'}).id;
 let t = call('snapshot',{view:'active'}).notes.find(n => n.id === progress);
 call('transition',{id:t.id,revision:t.updated_at,state:t.state,action:'start'});
 call('add',{text:'Review drafts, reminders and archive',tag:null});
 for(let index=0;index<(handoffOnly ? 0 : 100);index++) call('add',{text:`Benchmark task ${index}`,tag:'Work'});
-let wm, app, gtk;
+let wm, app;
 const logs=[]; const pageErrors=[];
 // Observe the real main-process menu without replacing native popup behavior.
 const installNativeMenuProbe = async () => app.evaluate(({Menu, ipcMain}) => {
@@ -125,28 +125,10 @@ const selectTaskAction = async (page, id, label) => {
 try {
   const socket = join(root,'i3.sock');
   const config = join(root,'i3.conf');
-  await writeFile(config,`font pango:monospace 9\nipc-socket ${socket}\nfor_window [class="^pinote-electron$"] floating enable, border none\nfor_window [window_role="^pinote-"] floating enable, border none\n`);
+  await writeFile(config,`font pango:monospace 9\nipc-socket ${socket}\nfor_window [class="^pinote-electron$"] floating enable, border none\n`);
   wm = spawn('i3',['-a','-c',config],{env,stdio:'ignore'});
   for(let i=0;i<100;i++) { if(spawnSync('i3-msg',['-s',socket,'-t','get_tree'],{env,stdio:'ignore'}).status===0) break; await new Promise(r=>setTimeout(r,30)); }
   env.I3SOCK = socket;
-  if (!handoffOnly) {
-  const gtkPath=resolve('../.venv-gui/bin/pinote-gui');
-  gtk=spawn(gtkPath,[],{env:{...env,GDK_BACKEND:'x11'},stdio:['ignore','pipe','pipe']});
-  gtk.stdout.on('data',b=>logs.push(`GTK: ${b}`));
-  gtk.stderr.on('data',b=>logs.push(`GTK: ${b}`));
-  gtk.on('exit',(code,signal)=>logs.push(`GTK exited: code=${code}, signal=${signal}`));
-  // A late GTK window steals the real X11 Escape used by native-menu checks.
-  // Wait for it to map before Electron opens and takes focus.
-  let gtkReady=false;
-  for(let i=0;i<200;i++) {
-    assert.equal(gtk.exitCode,null,`GTK exited before showing its window: ${logs.join('\n')}`);
-    const windows=spawnSync('xdotool',['search','--all','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
-    assert.ifError(windows.error);
-    if(windows.status===0 && windows.stdout.trim()) { gtkReady=true; break; }
-    await new Promise(resolve=>setTimeout(resolve,100));
-  }
-  assert.ok(gtkReady,`GTK must show its window before Electron starts: ${logs.join('\n')}`);
-  }
   const started = performance.now();
   app = await _electron.launch({ executablePath:createRequire(import.meta.url)('electron'), args:['--class=pinote-electron',resolve('dist/main.cjs')], env, chromiumSandbox:true, timeout:20000 });
   app.process().stderr.on('data',b=>logs.push(b.toString()));
@@ -218,15 +200,14 @@ try {
   // The idle resource sample runs once, in the shorter part 2.
   if (part !== '1') {
   const resources = await app.evaluate(({app})=>app.getAppMetrics().reduce((r,p)=>({rssKiB:r.rssKiB+p.memory.workingSetSize,cpuPercent:r.cpuPercent+p.cpu.percentCPUUsage}),{rssKiB:0,cpuPercent:0}));
-  const gtkRSS=Number(spawnSync('ps',['-o','rss=','-p',String(gtk.pid)],{encoding:'utf8'}).stdout.trim());
   const scan=performance.now(); for(let i=0;i<5;i++)call('snapshot',{view:'active'});
   const snapshotMean=Math.round((performance.now()-scan)/5);
   const ticks=async(pid,children=false)=>{try{const s=(await readFile(`/proc/${pid}/stat`,'utf8')).split(') ').slice(1).join(') ').split(' ');return Number(s[11])+Number(s[12])+(children?Number(s[13])+Number(s[14]):0);}catch{return 0;}};
   const pids=await app.evaluate(({app})=>app.getAppMetrics().map(p=>p.pid));
-  const sample=async()=>({electron:(await Promise.all(pids.map(p=>ticks(p,p===app.process().pid)))).reduce((a,b)=>a+b,0),gtk:await ticks(gtk.pid)});
+  const sample=async()=>(await Promise.all(pids.map(p=>ticks(p,p===app.process().pid)))).reduce((a,b)=>a+b,0);
   const before=await sample(), at=performance.now(); await page.waitForTimeout(2100); const after=await sample();
   const hz=Number(spawnSync('getconf',['CLK_TCK'],{encoding:'utf8'}).stdout.trim()), seconds=(performance.now()-at)/1000;
-  const measurement={datasetTasks:103,coldStartToTasksMs:Math.round(taskReadyMs),electronReportedRSSKiB:resources.rssKiB,gtkRSSKiB:gtkRSS,backendSnapshotMeanMs:snapshotMean,electronIdleCPUPercent:+((after.electron-before.electron)/hz/seconds*100).toFixed(2),gtkIdleCPUPercent:+((after.gtk-before.gtk)/hz/seconds*100).toFixed(2)};
+  const measurement={datasetTasks:103,coldStartToTasksMs:Math.round(taskReadyMs),electronReportedRSSKiB:resources.rssKiB,backendSnapshotMeanMs:snapshotMean,electronIdleCPUPercent:+((after-before)/hz/seconds*100).toFixed(2)};
   console.log('Resource sample',measurement); await writeFile(join(root,'resources.json'),JSON.stringify(measurement,null,2));
   }
   assert.ok(await page.locator('img[src]').evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),'Bundled icons must load');
@@ -468,12 +449,27 @@ try {
     // Playwright emulates perpetual page focus; disable it for actual X11 blur.
     const focusSession=await page.context().newCDPSession(page);
     await focusSession.send('Emulation.setFocusEmulationEnabled',{enabled:false});
-    const gtkWindow=spawnSync('xdotool',['search','--all','--onlyvisible','--pid',String(gtk.pid),'--name','^pinote — Reminders$'],{env,encoding:'utf8'});
-    assert.equal(gtkWindow.status,0,gtkWindow.stderr);
-    const activate=spawnSync('xdotool',['windowactivate','--sync',gtkWindow.stdout.trim().split('\n')[0]],{env,encoding:'utf8'});
+    // Another top-level window takes the X11 focus, as another application would.
+    await app.evaluate(async({BrowserWindow})=>{
+      const other=new BrowserWindow({width:200,height:100,title:'pinote-e2e-focus-target'});
+      if(!other.isVisible()) await new Promise(resolve=>other.once('show',resolve));
+    });
+    let otherWindow;
+    for(let i=0;i<100;i++) {
+      otherWindow=spawnSync('xdotool',['search','--all','--onlyvisible','--name','^pinote-e2e-focus-target$'],{env,encoding:'utf8'});
+      if(otherWindow.status===0 && otherWindow.stdout.trim()) break;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    assert.equal(otherWindow.status,0,otherWindow.stderr);
+    const activate=spawnSync('xdotool',['windowactivate','--sync',otherWindow.stdout.trim().split('\n')[0]],{env,encoding:'utf8'});
     assert.equal(activate.status,0,activate.stderr);
     await bar.waitFor({state:'detached'});
-    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].focus());
+    await app.evaluate(({BrowserWindow})=>{
+      const windows=BrowserWindow.getAllWindows();
+      const main=windows.find(w=>w.webContents.getURL().endsWith('/index.html'));
+      windows.find(w=>w.getTitle()==='pinote-e2e-focus-target').destroy();
+      main.focus();
+    });
     await page.waitForFunction(()=>document.hasFocus());
     await focusSession.send('Emulation.setFocusEmulationEnabled',{enabled:true});
     await focusSession.detach();
@@ -890,7 +886,6 @@ try {
   }
   if (part === '2') {
     // Part 1 checks these invariants later, in its own processes.
-    assert.equal(gtk.exitCode ?? gtk.signalCode,null,'GTK must coexist without exiting');
     assert.equal(outgoing.length,0,`Unexpected remote resources: ${outgoing}`);
     assert.deepEqual(pageErrors,[]);
   }
@@ -1342,7 +1337,7 @@ try {
     await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
-  // A Pi session saves handoff notes through the CLI on the same temporary data while GTK is running.
+  // A Pi session saves handoff notes through the CLI on the same temporary data.
   const agentUpdate=(revision,next)=>{
     const p=spawnSync(resolve('../backend/bin/note'),['--no-notify','agent','update',String(first),'--expected-updated-at',revision,'--set-json',JSON.stringify({Next:next})],{env,encoding:'utf8',timeout:10000});
     assert.equal(p.status,0,p.stderr);
@@ -1417,7 +1412,6 @@ try {
   await page.locator(`[data-id="${first}"]`).waitFor({state:'detached'});
   if (!disappearingPreview.isClosed()) await disappearingPreview.waitForEvent('close');
   await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('/index.html')).setBounds(bounds),previewOwnerBounds);
-  assert.equal(gtk.exitCode ?? gtk.signalCode,null,'GTK must coexist without exiting');
   // Reach a real failed launch: nonexistent folders are now rejected before effects.
   const kittyBin=join(root,'failed-kitty-bin'), kittyMarker=join(root,'kitty-launch-attempted');
   await mkdir(kittyBin);
@@ -1793,5 +1787,5 @@ finally {
     }).catch(()=>{});
     await app.close().catch(()=>{});
   }
-  gtk?.kill('SIGTERM'); wm?.kill('SIGTERM');
+  wm?.kill('SIGTERM');
 }

@@ -107,13 +107,13 @@ and carried selections do not append IDs; select the task in a new session to re
 IDs are metadata only: transcripts are not uploaded, and unsaved/deleted sessions
 may no longer be available. The array is separate from editable handoff fields.
 
-The GTK app's **Start in Kitty…** action (note 0.13.0+) chooses a working directory
-and opens a named tab with this task selected, without submitting a prompt.
-In note 0.16.0+, it uses the tag's default folder when available, otherwise keeps
-the directory chooser. Set or clear defaults in **Manage tags…**.
-With note 0.15.0+ and pi-note 0.32.0+, successful selection prefills an empty Pi editor
+Electron's **Start in Kitty…** action chooses a working directory and opens a
+named tab with this task selected, without submitting a prompt. It uses the tag's
+default folder when available, otherwise keeps the directory chooser. Set or
+clear defaults in **Manage tags…**.
+With pi-note 0.32.0+, successful selection prefills an empty Pi editor
 with `is task clear?`. Configure `gui.kitty_start_prompt` in the
-[GUI config](../docs/gui.md#gui-configuration), or set it to `""` to disable; existing
+[Electron configuration](../docs/electron.md#configuration), or set it to `""` to disable; existing
 drafts are never replaced.
 The one-shot `PINOTE_LAUNCH_TASK` environment handoff carries the task ID, displayed
 revision and optional editor draft, never task text or tokens. The draft is

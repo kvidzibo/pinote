@@ -1,6 +1,6 @@
 [project]
 name = "pinote"
-version = "0.25.2"
+version = "0.26.0"
 description = "Persistent desktop reminders with a small CLI and durable history"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,16 +8,12 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = []
 
-[project.optional-dependencies]
-gui = ["markdown-it-py>=3,<5"]
-
 [project.urls]
 Repository = "https://github.com/kvidzibo/pinote"
 Issues = "https://github.com/kvidzibo/pinote/issues"
 
 [project.scripts]
 note = "pinote.cli:main"
-pinote-gui = "pinote.gui:main"
 pinote-electron-backend = "pinote.electron_bridge:main"
 
 [build-system]
@@ -25,7 +21,7 @@ requires = ["uv_build>=0.11.8,<0.12"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = ["markdown-it-py>=3,<5", "pytest>=8,<10", "ruff>=0.11,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 
 [tool.uv.build-backend]
 source-include = ["docs/**"]
@@ -34,7 +30,6 @@ source-include = ["docs/**"]
 testpaths = ["tests"]
 markers = [
     "gui: isolated desktop integration (requires xvfb-run and a private D-Bus session)",
-    "gtk: optional GTK frontend integration (requires Debian-Python GUI environment)",
 ]
 
 [tool.ruff]
