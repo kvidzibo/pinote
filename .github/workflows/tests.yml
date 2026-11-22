@@ -65,7 +65,7 @@ jobs:
           node-version: "24"
       - run: sudo apt-get update && sudo apt-get install -y dunst dbus-x11 xvfb xauth
       - run: npm --prefix backend ci --ignore-scripts --no-audit --no-fund
-      - run: xvfb-run -a dbus-run-session -- npm --prefix backend run test:desktop
+      - run: xvfb-run -a npm --prefix backend run test:desktop
 
   electron:
     runs-on: ubuntu-latest

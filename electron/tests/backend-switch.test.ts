@@ -73,6 +73,8 @@ test('confirmed backend switching preserves data, rolls back failure and recover
         updateLock: join(root, 'update-lock/update.lock'),
         run: async (executable: string, args: string[], childEnv: NodeJS.ProcessEnv, input?: string) => {
           assert.doesNotMatch(executable, /\/(systemctl|busctl)$/, 'Switching never inspects or controls a service');
+          // A real environment's packages are importable only through its own interpreter path.
+          if (args[0] === '-c') assert.equal(executable, legacy.interpreter, 'The database probe runs the interpreter the launcher names');
           // The installed launcher is first run to verify its version.
           if (executable === cli && fails) {
             if (mode === 'deletion') rmSync(cli); // Owner deletion after publication must survive rollback.

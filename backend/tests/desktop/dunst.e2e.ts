@@ -1,5 +1,5 @@
-// Real Dunst checks, deliberately isolated from the user's desktop:
-// xvfb-run -a dbus-run-session -- npm --prefix backend run test:desktop
+// Real Dunst checks, deliberately isolated from the user's desktop. The npm
+// script starts the private D-Bus session: xvfb-run -a npm --prefix backend run test:desktop
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,10 +23,11 @@ async function desktop(t: TestContext) {
   for (const app of ['dunst', 'dunstify', 'dunstctl', 'dbus-send']) assert.equal(spawnSync('which', [app]).status, 0, `Desktop tests require ${app}`);
   assert.ok(process.env.DISPLAY && /xvfb-run\./.test(process.env.XAUTHORITY || ''), 'Desktop tests require xvfb-run');
   const address = process.env.DBUS_SESSION_BUS_ADDRESS || '';
-  assert.ok(address && !address.includes('/run/user/'), 'Use a private dbus-run-session');
-  const root = mkdtempSync(join(tmpdir(), 'pinote-dunst-'));
+  assert.ok(address && !address.includes('/run/user/'), 'Use npm run test:desktop for a private D-Bus session');
+  // Absolute even for a relative TMPDIR: the CLI ignores relative XDG paths.
+  const root = resolve(mkdtempSync(join(tmpdir(), 'pinote-dunst-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const env: NodeJS.ProcessEnv = { ...process.env, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state') };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state') };
   delete env.WAYLAND_DISPLAY;
   assert.equal(busHasDaemon(env), false, 'Refusing to test against an existing desktop daemon');
   const config = join(root, 'dunstrc'), log = join(root, 'dunst.log');

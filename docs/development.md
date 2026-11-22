@@ -10,7 +10,7 @@ Run checkout-relative commands from the repository root.
 npm --prefix backend ci --ignore-scripts
 npm --prefix backend run check && npm --prefix backend run build
 npm --prefix backend test
-xvfb-run -a dbus-run-session -- npm --prefix backend run test:desktop
+xvfb-run -a npm --prefix backend run test:desktop
 npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 (cd pi && npm pack --dry-run)
 npm --prefix backend run test:package
@@ -24,7 +24,8 @@ and bridge snapshots without running Python. Reminder time-zone checks use GNU
 
 The real Dunst test runs the Node CLI with temporary storage. It requires `dunst`,
 `dunstify`, `dunstctl`, `dbus-send`, `xvfb-run`, `xauth`, and `dbus-run-session`.
-It refuses to run outside `xvfb-run` with a private D-Bus session.
+The npm script starts its own private D-Bus session, and the test refuses to run
+outside `xvfb-run`.
 
 In CI, `backend` runs checks, builds, and tests (including the package test) on
 Node 22.19.0 and 24. `desktop` runs the real Dunst test on Node 24.

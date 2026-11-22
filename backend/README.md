@@ -31,7 +31,7 @@ or desktop configuration. See [CLI usage](../docs/usage.md) and
 npm --prefix backend ci --ignore-scripts
 npm --prefix backend run check && npm --prefix backend run build
 npm --prefix backend test
-xvfb-run -a dbus-run-session -- npm --prefix backend run test:desktop
+xvfb-run -a npm --prefix backend run test:desktop
 npm --prefix backend run test:package
 ```
 
