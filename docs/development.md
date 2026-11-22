@@ -1,6 +1,6 @@
 # Development and validation
 
-[Quickstart](../README.md) · [CLI and data](usage.md) · [GTK and desktop](gui.md) · [Development](development.md)
+[Quickstart](../README.md) · [CLI and data](usage.md) · [Electron](electron.md) · [Development](development.md)
 
 Run checkout-relative commands from the repository root.
 
@@ -13,7 +13,7 @@ uv sync --locked                 # legacy reference for interoperability checks
 npm --prefix backend test
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
-xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
+xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
 uv build
 npm --prefix pi ci --ignore-scripts
 npm --prefix pi test
@@ -21,25 +21,9 @@ npm --prefix pi test
 ```
 
 Dunst tests require `dunst`, `dunstify`, `dunstctl`, `xvfb-run`, `xauth`, and
-`dbus-run-session`. GTK tests additionally require `xdotool` and the [GUI environment](gui.md#debian-installation-isolated-from-the-cli). Install `i3-wm` for the optional placement/resize regression; it starts a
-private i3 with its own IPC socket inside Xvfb, never using your desktop's socket
-or configuration. The restart-helper regression also uses that isolated setup to
-check hidden-workspace recovery, environment preservation, and stopped GUIs.
-Install development tools into the GUI environment and run its
-interpreter directly (plain `uv run` would select the separate CLI environment):
-
-```sh
-uv pip install --python .venv-gui/bin/python -e '.[gui]' --group dev
-xvfb-run -a -s '-screen 0 2560x1440x24' dbus-run-session -- .venv-gui/bin/python -m pytest -m gtk --run-gui
-# Also cover placement on smaller displays:
-xvfb-run -a dbus-run-session -- .venv-gui/bin/python -m pytest tests/test_gtk.py -k 'compact_ or i3_honors or single_instance_reopen or error_notice_keeps or manual_position' --run-gui
-```
-
-Always run GUI tests under `xvfb-run` with a private D-Bus session; the tests refuse
-to use the real desktop. All tests use temporary storage. CI runs unit/CLI tests
-on Python 3.11 and 3.13, isolated Dunst tests, and a separate system-Python GTK job
-against the built wheel (including its bundled stylesheet and isolated i3 placement).
-GTK regressions also exercise manual window moves during geometry synchronization.
+`dbus-run-session`. Always run them under `xvfb-run` with a private D-Bus session;
+the tests refuse to use the real desktop. All tests use temporary storage. CI runs
+unit/CLI tests on Python 3.11 and 3.13 and isolated Dunst tests.
 
 Pi tests run in two jobs on each supported Node version (22.19.0 and 24): shard 1
 runs the long `tests/engine.test.ts` scenario alone; shard 2 runs every other unit
@@ -63,32 +47,22 @@ Pass an unpacked app directory to `test:package` for relocation checks; copying
 CI's root-owned SUID sandbox helper would lose its ownership, so CI tests it in place. No tests or display sizes are dropped;
 parallel jobs trade additional runner setup for shorter elapsed CI time.
 
-On PRs, the standalone GTK job runs when the complete PR diff changes Python
-source (`src/`), Python tests (`tests/`), scripts, `pyproject.toml`, `uv.lock`, or
-GitHub configuration (`.github/`). Electron-, Pi-, and docs-only changes skip
-that job. Deleted and renamed paths count. Release runs keep the full suite,
-and Electron's GTK coexistence checks remain enabled.
-
 ## Electron frontend
 
-The [experimental Electron guide](electron.md) covers installation, state,
-recovery, packaging, and limitations. These checks supplement, not replace, all
-Python, Dunst, GTK (including smaller-display and i3 regressions), and Pi checks
-above. Keep the Python package and Pi package versions independent of Electron.
+The [Electron guide](electron.md) covers installation, state, recovery, packaging,
+and limitations. These checks supplement the Python, Dunst, and Pi checks above.
+Keep the Python package and Pi package versions independent of Electron.
 
-Use Node.js 22.19+ (CI uses Node 24), Linux `flock`, and Linux
-Electron runtime libraries: GTK 3, NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11
-libraries. End-to-end tests additionally need `xvfb-run`, `dbus-run-session`,
-`xauth`, `i3-wm`, `xdotool`, and ImageMagick's `import` command (`imagemagick`
-on Debian/Ubuntu) for native-menu screenshots. System Python with `python3-gi` and
-`gir1.2-gtk-3.0` is needed for GTK coexistence coverage. The Electron scenario
-also saves agent updates through the real CLI without making model requests.
+Use Node.js 22.19+ (CI uses Node 24), Linux `flock`, and Electron runtime libraries:
+GTK 3 (`libgtk-3`), NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11 libraries.
+End-to-end tests additionally need `xvfb-run`, `dbus-run-session`, `xauth`, `i3-wm`,
+`xdotool`, and ImageMagick's `import` command (`imagemagick` on Debian/Ubuntu) for
+native-menu screenshots. The Electron scenario saves agent updates through the
+real CLI without making model requests.
 
 ```sh
 npm --prefix backend ci --ignore-scripts
 uv sync --locked                 # legacy reference only, not Electron's backend
-uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
-uv pip install --python .venv-gui/bin/python -e '.[gui]'
 npm --prefix pi ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
@@ -133,10 +107,11 @@ acquire reader exclusion up front, avoiding a cancellable wait inside commit.
 No uncertain mutation is replayed. Tests compare schema migrations 0–8, durable snapshots and alternating
 Python/Node writes using only temporary databases and this checkout's `.venv`.
 
-`src/pinote/` remains the unchanged legacy Python/GTK implementation and reference.
-GTK is loaded only when launching its GUI. Both implementations preserve the same
-schema, history and display lock. Electron bundles its bridge outside ASAR and
-uses a separately installed supported Node runtime.
+`src/pinote/` provides the legacy Python CLI and the reference implementation for
+Node interoperability and parity tests, including the legacy Electron bridge.
+Both implementations preserve the same schema, history, and display lock.
+Electron bundles the Node bridge outside ASAR and uses a separately installed
+supported Node runtime.
 
 `pi/` is the independently versioned `pi-note` npm package. Its extension
 reads and writes tasks in-process through `note`, never SQLite directly; watcher

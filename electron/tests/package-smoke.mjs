@@ -42,7 +42,7 @@ const socket=join(root,'i3.sock'); await writeFile(join(root,'i3.conf'),`font pa
 try {
   wm=spawn('i3',['-a','-c',join(root,'i3.conf')],{env,stdio:'ignore'});
   await wait(()=>run('i3-msg',['-s',socket,'-t','get_tree']).status===0); env.I3SOCK=socket;
-  call('add',{text:'Packaged Pinote keeps GTK available',tag:null});
+  call('add',{text:'Packaged Pinote keeps CLI available',tag:null});
   app=spawn(binary,[],{env,cwd:root,stdio:['ignore','ignore','pipe']}); app.stderr.on('data',b=>stderr+=b);
   let windowId;
   await wait(()=>{ const p=run('xdotool',['search','--all','--pid',String(app.pid),'--name','^Pinote$']); windowId=p.stdout.trim().split('\n')[0]; return p.status===0&&!!windowId; });

@@ -1,10 +1,10 @@
 # pinote
 
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
-Linux/i3 first, with Dunst notifications, a GTK checklist, and an optional
-Electron frontend for editing, tags, progress, scheduled reminders, and archived
-tasks. Electron and the shared CLI/backend use Node.js; Python remains only for
-legacy GTK compatibility. Desktop frontends run as separate processes, not services.
+Linux/i3 first, with Dunst notifications and an Electron desktop frontend for
+editing, tags, progress, scheduled reminders, and archived tasks. Electron and
+the shared CLI/backend use Node.js; Python remains only as a legacy CLI and test
+reference. Electron runs as a separate process, not a service.
 
 ## See it in action
 
@@ -26,19 +26,6 @@ hover does not move controls or replace task-state colors.*
 **Desktop workflow:** capture → start → edit → complete. Completed tasks remain
 recoverable from Archive.
 
-<details>
-<summary>GTK checklist and workflow (9-second demo)</summary>
-
-![Pinote GTK checklist on Linux/i3: tagged tasks, an amber in-progress task, and the task input and filter controls.](docs/images/linux-checklist.png)
-
-*GTK checklist with sample tasks. GTK remains available alongside Electron.*
-
-![A task is typed and added with Enter, started with its checkbox, edited with extra details, saved, and completed.](docs/images/workflow.gif)
-
-[View a still image instead](docs/images/workflow-still.png).
-
-</details>
-
 ## Install
 
 Requires **Node.js 22.19+**, npm, Linux `flock` (util-linux), and GNU `date` for local reminder times. From a checkout:
@@ -58,33 +45,15 @@ your shell, desktop configuration, or existing reminders.
 
 For upgrades and legacy Python compatibility, see the [CLI guide](docs/usage.md#install).
 
-### Optional GTK checklist
-
-On Debian, use a separate environment with the system GTK bindings, not the
-isolated CLI interpreter. Run from the checkout:
-
-```sh
-sudo apt install python3-gi gir1.2-gtk-3.0  # only if missing
-uv venv --python /usr/bin/python3 --system-site-packages .venv-gui
-uv pip install --python .venv-gui/bin/python -e '.[gui]'
-.venv-gui/bin/pinote-gui
-```
-
-The GUI and CLI share the same database. [GUI setup and controls](docs/gui.md)
-cover non-uv installation, i3 login startup, filtering, editing, and configuration.
-After GUI source changes, use `./scripts/restart-pinote.sh`; it preserves the
-running instance's workspace and leaves a stopped GUI stopped.
-
-### Experimental Electron frontend
+### Electron desktop frontend
 
 Electron uses the Node backend and the existing task database, with no Python
-requirement or data conversion. GTK remains available separately; installing or
-building Electron does not change desktop startup/configuration. Requires Node.js
-22.19+. **Menu (cog) → Switch to Node backend…** can explicitly
-switch an existing CLI/desktop installation, with backups and rollback.
-See [Electron installation, switching, and limitations](docs/electron.md).
+requirement or data conversion. Installing or building Electron does not change
+desktop startup or configuration. Requires Node.js 22.19+. **Menu (cog) → Switch
+to Node backend…** can explicitly switch an existing CLI/desktop installation,
+with backups and rollback. See [Electron installation, switching, and limitations](docs/electron.md).
 Its add-task input and task editor style Markdown source and assist title/bullet
-newlines. Only Linux/X11/i3 is a validation target; pixel-for-pixel GTK parity is not promised.
+newlines. Only Linux/X11/i3 is a validation target.
 
 ## Use
 
@@ -102,27 +71,9 @@ note history 3                          # inspect retained history
 note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 ```
 
-### GTK controls
-
-For Electron's controls and configurable task rows, see the [Electron guide](docs/electron.md#controls-and-deliberate-differences).
-
-- **Add:** press **Enter** or **+**. Unfinished input is restored when reopened.
-- **Task actions:** right-click task text to change its state, edit, tag, or schedule
-  it. Unfinished edits are restored when reopened and remain drafts until saved.
-- **Window size:** drag any edge or corner; width and height survive restarts.
-- **Menus:** the bottom menu opens reminders, the archive, and tag management.
-- **Tags:** the dropdown below the input tags new tasks. Type in tag-selection
-  or filter menus to search; without an exact name match, choose **Create tag…**
-  alongside any partial matches.
-  Tags stay saved without tasks and are enabled in the filter when created.
-  Creating or managing
-  a tag can set an optional default folder for **Start in Kitty…**; otherwise,
-  choose a folder when starting.
-- **Filters:** the separate funnel control selects one or more tags to view
-  together and shows the matching task count.
-
-For full commands, Markdown import/export, and scheduling rules, see the
-[CLI and data guide](docs/usage.md).
+See [Electron controls](docs/electron.md#controls) for desktop actions and row
+settings, or the [CLI and data guide](docs/usage.md) for full commands, Markdown
+import/export, and scheduling rules.
 
 ### Pi integration
 
@@ -161,13 +112,12 @@ Users of the former HTTP service should follow the
 **Markdown exports are not backups:** they omit IDs, tags, schedules, agent fields,
 project selections, and history.
 
-Close the GUI and stop CLI writes before copying `notes.db`, `gui-draft.txt`,
-`gui-edit-drafts/`, `gui-filter.json`, `gui-agent-read.json`, and `gui-window-size.json`.
-See [backup details](docs/usage.md#data-privacy-and-backup).
+Close Electron and stop CLI writes before copying `notes.db` and the `electron/`
+state directory beside it. See [backup details](docs/usage.md#data-privacy-and-backup).
 
-Back up before upgrading, and update both CLI and GUI installations together.
+Back up before upgrading, and update both the CLI and Electron together.
 Versions before 0.25.0 cannot read schema 8. See the
-[upgrade guide](docs/gui.md#upgrading-for-scheduled-reminders).
+[upgrade guide](docs/usage.md#upgrading-for-scheduled-reminders).
 
 ## Validation
 
@@ -180,16 +130,15 @@ uv sync --locked                  # legacy reference and compatibility tests
 npm --prefix backend test
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -m 'not gui'
-xvfb-run -a dbus-run-session -- uv run pytest -m 'gui and not gtk' --run-gui
+xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
 uv build
 npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 ```
 
-GUI tests require the documented desktop tools and always run under Xvfb with a
-private D-Bus session. [Development guide](docs/development.md) includes GTK tests,
-prerequisites, and the smaller-display checks. Tests use temporary storage.
-The optional Electron frontend has [additional checks](docs/development.md#electron-frontend)
-including sandboxed, isolated Xvfb/i3 end-to-end and packaged-app checks.
+Dunst tests require the [documented desktop tools](docs/development.md) and always
+run under Xvfb with a private D-Bus session. Tests use temporary storage.
+[Electron validation](docs/development.md#electron-frontend) includes sandboxed,
+isolated Xvfb/i3 end-to-end and packaged-app checks.
 
 ## License
 

@@ -155,7 +155,7 @@ async function boot() {
     if (!validState(value)) throw new Error('Invalid state');
     state = value;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying. GTK remains available.'; }
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying.'; }
   }
   await app.whenReady();
   const watcherHost = () => import(pathToFileURL(join(bundles, 'service/watcher-host.mjs')).href);

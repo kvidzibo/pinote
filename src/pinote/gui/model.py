@@ -1,4 +1,4 @@
-"""GTK-free data boundary: short-lived connections, existing locks and history."""
+"""Frontend data boundary: short-lived connections, existing locks and history."""
 
 from __future__ import annotations
 

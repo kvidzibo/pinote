@@ -1,4 +1,4 @@
-"""Read-only, GTK-free GUI preferences."""
+"""Read-only GUI preferences."""
 
 from __future__ import annotations
 
