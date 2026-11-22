@@ -1,0 +1,152 @@
+{
+ "active": {
+  "protocol": 1,
+  "ok": true,
+  "result": {
+   "notes": [
+    {
+     "id": 1,
+     "text": "older 🌱",
+     "state": "in_progress",
+     "created_at": "2026-11-22T00:28:57.232337+00:00",
+     "updated_at": "2026-11-22T00:28:57.235337+00:00",
+     "tag": "Z",
+     "remind_at": null,
+     "reminder_due_at": null,
+     "archived_at": null,
+     "agent_notes": {
+      "Result": "one"
+     },
+     "agent_event_id": 3,
+     "pi_sessions": [
+      "11111111-1111-4111-8111-111111111111"
+     ]
+    },
+    {
+     "id": 2,
+     "text": "newer",
+     "state": "active",
+     "created_at": "2026-11-22T00:28:57.233337+00:00",
+     "updated_at": "2026-11-22T00:28:57.233337+00:00",
+     "tag": "A",
+     "remind_at": null,
+     "reminder_due_at": null,
+     "archived_at": null,
+     "agent_notes": {},
+     "agent_event_id": 0,
+     "pi_sessions": []
+    }
+   ],
+   "tags": [
+    {
+     "name": "Unused",
+     "folder": null,
+     "available": false
+    },
+    {
+     "name": "Z",
+     "folder": null,
+     "available": false
+    },
+    {
+     "name": "A",
+     "folder": null,
+     "available": false
+    }
+   ],
+   "config": {
+    "maxVisibleNotes": 4,
+    "markdownPreview": false,
+    "kittyStartPrompt": "go"
+   }
+  }
+ },
+ "archive": {
+  "protocol": 1,
+  "ok": true,
+  "result": {
+   "notes": [
+    {
+     "id": 4,
+     "text": "done",
+     "state": "done",
+     "created_at": "2026-11-22T00:28:57.236337+00:00",
+     "updated_at": "2026-11-22T00:28:57.236338+00:00",
+     "tag": null,
+     "remind_at": null,
+     "reminder_due_at": null,
+     "archived_at": "2026-11-22T00:28:57.236338+00:00",
+     "agent_notes": {},
+     "agent_event_id": 0,
+     "pi_sessions": []
+    }
+   ],
+   "tags": [
+    {
+     "name": "Unused",
+     "folder": null,
+     "available": false
+    },
+    {
+     "name": "Z",
+     "folder": null,
+     "available": false
+    },
+    {
+     "name": "A",
+     "folder": null,
+     "available": false
+    }
+   ],
+   "config": {
+    "maxVisibleNotes": 4,
+    "markdownPreview": false,
+    "kittyStartPrompt": "go"
+   }
+  }
+ },
+ "scheduled": {
+  "protocol": 1,
+  "ok": true,
+  "result": {
+   "notes": [
+    {
+     "id": 3,
+     "text": "scheduled",
+     "state": "scheduled",
+     "created_at": "2026-11-22T00:28:57.235337+00:00",
+     "updated_at": "2026-11-22T00:28:57.236337+00:00",
+     "tag": null,
+     "remind_at": "2099-01-01T00:00:00.123456+00:00",
+     "reminder_due_at": null,
+     "archived_at": null,
+     "agent_notes": {},
+     "agent_event_id": 0,
+     "pi_sessions": []
+    }
+   ],
+   "tags": [
+    {
+     "name": "Unused",
+     "folder": null,
+     "available": false
+    },
+    {
+     "name": "Z",
+     "folder": null,
+     "available": false
+    },
+    {
+     "name": "A",
+     "folder": null,
+     "available": false
+    }
+   ],
+   "config": {
+    "maxVisibleNotes": 4,
+    "markdownPreview": false,
+    "kittyStartPrompt": "go"
+   }
+  }
+ }
+}

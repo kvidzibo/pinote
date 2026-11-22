@@ -29,20 +29,8 @@ npm install -g ./backend
 Use the checkout executable directly or keep npm's global bin directory on `PATH`.
 After source changes, rebuild; reinstall if using the global copy. For an offline
 transfer, `(cd backend && npm pack)` produces a tarball containing the CLI and
-bundled backend. No Python runtime or database conversion is needed.
-
-The legacy Python CLI remains available through `uv tool install .` / `pipx install .`
-and serves as a compatibility reference. It shares the same schema-8 database and
-lock. Be explicit about executable paths when both CLIs are installed. Neither
-installer changes desktop startup or existing reminders.
-
-For a CLI-only Python install without uv or pipx, use a dedicated virtual environment:
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install .
-.venv/bin/note --help
-```
+bundled backend. No Python runtime or database conversion is needed. Installation
+never changes desktop startup or existing reminders.
 
 ## Use
 
@@ -267,7 +255,8 @@ staged files before publishing. Uninstalling the tool does not delete data.
 ### Upgrading for scheduled reminders
 
 Back up `notes.db` first. Update every installation that opens the database,
-including Electron and the CLI used by Pi. `note` versions before 0.25.0 cannot read schema 8.
+including Electron and the CLI used by Pi. `note` versions before 0.25.0 cannot read
+schema 8.
 
 The first database open upgrades schema 1–7 to **8** atomically, retaining note
 IDs, timestamps, tags, reminders, history, and import markers. Tasks from schema
@@ -279,8 +268,10 @@ schema 8 adds persistent Pi session IDs (initially empty).
 Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Editing a task does not replace historical text.
 
-For existing GTK users: `pinote-gui` was removed in 0.26.0. Electron uses the
-same database; switching desktops requires no data conversion. Electron does not
-read GTK's unsaved input or edit drafts (`gui-draft.txt`, `gui-edit-drafts/` beside
-`notes.db`): save unfinished edits before upgrading, or copy their text from
-those files.
+`pinote-gui` and the Python `note` CLI are no longer provided. An installed Python
+`note` keeps working with the same schema-8 database but receives no updates.
+Replace it with Electron's [**Switch to Node backend…**](electron.md#switch-an-existing-installation)
+or build and run `npm install -g ./backend`, then check that `note` resolves to the
+Node CLI. Electron uses the same database but does not read GTK's unsaved input
+or edit drafts (`gui-draft.txt`, `gui-edit-drafts/` beside `notes.db`): save
+unfinished edits before upgrading, or copy their text from those files.

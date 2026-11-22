@@ -1,19 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-const worktree = fileURLToPath(new URL('../../../', import.meta.url));
-const pythonPath = fileURLToPath(new URL('../../../.venv/bin/python', import.meta.url));
+// Outputs captured from the removed Python implementation; see fixtures/python-reference/README.md.
+const reference = (name:string) => readFileSync(new URL('../fixtures/python-reference/'+name, import.meta.url), 'utf8');
 import { DatabaseSync } from 'node:sqlite';
 import { Store, NoteError, markdown } from '../../src/store.ts';
 import { timestamp, validate_tag, validate_text, agentJSON, codepointCompare } from '../../src/compat.ts';
 import { parse_reminder_time, local_reminder_time } from '../../src/reminders.ts';
 
 function fixture(t:any) { const dir=mkdtempSync(join(tmpdir(),'pinote-store-')); t.after(()=>rmSync(dir,{recursive:true,force:true})); const path=join(dir,'data','notes.db'); const store=new Store(path); t.after(()=>store.close()); return {store,path,dir}; }
-function python(code:string,args:string[]=[]) { const r=spawnSync(pythonPath,['-c',code,...args],{cwd:worktree,encoding:'utf8',env:{...process.env,PYTHONPATH:'src',PYTHONDONTWRITEBYTECODE:'1'}}); assert.equal(r.status,0,r.stderr); return r.stdout; }
 
 test('lifecycle, revisions, private creation, no-ops and transactional rollback',t=>{
  const {store:s,path}=fixture(t);
@@ -117,58 +114,39 @@ test('schema8 opens and ordinary polls without acquiring a SQLite write lock',t=
  assert.equal(s.notes().length,0);
 });
 
-const snapshot=`
-import json,sqlite3,sys
-c=sqlite3.connect(sys.argv[1]);c.row_factory=sqlite3.Row
-print(json.dumps({"schema":[list(r) for r in c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name")],"version":c.execute("PRAGMA user_version").fetchone()[0],"data":{name:[dict(r) for r in c.execute('SELECT * FROM '+name+' ORDER BY 1')] for name in ['notes','events','imports','tags','agent_selections','sqlite_sequence']}}))
-`;
-for(let version=0;version<=8;version++) test(`Python/Node migration schema/data/sequence parity v${version}`,t=>{
- const dir=mkdtempSync(join(tmpdir(),'pinote-migrate-')); t.after(()=>rmSync(dir,{recursive:true,force:true})); const a=join(dir,'a.db'),b=join(dir,'b.db');
- python(`
-import sqlite3,sys,shutil,ast
-from pinote.store import *
-p=sys.argv[1];v=int(sys.argv[3]);c=sqlite3.connect(p)
-if v:
- if v==1:
-  tree=ast.parse(open('tests/test_progress.py').read())
-  legacy=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='LEGACY_SCHEMA' for t in n.targets))
-  c.executescript(legacy)
- else:
-  for sql in SCHEMA:c.execute(sql)
- for i in range(3,v+1):
-  for sql in globals()['MIGRATION_'+str(i)]:c.execute(sql)
- c.execute('PRAGMA user_version='+str(v))
- c.execute("INSERT INTO notes(id,text,state,created_at,updated_at) VALUES (7,'legacy 🐦','active','created','old')")
- if v<3:c.execute("INSERT INTO events(id,note_id,action,state,occurred_at) VALUES (9,7,'add','active','created')")
- else:c.execute("INSERT INTO events(id,note_id,action,state,occurred_at,text) VALUES (9,7,'add','active','created','legacy 🐦')")
- c.execute("UPDATE sqlite_sequence SET seq=40 WHERE name='notes'")
- c.execute("UPDATE sqlite_sequence SET seq=80 WHERE name='events'")
- c.execute("INSERT INTO imports VALUES ('legacy','created',1)")
- c.commit()
-c.close();shutil.copyfile(p,sys.argv[2])
-with Store(__import__('pathlib').Path(p)):pass
-`,[a,b,String(version)]);
- const s=new Store(b); try {
-  const expected=JSON.parse(python(snapshot,[a])); const actual=JSON.parse(python(snapshot,[b])); assert.deepEqual(actual,expected);
+// The dumps insert rows before the tables their foreign keys name exist.
+function load(path:string,sql:string) { const c=new DatabaseSync(path,{enableForeignKeyConstraints:false}); try { c.exec(sql); } finally { c.close(); } }
+const tables=['notes','events','imports','tags','agent_selections','sqlite_sequence'];
+function snapshot(path:string) {
+ const c=new DatabaseSync(path,{readOnly:true});
+ try {
+  const all=(sql:string)=>c.prepare(sql).all().map(r=>({...r}));
+  return {schema:all('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').map(r=>[r.type,r.name,r.tbl_name,r.sql]),
+   version:c.prepare('PRAGMA user_version').get()!.user_version,
+   data:Object.fromEntries(tables.map(name=>[name,all('SELECT * FROM '+name+' ORDER BY 1')]))};
+ } finally { c.close(); }
+}
+const migrations:Record<string,{before:string|null,after:unknown}>=JSON.parse(reference('migrations.json'));
+for(let version=0;version<=8;version++) test(`migration schema/data/sequence matches the Python reference v${version}`,t=>{
+ const dir=mkdtempSync(join(tmpdir(),'pinote-migrate-')); t.after(()=>rmSync(dir,{recursive:true,force:true})); const path=join(dir,'notes.db');
+ const {before,after}=migrations[version];
+ assert.equal(before===null,version===0);
+ if(before!==null) load(path,before);
+ const s=new Store(path); try {
+  assert.deepEqual(snapshot(path),after);
   assert.deepEqual(s.query('PRAGMA foreign_key_check'),[]); assert.equal(s.row('PRAGMA integrity_check')!.integrity_check,'ok');
   assert.equal(s.add('after'),version?41n:1n);
  } finally{s.close();}
 });
 
-test('Python/Node write alternation and agent JSON byte parity',t=>{
- const {store:s,path}=fixture(t); const n=s.add_note('Node',{tag:'Straße'});
- python(`
-from pinote.store import Store
-from pathlib import Path
-import sys
-with Store(Path(sys.argv[1])) as s:
- n=s.get(1);s.update_agent(1,{'__proto__':'safe','10':'ten','2':'two','Next':'日本語\\nreview'},[],expected_updated_at=n.updated_at)
- s.add('Python',tag='STRASSE')
-`,[path]);
- const current=s.get(n.id); assert.equal(s.get(2n).tag,'Straße');
- const encoded=s.row('SELECT agent_notes FROM notes WHERE id=?',n.id)!.agent_notes; assert.equal(encoded,agentJSON(current.agent_notes));
- assert.equal(s.update_agent(n.id,{},[],{expected_updated_at:current.updated_at}).updated_at,current.updated_at);
- s.transition(n.id,'done');
- const data=JSON.parse(python(`from pinote.store import Store;from pathlib import Path;import sys,json\nwith Store(Path(sys.argv[1])) as s: print(json.dumps({'state':s.get(1).state,'actions':[r['action'] for r in s.history(1)]}))`,[path]));
- assert.deepEqual(data,{state:'done',actions:['add','agent','done']});
+test('a database written by the Python reference keeps tag casing and agent JSON bytes',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'pinote-store-')); t.after(()=>rmSync(dir,{recursive:true,force:true})); const path=join(dir,'notes.db');
+ load(path,reference('python-written.sql'));
+ const s=new Store(path); t.after(()=>s.close());
+ const current=s.get(1n); assert.equal(s.get(2n).tag,'Straße');
+ assert.deepEqual({...current.agent_notes},{'10':'ten','2':'two',Next:'日本語\nreview',...JSON.parse('{"__proto__":"safe"}')});
+ const encoded=s.row('SELECT agent_notes FROM notes WHERE id=?',1n)!.agent_notes; assert.equal(encoded,agentJSON(current.agent_notes));
+ assert.equal(s.update_agent(1n,{},[],{expected_updated_at:current.updated_at}).updated_at,current.updated_at);
+ s.transition(1n,'done');
+ assert.deepEqual({state:s.get(1n).state,actions:s.history(1n).map(e=>e.action)},{state:'done',actions:['add','agent','done']});
 });

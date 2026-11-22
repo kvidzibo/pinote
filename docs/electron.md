@@ -20,12 +20,12 @@ npm --prefix electron run setup
 npm --prefix electron start
 ```
 
-`setup` installs the locked backend and `pi/` service build dependencies, builds
-the backend bundles, and explicitly downloads the locked Electron 45 binary; there is no Electron
-postinstall download in this version. Dependencies have their own
-`electron/package-lock.json`. `start` rebuilds before launching.
-For development checks (including legacy Python and Pi service fixtures), see
-[Electron tests](development.md#electron-frontend). They are not required to launch.
+`setup` installs the locked backend and `pi/` watcher build dependencies, builds
+the backend bundles, and explicitly downloads the locked Electron 45 binary;
+there is no Electron postinstall download in this version. Dependencies have
+their own `electron/package-lock.json`. `start` rebuilds before launching.
+See [Electron tests](development.md#electron-frontend) for development checks;
+they are not required to launch.
 The build includes the backend bundle. At runtime it uses external `node` from
 absolute PATH directories, or a **trusted absolute Node executable** in `PINOTE_NODE`.
 Relative PATH entries are ignored; unsupported Node versions fail at startup.

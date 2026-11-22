@@ -1,0 +1,1047 @@
+{
+ "0": {
+  "before": null,
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [],
+    "events": [],
+    "imports": [],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 0
+     },
+     {
+      "name": "notes",
+      "seq": 0
+     }
+    ]
+   }
+  }
+ },
+ "1": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_id INTEGER NOT NULL REFERENCES notes(id),\n    action TEXT NOT NULL CHECK (action IN ('add', 'done', 'rm', 'restore', 'import')),\n    previous_state TEXT,\n    state TEXT NOT NULL,\n    occurred_at TEXT NOT NULL\n);\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created');\nCREATE TABLE imports (\n    source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL\n);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    text TEXT NOT NULL,\n    state TEXT NOT NULL CHECK (state IN ('active', 'done', 'removed')),\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n);\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old');\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=1;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (\n    source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL\n)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "2": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_id INTEGER NOT NULL REFERENCES notes(id),\n    action TEXT NOT NULL CHECK (\n        action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import')\n    ),\n    previous_state TEXT,\n    state TEXT NOT NULL,\n    occurred_at TEXT NOT NULL\n);\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created');\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    text TEXT NOT NULL,\n    state TEXT NOT NULL CHECK (state IN ('active', 'in_progress', 'done', 'removed')),\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n);\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old');\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=2;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "3": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE \"events\" (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_id INTEGER NOT NULL REFERENCES notes(id),\n    action TEXT NOT NULL CHECK (\n        action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import', 'edit', 'tag')\n    ),\n    previous_state TEXT,\n    state TEXT NOT NULL,\n    occurred_at TEXT NOT NULL,\n    text TEXT NOT NULL,\n    previous_text TEXT,\n    tag TEXT,\n    previous_tag TEXT\n);\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created','legacy 🐦',NULL,NULL,NULL);\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    text TEXT NOT NULL,\n    state TEXT NOT NULL CHECK (state IN ('active', 'in_progress', 'done', 'removed')),\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n, tag TEXT);\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old',NULL);\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nCOMMIT;\nPRAGMA user_version=3;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "4": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES \"notes\"(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT\n    );\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created','legacy 🐦',NULL,NULL,NULL,NULL,NULL);\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT,\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    );\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old',NULL,NULL);\nCREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled';\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=4;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "5": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES \"notes\"(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT\n    );\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created','legacy 🐦',NULL,NULL,NULL,NULL,NULL);\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT,\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    );\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old',NULL,NULL);\nCREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL);\nCREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled';\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=5;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "6": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id));\nCREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    );\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created','legacy 🐦',NULL,NULL,NULL,NULL,NULL,'{}','{}');\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    );\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old',NULL,NULL,'{}');\nCREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL);\nCREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled';\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=6;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "7": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id));\nCREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    );\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created','legacy 🐦',NULL,NULL,NULL,NULL,NULL,'{}','{}');\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    );\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old',NULL,NULL,'{}');\nCREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT);\nCREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled';\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=7;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ },
+ "8": {
+  "before": "BEGIN TRANSACTION;\nCREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id));\nCREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    );\nINSERT INTO \"events\" VALUES(9,7,'add',NULL,'active','created','legacy 🐦',NULL,NULL,NULL,NULL,NULL,'{}','{}');\nCREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL);\nINSERT INTO \"imports\" VALUES('legacy','created',1);\nCREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    );\nINSERT INTO \"notes\" VALUES(7,'legacy 🐦','active','created','old',NULL,NULL,'{}','[]');\nCREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT);\nCREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled';\nDELETE FROM \"sqlite_sequence\";\nINSERT INTO \"sqlite_sequence\" VALUES('notes',40);\nINSERT INTO \"sqlite_sequence\" VALUES('events',80);\nCOMMIT;\nPRAGMA user_version=8;\n",
+  "after": {
+   "schema": [
+    [
+     "index",
+     "scheduled_times",
+     "notes",
+     "CREATE INDEX scheduled_times ON notes(remind_at) WHERE state = 'scheduled'"
+    ],
+    [
+     "index",
+     "sqlite_autoindex_agent_selections_1",
+     "agent_selections",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_imports_1",
+     "imports",
+     null
+    ],
+    [
+     "index",
+     "sqlite_autoindex_tags_1",
+     "tags",
+     null
+    ],
+    [
+     "table",
+     "agent_selections",
+     "agent_selections",
+     "CREATE TABLE agent_selections (cwd TEXT PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id))"
+    ],
+    [
+     "table",
+     "events",
+     "events",
+     "CREATE TABLE \"events\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        note_id INTEGER NOT NULL REFERENCES notes(id),\n        action TEXT NOT NULL CHECK (\n            action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import',\n                       'edit', 'tag', 'schedule', 'remind', 'agent')\n        ),\n        previous_state TEXT,\n        state TEXT NOT NULL,\n        occurred_at TEXT NOT NULL,\n        text TEXT NOT NULL,\n        previous_text TEXT,\n        tag TEXT,\n        previous_tag TEXT,\n        remind_at TEXT,\n        previous_remind_at TEXT,\n        agent_notes TEXT NOT NULL DEFAULT '{}',\n        previous_agent_notes TEXT NOT NULL DEFAULT '{}'\n    )"
+    ],
+    [
+     "table",
+     "imports",
+     "imports",
+     "CREATE TABLE imports (source TEXT PRIMARY KEY, imported_at TEXT NOT NULL, note_count INTEGER NOT NULL)"
+    ],
+    [
+     "table",
+     "notes",
+     "notes",
+     "CREATE TABLE \"notes\" (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        text TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (\n            state IN ('active', 'in_progress', 'done', 'removed', 'scheduled')\n        ),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        tag TEXT,\n        remind_at TEXT, agent_notes TEXT NOT NULL DEFAULT '{}', pi_sessions TEXT NOT NULL DEFAULT '[]',\n        CHECK ((state = 'scheduled') = (remind_at IS NOT NULL))\n    )"
+    ],
+    [
+     "table",
+     "sqlite_sequence",
+     "sqlite_sequence",
+     "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+     "table",
+     "tags",
+     "tags",
+     "CREATE TABLE tags (name TEXT PRIMARY KEY NOT NULL, default_folder TEXT)"
+    ]
+   ],
+   "version": 8,
+   "data": {
+    "notes": [
+     {
+      "id": 7,
+      "text": "legacy 🐦",
+      "state": "active",
+      "created_at": "created",
+      "updated_at": "old",
+      "tag": null,
+      "remind_at": null,
+      "agent_notes": "{}",
+      "pi_sessions": "[]"
+     }
+    ],
+    "events": [
+     {
+      "id": 9,
+      "note_id": 7,
+      "action": "add",
+      "previous_state": null,
+      "state": "active",
+      "occurred_at": "created",
+      "text": "legacy 🐦",
+      "previous_text": null,
+      "tag": null,
+      "previous_tag": null,
+      "remind_at": null,
+      "previous_remind_at": null,
+      "agent_notes": "{}",
+      "previous_agent_notes": "{}"
+     }
+    ],
+    "imports": [
+     {
+      "source": "legacy",
+      "imported_at": "created",
+      "note_count": 1
+     }
+    ],
+    "tags": [],
+    "agent_selections": [],
+    "sqlite_sequence": [
+     {
+      "name": "events",
+      "seq": 80
+     },
+     {
+      "name": "notes",
+      "seq": 40
+     }
+    ]
+   }
+  }
+ }
+}

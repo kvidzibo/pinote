@@ -6,10 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { switchToNode, recoverBackendSwitch, preferredBackendEnvironment, runCommand } from '../src/backend-switch.ts';
+import { legacyEnvironment, legacyPackage } from './legacy-python.mjs';
 
-let bundles: string;
+let bundles: string, legacy: { interpreter: string; note: string };
 before(async () => {
   bundles = await mkdtemp(join(tmpdir(), 'pinote-switch-bundles-'));
+  // A shebang cannot name an interpreter under the fixtures' paths with spaces.
+  legacy = await legacyEnvironment(join(bundles, 'legacy'));
   for (const artifact of ['cli.mjs', 'bridge.mjs']) await symlink(resolve('../backend/dist', artifact), join(bundles, artifact));
 });
 after(async () => { if (bundles) await rm(bundles, { recursive: true, force: true }); });
@@ -39,10 +42,11 @@ test('confirmed backend switching preserves data, rolls back failure and recover
       await mkdir(join(root, '.local/bin'), { recursive: true });
       const custom = join(root, 'old-note'); await writeFile(custom, '#!/bin/sh\nprintf old\\n\n', { mode: 0o700 });
       const isPip = mode === 'pip' || mode === 'pip-lazy' || mode === 'interpreter-shim';
-      const old = isPip ? join(root, 'pip-note') : mode === 'user-wrapper' ? custom : mode === 'node' || mode === 'node-wrapper' ? resolve('../backend/bin/note') : resolve('../.venv/bin/note');
+      const old = isPip ? join(root, 'pip-note') : mode === 'user-wrapper' ? custom : mode === 'node' || mode === 'node-wrapper' ? resolve('../backend/bin/note') : legacy.note;
       if (isPip) {
         const entry = mode === 'pip' ? "from pinote.cli import main\nif __name__ == '__main__':" : "if __name__ == '__main__':\n    from pinote.cli import main";
-        const interpreter = mode === 'interpreter-shim' ? join(root, 'bin/python') : resolve('../.venv/bin/python');
+        const interpreter = mode === 'interpreter-shim' ? join(root, 'bin/python') : legacy.interpreter;
+        await legacyPackage(root);
         if (mode === 'interpreter-shim') await writeFile(interpreter, `#!/bin/sh\ntouch '${root}/shim-ran'\nexit 1\n`, { mode: 0o700 });
         await writeFile(old, `#!${interpreter}\n# -*- coding: utf-8 -*-\nimport re\nimport sys\n${entry}\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n`, { mode: 0o700 });
       }

@@ -320,16 +320,15 @@ From the repository root:
 ```sh
 npm --prefix backend ci --ignore-scripts
 npm --prefix backend run build
-npm --prefix pi ci --ignore-scripts
-npm --prefix pi test
+npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 (cd pi && npm pack --dry-run)
 ```
 
 Tests use the checkout's own `backend/bin/note` and temporary storage. UI validation must use Xvfb, a private D-Bus session and temporary app data.
 
-The npm and Python packages are versioned independently. Bump npm with
-`npm version patch|minor|major --no-git-tag-version` inside `pi/` and commit its
-manifest and lockfile together. GitHub CI tests `main`, then publishes new npm
-versions through OIDC trusted publishing; registry failures fail the workflow.
+Bump the pi-note version with `npm version patch|minor|major --no-git-tag-version`
+inside `pi/` and commit its manifest and lockfile together. GitHub CI tests `main`,
+then publishes new npm versions through OIDC trusted publishing; registry failures
+fail the workflow.
 The trusted publisher is `kvidzibo/pinote`, workflow `publish.yml`, no environment.
 Installation never edits personal Pi, shell, systemd or desktop configuration.

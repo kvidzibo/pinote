@@ -2,8 +2,9 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { decode, validate, respond, MAX_REQUEST } from '../../src/bridge.ts';
 import { Store } from '../../src/store.ts';
 import { discoverPaths, withDisplayLock, jsonStringify, type Paths } from '../../src/runtime.ts';
@@ -30,7 +31,7 @@ test('handshake, help and version are side-effect free', async () => {
   assert.equal(existsSync(paths.data), false); assert.equal(existsSync(paths.state), false);
   assert.equal((await respond(request('handshake'), paths)).ok, true);
 });
-test('symlink/.. in XDG_DATA_HOME shares the Python database and display lock', () => {
+test('symlink/.. in XDG_DATA_HOME resolves through the filesystem and honours a display lock held elsewhere', () => {
   mkdirSync(join(root, 'actual', 'nested'), { recursive: true });
   symlinkSync('actual/nested', join(root, 'link'));
   process.env.XDG_DATA_HOME = `${root}/link/../profile`;
@@ -41,33 +42,19 @@ test('symlink/.. in XDG_DATA_HOME shares the Python database and display lock', 
   assert.equal(existsSync(join(root, 'actual', 'profile')), false);
   assert.equal(existsSync(paths.state), false);
 
-  const py = (code: string, args: readonly string[] = []) => {
-    const result = spawnSync(resolve('../.venv/bin/python'), ['-c', code, ...args], { env: process.env, encoding: 'utf8', timeout: 10000 });
-    assert.equal(result.status, 0, result.stderr);
-    return result.stdout.trim();
-  };
-  const locked = py(`
-import subprocess, sys
-from pinote.paths import Paths, display_lock
-paths = Paths.discover()
-print(paths.database.resolve(), flush=True)
-with display_lock(paths):
-    subprocess.run(sys.argv[2:], input=sys.argv[1], text=True, check=True, timeout=5)
-`, [JSON.stringify(request('add', { text: 'blocked', tag: null })), ...bridgeCommand]);
-  const [database, reply] = locked.split('\n');
-  assert.equal(database, expected);
-  assert.equal(JSON.parse(reply).error.code, 'busy');
+  // Another process holds flock(2) on display.lock in the physical directory, as the Python CLI did.
+  mkdirSync(dirname(expected), { recursive: true, mode: 0o700 });
+  const locked = spawnSync('flock', ['-x', join(dirname(expected), 'display.lock'), ...bridgeCommand],
+    { input: JSON.stringify(request('add', { text: 'blocked', tag: null })), env: process.env, encoding: 'utf8', timeout: 10000 });
+  assert.equal(locked.status, 0, locked.stderr);
+  assert.equal(JSON.parse(locked.stdout).error.code, 'busy');
   assert.equal(existsSync(expected), false);
 
   const added = processRequest(JSON.stringify(request('add', { text: 'shared note', tag: null })));
   assert.equal(added.status, 0, added.stderr);
   assert.equal(JSON.parse(added.stdout).ok, true);
-  assert.equal(py(`
-from pinote.paths import Paths
-from pinote.store import Store
-with Store(Paths.discover().database) as store:
-    print(store.get(1).text)
-`), 'shared note');
+  const shared = new DatabaseSync(expected, { readOnly: true });
+  try { assert.equal(shared.prepare('SELECT text FROM notes WHERE id = 1').get()!.text, 'shared note'); } finally { shared.close(); }
   assert.equal(existsSync(join(root, 'profile')), false);
 });
 test('untraversable XDG_DATA_HOME parent step fails without opening a different profile', () => {
@@ -172,20 +159,17 @@ test('bad config and unsupported database IDs return bounded errors', async () =
   try { s.add('large'); s.connection.exec('DELETE FROM events; UPDATE notes SET id=9007199254740992'); } finally { s.close(); }
   assert.equal((await respond(request('snapshot', { view: 'active' }), paths)).error.code, 'internal');
 });
-test('Python and Node snapshots share exact schema8 metadata, config and ordering', async () => {
+test('snapshots match the Python reference for schema8 metadata, config and ordering', async () => {
+  // Captured from the removed Python bridge; see fixtures/python-reference/README.md.
+  const reference = (name: string) => readFileSync(new URL('../fixtures/python-reference/' + name, import.meta.url), 'utf8');
   const config = join(process.env.XDG_CONFIG_HOME!, 'pinote'); mkdirSync(config, { recursive: true });
   writeFileSync(join(config, 'config.toml'), '[gui]\nmax_visible_notes=4\nmarkdown_preview=false\nkitty_start_prompt="go"');
-  const s = new Store(paths.database);
-  try {
-    s.create_tag('Unused'); const id = s.add('older 🌱', { tag: 'Z' }); s.add('newer', { tag: 'A' });
-    s.update_agent(id, { Result: 'one' }, [], { expected_updated_at: s.get(id).updated_at });
-    s.transition(id, 'start', { pi_session_id: '11111111-1111-4111-8111-111111111111' });
-    const scheduled = s.add('scheduled'); s.schedule(scheduled, '2099-01-01T00:00:00.123456+00:00');
-    const archived = s.add('done'); s.transition(archived, 'done');
-  } finally { s.close(); }
+  mkdirSync(paths.data, { recursive: true, mode: 0o700 });
+  // The dump inserts rows before the tables their foreign keys name exist.
+  const database = new DatabaseSync(paths.database, { enableForeignKeyConstraints: false });
+  try { database.exec(reference('bridge-snapshots.sql')); } finally { database.close(); }
+  const expected = JSON.parse(reference('bridge-snapshots.json'));
   for (const view of ['active', 'archive', 'scheduled']) {
-    const py = spawnSync(resolve('../.venv/bin/python'), ['-c', 'import json,sys; from pinote.electron_bridge import respond; print(json.dumps(respond(json.loads(sys.stdin.read())), ensure_ascii=False))'], { input: JSON.stringify(request('snapshot', { view })), env: process.env, encoding: 'utf8', timeout: 10000 });
-    assert.equal(py.status, 0, py.stderr);
-    assert.deepEqual(JSON.parse(jsonStringify(await respond(request('snapshot', { view }), paths))), JSON.parse(py.stdout));
+    assert.deepEqual(JSON.parse(jsonStringify(await respond(request('snapshot', { view }), paths))), expected[view]);
   }
 });
