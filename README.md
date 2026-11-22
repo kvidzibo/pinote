@@ -116,7 +116,7 @@ Close Electron and stop CLI writes before copying `notes.db` and the `electron/`
 state directory beside it. See [backup details](docs/usage.md#data-privacy-and-backup).
 
 Back up before upgrading, and update both the CLI and Electron together.
-Versions before 0.25.0 cannot read schema 8. See the
+`note` versions before 0.25.0 cannot read schema 8. See the
 [upgrade guide](docs/usage.md#upgrading-for-scheduled-reminders).
 
 ## Validation

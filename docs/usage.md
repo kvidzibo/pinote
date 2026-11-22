@@ -267,7 +267,7 @@ staged files before publishing. Uninstalling the tool does not delete data.
 ### Upgrading for scheduled reminders
 
 Back up `notes.db` first. Update every installation that opens the database,
-including Electron and the CLI used by Pi. Versions before 0.25.0 cannot read schema 8.
+including Electron and the CLI used by Pi. `note` versions before 0.25.0 cannot read schema 8.
 
 The first database open upgrades schema 1–7 to **8** atomically, retaining note
 IDs, timestamps, tags, reminders, history, and import markers. Tasks from schema
@@ -280,4 +280,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
 `note history ID` shows them. Editing a task does not replace historical text.
 
 For existing GTK users: `pinote-gui` was removed in 0.26.0. Electron uses the
-same database; switching desktops requires no data conversion.
+same database; switching desktops requires no data conversion. Electron does not
+read GTK's unsaved input or edit drafts (`gui-draft.txt`, `gui-edit-drafts/` beside
+`notes.db`): save unfinished edits before upgrading, or copy their text from
+those files.
