@@ -203,8 +203,8 @@ test('enabled watcher alerts trigger once, defer busy workers, and revalidate af
   }
 });
 
-test('seven explicit direct schemas; tool state is applied before next serialized call', async () => {
-  assert.deepEqual(toolDefinitions.map((t) => t.name).sort(), ['fields', 'get_current', 'get_task', 'propose', 'search', 'tags', 'update_current']);
+test('eight explicit direct schemas; tool state is applied before next serialized call', async () => {
+  assert.deepEqual(toolDefinitions.map((t) => t.name).sort(), ['fields', 'get_current', 'get_task', 'propose', 'search', 'suggest_later', 'tags', 'update_current']);
   const seen: unknown[] = [];
   const h = harness({ tool: async (_name, _args, meta) => {
     seen.push(structuredClone((meta[UI_CONTEXT] as any).state));
@@ -598,7 +598,7 @@ test('menu bounds native layout and preserves search/selection across notificati
   assert.deepEqual(await second, { id: 'setting-1' }); component.dispose();
 });
 
-test('extension registers seven tools before startup and returns hidden unavailable context', async () => {
+test('extension registers eight tools before startup and returns hidden unavailable context', async () => {
   const { default: extension } = await import('../index.ts');
   const tools: string[] = [], commands: string[] = [], handlers = new Map<string, (...args: any[]) => any>();
   extension({
@@ -608,7 +608,7 @@ test('extension registers seven tools before startup and returns hidden unavaila
     events: { on() { return () => {}; } },
     on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
   } as any);
-  assert.equal(tools.length, 7);
+  assert.equal(tools.length, 8);
   assert.ok(tools.every((name) => name.startsWith('pinote_')));
   assert.deepEqual(commands, ['pinote']);
   const event = { systemPromptOptions: { sections: {} as Record<string, string> } };

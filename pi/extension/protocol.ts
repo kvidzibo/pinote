@@ -43,7 +43,7 @@ export const ViewSchema = z.object({
     }
   }
 });
-export const ActionResultSchema = z.object({ view: ViewSchema, draft: text.optional(), preview: text.optional() });
+export const ActionResultSchema = z.object({ view: ViewSchema, draft: text.optional(), preview: text.optional(), notice: text.optional() });
 export type NativeView = z.infer<typeof ViewSchema>;
 export type NativeControl = z.infer<typeof control>;
 

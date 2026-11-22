@@ -71,6 +71,9 @@ Fullscreen has a clickable footer: **▤** opens Pinote; single-click a task tit
 to preview, or double-click to complete immediately without another confirmation
 (requires idle Pi). Single-click a suggestion title to preview it; double-click
 to accept, start and select it immediately without another confirmation.
+A future task suggested by the agent follows the fields as `✚ [tag] title`:
+single-click to preview, double-click to add it without starting or selecting
+it, right-click to dismiss.
 Regular mode shows status; `/pinote` provides all actions. No Kitty action handler
 is needed.
 
@@ -170,7 +173,8 @@ Pinote does not display their error or response text. This is a trusted local ex
 ### Agent tools and context
 
 The extension registers `pinote_search`, `pinote_get_task`, `pinote_get_current`,
-`pinote_update_current`, `pinote_fields`, `pinote_tags`, and `pinote_propose`.
+`pinote_update_current`, `pinote_fields`, `pinote_tags`, `pinote_propose`, and
+`pinote_suggest_later`.
 Default guidance suggests tasks only for substantial work requiring changes, not
 questions, explanations, research, read-only inspection, or trivial edits.
 For new tasks, `pinote_propose` requires a nonblank, single-line `title` of
@@ -178,6 +182,12 @@ For new tasks, `pinote_propose` requires a nonblank, single-line `title` of
 Title and description are joined with a blank line; the combined text must
 fit 4,000 characters. Invalid input is rejected, never truncated. To suggest an
 existing task, pass only `task_id`.
+
+`pinote_suggest_later` suggests a new task for future work when you ask for one,
+with the same `title`, `description` and `tag` rules. It works with a task
+selected and never changes the selection. Preview it from the footer or
+`/pinote`; adding it creates a not-started task. A new suggestion replaces the
+pending one.
 
 Suggestions do not create/start/select tasks until accepted in the UI. Reads by ID
 do not change selection. Updates require the task's `expected_updated_at` revision;

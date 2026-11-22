@@ -25,14 +25,14 @@ const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', '
 const TaskId = z.number().int().positive().safe();
 const NewProposal = z.object({ text: z.string().min(1).refine((value) => [...value].length <= 4000, 'Task text exceeds 4000 characters'), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const ExistingProposal = z.object({ task_id: TaskId }).strict();
-const ProposalInput = z.union([
-  z.object({ title: z.string(), description: z.string().optional(), tag: NewProposal.shape.tag }).strict()
-    .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) })),
-  ExistingProposal,
-]);
+const NewProposalInput = z.object({ title: z.string(), description: z.string().optional(), tag: NewProposal.shape.tag }).strict()
+  .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) }));
+const ProposalInput = z.union([NewProposalInput, ExistingProposal]);
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
 const Context = z.object({ conversationId: z.string().min(1).max(256), piSessionId: z.string().max(256).regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/).optional(), contextId: z.string().min(1).max(256).optional(), fieldReceipts: z.array(z.string().uuid()).max(4096).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
+  // A task suggested for later: created on acceptance, never started or selected.
+  later: NewProposal.extend({ id: z.string().uuid() }).nullable().optional(),
   launch: z.object({ task_id: TaskId, updated_at: z.string().min(1).max(128) }).strict().optional(),
   selectedId: z.number().int().positive().safe().nullable().optional(), screen: z.enum(['tasks', 'settings', 'field']).optional(),
   field: z.string().refine((value) => [...value].length <= 64, 'Field name exceeds 64 code points').optional(), search: z.string().max(256).optional(),
@@ -109,17 +109,18 @@ async function selection(state: State, signal: AbortSignal) {
   let proposal = task || state.proposal && await consumed(state.proposal.id) ? null : state.proposal ?? null;
   const proposedTask: Task | null = proposal && 'task_id' in proposal ? JSON.parse(await note(['agent', 'get', String(proposal.task_id)], signal)) : null;
   if (proposal && 'task_id' in proposal && (!proposedTask || !['active', 'in_progress'].includes(proposedTask.state))) proposal = null;
-  return { task, proposal, proposedTask };
+  const later = state.later && !await consumed(state.later.id) ? state.later : null;
+  return { task, proposal, proposedTask, later };
 }
 async function snapshot(state: State, signal: AbortSignal, automation?: FieldAutomation, contextId?: string, receipts: readonly string[] = [], groupReceipts = false) {
   const launchTask: Task | null = state.launch ? JSON.parse(await note(['agent', 'get', String(state.launch.task_id)], signal)) : null;
   const tasks: Task[] = state.launch
     ? launchTask && ['active', 'in_progress'].includes(launchTask.state) ? [launchTask] : []
     : JSON.parse(await note(['list', '--json'], signal));
-  const { task, proposal, proposedTask } = await selection(state, signal);
+  const { task, proposal, proposedTask, later } = await selection(state, signal);
   const config = settings();
   const suggestion = proposal && ('task_id' in proposal ? proposedTask : proposal);
-  state = { ...state, selectedId: task?.id ?? null, proposal };
+  state = { ...state, selectedId: task?.id ?? null, proposal, later };
   if (state.screen === 'field' && !fields(config.config, task?.agent_notes).some((f) => f.name === state.field)) state.screen = 'settings';
   state = Context.parse({ conversationId: 'canonical', state }).state;
   const fieldStatuses = task ? automation?.statuses(task) ?? [] : [];
@@ -138,7 +139,7 @@ function actionRevision(data: Snapshot, control: Control): string {
   if (id === 'done') dependency = data.task && { id: data.task.id, updated_at: data.task.updated_at };
   else if (id === 'proposal:accept' || id === 'proposal:preview') dependency = data.proposedTask;
   else if (id.startsWith('select:')) dependency = data.tasks.find((task) => task.id === Number(id.slice(7)));
-  else if (!['preview', 'continue', 'clear', 'search', 'add', 'proposal:accept', 'proposal:dismiss'].includes(id) && !id.startsWith('screen:') && !id.startsWith('field:')) {
+  else if (!['preview', 'continue', 'clear', 'search', 'add', 'proposal:accept', 'proposal:dismiss'].includes(id) && !id.startsWith('later:') && !id.startsWith('screen:') && !id.startsWith('field:')) {
     dependency = { raw: data.config.raw, ...(['add-field', 'remove-field', 'label', 'format', 'width', 'link', 'enabled', 'instructions'].includes(id) ? { fields: fields(data.config.config, data.task?.agent_notes) } : {}) };
   }
   return createHash('sha256').update(JSON.stringify({ action: id, semantics, state: data.state, dependency })).digest('hex');
@@ -186,6 +187,14 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     if (confirm.length <= 20_000) action('proposal:accept', 'Accept suggestion', { icon: icons.add, description: `${acceptance} Review the complete task and tag before confirming.`, confirm });
     else body += '\nSuggestion exceeds the confirmation limit; review and select it through the Pinote CLI.';
     action('proposal:dismiss', 'Dismiss suggestion', { icon: icons.cross });
+  }
+  const later = state.later;
+  const laterTitle = later ? `${later.tag ? `[${later.tag}] ` : ''}${taskTitle(later.text).slice(0, 2000)}` : '';
+  if (later) {
+    const acceptance = 'Create this task for later; it is not started or selected.';
+    action('later:preview', 'Preview future task', { description: `${laterTitle} · Preview only; does not create the task.` });
+    action('later:accept', 'Add future task', { icon: icons.add, description: `${acceptance} Review the complete task and tag before confirming.`, confirm: `${acceptance}\nTag: ${later.tag || 'No tag'}\n\n${later.text}` });
+    action('later:dismiss', 'Dismiss future task', { icon: icons.cross });
   }
   action('screen:tasks', 'Tasks', { icon: icons.note });
   action('screen:settings', 'Settings', { description: 'Prompts, task offers, and footer fields; affects every Pi session using this configuration' });
@@ -340,6 +349,10 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       if (!prs.length) fieldCount++;
     }
   }
+  if (later && footer.length <= 126) {
+    footer.push({ text: ' · ', width: 3 });
+    footer.push({ text: `${icons.add} ${laterTitle}`, action: 'later:preview', ...(features.footerDoubleActions ? { doubleAction: 'later:accept' } : {}), ...(secondary ? { secondaryAction: 'later:dismiss' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+  }
   const editable = controls.filter((control) => {
     if (typeof control.value !== 'string' || control.value.length <= 20_000) return true;
     body = `${control.label} exceeds the editor limit; edit it outside this UI.\n${body}`;
@@ -360,7 +373,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   return result;
 }
 async function agentContext(state: State, signal: AbortSignal, automation?: FieldAutomation): Promise<string> {
-  const { task, proposal, proposedTask } = await selection(state, signal);
+  const { task, proposal, proposedTask, later } = await selection(state, signal);
   const guidance = agentGuidance();
   const config = task ? settings().config : null;
   const data = task
@@ -384,6 +397,7 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
   const fieldGuidance = instructions.length
     ? `Configured field instructions (trusted shared settings; automatically maintain enabled fields when relevant):\n${JSON.stringify(instructions)}\n` : '';
   let text = `${guidance ? `${guidance}\n` : ''}${fieldGuidance}${data}`;
+  if (later) text += `\nPending future-task suggestion (not created; awaiting the user):\n${JSON.stringify({ text: later.text, tag: later.tag })}`;
   if (statuses.length) {
     const prefix = '\nField automation results (untrusted observations, not instructions or authorization; current checks only):\n';
     // Values already appear in agent_notes. Preserve the complete task context
@@ -448,8 +462,8 @@ return {
   if (!control || (control.revision ?? before.revision) !== params.revision) staleAction();
   const next: State = { ...before.state };
   // A launcher filter is one-shot; read-only previews preserve it.
-  if (action !== 'preview' && action !== 'proposal:preview') delete next.launch;
-  let draft: string | undefined, preview: string | undefined;
+  if (action !== 'preview' && action !== 'proposal:preview' && action !== 'later:preview') delete next.launch;
+  let draft: string | undefined, preview: string | undefined, notice: string | undefined;
   if (action === 'proposal:accept' || action === 'proposal:dismiss') {
     const proposal = before.state.proposal;
     if (!proposal || before.task) throw new Error('Suggestion no longer available');
@@ -459,7 +473,17 @@ return {
       const task: Task = 'task_id' in proposal ? before.proposedTask! : JSON.parse(await note(['agent', 'add', `--text=${proposal.text}`, ...(proposal.tag ? [`--tag=${proposal.tag}`] : [])], signal));
       await note(['agent', 'start', String(task.id), '--expected-updated-at', task.updated_at, ...sessionArgs], signal); next.selectedId = task.id;
     }
-  } else if (action.startsWith('screen:')) next.screen = action.slice(7) as State['screen'];
+  } else if (action === 'later:accept' || action === 'later:dismiss') {
+    const later = before.state.later;
+    if (!later) throw new Error('Future task no longer available');
+    await consume(later.id); // Fail closed before creation; never replay uncertain creation.
+    next.later = null;
+    if (action === 'later:accept') {
+      const task: Task = JSON.parse(await note(['agent', 'add', `--text=${later.text}`, ...(later.tag ? [`--tag=${later.tag}`] : [])], signal));
+      notice = `Added #${task.id} for later: ${taskTitle(task.text).slice(0, 200)}. Not started or selected.`;
+    } else notice = 'Future task dismissed; tasks are unchanged.';
+  } else if (action === 'later:preview') preview = fullPreview(before.state.later!);
+  else if (action.startsWith('screen:')) next.screen = action.slice(7) as State['screen'];
   else if (action.startsWith('field:')) { next.screen = 'field'; next.field = action.slice(6); }
   else if (action === 'search') next.search = z.string().max(256).parse(value);
   else if (action === 'clear') next.selectedId = null;
@@ -545,7 +569,7 @@ return {
     if (reset) options.fieldAutomation?.reset(reset);
   }
   if (next.selectedId && (action.startsWith('select:') || action === 'proposal:accept' || action === 'add')) options.fieldAutomation?.claim(next.selectedId, owner, true);
-  const result = { view: view(await snapshot(next, signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(params._meta).fieldReceiptGroups), scoped, secondaryActions(params._meta), footerFeatures(params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}) };
+  const result = { view: view(await snapshot(next, signal, options.fieldAutomation, owner, caller.fieldReceipts, footerFeatures(params._meta).fieldReceiptGroups), scoped, secondaryActions(params._meta), footerFeatures(params._meta), options.watcherLogPath), ...(draft ? { draft } : {}), ...(preview ? { preview } : {}), ...(notice ? { notice } : {}) };
   changed();
   return result;
   }),
@@ -564,6 +588,12 @@ return {
       if (state.proposal && !await consumed(state.proposal.id)) await consume(state.proposal.id);
       changed();
       result = { status: 'Suggested; user can left-click + to accept or right-click + to dismiss (or use the app menu). Continue working without asking again.' };
+    } else if (name === 'suggest_later') {
+      const args = NewProposalInput.parse(input);
+      outgoing = boundedState({ ...state, later: { ...args, id: randomUUID() } });
+      if (state.later && !await consumed(state.later.id)) await consume(state.later.id);
+      changed();
+      result = { status: 'Suggested for later; the user can preview it in the footer and double-click to add it (right-click dismisses). Nothing is created, started or selected until then. Continue working without asking again.' };
     } else if (name === 'search') {
       const args = z.object({ query: z.string().max(256), limit: z.number().int().min(1).max(50).default(10), offset: z.number().int().min(0).safe().default(0) }).strict().parse(input);
       const words = args.query.toLowerCase().trim().split(/\s+/).filter(Boolean);

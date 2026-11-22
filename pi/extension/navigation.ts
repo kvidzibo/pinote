@@ -15,7 +15,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
     case 'tasks':
       title = 'Pinote'; body = view.body ?? '';
       controls = [...take('add'), ...view.controls.filter((c) => c.id.startsWith('select:')),
-        ...take('preview', 'proposal:preview', 'proposal:accept', 'proposal:dismiss', 'continue', 'done', 'clear')];
+        ...take('preview', 'proposal:preview', 'proposal:accept', 'proposal:dismiss', 'later:preview', 'later:accept', 'later:dismiss', 'continue', 'done', 'clear')];
       if (!controls.some((c) => c.id.startsWith('select:'))) body = view.state.search ? 'No tasks match this search.' : 'No active tasks. Create one with + New task.';
       break;
     case 'settings':
