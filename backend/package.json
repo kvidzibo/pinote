@@ -12,7 +12,7 @@
     "build": "node build.mjs",
     "check": "tsc --noEmit",
     "test": "node --test --experimental-strip-types tests/*.test.ts tests/*/*.test.ts",
-    "test:desktop": "dbus-run-session -- node --test --experimental-strip-types tests/desktop/dunst.e2e.ts",
+    "test:desktop": "node --test --experimental-strip-types tests/desktop/dunst.e2e.ts",
     "test:package": "npm run build && node tests/package.mjs",
     "prepack": "npm run build"
   },

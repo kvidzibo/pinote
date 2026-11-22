@@ -148,5 +148,10 @@ test('a database written by the Python reference keeps tag casing and agent JSON
  const encoded=s.row('SELECT agent_notes FROM notes WHERE id=?',1n)!.agent_notes; assert.equal(encoded,agentJSON(current.agent_notes));
  assert.equal(s.update_agent(1n,{},[],{expected_updated_at:current.updated_at}).updated_at,current.updated_at);
  s.transition(1n,'done');
- assert.deepEqual({state:s.get(1n).state,actions:s.history(1n).map(e=>e.action)},{state:'done',actions:['add','agent','done']});
+ // A separate connection sees only what the transition committed.
+ const c=new DatabaseSync(path,{readOnly:true});
+ try {
+  assert.deepEqual({state:c.prepare('SELECT state FROM notes WHERE id=1').get()!.state,
+   actions:c.prepare('SELECT action FROM events WHERE note_id=1 ORDER BY id').all().map(r=>r.action)},{state:'done',actions:['add','agent','done']});
+ } finally { c.close(); }
 });

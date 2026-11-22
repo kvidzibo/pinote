@@ -1,5 +1,5 @@
-// Real Dunst checks, deliberately isolated from the user's desktop. The npm
-// script starts the private D-Bus session: xvfb-run -a npm --prefix backend run test:desktop
+// Real Dunst checks, deliberately isolated from the user's desktop: each test
+// starts its own D-Bus session. Run: xvfb-run -a npm --prefix backend run test:desktop
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,15 +20,24 @@ const busHasDaemon = (env: NodeJS.ProcessEnv) => checked('dbus-send', ['--sessio
   '/org/freedesktop/DBus', 'org.freedesktop.DBus.NameHasOwner', 'string:org.freedesktop.Notifications'], env).includes('boolean true');
 
 async function desktop(t: TestContext) {
-  for (const app of ['dunst', 'dunstify', 'dunstctl', 'dbus-send']) assert.equal(spawnSync('which', [app]).status, 0, `Desktop tests require ${app}`);
+  for (const app of ['dunst', 'dunstify', 'dunstctl', 'dbus-send', 'dbus-daemon']) assert.equal(spawnSync('which', [app]).status, 0, `Desktop tests require ${app}`);
   assert.ok(process.env.DISPLAY && /xvfb-run\./.test(process.env.XAUTHORITY || ''), 'Desktop tests require xvfb-run');
-  const address = process.env.DBUS_SESSION_BUS_ADDRESS || '';
-  assert.ok(address && !address.includes('/run/user/'), 'Use npm run test:desktop for a private D-Bus session');
   // Absolute even for a relative TMPDIR: the CLI ignores relative XDG paths.
   const root = resolve(mkdtempSync(join(tmpdir(), 'pinote-dunst-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state') };
   delete env.WAYLAND_DISPLAY;
+  delete env.DBUS_SESSION_BUS_ADDRESS;
+  // Never the caller's session bus, however this file is invoked.
+  const bus = spawn('dbus-daemon', ['--session', '--nofork', `--address=unix:path=${join(root, 'bus')}`, '--print-address=1'],
+    { env, stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => { bus.kill('SIGTERM'); });
+  env.DBUS_SESSION_BUS_ADDRESS = await new Promise<string>((ready, failed) => {
+    let printed = '';
+    bus.stdout.on('data', chunk => { printed += chunk; if (printed.includes('\n')) ready(printed.trim()); });
+    bus.once('error', failed);
+    bus.once('exit', code => failed(new Error(`dbus-daemon exited with ${code}`)));
+  });
   assert.equal(busHasDaemon(env), false, 'Refusing to test against an existing desktop daemon');
   const config = join(root, 'dunstrc'), log = join(root, 'dunst.log');
   writeFileSync(config, '[global]\norigin=top-right\nwidth=500\nheight=600\nmarkup=full\nignore_newline=true\nhistory_length=50\n'

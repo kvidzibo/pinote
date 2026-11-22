@@ -23,9 +23,8 @@ and bridge snapshots without running Python. Reminder time-zone checks use GNU
 `/usr/bin/date` as the reference.
 
 The real Dunst test runs the Node CLI with temporary storage. It requires `dunst`,
-`dunstify`, `dunstctl`, `dbus-send`, `xvfb-run`, `xauth`, and `dbus-run-session`.
-The npm script starts its own private D-Bus session, and the test refuses to run
-outside `xvfb-run`.
+`dunstify`, `dunstctl`, `dbus-send`, `dbus-daemon`, `xvfb-run`, and `xauth`.
+Each test starts its own private D-Bus session and refuses to run outside `xvfb-run`.
 
 In CI, `backend` runs checks, builds, and tests (including the package test) on
 Node 22.19.0 and 24. `desktop` runs the real Dunst test on Node 24.
