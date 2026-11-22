@@ -80,13 +80,20 @@ function boundedState(state: State): State {
   if (JSON.stringify(state).length > 8192) throw new Error('Proposal exceeds the host state budget; shorten it');
   return state;
 }
+// Commands that already reported a supported version. A failed check is not
+// remembered, so upgrading the CLI works without reloading.
+const supported = new Set<string>();
 async function note(args: string[], signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
   const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
-  const version = (await exec(noteCommand(), ['--version'], options)).stdout.trim();
-  const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote requires note 0.25.0+');
-  return (await exec(noteCommand(), ['--no-notify', ...args], options)).stdout;
+  const command = noteCommand();
+  if (!supported.has(command)) {
+    const version = (await exec(command, ['--version'], options)).stdout.trim();
+    const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
+    if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote requires note 0.25.0+');
+    supported.add(command);
+  }
+  return (await exec(command, ['--no-notify', ...args], options)).stdout;
 }
 async function selected(state: State, signal: AbortSignal): Promise<Task | null> {
   if (!state.selectedId) return null;

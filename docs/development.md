@@ -40,10 +40,11 @@ node --test --experimental-strip-types $(ls tests/*.test.ts test-load.ts | grep 
 ```
 
 The `electron` job runs on Node 24 at 1280×900 and 800×600 in parallel. Each job
-runs the E2E scenario as two concurrent halves on separate Xvfb servers and
+runs the E2E scenario as three concurrent parts on separate Xvfb servers and
 D-Bus sessions: `--part=1` is the lifecycle/recovery sequence; `--part=2` holds
-the self-contained workflow checks, after the backend-switch and Watchers settings
-checks. Without `--part`, `tests/e2e.mjs` runs everything.
+the self-contained workflow checks, after the backend-switch check; `--part=3` is
+the editor autosave sequence, after the Watchers settings check. Without `--part`,
+`tests/e2e.mjs` runs everything in one application.
 Type/unit checks run once in the 800×600 job; packaged-app validation runs once in
 the 1280×900 job. The packaged smoke test runs from a
 temporary working directory with a private PATH and no Python executable.
