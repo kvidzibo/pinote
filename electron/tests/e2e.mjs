@@ -1785,8 +1785,8 @@ try {
     assert.equal(await readFile(join(stateDir,'state.json'),'utf8'),'corrupt draft JSON — preserve me');
   } finally { await chmod(stateDir,0o700); }
   }
-  console.log(`Electron UI validation artifacts: ${root}`);
   }
+  console.log(`Electron UI validation artifacts: ${root}`);
   }
 } catch(error) { console.error(logs.join('\n')); if(app) { try { await (await app.firstWindow()).screenshot({path:join(root,'failure.png')}); }catch{} } console.error(`Failure artifacts: ${root}`); throw error; }
 finally {

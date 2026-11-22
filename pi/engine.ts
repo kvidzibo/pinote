@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
@@ -80,18 +80,28 @@ function boundedState(state: State): State {
   if (JSON.stringify(state).length > 8192) throw new Error('Proposal exceeds the host state budget; shorten it');
   return state;
 }
-// Commands that already reported a supported version. A failed check is not
-// remembered, so upgrading the CLI works without reloading.
+// Executables that already reported a supported version. Replacing the CLI or
+// changing what PATH resolves to checks again; a failed check is not remembered.
 const supported = new Set<string>();
+async function executable(command: string): Promise<string | null> {
+  const candidates = command.includes('/') ? [command] : (process.env.PATH ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, command));
+  for (const candidate of candidates) {
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isFile() && stat.mode & 0o111) return [await fs.realpath(candidate), stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+    } catch { /* Not this PATH entry. */ }
+  }
+  return null; // Never remembered; running it reports the actual error.
+}
 async function note(args: string[], signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
   const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
-  const command = noteCommand();
-  if (!supported.has(command)) {
+  const command = noteCommand(), identity = await executable(command);
+  if (identity === null || !supported.has(identity)) {
     const version = (await exec(command, ['--version'], options)).stdout.trim();
     const match = /^pinote (\d+)\.(\d+)\.(\d+)$/.exec(version);
     if (!match || Number(match[1]) === 0 && Number(match[2]) < 25) throw new Error('Pinote requires note 0.25.0+');
-    supported.add(command);
+    if (identity !== null) supported.add(identity);
   }
   return (await exec(command, ['--no-notify', ...args], options)).stdout;
 }
