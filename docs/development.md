@@ -9,23 +9,27 @@ Run checkout-relative commands from the repository root.
 ```sh
 npm --prefix backend ci --ignore-scripts
 npm --prefix backend run check && npm --prefix backend run build
-uv sync --locked                 # legacy reference for interoperability checks
 npm --prefix backend test
-uv run ruff check . && uv run ruff format --check .
-uv run pytest -m 'not gui'
-xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
-uv build
-npm --prefix pi ci --ignore-scripts
-npm --prefix pi test
+xvfb-run -a npm --prefix backend run test:desktop
+npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 (cd pi && npm pack --dry-run)
+npm --prefix backend run test:package
 ```
 
-Dunst tests require `dunst`, `dunstify`, `dunstctl`, `xvfb-run`, `xauth`, and
-`dbus-run-session`. Always run them under `xvfb-run` with a private D-Bus session;
-the tests refuse to use the real desktop. All tests use temporary storage. CI runs
-unit/CLI tests on Python 3.11 and 3.13 and isolated Dunst tests.
+Backend tests use temporary databases and
+[frozen Python-reference fixtures](../backend/tests/fixtures/python-reference/README.md)
+to check migrations (schemas 0–8), a mutation sequence, a Python-written database,
+and bridge snapshots without running Python. Reminder time-zone checks use GNU
+`/usr/bin/date` as the reference.
 
-Pi tests run in two jobs on each supported Node version (22.19.0 and 24): shard 1
+The real Dunst test runs the Node CLI with temporary storage. It requires `dunst`,
+`dunstify`, `dunstctl`, `dbus-send`, `dbus-daemon`, `xvfb-run`, and `xauth`.
+Each test starts its own private D-Bus session and refuses to run outside `xvfb-run`.
+
+In CI, `backend` runs checks, builds, and tests (including the package test) on
+Node 22.19.0 and 24. `desktop` runs the real Dunst test on Node 24.
+
+The `pi` job runs two shards on each Node version (22.19.0 and 24): shard 1
 runs the long `tests/engine.test.ts` scenario alone; shard 2 runs every other unit
 and real-loader test. Type checks run on both, and the package dry-run runs once per
 Node version. To reproduce them in `pi/`:
@@ -35,11 +39,11 @@ node --test --experimental-strip-types tests/engine.test.ts
 node --test --experimental-strip-types $(ls tests/*.test.ts test-load.ts | grep -vx tests/engine.test.ts)
 ```
 
-Electron's 1280×900 and 800×600 end-to-end runs use separate parallel jobs, each
-with its own Xvfb and private D-Bus session. Each job runs the E2E scenario as two
-concurrent halves on separate Xvfb servers and D-Bus sessions: `--part=1` is the
-lifecycle/recovery sequence; `--part=2` holds the self-contained workflow checks,
-after the backend-switch and Watchers settings checks. Without `--part`, `tests/e2e.mjs` runs everything.
+The `electron` job runs on Node 24 at 1280×900 and 800×600 in parallel. Each job
+runs the E2E scenario as two concurrent halves on separate Xvfb servers and
+D-Bus sessions: `--part=1` is the lifecycle/recovery sequence; `--part=2` holds
+the self-contained workflow checks, after the backend-switch and Watchers settings
+checks. Without `--part`, `tests/e2e.mjs` runs everything.
 Type/unit checks run once in the 800×600 job; packaged-app validation runs once in
 the 1280×900 job. The packaged smoke test runs from a
 temporary working directory with a private PATH and no Python executable.
@@ -50,19 +54,18 @@ parallel jobs trade additional runner setup for shorter elapsed CI time.
 ## Electron frontend
 
 The [Electron guide](electron.md) covers installation, state, recovery, packaging,
-and limitations. These checks supplement the Python, Dunst, and Pi checks above.
-Keep the Python package and Pi package versions independent of Electron.
+and limitations. These checks supplement the backend, Dunst, and Pi checks above.
 
 Use Node.js 22.19+ (CI uses Node 24), Linux `flock`, and Electron runtime libraries:
 GTK 3 (`libgtk-3`), NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11 libraries.
 End-to-end tests additionally need `xvfb-run`, `dbus-run-session`, `xauth`, `i3-wm`,
 `xdotool`, and ImageMagick's `import` command (`imagemagick` on Debian/Ubuntu) for
-native-menu screenshots. The Electron scenario saves agent updates through the
-real CLI without making model requests.
+native-menu screenshots. Electron unit tests and `backend-switch-e2e` need system
+`/usr/bin/python3` to run the stub legacy launcher. The Electron scenario saves
+agent updates through the real CLI without making model requests.
 
 ```sh
 npm --prefix backend ci --ignore-scripts
-uv sync --locked                 # legacy reference only, not Electron's backend
 npm --prefix pi ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
@@ -96,20 +99,16 @@ machine configuration as a test workaround.
 
 ## Architecture and integration
 
-`backend/` is the private Node/TypeScript CLI and Electron bridge package, using
-`node:sqlite` against the existing schema-8 database. Build-time dependencies are
-bundled into self-contained ES modules. Linux util-linux `flock` acquires the same
-retained file-description lock as Python; no writer supervisor or Python fallback
-is used. CLI/bridge work runs in a worker thread in that same process, keeping
-signal handling responsive during SQLite waits and large imports. A shared
-cancellation flag is checked before work and commit; exclusive write transactions
-acquire reader exclusion up front, avoiding a cancellable wait inside commit.
-No uncertain mutation is replayed. Tests compare schema migrations 0–8, durable snapshots and alternating
-Python/Node writes using only temporary databases and this checkout's `.venv`.
+`backend/` is the only CLI and backend implementation. It uses Node/TypeScript and
+`node:sqlite`, preserving the schema, history, and display-lock behavior of the
+earlier Python implementation. Build-time dependencies are bundled into
+self-contained ES modules. Linux util-linux `flock` acquires the retained
+file-description lock. CLI/bridge work runs in a worker thread in the same process,
+without a writer supervisor, keeping signal handling responsive during SQLite
+waits and large imports. A shared cancellation flag is checked before work and
+commit; exclusive write transactions acquire reader exclusion up front, avoiding
+a cancellable wait inside commit. No uncertain mutation is replayed.
 
-`src/pinote/` provides the legacy Python CLI and the reference implementation for
-Node interoperability and parity tests, including the legacy Electron bridge.
-Both implementations preserve the same schema, history, and display lock.
 Electron bundles the Node bridge outside ASAR and uses a separately installed
 supported Node runtime.
 

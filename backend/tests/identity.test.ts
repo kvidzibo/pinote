@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { application_id } from '../src/model.ts';
 import { discoverPaths } from '../src/runtime.ts';
 
-const python = resolve('../.venv/bin/python');
 // Also run the same byte-level regressions against the shipped shebang wrappers
 // after building: PINOTE_TEST_WRAPPERS=1 node --test --experimental-strip-types tests/identity.test.ts
 const wrappers = process.env.PINOTE_TEST_WRAPPERS === '1';
@@ -20,23 +20,19 @@ function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pinote-identity-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, 'bin'); mkdirSync(bin); symlinkSync(process.execPath, join(bin, 'node'));
-  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), LC_ALL: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1' };
+  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), LC_ALL: 'C.UTF-8' };
   function run(entry: string, { args = [], input, bindings = {}, cwd = root }: {
     args?: (string | Buffer)[]; input?: string; bindings?: Record<string, string | Buffer>; cwd?: string | Buffer;
   } = {}) {
-    // JS subprocess APIs cannot produce undecodable argv/env/cwd. Python only
+    // JS subprocess APIs cannot produce undecodable argv/env/cwd. Bash only
     // injects the execve bytes here; neither production entry depends on it.
     const argv = wrappers ? [entry, ...args] : [process.execPath, '--disable-warning=ExperimentalWarning', '--experimental-strip-types', entry, ...args];
     const childEnv: Record<string, string | Buffer> = { ...env, ...bindings };
     if (wrappers && bindings.PATH !== undefined) childEnv.PATH = Buffer.concat([Buffer.from(bin + ':'), Buffer.from(bindings.PATH)]);
-    const pairs = Object.entries(childEnv).map(([key, value]) => [hex(key), hex(value)]);
-    const result = spawnSync(python, ['-c', `
-import json, os, sys
-cwd, argv, env = json.loads(sys.argv[1])
-os.chdir(bytes.fromhex(cwd))
-argv = list(map(bytes.fromhex, argv))
-os.execve(argv[0], argv, {bytes.fromhex(k): bytes.fromhex(v) for k, v in env})
-`, JSON.stringify([hex(cwd), argv.map(hex), pairs])], { env, input, encoding: 'utf8', timeout: 10000 });
+    // An ASCII-only script: $'\xHH' quoting yields each byte unchanged.
+    const quote = (value: string | Buffer) => "$'" + Buffer.from(value).toString('hex').replace(/../g, '\\x$&') + "'";
+    const script = `cd ${quote(cwd)} && exec /usr/bin/env -i ${Object.entries(childEnv).map(([key, value]) => quote(Buffer.concat([Buffer.from(key + '='), Buffer.from(value)]))).join(' ')} ${argv.map(quote).join(' ')}`;
+    const result = spawnSync('/bin/bash', ['-c', script], { env: { LC_ALL: 'C' }, input, encoding: 'utf8', timeout: 10000 });
     assert.ifError(result.error);
     assert.equal(result.signal, null);
     return result;
@@ -126,15 +122,9 @@ test('handshake and folder/selection keys never substitute a U+FFFD sibling for 
     f.fresh(join(sibling, 'pinote'));
     const canonical = f.reply(f.run(bridge, { input: request('handshake'), bindings: { XDG_DATA_HOME: good } })).result.database;
     assert.equal(canonical, join(sibling, 'pinote/notes.db'));
-    const ref = spawnSync(python, ['-c', `
-import json, os
-from pinote.paths import Paths
-from pinote.gui.model import application_id
-paths = Paths.discover()
-print(json.dumps([os.fsencode(paths.database.resolve()).hex(), application_id(paths)]))
-`], { env: { ...f.env, XDG_DATA_HOME: good }, encoding: 'utf8' });
-    assert.equal(ref.status, 0, ref.stderr);
-    assert.deepEqual(JSON.parse(ref.stdout), [hex(canonical), application_id(discoverPaths({ ...f.env, XDG_DATA_HOME: good }))]);
+    // Independent of model.ts: SHA-256 of the canonical database path's bytes, as the Python reference computed it.
+    assert.equal(application_id(discoverPaths({ ...f.env, XDG_DATA_HOME: good })),
+      'io.github.kvidzibo.pinote.g' + createHash('sha256').update(canonical).digest('hex').slice(0, 32));
     assert.equal(f.reply(f.run(bridge, { input: tag(good) })).ok, true);
     assert.equal(f.reply(f.run(bridge, { input: request('snapshot', { view: 'archive' }) })).result.tags[0].folder, sibling);
   } finally { rmdirSync(raw); }

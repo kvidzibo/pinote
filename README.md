@@ -3,8 +3,7 @@
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first, with Dunst notifications and an Electron desktop frontend for
 editing, tags, progress, scheduled reminders, and archived tasks. Electron and
-the shared CLI/backend use Node.js; Python remains only as a legacy CLI and test
-reference. Electron runs as a separate process, not a service.
+the shared CLI/backend use Node.js. Electron runs as a separate process, not a service.
 
 ## See it in action
 
@@ -43,7 +42,7 @@ Dunst (`dunstify`), a graphical session, and session D-Bus are needed only for
 notifications; terminal commands work without Dunst. Installation never changes
 your shell, desktop configuration, or existing reminders.
 
-For upgrades and legacy Python compatibility, see the [CLI guide](docs/usage.md#install).
+For existing installations, see the [CLI upgrade guide](docs/usage.md#upgrading-for-scheduled-reminders).
 
 ### Electron desktop frontend
 
@@ -126,17 +125,13 @@ From the repository root:
 ```sh
 npm --prefix backend ci --ignore-scripts
 npm --prefix backend run check && npm --prefix backend run build
-uv sync --locked                  # legacy reference and compatibility tests
 npm --prefix backend test
-uv run ruff check . && uv run ruff format --check .
-uv run pytest -m 'not gui'
-xvfb-run -a dbus-run-session -- uv run pytest -m gui --run-gui
-uv build
+xvfb-run -a npm --prefix backend run test:desktop
 npm --prefix pi ci --ignore-scripts && npm --prefix pi test
 ```
 
 Dunst tests require the [documented desktop tools](docs/development.md) and always
-run under Xvfb with a private D-Bus session. Tests use temporary storage.
+run under Xvfb with their own private D-Bus session. Tests use temporary storage.
 [Electron validation](docs/development.md#electron-frontend) includes sandboxed,
 isolated Xvfb/i3 end-to-end and packaged-app checks.
 

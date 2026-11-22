@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import { _electron } from 'playwright';
+import { legacyEnvironment } from './legacy-python.mjs';
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./);
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'));
 // Both display-size lanes share the real updater lock protocol. Serialize this
@@ -23,8 +24,8 @@ for (const key of Object.keys(env)) if (/^(LD_|NODE_|ELECTRON_|PYTHON)/.test(key
 env.LD_LIBRARY_PATH = join(root, 'cuda/lib64'); // A system profile's library path must not block the switch.
 for (const path of ['bin', 'data', 'state', 'config', 'cache', 'runtime', '.local/bin']) await mkdir(join(root, path), { recursive: true, mode: 0o700 });
 const marker = join(root, 'python-calls');
-await writeFile(env.PINOTE_ELECTRON_BACKEND, `#!/bin/sh\nprintf x >> '${marker}'\nexec '${resolve('../.venv/bin/pinote-electron-backend')}'\n`, { mode: 0o700 });
-const old = resolve('../.venv/bin/note');
+await writeFile(env.PINOTE_ELECTRON_BACKEND, `#!/bin/sh\nprintf x >> '${marker}'\nexec '${resolve('../backend/bin/pinote-electron-backend')}'\n`, { mode: 0o700 });
+const old = (await legacyEnvironment(join(root, 'legacy'))).note;
 await symlink(old, join(root, '.local/bin/note'));
 const seed = spawnSync(process.execPath, [resolve('../backend/dist/cli.mjs'), '--no-notify', 'Existing task survives switch'], { env, encoding: 'utf8' }); assert.equal(seed.status, 0, seed.stderr);
 const config = join(root, 'i3.conf');

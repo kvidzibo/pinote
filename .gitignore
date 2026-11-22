@@ -1,13 +1,7 @@
-.venv/
-__pycache__/
-.pytest_cache/
-.ruff_cache/
-*.py[cod]
 dist/
 /electron/out/
 /electron/test-results/
 /electron/playwright-report/
-*.egg-info/
 *.db
 *.db-*
 *.log
