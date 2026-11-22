@@ -73,7 +73,7 @@ to preview, or double-click to complete immediately without another confirmation
 to accept, start and select it immediately without another confirmation.
 A future task suggested by the agent follows the fields as `✚ [tag] title`:
 single-click to preview, double-click to add it without starting or selecting
-it, right-click to dismiss.
+it, right-click to dismiss. It keeps up to 24 columns when the row is full.
 Regular mode shows status; `/pinote` provides all actions. No Kitty action handler
 is needed.
 
@@ -184,7 +184,8 @@ fit 4,000 characters. Invalid input is rejected, never truncated. To suggest an
 existing task, pass only `task_id`.
 
 `pinote_suggest_later` suggests a new task for future work when you ask for one,
-with the same `title`, `description` and `tag` rules. It works with a task
+with the same `title` and `tag` rules and a required, nonblank Markdown
+`description`. It works with a task
 selected and never changes the selection. Preview it from the footer or
 `/pinote`; adding it creates a not-started task. A new suggestion replaces the
 pending one.

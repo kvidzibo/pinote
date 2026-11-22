@@ -494,6 +494,15 @@ test('native fullscreen footer keeps preview and double completion/acceptance di
   assert.deepEqual(calls, ['complete', 'preview']);
   click(0, 1); await sleep(5);
   assert.deepEqual(calls, ['complete', 'preview', 'open']);
+  // Kept items stay visible and clickable when earlier items fill the row.
+  current.footer = [{ text: 'T'.repeat(60), action: 'preview', width: 60 }, { text: ' · Next: ' + 'n'.repeat(60), width: 60 },
+    { text: ' · ', width: 3, keep: true }, { text: '✚ [tag] ' + 'Later '.repeat(10), action: 'preview', keep: true, width: 60 }];
+  const narrow = footer.render(80)[0];
+  assert.equal(visibleWidth(narrow), 80);
+  assert.match(narrow, / · ✚ \[tag\] Later/);
+  click(79, 1); await sleep(5);
+  assert.deepEqual(calls, ['complete', 'preview', 'open', 'preview']);
+  calls.pop();
   // A proposal has no single-click mutation, only a separately negotiated double action.
   current.footer = [{ text: '? Proposal', doubleAction: 'complete' }]; footer.render(80);
   click(1, 1); await sleep(520); assert.equal(calls.length, 3);

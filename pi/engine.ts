@@ -25,9 +25,13 @@ const icons = Object.fromEntries(['add', 'check', 'cross', 'note', 'open-app', '
 const TaskId = z.number().int().positive().safe();
 const NewProposal = z.object({ text: z.string().min(1).refine((value) => [...value].length <= 4000, 'Task text exceeds 4000 characters'), tag: z.string().trim().min(1).max(64).optional() }).strict();
 const ExistingProposal = z.object({ task_id: TaskId }).strict();
-const NewProposalInput = z.object({ title: z.string(), description: z.string().optional(), tag: NewProposal.shape.tag }).strict()
+const ProposalInput = z.union([
+  z.object({ title: z.string(), description: z.string().optional(), tag: NewProposal.shape.tag }).strict()
+    .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) })),
+  ExistingProposal,
+]);
+const LaterInput = z.object({ title: z.string(), description: z.string().refine((value) => value.trim() !== '', 'description must be nonblank'), tag: NewProposal.shape.tag }).strict()
   .transform(({ title, description, ...rest }) => ({ ...rest, text: proposalText(title, description) }));
-const ProposalInput = z.union([NewProposalInput, ExistingProposal]);
 const Proposal = z.union([NewProposal.extend({ id: z.string().uuid() }), ExistingProposal.extend({ id: z.string().uuid() })]);
 const Context = z.object({ conversationId: z.string().min(1).max(256), piSessionId: z.string().max(256).regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/).optional(), contextId: z.string().min(1).max(256).optional(), fieldReceipts: z.array(z.string().uuid()).max(4096).optional(), state: z.object({
   proposal: Proposal.nullable().optional(),
@@ -270,7 +274,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     for (const candidate of matches.slice(0, 200)) action(`select:${candidate.id}`, taskTitle(candidate.text), { description: `#${candidate.id} · ${candidate.tag || 'No tag'} · ${humanStatus(candidate.state)}${candidate.id === task?.id ? ' · CURRENT' : ''} · Select and start this task for this conversation` });
     if (matches.length > 200) body += '\nShowing the first 200 matches; use Filter tasks to narrow the list.';
   }
-  const footer: { text: string; openApp?: true; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic?: boolean } & NonNullable<FieldResult['display']>; width?: number }[] = features.footerNativeActions
+  const footer: { text: string; openApp?: true; keep?: true; url?: string; action?: string; secondaryAction?: string; doubleAction?: string; style?: { italic?: boolean } & NonNullable<FieldResult['display']>; width?: number }[] = features.footerNativeActions
     ? [{ text: `${icons['open-app']} `, openApp: true, width: 3 }]
     : [{ text: `${icons.note} `, width: 3 }];
   if (features.footerNativeActions) {
@@ -350,8 +354,10 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     }
   }
   if (later && footer.length <= 126) {
-    footer.push({ text: ' · ', width: 3 });
-    footer.push({ text: `${icons.add} ${laterTitle}`, action: 'later:preview', ...(features.footerDoubleActions ? { doubleAction: 'later:accept' } : {}), ...(secondary ? { secondaryAction: 'later:dismiss' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
+    // Fullscreen hosts keep these visible when the title and fields fill the row.
+    const keep = features.footerNativeActions ? { keep: true as const } : {};
+    footer.push({ text: ' · ', width: 3, ...keep });
+    footer.push({ text: `${icons.add} ${laterTitle}`, ...keep, action: 'later:preview', ...(features.footerDoubleActions ? { doubleAction: 'later:accept' } : {}), ...(secondary ? { secondaryAction: 'later:dismiss' } : {}), ...(features.footerStyles ? { style: { italic: true, color: 'accent' } as const } : {}), width: config.config.titleWidth });
   }
   const editable = controls.filter((control) => {
     if (typeof control.value !== 'string' || control.value.length <= 20_000) return true;
@@ -589,7 +595,7 @@ return {
       changed();
       result = { status: 'Suggested; user can left-click + to accept or right-click + to dismiss (or use the app menu). Continue working without asking again.' };
     } else if (name === 'suggest_later') {
-      const args = NewProposalInput.parse(input);
+      const args = LaterInput.parse(input);
       outgoing = boundedState({ ...state, later: { ...args, id: randomUUID() } });
       if (state.later && !await consumed(state.later.id)) await consume(state.later.id);
       changed();

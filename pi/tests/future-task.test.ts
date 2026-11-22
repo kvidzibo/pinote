@@ -34,13 +34,14 @@ test('a future task is previewed and added without starting it or replacing the 
     const before = await cli('list', '--all', '--json');
     assert.equal((await call('suggest_later', { title: 'x'.repeat(61) })).isError, true);
     assert.equal((await call('suggest_later', { task_id: selectedId })).isError, true, 'Only new tasks can be suggested for later');
-    assert.equal((await call('suggest_later', { title: 'Old idea' })).isError, undefined);
+    for (const description of [undefined, '', ' \n']) assert.equal((await call('suggest_later', { title: 'No details', description })).isError, true, 'A description is required');
+    assert.equal((await call('suggest_later', { title: 'Old idea', description: 'Details' })).isError, undefined);
     const replaced = await read();
     assert.equal((await call('suggest_later', { title: 'Retry flaky e2e', description: '- Wait for the ready event', tag: 'ci' })).isError, undefined);
     view = await read();
     assert.equal(view.state.selectedId, selectedId, 'Selection is unchanged');
     assert.deepEqual(await cli('list', '--all', '--json'), before, 'Suggesting creates nothing');
-    assert.deepEqual(view.footer.at(-1), { text: '✚ [ci] Retry flaky e2e', action: 'later:preview', doubleAction: 'later:accept', secondaryAction: 'later:dismiss', style: { italic: true, color: 'accent' }, width: 60 });
+    assert.deepEqual(view.footer.at(-1), { text: '✚ [ci] Retry flaky e2e', keep: true, action: 'later:preview', doubleAction: 'later:accept', secondaryAction: 'later:dismiss', style: { italic: true, color: 'accent' }, width: 60 });
     assert.equal(view.footer[1].action, 'preview', 'The selected task stays first');
     assert.match(await client.readContext(meta()), /Pending future-task suggestion[^\n]*\n\{"text":"Retry flaky e2e\\n\\n- Wait for the ready event","tag":"ci"\}$/);
     await assert.rejects(act(replaced, 'later:accept'), /changed/, 'A replaced suggestion cannot be accepted');
@@ -57,7 +58,7 @@ test('a future task is previewed and added without starting it or replacing the 
     assert.deepEqual([created.text, created.tag, created.state], ['Retry flaky e2e\n\n- Wait for the ready event', 'ci', 'active']);
     state = pending;
     assert.equal((await read()).state.later, null, 'Accepted consent cannot be replayed from old state');
-    await call('suggest_later', { title: 'Dismiss me' });
+    await call('suggest_later', { title: 'Dismiss me', description: 'Details' });
     view = await read();
     const dismissed = await act(view, view.footer.at(-1).secondaryAction);
     assert.equal(dismissed.view.state.later, null);
@@ -66,7 +67,7 @@ test('a future task is previewed and added without starting it or replacing the 
     // Also offered when nothing is selected, alongside a regular suggestion.
     await act(await read(), 'clear');
     await call('propose', { title: 'Start now' });
-    await call('suggest_later', { title: 'Do later' });
+    await call('suggest_later', { title: 'Do later', description: 'Details' });
     view = await read();
     assert.deepEqual(view.footer.filter((item: any) => item.action).map((item: any) => item.action), ['proposal:preview', 'later:preview']);
   } finally { await client.close(); await rm(dir, { recursive: true, force: true }); }
