@@ -25,7 +25,7 @@ export const ViewSchema = z.object({
       ctx.addIssue({ code: 'custom', message: 'Receipt IDs must be unique and include the notice ID' });
     }
   })).max(64).optional(),
-  footer: z.array(z.object({ text, openApp: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().min(1).max(256).optional(), secondaryAction: z.string().min(1).max(256).optional(), doubleAction: z.string().min(1).max(256).optional(), style: z.object({ italic: z.boolean().optional(), strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
+  footer: z.array(z.object({ text, openApp: z.literal(true).optional(), keep: z.literal(true).optional(), url: z.string().max(2048).optional(), action: z.string().min(1).max(256).optional(), secondaryAction: z.string().min(1).max(256).optional(), doubleAction: z.string().min(1).max(256).optional(), style: z.object({ italic: z.boolean().optional(), strikethrough: z.boolean().optional(), color: z.enum(['accent', 'muted', 'text', 'warning', 'error', 'success']).optional() }).strict().optional(), width: z.number().int().min(3).max(1000).optional() }).strict()).max(128).optional(),
 }).strict().superRefine((view, ctx) => {
   if (new Set(view.controls.map((c) => c.id)).size !== view.controls.length) ctx.addIssue({ code: 'custom', message: 'Duplicate control IDs' });
   for (const item of view.footer ?? []) {
@@ -43,7 +43,7 @@ export const ViewSchema = z.object({
     }
   }
 });
-export const ActionResultSchema = z.object({ view: ViewSchema, draft: text.optional(), preview: text.optional() });
+export const ActionResultSchema = z.object({ view: ViewSchema, draft: text.optional(), preview: text.optional(), notice: text.optional() });
 export type NativeView = z.infer<typeof ViewSchema>;
 export type NativeControl = z.infer<typeof control>;
 

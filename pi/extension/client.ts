@@ -16,7 +16,7 @@ export interface Peer {
   view(meta: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   context(meta: Record<string, unknown>, signal: AbortSignal): Promise<string>;
   tool(name: string, args: Record<string, unknown>, meta: Record<string, unknown>, signal: AbortSignal): Promise<{ result: unknown; state?: unknown }>;
-  action(params: Record<string, unknown>, signal: AbortSignal): Promise<{ view: unknown; draft?: string; preview?: string }>;
+  action(params: Record<string, unknown>, signal: AbortSignal): Promise<{ view: unknown; draft?: string; preview?: string; notice?: string }>;
   close(): Promise<void>;
 }
 export type PeerFactory = (changed: () => void) => Promise<Peer>;

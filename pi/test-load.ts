@@ -47,7 +47,7 @@ test('default package loads through Pi and two sessions share real local notes',
     const first = await load(entries), other = await load(otherEntries);
     await event(first, 'session_start', ctx); await event(other, 'session_start', otherCtx);
     assert.deepEqual([...first.commands.keys()], ['pinote']);
-    assert.equal(first.tools.size, 7);
+    assert.equal(first.tools.size, 8);
     const call = (extension: any, name: string, args: any, context: any) => extension.tools.get(`pinote_${name}`).definition.execute(name, args, undefined, undefined, context);
     const parsed = (result: any) => JSON.parse(result.content[0].text);
     assert.equal(parsed(await call(first, 'get_current', {}, ctx)).id, task.id);

@@ -45,8 +45,8 @@ export class PinoteUI {
           if (this.opening || this.acting) return false;
           if (item.openApp) { await this.open(ctx); return true; }
           const control = view.controls.find((c) => c.id === action && c.kind === 'action');
-          // Deliberate footer double-click approves completion or suggestion acceptance.
-          const approved = (action === 'done' || action === 'proposal:accept') && item.doubleAction === action;
+          // Deliberate footer double-click approves completion, suggestion acceptance or adding a future task.
+          const approved = (action === 'done' || action === 'proposal:accept' || action === 'later:accept') && item.doubleAction === action;
           return control ? this.dispatch(ctx, view, control, undefined, approved) : false;
         }, this.repaint);
       return {
@@ -104,9 +104,9 @@ export class PinoteUI {
         if (await ctx.ui.select(`Pinote / ${accept} #${view.state.selectedId}\n${summary}\n${exits ? 'Closes this dedicated Pi session.' : 'Clears selection; keeps this conversation and editor.'}`,
           ['Cancel', accept], { signal }) !== accept) return false;
       }
-      if (control.confirm && !(footerConfirmed && control.id === 'proposal:accept')) {
+      if (control.confirm && !(footerConfirmed && (control.id === 'proposal:accept' || control.id === 'later:accept'))) {
         const details = control.kind === 'action' ? control.confirm : `${control.confirm}\n\n${control.id === 'add' || control.id === 'add-field' || control.id === 'add-watcher' ? '' : `Before:\n${disclosure(control.value)}\n\n`}After:\n${disclosure(value)}`;
-        const accept = control.id === 'add' ? 'Create, start and select' : control.id === 'proposal:accept' ? 'Accept suggestion' :
+        const accept = control.id === 'add' ? 'Create, start and select' : control.id === 'proposal:accept' ? 'Accept suggestion' : control.id === 'later:accept' ? 'Add for later' :
           control.id === 'remove-field' ? 'Remove display field' : control.id === 'add-field' ? 'Add field' : 'Save change';
         if (!await review(ctx, line(control.label), details, signal, accept)) return false;
       }
@@ -114,7 +114,7 @@ export class PinoteUI {
       if (control.id === 'continue' && ctx.ui.getEditorText().length) {
         ctx.ui.notify('Draft not inserted: your editor already contains text. Clear or save it first.', 'warning'); return false;
       }
-      const result = await working(ctx, control.id === 'preview' || control.id === 'proposal:preview' ? 'Loading preview…' : 'Applying Pinote action…',
+      const result = await working(ctx, control.id === 'preview' || control.id.endsWith(':preview') ? 'Loading preview…' : 'Applying Pinote action…',
         () => this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle()), signal);
       if (!current() || !result) return false;
       const selected = this.session.view;
@@ -126,7 +126,8 @@ export class PinoteUI {
           this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
         this.closing = true; ctx.shutdown(); return true;
       }
-      if (result.preview) await document(ctx, `Pinote / ${control.id === 'proposal:preview' ? 'Suggestion' : 'Task preview'}`, result.preview, signal);
+      if (result.notice) ctx.ui.notify(line(result.notice), 'info');
+      if (result.preview) await document(ctx, `Pinote / ${control.id === 'proposal:preview' ? 'Suggestion' : control.id === 'later:preview' ? 'Future task' : 'Task preview'}`, result.preview, signal);
       if (result.draft && await review(ctx, 'Pinote / Insert task prompt', `Insert into the editor only; never submit.\n\n${disclosure(result.draft)}`, signal, 'Insert draft') && current()) {
         if (ctx.ui.getEditorText().length) ctx.ui.notify('Draft not inserted: clear the editor first.', 'warning');
         else ctx.ui.setEditorText(editorText(result.draft));
@@ -271,7 +272,7 @@ export class PinoteUI {
           if (control.id.startsWith('select:') || ['add', 'proposal:accept', 'continue'].includes(control.id)) return;
           if (control.id === 'remove-field') screen = 'fields';
           notice = control.id === 'clear' ? 'Selection cleared; task progress is unchanged.' : control.id === 'done' ? 'Task completed.' :
-            control.id === 'proposal:dismiss' ? 'Suggestion dismissed; tasks are unchanged.' : control.confirm ? `Saved: ${line(control.label)}.` : '';
+            control.id === 'proposal:dismiss' ? 'Suggestion dismissed; tasks are unchanged.' : control.id.startsWith('later:') ? '' : control.confirm ? `Saved: ${line(control.label)}.` : '';
         }
       }
     } finally { this.opening = false; this.menuChanged = undefined; }

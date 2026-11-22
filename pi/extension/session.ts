@@ -208,7 +208,7 @@ export class PinoteSession {
   /** Resolves to the tool's JSON result. */
   tool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     return this.serial(async () => {
-      const current = this.current(), mutation = ['propose', 'update_current'].includes(name);
+      const current = this.current(), mutation = ['propose', 'suggest_later', 'update_current'].includes(name);
       let attempted = false;
       try {
         const peer = await this.connected(true);
@@ -229,7 +229,7 @@ export class PinoteSession {
       } catch (error) { if (current()) this.failed(error, mutation && attempted); throw new PinoteFailure(mutation && attempted); }
     }, signal);
   }
-  async action(view: NativeView, control: NativeControl, value?: NativeControl['value'], allow = () => true): Promise<{ draft?: string; preview?: string }> {
+  async action(view: NativeView, control: NativeControl, value?: NativeControl['value'], allow = () => true): Promise<{ draft?: string; preview?: string; notice?: string }> {
     const signal = this.signal;
     let completedId: number | undefined;
     const result = await this.serial(async () => {

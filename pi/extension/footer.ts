@@ -37,10 +37,14 @@ export class NativeFooter implements Component {
     this.hits = [];
     return this.rows().filter(({ view }) => view.footer?.length).map(({ uri, view }, y) => {
       let rendered = '', x = 0;
+      // Earlier items yield up to 24 columns to each kept item, so a pending suggestion stays clickable.
+      const share = (item: Item) => item.keep ? Math.min(visibleWidth(line(item.text)), item.width ?? 60, 24) : 0;
+      let reserved = (view.footer ?? []).reduce((sum, item) => sum + share(item), 0);
       for (const item of view.footer ?? []) {
         if (x >= width) break;
+        reserved -= share(item);
         const text = footerText({ ...view, footer: [item] },
-          (value, budget) => truncateToWidth(value, Math.max(0, Math.min(budget, width - x))),
+          (value, budget) => truncateToWidth(value, Math.max(0, Math.min(budget, width - x - reserved))),
           (value, style) => {
             const colored = style.color ? this.theme.fg(style.color, value) : value;
             const italic = style.italic ? this.theme.italic(colored) : colored;
