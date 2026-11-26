@@ -85,7 +85,7 @@ export type WatcherSettings = { raw: string | null; watchers: Watcher[]; fieldNa
 export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
 /** Start in Kitty's tab name when none is saved; the backend expands the placeholders. */
 export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
-export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value);
+export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
 export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };

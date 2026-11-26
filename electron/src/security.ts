@@ -1,4 +1,4 @@
-import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from './protocol.ts';
+import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds, validKittyTabTitle } from './protocol.ts';
 import type { MenuRequest, Operation, PreviewData, PreviewRequest, UIState, WindowStartup } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
@@ -18,7 +18,7 @@ const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   create_tag: { name: str, folder: nullable, id: v => v === undefined || id(v), revision: v => v === undefined || str(v) },
   rename_tag: { name: str, newName: str }, delete_tag: { name: str }, tag_folder: { name: str, folder: nullable },
   completions: { ids: v => Array.isArray(v) && v.length <= 1000 && v.every(id) },
-  kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || str(v, 1024) },
+  kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || typeof v === 'string' && validKittyTabTitle(v) },
 };
 export function validParams(op: unknown, value: unknown): op is Operation {
   if (typeof op !== 'string' || !Object.hasOwn(specs, op) || !record(value)) return false;
@@ -81,7 +81,7 @@ export function validState(value: unknown): value is UIState {
   if (Object.hasOwn(value, 'creationTag') && value.creationTag !== null && (typeof value.creationTag !== 'string' || !str(value.creationTag, 256) || !value.creationTag.length)) return false;
   if (Object.hasOwn(value, 'collapsed') && typeof value.collapsed !== 'boolean') return false;
   if (Object.hasOwn(value, 'composerStartAsMarkdown') && typeof value.composerStartAsMarkdown !== 'boolean') return false;
-  if (Object.hasOwn(value, 'kittyTabTitle') && !str(value.kittyTabTitle, 1024)) return false;
+  if (Object.hasOwn(value, 'kittyTabTitle') && (typeof value.kittyTabTitle !== 'string' || !validKittyTabTitle(value.kittyTabTitle))) return false;
   const scroll = value.scroll;
   if (Object.hasOwn(value, 'scroll') && (!record(scroll) || Object.keys(scroll).length !== 2 ||
     !['ordinary','pinned'].every(k => typeof scroll[k] === 'number' && Number.isFinite(scroll[k]) && scroll[k] >= 0 && scroll[k] <= 100000000))) return false;
