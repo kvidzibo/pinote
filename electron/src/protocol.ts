@@ -90,9 +90,9 @@ export type KittySettings = { raw: string | null; oneTaskPerTab: boolean; onTask
 /** Start in Kitty's tab name when none is saved; the backend expands the placeholders. */
 export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
 export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
-/** Start in Kitty's draft for Pi's empty editor when none is saved; empty disables it. Never submitted. */
+/** Start in Kitty's draft for Pi's empty editor when none is saved (the backend's default); empty disables it. Never submitted. */
 export const DEFAULT_KITTY_START_PROMPT = 'is task clear?';
-export const validKittyStartPrompt = (value: string) => Array.from(value).length <= 4000 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\uD800-\uDFFF]/u.test(value);
+export const validKittyStartPrompt = (value: string) => Array.from(value).length <= 4000 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f\p{Bidi_Control}\uD800-\uDFFF]/u.test(value);
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
 export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };

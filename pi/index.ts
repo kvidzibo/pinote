@@ -138,5 +138,5 @@ export default function pinote(pi: ExtensionAPI): void {
         (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`),
     } };
   });
-  registerExit(pi, () => session, () => { if (taskCompletion() === 'close-pane') closePaneOnExit(); });
+  registerExit(pi, () => session, async () => { if (taskCompletion() === 'close-pane') await closePaneOnExit((command, args, options) => pi.exec(command, args, options)); });
 }

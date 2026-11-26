@@ -57,7 +57,7 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   for (const extra of [
     ...[null, 'true', 1, {}].map(composerStartAsMarkdown => ({ composerStartAsMarkdown })),
     ...[1, '', ' ', 'a\tb', '\ud800', 'x'.repeat(257)].map(kittyTabTitle => ({ kittyTabTitle })),
-    ...[1, null, '\x1b[31m', '\u202e', '\ud800', '🌱'.repeat(4001)].map(kittyStartPrompt => ({ kittyStartPrompt })), { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
+    ...[1, null, '\x1b[31m', '\u202e', '\u200f', '\ud800', '🌱'.repeat(4001)].map(kittyStartPrompt => ({ kittyStartPrompt })), { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
     { scroll: null }, { scroll: { ordinary: 0 } }, { scroll: { ordinary: -1, pinned: 0 } },
     { scroll: { ordinary: Infinity, pinned: 0 } }, { scroll: { ordinary: 0, pinned: 0, extra: 1 } },
   ]) assert.ok(!validState({ ...initialState(), ...extra }));

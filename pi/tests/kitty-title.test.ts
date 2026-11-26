@@ -178,22 +178,27 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
   }
 });
 
-test('closing the pane runs Kitty once, after Pi exits, and only for a local Kitty pane', async () => {
+test('closing the pane runs Kitty once, after Pi exits, and only for a local Kitty pane running Pi', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pinote-kitty-close-')), log = join(dir, 'log');
   try {
-    writeFileSync(join(dir, 'kitty'), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${log}'\n`, { mode: 0o755 });
-    const script = `const { closePaneOnExit } = await import(${JSON.stringify(new URL('../extension/kitty.ts', import.meta.url).href)});
-      closePaneOnExit(); closePaneOnExit(); await new Promise((resolve) => setTimeout(resolve, 100));
-      if (${JSON.stringify(log)} && (await import('node:fs')).existsSync(${JSON.stringify(log)})) process.exitCode = 3;`;
+    // `ls` reports this pane's foreground process: Pi itself (the caller), or another program such as tmux.
+    writeFileSync(join(dir, 'kitty'), `#!/bin/sh
+if [ "$4" = ls ]; then pid=$PPID; [ -n "$TEST_FOREIGN" ] && pid=1; printf '[{"tabs":[{"windows":[{"id":42,"foreground_processes":[{"pid":%s}]}]}]}]' "$pid"; exit; fi
+printf '%s\\n' "$@" >> '${log}'\n`, { mode: 0o755 });
+    const script = `const { execFile } = await import('node:child_process');
+      const exec = (command, args, options) => new Promise((resolve) => execFile(command, args, options, (error, stdout) => resolve({ code: error ? 1 : 0, stdout, killed: false })));
+      const { closePaneOnExit } = await import(${JSON.stringify(new URL('../extension/kitty.ts', import.meta.url).href)});
+      await closePaneOnExit(exec); await closePaneOnExit(exec); await new Promise((resolve) => setTimeout(resolve, 100));
+      if ((await import('node:fs')).existsSync(${JSON.stringify(log)})) process.exitCode = 3;`;
     const run = (env: Record<string, string>) => execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', SSH_CONNECTION: '', SSH_TTY: '', ...env } });
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', SSH_CONNECTION: '', SSH_TTY: '', TEST_FOREIGN: '', ...env } });
     run({}); // Exit code 3 would mean the pane closed before Pi finished.
     for (let i = 0; i < 100 && !existsSync(log); i++) await new Promise((resolve) => setTimeout(resolve, 20));
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), ['@', '--to', 'unix:/tmp/isolated-kitty-test', 'close-window', '--match=id:42']);
     rmSync(log);
-    run({ SSH_CONNECTION: 'remote' }); run({ KITTY_LISTEN_ON: '' });
+    run({ TEST_FOREIGN: '1' }); run({ SSH_CONNECTION: 'remote' }); run({ KITTY_LISTEN_ON: '' });
     await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(existsSync(log), false, 'SSH and non-Kitty sessions never close a pane');
+    assert.equal(existsSync(log), false, 'Inherited Kitty variables, SSH and non-Kitty sessions never close a pane');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

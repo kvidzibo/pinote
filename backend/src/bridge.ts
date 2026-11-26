@@ -5,7 +5,7 @@ import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
 import { GuiConfig, ConfigError, guiConfigPath } from './config.ts';
 import { ReminderModel, folder_available } from './model.ts';
-import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch, tab_title, validate_tab_title, validate_start_prompt } from './kitty.ts';
+import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch, tab_title, validate_tab_title, validate_start_prompt, DEFAULT_START_PROMPT } from './kitty.ts';
 export const PROTOCOL = 1, MAX_REQUEST = 1024 * 1024, MAX_ID = 9007199254740991;
 export class BridgeError extends Error { readonly code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge request.'); };
@@ -134,7 +134,7 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
         const note = store.get(id!);
         if (note.updated_at !== p.revision || !['active', 'in_progress'].includes(note.state)) conflict();
         const title = tab_title(note, p.tabTitle);
-        try { await start_in_kitty(p.directory, note, title, p.prompt ?? ''); }
+        try { await start_in_kitty(p.directory, note, title, p.prompt ?? DEFAULT_START_PROMPT); }
         catch (error) {
           // NoteError: nothing was launched. Otherwise a tab or window may exist.
           if (error instanceof NoteError) throw error;

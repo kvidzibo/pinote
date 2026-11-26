@@ -146,7 +146,7 @@ export class PinoteUI {
       }
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
           this.session.view && this.session.view.state.selectedId == null && completion !== 'keep-open') {
-        if (completion === 'close-pane') closePaneOnExit();
+        if (completion === 'close-pane') await closePaneOnExit((command, args, options) => this.pi.exec(command, args, options));
         this.closing = true; ctx.shutdown(); return true;
       }
       if (result.notice) ctx.ui.notify(line(result.notice), 'info');

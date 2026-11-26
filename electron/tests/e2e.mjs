@@ -876,7 +876,7 @@ try {
     await page.screenshot({path:join(root,'kitty-started-before-launch.png')});
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:true,result:{changed:true}}));
     await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] [data-row-element="done"]`)?.disabled,id);
-    // A saved tab name and start prompt reach the launch; the default tab name is not sent.
+    // A saved tab name and start prompt reach the launch; defaults are not sent.
     {
       const kitty = page.getByRole('dialog',{name:'Kitty',exact:true}), name = kitty.getByRole('textbox',{name:'Tab name',exact:true});
       const prompt = kitty.getByRole('textbox',{name:'Start prompt',exact:true});
@@ -896,7 +896,7 @@ try {
     await selectTaskAction(page,id,'Start in Kitty…');
     for(let i=0;i<100;i++) { if(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length)===2) break; await page.waitForTimeout(20); }
     assert.equal(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length),2);
-    assert.deepEqual(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.map(r=>[r.tabTitle,r.prompt])),[[undefined,'is task clear?'],['{tag}{title}','Check scope\nthen wait']]);
+    assert.deepEqual(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.map(r=>[r.tabTitle,r.prompt])),[[undefined,undefined],['{tag}{title}','Check scope\nthen wait']]);
     assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===id).updated_at,started.updated_at,'An already-started task is not started again');
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:false,error:{code:'busy',message:'Injected launch failure'}}));
     await page.getByText('busy: Injected launch failure',{exact:true}).waitFor();

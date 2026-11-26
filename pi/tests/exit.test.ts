@@ -62,7 +62,7 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
   } as unknown as ExtensionContext;
   const emit = async (name: string) => { for (const handler of handlers.get(name) ?? []) await handler({}, ctx); };
   let completedExits = 0; // Only an acknowledged completion that exits may close the pane.
-  registerExit(pi, () => session as unknown as PinoteSession, () => { completedExits++; });
+  registerExit(pi, () => session as unknown as PinoteSession, async () => { completedExits++; });
   await emit('session_start');
   let editor = factory!({} as any, {} as any, { matches: (data: string, action: string) => action === 'app.exit' && data === 'configured-exit' } as any);
   const press = async () => { editor.handleInput('configured-exit'); await tick(); };
@@ -164,7 +164,7 @@ test('/new gates replacement on exact task approval without exiting Pi', async (
   const decide = async (choice?: string, change = () => {}) => {
     const result = startNew(); await tick(); change(); choose(choice); return result;
   };
-  registerExit(pi, () => session as unknown as PinoteSession, () => assert.fail('/new must not close the pane'));
+  registerExit(pi, () => session as unknown as PinoteSession, async () => assert.fail('/new must not close the pane'));
   await emit('session_start');
   assert.equal(await emit('session_before_switch', { reason: 'resume' }), undefined);
   assert.equal(refreshes, 0, 'resume must not show the new-session prompt');

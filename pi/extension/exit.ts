@@ -4,7 +4,7 @@ import { clean } from './protocol.ts';
 import type { PinoteSession } from './session.ts';
 
 /** Exit and /new companion. /quit and nonempty-editor exit input remain Pi-owned. */
-export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession | undefined, onCompletedExit = () => {}): void {
+export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession | undefined, onCompletedExit: () => Promise<void> = async () => {}): void {
   let invalidate: (() => void) | undefined;
   let stop: (() => void) | undefined;
   let confirm: ((reason: 'exit' | 'new') => Promise<boolean>) | undefined;
@@ -55,7 +55,7 @@ export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession |
         await session.action(view, done, undefined, () => current() && ctx.isIdle() && ctx.sessionManager.getLeafId() === branch);
         if (!current()) return false;
         if (session.view && session.view.state.selectedId == null) {
-          if (reason === 'exit') onCompletedExit();
+          if (reason === 'exit') await onCompletedExit();
           return true;
         }
         ctx.ui.notify('Pinote: Pi stayed in this session because the selection was not cleared. Refresh /pinote before retrying.', 'warning');

@@ -174,14 +174,14 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
     const params = { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle };
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params }, paths)).ok, true); assert.equal(tools.calls().at(-2).at(-1), expected);
   }
-  // Electron's start prompt reaches Pi's launch handoff; without one, none is drafted.
+  // Electron's start prompt reaches Pi's launch handoff; without one, the default is drafted.
   const handoff = () => JSON.parse(tools.calls().filter((a: string[]) => a[3] === 'launch').at(-1).find((x: string) => x.startsWith('--env=PINOTE_LAUNCH_TASK=')).slice('--env=PINOTE_LAUNCH_TASK='.length)).prompt;
   for (const prompt of ['Check scope\n🌱', '', '🌱'.repeat(4000)]) {
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, prompt } }, paths)).ok, true); assert.equal(handoff(), prompt);
   }
-  assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root } }, paths)).ok, true); assert.equal(handoff(), '');
+  assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root } }, paths)).ok, true); assert.equal(handoff(), 'is task clear?');
   const launches = tools.calls().length;
-  for (const prompt of ['\x1b[31m', '\u202e', '🌱'.repeat(4001), 42])
+  for (const prompt of ['\x1b[31m', '\u202e', '\u200e', '\u061c', '🌱'.repeat(4001), 42])
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, prompt } }, paths)).error.code, 'invalid');
   for (const tabTitle of ['', '   ', 'a\tb', '‮{title}', 'x'.repeat(257), 42])
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle } }, paths)).error.code, 'invalid');

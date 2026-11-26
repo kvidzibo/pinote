@@ -170,9 +170,8 @@ Put potentially throwing work inside the registered promise, as above. Exception
 thrown by the listener itself before registration are handled by Pi's own logger,
 which may print their raw text; Pinote cannot intercept those bus errors.
 All registered work is awaited outside Pinote's serial queue (so listeners may use
-`pinote:query-current`) before Done returns or a launched session auto-exits.
-Without registered work, completion proceeds immediately. Ordinary Done still
-keeps the conversation open.
+`pinote:query-current`) before Done returns or Pi exits after completion.
+Without registered work, completion proceeds immediately.
 
 There is one fixed **25-second total deadline**, shared by all listeners. The signal
 aborts on session lifetime cancellation, deadline, or hook settlement; listeners

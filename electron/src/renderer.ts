@@ -901,7 +901,9 @@ async function startKitty(task: Task): Promise<void> {
     }
     // Progress is already saved and visible, even if launching fails.
     // call() owns uncertain-outcome recovery; never replay a launch automatically.
-    await call('kitty', { ...target(launchTask), directory, prompt: state.kittyStartPrompt ?? DEFAULT_KITTY_START_PROMPT, ...(state.kittyTabTitle !== undefined ? { tabTitle: state.kittyTabTitle } : {}) });
+    // Defaults are not sent, so an older backend can still launch.
+    await call('kitty', { ...target(launchTask), directory, ...(state.kittyTabTitle !== undefined ? { tabTitle: state.kittyTabTitle } : {}),
+      ...(state.kittyStartPrompt !== undefined ? { prompt: state.kittyStartPrompt } : {}) });
   } finally { busyTasks.delete(task.id); renderTasks(); await refresh(); }
 }
 

@@ -5,7 +5,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
 const TASK_VAR = 'pinote_task';
 type Exec = ExtensionAPI['exec'];
-type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown> };
+type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown>; foreground_processes?: { pid?: unknown }[] };
 type OsWindow = { tabs?: { is_active?: unknown; windows?: Window[] }[] };
 
 /** This pane in a local Kitty with remote control; SSH and other terminals are left alone. */
@@ -17,10 +17,19 @@ function pane(): { window: string; socket: string } | undefined {
 
 let closing = false;
 /** After Pi exits, close this Kitty pane too, ending any shell Pi ran in. Best effort; a pane whose
- * only program was Pi is already gone. The command is detached so Pi can finish exiting first. */
-export function closePaneOnExit(): void {
+ * only program was Pi is already gone. Only a pane running Pi in its foreground is closed: inherited
+ * Kitty variables (tmux, screen, child processes) can name another pane. The command is detached so
+ * Pi can finish exiting first. */
+export async function closePaneOnExit(exec: Exec): Promise<void> {
   const target = pane();
   if (!target || closing) return;
+  try {
+    const result = await exec('kitty', ['@', '--to', target.socket, 'ls', `--match=id:${target.window}`], { timeout: 1500 });
+    if (result.code !== 0 || result.killed) return;
+    const owned = (JSON.parse(result.stdout) as OsWindow[]).some((os) => os.tabs?.some((tab) => tab.windows?.some((window) =>
+      window.id === Number(target.window) && window.foreground_processes?.some((process_) => process_.pid === process.pid))));
+    if (!owned || closing) return;
+  } catch { return; }
   closing = true;
   process.once('exit', () => {
     try { spawn('kitty', ['@', '--to', target.socket, 'close-window', `--match=id:${target.window}`], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); }
