@@ -52,9 +52,10 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(validState({ ...initialState(), creationTag: 'Work', collapsed: true, scroll: { ordinary: 42, pinned: 0 } }));
   assert.ok(validState({ ...initialState(), creationTag: null, collapsed: false }));
   for (const composerStartAsMarkdown of [false, true]) assert.ok(validState({ ...initialState(), composerStartAsMarkdown }));
+  assert.ok(validState({ ...initialState(), kittyTabTitle: '{tag}{title}' }));
   for (const extra of [
     ...[null, 'true', 1, {}].map(composerStartAsMarkdown => ({ composerStartAsMarkdown })),
-    { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
+    ...[1, '', ' ', 'a\tb', '\ud800', 'x'.repeat(257)].map(kittyTabTitle => ({ kittyTabTitle })), { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
     { scroll: null }, { scroll: { ordinary: 0 } }, { scroll: { ordinary: -1, pinned: 0 } },
     { scroll: { ordinary: Infinity, pinned: 0 } }, { scroll: { ordinary: 0, pinned: 0, extra: 1 } },
   ]) assert.ok(!validState({ ...initialState(), ...extra }));

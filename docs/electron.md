@@ -10,7 +10,7 @@ performance guarantee. [macOS](#macos-experimental) support is experimental.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
 for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
-The private `electron/` package (0.22.0) bundles the matching Node backend;
+The private `electron/` package (0.23.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -284,9 +284,12 @@ and point `KITTY_LISTEN_ON` at its socket. Without that variable, Pinote searche
 for same-user Kitty instances on the same X11 display at `unix:@mykitty-<pid>`
 (`listen_on unix:@mykitty`). If the explicit address is unreachable, launch fails.
 If discovery finds no reachable instance, Pinote opens a new window without
-restoring saved tabs. It names the tab from the first line of the task, stripping a
-leading Markdown heading marker and taking up to 30 characters, plus a `[tag]`
-prefix if tagged. Saved text and tags are unchanged.
+restoring saved tabs. **Menu → Kitty tabs…** sets the tab name; the default
+`{tag}{title:30}` gives a `[tag] ` prefix if tagged, then the task's first line
+without a leading Markdown heading marker, cut to 30 characters. `{title}` keeps
+the whole line and `{id}` adds the task number; other text is literal. The expanded
+name is cut to 1024 characters. The setting is saved with Electron's working
+state, not in `pi-note.json`. Saved text and tags are unchanged.
 
 On macOS, Pinote also looks for `kitty` in `/Applications/kitty.app` and
 `~/Applications/kitty.app`, for `pi` in `~/.pi/agent/bin`, and for both in
@@ -339,7 +342,7 @@ or data conversion.
 
 Restarting restores the new-task tag (including Untagged), tag filters, composer
 and private edit drafts, collapsed state, list scroll positions, saved task-action
-preferences, the add-task input preference, and agent read cursors. A deleted or
+preferences, the add-task input preference, the Kitty tab name, and agent read cursors. A deleted or
 externally renamed new-task tag falls back to Untagged; renaming it inside Electron updates the selection.
 Dialogs, search text within menus, unsaved settings, and pending deletion marks
 are temporary. Private edit drafts remain available through draft recovery.

@@ -5,7 +5,7 @@ import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STA
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
 import type { BackendSettings, KittyTabSettings, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
-import { FIELD_EVENTS, TASK_EVENTS } from './protocol';
+import { DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, validKittyTabTitle } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -318,17 +318,34 @@ function configureKittyTabs(): void {
   const toggle = el('input'); toggle.type = 'checkbox'; toggle.disabled = true;
   const label = el('label', undefined, 'setting-toggle'); label.append(toggle, el('span', 'One task per tab'));
   const status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
-  modal.panel.append(label, el('p', 'When you select a task in Pi and another pane in its Kitty tab has a different task, the pane moves to a new tab beside it, named after the task. Off renames the shared tab. Shared with Pi settings.'), status);
+  const name = field('Tab name for Start in Kitty', state.kittyTabTitle ?? DEFAULT_KITTY_TAB_TITLE);
+  name.input.spellcheck = false;
+  name.input.addEventListener('input', () => update());
+  modal.panel.append(label, el('p', 'When you select a task in Pi and another pane in its Kitty tab has a different task, the pane moves to a new tab beside it, named after the task. Off renames the shared tab. Shared with Pi settings.'),
+    name.wrapper, el('p', '{tag} adds "[tag] " for tagged tasks, {id} the task number and {title} its first line; {title:30} keeps the first 30 characters.', 'tag-hint'), status);
   let settings: KittyTabSettings | undefined, saving = false;
-  const update = () => { toggle.disabled = save.disabled = !settings || saving || readonly; };
+  const update = () => {
+    toggle.disabled = !settings || saving || readonly;
+    name.input.disabled = !stateLoaded || saving || readonly;
+    save.disabled = name.input.disabled || !validKittyTabTitle(name.input.value);
+  };
   const save = button('save', 'Save Kitty tab settings', async () => {
-    if (!settings || saving || readonly || closing) return;
+    if (saving || readonly || closing || !stateLoaded || !validKittyTabTitle(name.input.value)) return;
     saving = true; status.textContent = ''; update();
-    try { await api.saveKittyTabSettings(toggle.checked, settings.raw); modal.close(); }
-    catch (error) { status.textContent = ipcMessage(error); }
+    const title = name.input.value.trim(), next = title === DEFAULT_KITTY_TAB_TITLE ? undefined : title;
+    try {
+      // The tab name is Electron-only working state, saved first so a failed shared write can be retried alone.
+      if (next !== state.kittyTabTitle) {
+        const previous = state.kittyTabTitle; state.kittyTabTitle = next;
+        try { await persist(); } catch (error) { state.kittyTabTitle = previous; throw error; }
+      }
+      // Only a changed toggle rewrites the file shared with Pi.
+      if (settings && toggle.checked !== settings.oneTaskPerTab) await api.saveKittyTabSettings(toggle.checked, settings.raw);
+      modal.close();
+    } catch (error) { status.textContent = ipcMessage(error); }
     finally { saving = false; update(); }
   }, true);
-  controls(modal.panel).append(save);
+  controls(modal.panel).append(save); update();
   void api.kittyTabSettings().then(loaded => { settings = loaded; toggle.checked = loaded.oneTaskPerTab; status.textContent = ''; update(); },
     error => { status.textContent = `Could not load Kitty tab settings: ${ipcMessage(error)}`; });
 }
@@ -858,7 +875,7 @@ async function startKitty(task: Task): Promise<void> {
     }
     // Progress is already saved and visible, even if launching fails.
     // call() owns uncertain-outcome recovery; never replay a launch automatically.
-    await call('kitty', { ...target(launchTask), directory });
+    await call('kitty', { ...target(launchTask), directory, ...(state.kittyTabTitle !== undefined ? { tabTitle: state.kittyTabTitle } : {}) });
   } finally { busyTasks.delete(task.id); renderTasks(); await refresh(); }
 }
 

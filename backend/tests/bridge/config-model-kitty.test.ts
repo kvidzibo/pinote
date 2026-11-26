@@ -170,6 +170,16 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { ...params, revision: 'old' } }, paths)).error.code, 'conflict');
     process.env.TEST_KITTY_FAIL = 'set-tab-title'; const failed = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(failed.error.code, 'unknown'); assert.match(failed.error.message, /uncertain \(Kitty remote control failed at unix:@explicit: Error: simulated failure\)\. Check the tab/); delete process.env.TEST_KITTY_FAIL;
   }
+  // A configured tab name: {title} is uncut, {title:N} keeps N characters, other braces stay literal.
+  const long = await model.add('# ' + 'y'.repeat(40) + '\nbody', { tag: 'os' }), longNote = store(s => s.get(long));
+  for (const [tabTitle, expected] of [['{tag}{title}', '[os] ' + 'y'.repeat(40)], ['#{id} {title:5} {other}', `#${long} yyyyy {other}`], ['  {tag}  ', '[os]'], ['{title}'.repeat(32), 'y'.repeat(1024)]]) {
+    const params = { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle };
+    assert.equal((await respond({ protocol: 1, operation: 'kitty', params }, paths)).ok, true); assert.equal(tools.calls().at(-2).at(-1), expected);
+  }
+  const launches = tools.calls().length;
+  for (const tabTitle of ['', '   ', 'a\tb', '‮{title}', 'x'.repeat(257), 42])
+    assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle } }, paths)).error.code, 'invalid');
+  assert.equal(tools.calls().length, launches);
   const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_FAIL = 'yes';
   // Nothing launches when the explicit address is unreachable.
   assert.deepEqual((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).error, { code: 'invalid', message: 'Kitty remote control failed at unix:@explicit: Error: simulated failure' });

@@ -876,9 +876,23 @@ try {
     await page.screenshot({path:join(root,'kitty-started-before-launch.png')});
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:true,result:{changed:true}}));
     await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] [data-row-element="done"]`)?.disabled,id);
+    // A saved tab name reaches the launch; the default is not sent.
+    {
+      const kitty = page.getByRole('dialog',{name:'Kitty tabs',exact:true}), name = kitty.getByRole('textbox',{name:'Tab name for Start in Kitty',exact:true});
+      const save = kitty.getByRole('button',{name:'Save Kitty tab settings',exact:true});
+      await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'kitty-tabs');
+      await name.waitFor(); for(let i=0;i<200 && await name.isDisabled();i++) await page.waitForTimeout(10);
+      assert.equal(await name.inputValue(),'{tag}{title:30}');
+      await name.fill('  '); assert.equal(await save.isDisabled(),true,'A blank tab name cannot be saved');
+      const shared = join(env.PI_CODING_AGENT_DIR,'pi-note.json'), before = await readFile(shared,'utf8').catch(()=>null);
+      await name.fill('{tag}{title}'); await save.click(); await kitty.waitFor({state:'detached'});
+      assert.equal((await page.evaluate(()=>window.pinote.loadState())).kittyTabTitle,'{tag}{title}');
+      assert.equal(await readFile(shared,'utf8').catch(()=>null),before,'A tab-name-only save leaves the file shared with Pi untouched');
+    }
     await selectTaskAction(page,id,'Start in Kitty…');
     for(let i=0;i<100;i++) { if(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length)===2) break; await page.waitForTimeout(20); }
     assert.equal(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length),2);
+    assert.deepEqual(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.map(r=>r.tabTitle)),[undefined,'{tag}{title}']);
     assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===id).updated_at,started.updated_at,'An already-started task is not started again');
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:false,error:{code:'busy',message:'Injected launch failure'}}));
     await page.getByText('busy: Injected launch failure',{exact:true}).waitFor();
