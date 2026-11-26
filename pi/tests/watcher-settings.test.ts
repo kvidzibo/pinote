@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { FieldAutomation, type WatcherFailureLog } from '../field-events.ts';
+import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { readConfigDocument, saveFieldWatchers } from '../footer-config.ts';
 import { handleTaskEvent } from '../watchers/cleanup-worktree.mjs';
+import { runCommand } from '../watchers/run-command.mjs';
 
 const exec = promisify(execFile);
 const command = fileURLToPath(new URL('../../backend/bin/note', import.meta.url));
@@ -74,6 +76,17 @@ test('watcher settings save validated entries and the shared keys their scripts 
   assert.deepEqual([forgejo.fields, forgejo.params.instances], [['PRs', 'PR'], [{ url: 'https://forgejo.example', tokenEnv: 'TOKEN' }]]);
   const cleanup = discoverFieldWatchers(value).find((watcher) => watcher.name === 'Worktree cleanup')!;
   assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.timeoutSeconds, cleanup.params], [['completed'], [], ['Worktrees'], 120, { dir: '/tmp' }]);
+  // A full configuration stays valid when a later version bundles another watcher.
+  const full = [...Array.from({ length: 29 }, (_, i) => ({ path: join(dir, `full-${i}.mjs`), enabled: false })),
+    ...discoverFieldWatchers({}).filter((watcher) => watcher.name !== 'Run command').map(({ path }) => ({ path, enabled: false }))];
+  assert.deepEqual(discoverFieldWatchers({ fieldWatchers: full }).map((watcher) => watcher.path), full.map((entry) => entry.path));
+  // Saved copies from another package directory: the desktop hides their bundled twins, not a distinct watcher
+  // that shares a file name with a customized script.
+  const bundledDir = dirname(discoverFieldWatchers({}).find((watcher) => watcher.name === 'Run command')!.path), packageDir = join(dir, 'package');
+  mkdirSync(packageDir);
+  for (const name of ['cleanup-worktree', 'forgejo-pr', 'github-pr']) cpSync(join(bundledDir, `${name}.params.json`), join(packageDir, `${name}.params.json`));
+  const copies = [...full.slice(0, 27), ...['cleanup-worktree.mjs', 'forgejo-pr.mjs', 'github-pr.mjs', 'run-command.mjs'].map((name) => ({ path: join(packageDir, name), enabled: false }))];
+  assert.equal(discoverFieldWatchers({ fieldWatchers: copies }).at(-1)!.path, join(bundledDir, 'run-command.mjs'));
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },
@@ -202,10 +215,13 @@ console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id 
 setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:'${name}',scope:input.scope,event:input.event,eventId:input.eventId,start,end:Date.now()})+'\\n');console.log('{}');},${sleep});`, { mode: 0o700 });
     return path;
   };
+  // Stops on SIGTERM, recording it: a timed-out watcher can stop what it started.
+  const slow = join(dir, 'slow.mjs'), terminated = join(dir, 'terminated');
+  writeFileSync(slow, `#!${process.execPath}\nimport fs from 'node:fs';process.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(terminated)},'');process.exit(1);});setTimeout(()=>{},10000);`, { mode: 0o700 });
   // Without field events: this fake history serves task events only.
   let entries: Record<string, unknown>[] = [
     { path: script('a', 600), enabled: true, appEvents: ['startup'] }, { path: script('b', 600), enabled: true, appEvents: ['startup'] },
-    { path: script('slow', 10_000), enabled: true, appEvents: ['startup'], timeoutSeconds: 1 },
+    { path: slow, enabled: true, appEvents: ['startup'], timeoutSeconds: 1 },
     { path: script('cool'), enabled: true, taskEvents: ['completed'], cooldownSeconds: 2 }, { path: script('other'), enabled: true, taskEvents: ['started'] },
   ].map((entry) => ({ ...entry, fieldEvents: [] }));
   const failures: WatcherFailureLog[] = [];
@@ -222,6 +238,7 @@ setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:
   assert.deepEqual([a.scope, a.event, b.event], ['app', 'startup', 'startup']);
   assert.ok(a.start < b.end && b.start < a.end, 'Different watchers run at the same time');
   assert.deepEqual(failures.map(({ watcher, taskId, field, reason }) => [watcher, taskId, field, reason]), [['slow', null, 'app:startup', 'Watcher timed out']]);
+  assert.ok(existsSync(terminated), 'A timeout sends SIGTERM first');
   // Enabling a startup watcher later does not run it: only the next start does.
   entries = [...entries, { path: script('late'), enabled: true, appEvents: ['startup'], fieldEvents: [] }];
   writeFileSync(state, JSON.stringify({ tail: 2, events: [1, 2].map((id) => ({ id, taskId: id, event: 'completed', fields: {} })) }));
@@ -239,4 +256,87 @@ setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:
   await automation.close(); automation = await open();
   await automation.tick();
   assert.deepEqual(delivered().filter((call) => call.event === 'startup').map((call) => call.name).sort(), ['a', 'a', 'b', 'b', 'late']);
+});
+
+test('run command passes arguments without a shell; a coalescing watcher runs once for completions held by its cooldown', { timeout: 30_000 }, async (t) => {
+  const dir = profile(t), note = join(dir, 'note.mjs'), state = join(dir, 'history.json'), calls = join(dir, 'calls.log'), command = join(dir, 'record.sh');
+  writeFileSync(command, `#!/bin/sh\nprintf '%s|' "$PWD" "$@" >> ${JSON.stringify(calls)}\necho >> ${JSON.stringify(calls)}\n[ "$1" != fail ]\n`, { mode: 0o700 });
+  const args = (...values: string[]) => values.map((value) => ({ value }));
+  assert.deepEqual(await runCommand({ params: { command, args: args('$(touch pwned)', 'two words') } }), {});
+  assert.equal(readFileSync(calls, 'utf8'), `${dir}|$(touch pwned)|two words|\n`, 'Arguments are passed as written, from the command directory');
+  assert.ok(!existsSync(join(dir, 'pwned')));
+  for (const params of [{ command, args: args('fail') }, { command: 'record.sh' }, { command: join(dir, 'missing') }, { command, args: ['bare'] }]) {
+    await assert.rejects(runCommand({ params }));
+  }
+  rmSync(calls);
+  // The executable decodes stdin as one stream: a character split between two reads survives.
+  const child = spawn(fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url)), [], { stdio: ['pipe', 'ignore', 'ignore'] });
+  const input = Buffer.from(JSON.stringify({ params: { command, args: args('žvėris') } })), split = input.indexOf(Buffer.from('ž')) + 1;
+  child.stdin.write(input.subarray(0, split));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  child.stdin.end(input.subarray(split));
+  assert.equal((await once(child, 'exit'))[0], 0);
+  assert.equal(readFileSync(calls, 'utf8'), `${dir}|žvėris|\n`);
+  rmSync(calls);
+  // A stopped run ends only with its whole process group: a command ignoring SIGTERM is killed after the grace period.
+  const stubborn = join(dir, 'stubborn.sh');
+  writeFileSync(stubborn, `#!/bin/sh\ntrap '' TERM\nsleep 30\n`, { mode: 0o700 });
+  const started = Date.now(), watcherPath = fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url));
+  await assert.rejects(runFieldHandler(watcherPath, { params: { command: stubborn } }, new AbortController().signal, 300), /Watcher timed out/);
+  assert.ok(Date.now() - started >= 3000 && Date.now() - started < 4500, 'The invocation waits for its process group, within the grace period');
+  assert.throws(() => execFileSync('pgrep', ['-f', stubborn]), 'Nothing from the stopped run survives');
+
+  writeFileSync(note, `#!${process.execPath}
+import fs from 'node:fs';
+const args = process.argv.slice(2), state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined, limit = Number(args[args.indexOf('--limit') + 1]);
+const events = after === undefined ? [] : state.events.filter((event) => event.id > after).slice(0, limit);
+console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id : state.tail, events }));`, { mode: 0o700 });
+  const history = (ids: number[]) => writeFileSync(state, JSON.stringify({ tail: ids.at(-1) ?? 0, events: ids.map((id) => ({ id, taskId: id, event: 'completed', fields: {} })) }));
+  history([]);
+  const script = fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url));
+  const entries = [{ path: script, enabled: true, cooldownSeconds: 2, params: { command, args: args('check') } }];
+  const watcher = discoverFieldWatchers({ fieldWatchers: entries })[0];
+  assert.deepEqual([watcher.name, watcher.appEvents, watcher.taskEvents, watcher.coalesceTaskEvents, watcher.timeoutSeconds, watcher.problem], ['Run command', ['startup'], ['completed'], true, 300, undefined]);
+  const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, watchers: () => discoverFieldWatchers({ fieldWatchers: entries }) });
+  t.after(() => automation.close());
+  const runs = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').length : 0;
+  const until = async (count: number) => { for (let i = 0; i < 50 && runs() < count; i++) { await automation.tick(); await new Promise((resolve) => setTimeout(resolve, 100)); } };
+  await until(1);
+  assert.equal(runs(), 1, 'Startup runs the command');
+  // 40 completions during the cooldown take two history reads; they queue as one run.
+  history(Array.from({ length: 40 }, (_, i) => i + 1));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 1, 'The cooldown holds the completions');
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await until(2);
+  for (let i = 0; i < 3; i++) await automation.tick();
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 2, 'One run covers every completion queued before it');
+  // Outside the cooldown, a burst spanning several history pages runs at once and once more after the cooldown.
+  history(Array.from({ length: 80 }, (_, i) => i + 1));
+  await until(3);
+  for (let i = 0; i < 4; i++) await automation.tick();
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await until(4);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 4, 'Events read during the cooldown merge into one run');
+  // Coalescing declared while events wait: they run as one.
+  const copy = join(dir, 'later.mjs'), manifest = join(dir, 'later.params.json');
+  cpSync(script, copy);
+  writeFileSync(manifest, JSON.stringify({ taskEvents: ['completed'], params: [{ key: 'command', label: 'Command', type: 'string' }, { key: 'args', label: 'Arguments', type: 'list', columns: [{ key: 'value', label: 'Argument' }] }] }));
+  entries.splice(0, 1, { path: copy, enabled: true, cooldownSeconds: 2, params: { command, args: args('later') } });
+  await automation.tick();
+  history(Array.from({ length: 83 }, (_, i) => i + 1));
+  await until(5);
+  history(Array.from({ length: 86 }, (_, i) => i + 1));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), coalesceTaskEvents: true }));
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await until(6);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 6, 'Turning coalescing on merges the events already queued');
 });

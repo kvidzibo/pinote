@@ -129,6 +129,7 @@ never executed. All keys are optional:
   "timeoutSeconds": 60,
   "cooldownSeconds": 0,
   "taskEvents": ["completed"],
+  "coalesceTaskEvents": false,
   "fieldEvents": ["changed"],
   "fields": ["Deploy"],
   "params": [
@@ -147,6 +148,14 @@ desktop and in Pi's confirmation before enabling. A watcher with a missing `requ
 parameter or an invalid parameter file cannot be enabled and does not run. At
 most 32 parameters; the file is limited to 64 KiB. A custom script cannot take
 the name of a bundled PR watcher.
+
+`coalesceTaskEvents: true` (pi-note 0.55.0+; earlier versions reject the file) is
+declared by the script only, not saved per entry. Task events queued behind the
+cooldown or a running invocation then reach the script as one invocation with the
+newest event. Events not yet read from history are not queued: history is read 25
+events per second, so a larger burst can cause further invocations, as many as the
+cooldown allows meanwhile. Use it when the script acts on current state, not on each
+event.
 
 ### Task events
 
@@ -193,6 +202,25 @@ dependencies and build output, but also a local `.env` or ignored backups. Keep
 anything you need outside the worktree, or lock it with `git worktree lock`. Each recorded path is used exactly as saved. All paths share one
 invocation time limit (default 120 seconds); a worktree not reached in time is kept. It is
 disabled until you enable it and needs `git` on the desktop's `PATH`.
+
+### Run command
+
+The bundled **Run command** watcher (pi-note 0.55.0+, Electron 0.28.0+) runs one
+trusted executable, without a shell, when the desktop starts and when a task is
+completed. Set **Command** to its absolute path and add **Arguments**, one per row,
+passed exactly as written. It runs from the command's directory with the desktop's
+environment; its output is discarded and a nonzero exit is logged in `watchers.log`.
+Defaults: 300-second time limit and 60-second cooldown. Completions during the
+cooldown or a run are merged into one later run (`coalesceTaskEvents`). Completions
+made while the desktop is closed are not replayed; the startup run covers them. The
+command must finish within the time limit. When a run times out or is cancelled
+(closing the desktop, changing the watcher), the command receives SIGTERM and, after
+3 seconds, its process group SIGKILL; a command that starts processes in another
+process group must stop them on SIGTERM. One configured command per watcher file: copy
+the script and its parameter file to a custom path for another command.
+
+For example, Command `/home/me/AI/settings/scripts/pi-updates.sh` with Argument
+`--check` checks for Pi updates at startup and after completed tasks.
 
 ## Forgejo PRs
 
@@ -351,8 +379,10 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - Up to four watchers run at once; each watcher runs one invocation at a time, in
   turn between its task events and field checks, after its startup event. Each
   invocation has the watcher's time limit (30 seconds by default) and a
-  combined 64 KiB stdout/stderr limit. On Unix, cancellation kills its process
-  group. Scripts must not detach child processes. Invalid JSON/schema, nonzero
+  combined 64 KiB stdout/stderr limit. On Unix, a timeout or cancellation sends
+  SIGTERM to its process group and, if any of it remains, SIGKILL 3 seconds later. The
+  invocation ends once the group is gone, or shortly after the SIGKILL when only
+  unreaped members remain (pi-note 0.55.0+; earlier versions send SIGKILL at once). Scripts must not detach child processes. Invalid JSON/schema, nonzero
   exit, timeout or `state: "error"` preserve the last good result as stale and
   retry with exponential backoff (30 seconds to one hour, or a longer requested
   retry). First-check failure appears as unavailable. Stale results don't alert.

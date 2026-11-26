@@ -71,7 +71,7 @@ try {
   };
   await resize(760);
   await list.getByRole('button',{name:/^Worktree cleanup: disabled$/}).click();
-  assert.deepEqual(await list.getByRole('button').evaluateAll(nodes=>nodes.map(node=>node.textContent)),['Worktree cleanup','Forgejo PR','GitHub PR']);
+  assert.deepEqual(await list.getByRole('button').evaluateAll(nodes=>nodes.map(node=>node.textContent)),['Worktree cleanup','Forgejo PR','GitHub PR','Run command']);
   assert.equal(await save.isDisabled(),true,'Nothing to save before a change');
 
   // Bundled task-event watcher: declared defaults, a directory parameter and the trust confirmation.

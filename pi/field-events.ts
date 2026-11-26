@@ -64,6 +64,8 @@ const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watc
 const startupInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, watcher.params]);
 const taskInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, subscription(watcher)]);
 const checkInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, settings(watcher)]);
+/** Time between SIGTERM and SIGKILL for a stopped watcher's process group. */
+const KILL_GRACE_MS = 3000;
 /** Watchers invoked at once; each watcher runs one invocation at a time. */
 const CONCURRENCY = 4;
 type Run = { input: (watcher: FieldWatcher) => string; key: string; controller: AbortController; promise: Promise<void> };
@@ -77,9 +79,19 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
   return new Promise((resolve, reject) => {
     const child = spawn(handler, [], { cwd: dirname(handler), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let output = '', bytes = 0, failure: string | undefined;
+    const group = process.platform !== 'win32';
+    const send = (name: NodeJS.Signals) => {
+      try { if (group && child.pid) process.kill(-child.pid, name); else child.kill(name); } catch { /* Already exited. */ }
+    };
+    const alive = () => { try { return group && !!child.pid && process.kill(-child.pid, 0); } catch { return false; } };
+    // SIGTERM lets the script stop the processes it started; the group is killed after a grace period,
+    // within the desktop's 5-second shutdown allowance.
+    let escalation: ReturnType<typeof setTimeout> | undefined, killed: number | undefined;
     const kill = (reason = 'Watcher cancelled') => {
-      failure ??= reason;
-      try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
+      if (failure) return;
+      failure = reason;
+      send('SIGTERM');
+      escalation = setTimeout(() => { killed = performance.now(); if (alive()) send('SIGKILL'); }, KILL_GRACE_MS);
     };
     const timer = setTimeout(() => kill('Watcher timed out'), timeoutMs);
     const abort = () => kill();
@@ -94,8 +106,13 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
       reject(new FieldHandlerFailure(error.code === 'ENOENT' ? 'Watcher executable or interpreter not found; check PATH' :
         error.code === 'EACCES' ? 'Watcher execution denied; check permissions' : 'Watcher could not be started'));
     });
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       cleanup();
+      // A stopped invocation ends with its process group, so the next one cannot overlap it. After the
+      // SIGKILL, members still listed are zombies awaiting another parent's reaping: stop waiting.
+      // Signals go only to a group just seen to exist, which a reused ID would need a PID wraparound to fake.
+      while (failure && alive() && (killed === undefined || performance.now() - killed < 250)) await new Promise((resolve) => setTimeout(resolve, 50));
+      clearTimeout(escalation);
       if (failure || code !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
         (code === 127 ? 'Watcher exited with code 127; check interpreter and PATH' : 'Watcher exited unsuccessfully')));
       try { resolve(FieldResult.parse(JSON.parse(output))); } catch { reject(new FieldHandlerFailure('Invalid watcher JSON or result schema')); }
@@ -213,7 +230,7 @@ export class FieldAutomation {
   private reconcile(durable = false): void {
     const enabled = this.watchers().filter((watcher) => watcher.enabled && !watcher.problem);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
-    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.appEvents, w.taskEvents, settings(w), w.timeoutSeconds, w.cooldownSeconds]));
+    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.appEvents, w.taskEvents, settings(w), w.timeoutSeconds, w.cooldownSeconds, w.coalesceTaskEvents]));
     if (signature !== this.signature) {
       this.generation++;
       for (const [id, run] of this.running) {
@@ -444,7 +461,13 @@ export class FieldAutomation {
             if (!valid()) return;
             if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
             for (const event of batch.events) {
-              for (const key of keys) if (wantsTask(subscribed.get(key)!, event)) this.taskQueue.push({ subscription: key, event });
+              for (const key of keys) {
+                const watcher = subscribed.get(key)!;
+                if (!wantsTask(watcher, event)) continue;
+                // One later run covers every event queued before it starts.
+                if (watcher.coalesceTaskEvents) this.taskQueue = this.taskQueue.filter((item) => item.subscription !== key);
+                this.taskQueue.push({ subscription: key, event });
+              }
             }
             if (batch.cursor !== cursor) more = true;
             for (const key of keys) this.taskCursors.set(key, batch.cursor);
@@ -514,7 +537,12 @@ export class FieldAutomation {
         const queued = this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
         const job = due.find((item) => item.job.watcherId === watcher.id);
         if (queued >= 0 && (!job || !fieldChecks || !this.taskTurn.has(watcher.id))) {
-          const { event } = this.taskQueue.splice(queued, 1)[0];
+          let { event } = this.taskQueue.splice(queued, 1)[0];
+          // One invocation of a coalescing watcher covers every event queued before it, with the newest.
+          if (watcher.coalesceTaskEvents) {
+            const key = subscription(watcher), newer = this.taskQueue.filter((item) => item.subscription === key).at(-1);
+            if (newer) { event = newer.event; this.taskQueue = this.taskQueue.filter((item) => item.subscription !== key); }
+          }
           this.taskTurn.add(watcher.id); work = (signal) => this.runTask(watcher, event, signal); input = taskInput;
         } else if (job && fieldChecks) {
           this.taskTurn.delete(watcher.id); work = (signal) => this.runCheck(watcher, job.raw, job.job, signal);
