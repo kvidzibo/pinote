@@ -10,7 +10,7 @@ performance guarantee. [macOS](#macos-experimental) support is experimental.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
 for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
-The private `electron/` package (0.23.0) bundles the matching Node backend;
+The private `electron/` package bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -30,8 +30,9 @@ The build includes the backend bundle. At runtime it uses external `node` from
 absolute PATH directories, or a **trusted absolute Node executable** in `PINOTE_NODE`.
 Relative PATH entries are ignored; unsupported Node versions fail at startup.
 Node/Electron injection environment flags are cleared in backend children.
-`PINOTE_ELECTRON_BACKEND` remains an explicit trusted absolute executable override
-for compatibility and diagnostics; there is no automatic Python fallback.
+`PINOTE_BRIDGE_COMMAND` is an explicit trusted absolute bridge executable
+override for diagnostics and tests; there is no Python fallback. HOME must be
+absolute, and HOME, XDG_STATE_HOME and XDG_CONFIG_HOME must not contain `..`.
 Installation does not change desktop login startup, i3 rules, or user configuration.
 
 ### macOS (experimental)
@@ -56,11 +57,8 @@ stop lines are written to the desktop's `app.log`; failed checks are detailed in
 `watchers.log` beside the watcher state. If watchers cannot start, the reason is
 logged and the desktop stays usable.
 
-A standalone `pinote.service` from earlier versions is no longer used. Since
-Electron 0.16.0 the [backend switch](#switch-an-existing-installation) neither
-inspects nor changes that unit. If a switch started by an earlier version is
-still pending, first let that version finish its recovery. Then stop and disable
-the unit and remove its leftover `pinote.service.d/90-node-backend.conf` drop-in.
+A standalone `pinote.service` from earlier versions is no longer used: stop and
+disable it, and remove any leftover `pinote.service.d/90-node-backend.conf` drop-in.
 
 Since Electron 0.19.0, **Menu → Watchers…** edits them: add a script, choose
 the app, task and field events it listens for, name its fields and fill in the
@@ -88,62 +86,6 @@ intended automatic-floating mechanism in i3, without additional rules. Although
 `start` requests `--class=pinote-electron`, native development `WM_CLASS` can be
 `electron`; do not rely on that requested class as an observed window identity.
 Icons are bundled rather than taken from the host icon theme.
-
-## Switch an existing installation
-
-After updating/building this Electron version, open **Menu (cog) → Switch to Node backend…**
-and use **Switch to Node backend** (play icon). The menu item is hidden once
-the desktop uses Node and the matching user CLI is installed. A native confirmation defaults to
-Cancel. The operation saves pending edits and drafts, verifies external Node and
-the bundled CLI/bridge against the same database, then:
-
-- Backs up SQLite, Electron drafts/geometry, and the replaced configuration.
-- Replaces `~/.local/bin/note` with a launcher for this application's bundled CLI.
-  An existing command is first checked to use the same database. Standard
-  direct-Python uv and pip/pipx entry points are recognized when their shebang
-  selects a trusted native Python installation. Interpreter shims, shell wrappers
-  (including long-shebang shims), and runtime injection require a manual switch:
-  `LD_PRELOAD` and other `LD_*` loader settings, `PYTHON*`, `NODE_OPTIONS`,
-  `GCONV_PATH` or `GLIBC_TUNABLES` in the desktop environment block this check,
-  and the error names the variable. `LD_LIBRARY_PATH` (for example from a CUDA
-  profile) and other `NODE_*` or `ELECTRON_*` settings do not.
-  Launcher checks do not authenticate Python installations or their installed
-  packages. PATH must contain only absolute entries and resolve `flock` to the
-  system utility. PATH entries and home/XDG paths used for switching must not
-  contain `..`; HOME must be absolute. Startup also rejects parent components in
-  HOME, XDG_CONFIG_HOME and XDG_STATE_HOME before reading preferences or recovery
-  data.
-- Saves an explicit Node preference and relaunches Electron.
-
-No downloads, administrator access, model requests or database conversion occur
-when clicking Switch. Normal desktop updates must first install this app version;
-its `setup` now also prepares the backend for the existing desktop updater.
-Keep the installed application's directory stable: the CLI launcher follows its
-bundled resources, so subsequent updates replace both runtimes together.
-**Refresh backend settings** checks the saved desktop preference and the installed
-user CLI.
-
-The preference lives in `$XDG_CONFIG_HOME/pinote/backend.json` (default
-`~/.config/pinote/backend.json`). It overrides only the exact backend override
-replaced during confirmation, including the old Python-forcing desktop launcher;
-a different explicit diagnostic override still works.
-
-Backups and interrupted-switch recovery are under
-`$XDG_STATE_HOME/pinote/backend-switch` (default `~/.local/state/pinote/backend-switch`).
-On failure, rollback restores configuration. Task data is **never** automatically
-restored or converted. Interrupted rollback is recovered on the next launch; one
-started by Electron 0.15 or earlier with a `pinote.service` present must be
-finished with that version. Concurrent configuration edits are not overwritten:
-if recovery cannot finish, preserve `pending.json` and the private backups for repair.
-Original configuration inodes are also kept beside their paths as hidden
-`.NAME.pinote-switch-*.previous` files; interrupted rollback can retain matching
-`.rollback` files. Do not delete these while reconciling a concurrent editor's changes.
-Deleted targets are not recreated. If a previously existing target disappears
-after publication intent, recovery stops for manual repair rather than guessing.
-An originally absent target that is absent again already matches its backup;
-rollback leaves it absent without requiring repair.
-A busy updater, unsafe paths, or an existing CLI on a different database blocks
-the switch rather than guessing.
 
 ## Controls
 
@@ -255,7 +197,7 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   renames keep their folders.
 - The bottom cog menu opens beside its button and groups scheduled reminders
   and Archive (including restore); tag management, task-action, new-task editor,
-  watcher, Kitty tab, window and backend-switch settings; draft recovery; and **Quit Pinote**. Filtering
+  watcher, Kitty tab and window settings; draft recovery; and **Quit Pinote**. Filtering
   stays on the toolbar's filter button. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
 - The task row's eye opens a floating Markdown preview about 10 px from the

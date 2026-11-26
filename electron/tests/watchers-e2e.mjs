@@ -11,7 +11,7 @@ import { _electron } from 'playwright';
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
 const root = await mkdtemp(join(tmpdir(), 'pinote-watchers-e2e-'));
-const env = { ...process.env, PINOTE_ELECTRON_BACKEND: resolve('../backend/bin/pinote-electron-backend'), PINOTE_NOTE_COMMAND: resolve('../backend/bin/note'),
+const env = { ...process.env, PINOTE_BRIDGE_COMMAND: resolve('../backend/bin/pinote-electron-backend'), PINOTE_NOTE_COMMAND: resolve('../backend/bin/note'),
   HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'),
   XDG_RUNTIME_DIR: join(root,'runtime'), PI_CODING_AGENT_DIR: join(root,'pi-agent'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];

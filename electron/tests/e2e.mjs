@@ -14,8 +14,8 @@ const handoffOnly = process.argv.includes('--handoff-only');
 const part = process.argv.find(arg => arg.startsWith('--part='))?.slice('--part='.length);
 assert.ok(part === undefined || (['1', '2', '3'].includes(part) && !handoffOnly), 'Use --part=1, --part=2 or --part=3 without --handoff-only');
 const root = await mkdtemp(join(tmpdir(), 'pinote-electron-e2e-'));
-const backend = process.env.PINOTE_ELECTRON_BACKEND || resolve('../backend/bin/pinote-electron-backend');
-const env = { ...process.env, PINOTE_ELECTRON_BACKEND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
+const backend = process.env.PINOTE_BRIDGE_COMMAND || resolve('../backend/bin/pinote-electron-backend');
+const env = { ...process.env, PINOTE_BRIDGE_COMMAND: backend, HOME: join(root,'home'), XDG_DATA_HOME: join(root,'data'), XDG_STATE_HOME: join(root,'state'), XDG_CONFIG_HOME: join(root,'config'), XDG_CACHE_HOME: join(root,'cache'), XDG_RUNTIME_DIR: join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 // The desktop's watcher scheduler must use this checkout's CLI and temporary data.
 env.PINOTE_NOTE_COMMAND=resolve('../backend/bin/note');
@@ -28,7 +28,7 @@ const editMarker=join(root,'edit-committed');
 const createTagMarker=join(root,'create-tag-committed');
 const frontendBackend=join(root,'backend.mjs');
 await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(fault==='slow-busy-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected delayed edit failure'}})),1500);return;}if((fault==='busy-tag'&&op==='tag')||(fault==='busy-create-tag'&&op==='create_tag')){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected edit failure'}}));return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-create-tag'&&op==='create_tag'){writeFileSync(${JSON.stringify(createTagMarker)},'committed');setTimeout(reply,1200);return;}if(fault==='slow-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(reply,1200);return;}if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
-env.PINOTE_ELECTRON_BACKEND=frontendBackend;
+env.PINOTE_BRIDGE_COMMAND=frontendBackend;
 function call(operation, params) {
   const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
   assert.equal(run.status,0,run.stderr);
@@ -520,7 +520,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty','window-settings','backend-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty','window-settings','drafts','close']);
     assert.ok(state.items.every(i=>i.type==='separator' || i.hasIcon),'Every native menu item needs a bundled icon');
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);

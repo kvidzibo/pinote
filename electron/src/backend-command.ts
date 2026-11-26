@@ -12,9 +12,9 @@ export function backendCommand(bundle: string, env: NodeJS.ProcessEnv = process.
     const candidates = override !== undefined ? [override] : (env.PATH || '').split(delimiter).filter(isAbsolute).map(path => join(path, name));
     return candidates.find(path => { try { if (!isAbsolute(path)) return false; accessSync(path, constants.X_OK); return statSync(path).isFile(); } catch { return false; } });
   };
-  if (env.PINOTE_ELECTRON_BACKEND !== undefined) {
-    const executable = find('pinote-electron-backend', env.PINOTE_ELECTRON_BACKEND);
-    if (!executable) throw new Error('Install Pinote or set PINOTE_ELECTRON_BACKEND to a trusted absolute executable.');
+  if (env.PINOTE_BRIDGE_COMMAND !== undefined) {
+    const executable = find('pinote-electron-backend', env.PINOTE_BRIDGE_COMMAND);
+    if (!executable) throw new Error('Install Pinote or set PINOTE_BRIDGE_COMMAND to a trusted absolute executable.');
     return { executable, args: [] };
   }
   const executable = find('node', env.PINOTE_NODE);

@@ -5,9 +5,6 @@ const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','
 const api: PinoteApi = {
   ...backend,
   agentFields: () => ipcRenderer.invoke('agent-fields'),
-  backendSettings: () => ipcRenderer.invoke('backend-settings'),
-  switchBackend: () => ipcRenderer.invoke('switch-backend'),
-  onBackendSwitchProgress: callback => { ipcRenderer.removeAllListeners('backend-switch-progress'); ipcRenderer.on('backend-switch-progress', (_event, text) => callback(text)); },
   openPreview: request => ipcRenderer.invoke('open-preview', request),
   updatePreview: (token, data) => ipcRenderer.invoke('update-preview', token, data),
   onPreviewClosed: callback => { ipcRenderer.removeAllListeners('preview-closed'); ipcRenderer.on('preview-closed', (_event, token, edit) => callback(token, edit)); },

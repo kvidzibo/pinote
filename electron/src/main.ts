@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Backend } from './backend.ts';
 import { backendCommand } from './backend-command.ts';
-import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
+import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
 import { TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
@@ -44,7 +44,7 @@ const warning = 'A previous operation may have succeeded without confirmation. C
 const log = (message: string) => {
   console.log(message);
   try {
-    if (!logFile) verifySwitchPaths(process.env, ['HOME', 'XDG_STATE_HOME']);
+    if (!logFile) verifyProfilePaths(process.env, ['HOME', 'XDG_STATE_HOME']);
     const path = logFile || join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', 'app.log');
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     appendFileSync(path, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 });
@@ -99,7 +99,7 @@ function saveGeometry() {
   return geometryWrites;
 }
 
-function popupMenu(request: MenuRequest, showBackend: boolean): Promise<MenuAction | null> {
+function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
   if (!window || closing || activeMenu) return Promise.resolve(null);
   const owner = window;
   return new Promise(resolve => {
@@ -111,8 +111,7 @@ function popupMenu(request: MenuRequest, showBackend: boolean): Promise<MenuActi
     const menu = Menu.buildFromTemplate([
       item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
       item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('watchers', 'Watchers…', 'view-reveal'),
-      item('kitty', 'Kitty…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'),
-      ...showBackend ? [item('backend-settings', 'Switch to Node backend…', 'utilities-terminal')] : [], separator,
+      item('kitty', 'Kitty…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'), separator,
       item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
     const content = owner.getContentBounds();
@@ -131,25 +130,16 @@ async function boot() {
   // already lossily decoded by Node. Do not log to an unverified profile.
   try { await processEnvironment(process.pid); }
   catch { console.error('Cannot verify Pinote startup paths as UTF-8.'); app.exit(1); return; }
+  // Profile paths are joined lexically here but resolved through symlinks by the backend.
+  verifyProfilePaths(process.env, ['HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']);
   const bundles = join(app.isPackaged ? process.resourcesPath : __dirname, 'pinote-backend');
   const bundle = join(bundles, 'bridge.mjs');
-  const switchRuntime = () => ({ bundles, node: backendCommand(bundle, { ...process.env, PINOTE_ELECTRON_BACKEND: undefined }).executable });
-  await recoverBackendSwitch(process.env);
-  const environment = await preferredBackendEnvironment(process.env);
-  const command = backendCommand(bundle, environment);
-  const backend = new Backend(command.executable, environment, command.args);
+  const command = backendCommand(bundle);
+  const backend = new Backend(command.executable, process.env, command.args);
   const hello = await backend.call('handshake', {});
   if (!hello.ok) throw new Error(hello.error.message);
   const identity = hello.result as { protocol?: unknown; database?: unknown; version?: unknown };
   if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(2[3-9]|[3-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.23.0+ with protocol 1.');
-  const database = identity.database;
-  let switchRequested = false, switchConfirming = false;
-  const switchOptions = () => ({ ...switchRuntime(), env: process.env, database });
-  // Resolve the runtime once: each menu opening only rereads the preference and launcher.
-  let menuSwitchOptions: ReturnType<typeof switchOptions> | undefined;
-  const backendSwitched = async () => {
-    try { return await hasBackendPreference(process.env) && await hasInstalledLauncher(menuSwitchOptions ??= switchOptions()); } catch { return false; }
-  };
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
   dataDir = join(dirname(identity.database), 'electron');
   const profile = join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', hash);
@@ -267,33 +257,8 @@ async function boot() {
   const handlers: Record<string, (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown> = {
     'open-preview': (_event, request: unknown) => closing ? false : preview.open(request),
     'update-preview': (_event, token: unknown, data: unknown) => preview.update(token, data),
-    'popup-menu': async (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request, !await backendSwitched()); },
+    'popup-menu': async (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request); },
     'load-state': () => structuredClone(state),
-    'backend-settings': async () => {
-      try {
-        const options = switchOptions();
-        const version = (await runCommand(options.node, [join(bundles, 'cli.mjs'), '--version'], process.env)).trim();
-        const selected = await hasBackendPreference(process.env);
-        const switched = selected && await hasInstalledLauncher(options);
-        return { switched, canSwitch: !switched && !readonly && !closing && !state.warning,
-          detail: switched ? 'Node is selected for the desktop. The user CLI matches this installation.' : selected ? 'Node is selected for the desktop, but the installed user CLI is missing or different. Check your CLI before switching again.' : command.args.length ? 'The desktop uses bundled Node. Install the matching user CLI to complete the switch.' : 'The desktop still uses an explicit backend override. Switch to the bundled Node backend and matching CLI.', version };
-      } catch { return { switched: false, canSwitch: false, detail: 'The bundled backend or Node.js 22.19+ is unavailable. Install this version completely before switching.', version: '' }; }
-    },
-    'switch-backend': async () => {
-      if (readonly || state.warning || closing || switchRequested || switchConfirming) return false;
-      switchConfirming = true;
-      try {
-        switchOptions();
-        const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Switch to the Node backend?',
-          detail: 'Saves pending edits, backs up SQLite, Electron drafts and configuration, and replaces your ~/.local/bin/note command. An existing note command must use the same database.\n\nThe current desktop backend override will be replaced by your explicit Node choice. A different future diagnostic override will still work. Electron restarts after verification. On failure, configuration is restored; task data is never converted or automatically restored from backup. No downloads, administrator access or model requests.',
-          buttons: ['Cancel', 'Switch to Node backend'], defaultId: 0, cancelId: 0 });
-        if (result.response !== 1 || closing) return false;
-        switchRequested = true;
-        // Let the IPC caller finish before the existing close/drain protocol.
-        setTimeout(() => window?.close(), 0);
-        return true;
-      } finally { switchConfirming = false; }
-    },
     'acknowledge-warning': async () => {
       if (readonly) return false;
       const result = await dialog.showMessageBox(window!, { type: 'warning', message: 'Have you checked saved tasks and any new Kitty tab?', detail: 'Continue only after reconciling the uncertain operation. No task or launch will be retried.', buttons: ['Cancel', 'I checked; enable writes'], defaultId: 0, cancelId: 0 });
@@ -388,17 +353,10 @@ async function boot() {
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top); },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; fixedTop = undefined; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
-    'cancel-close': () => { if (!exiting) { closing = false; switchRequested = false; } },
+    'cancel-close': () => { if (!exiting) closing = false; },
     'finish-close': async () => {
       if (!closing) throw new Error('Close was not requested.');
       await tasks; await stateWrites; await saveGeometry();
-      if (switchRequested) {
-        try {
-          if (readonly || state.warning) throw new Error('Resolve the saved-state warning before switching backends.');
-          await switchToNode(switchOptions(), text => window?.webContents.send('backend-switch-progress', text));
-          app.relaunch();
-        } catch (error) { switchRequested = false; throw error; }
-      }
       exiting = true; window?.destroy(); app.quit();
     },
   };

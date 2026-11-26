@@ -14,8 +14,10 @@ test('bundled backend uses supported trusted Node without injection or Python fa
     assert.throws(()=>backendCommand(bundle,{PINOTE_NODE:join(root,'missing')}),/Install Node/);
     const old=join(root,'old-node'); writeFileSync(old,'#!/bin/sh\necho v22.18.0\n',{mode:0o700});
     assert.throws(()=>backendCommand(bundle,{PINOTE_NODE:old}),/22.19/);
-    assert.throws(()=>backendCommand(bundle,{PINOTE_ELECTRON_BACKEND:'relative'}),/Install Pinote/);
-    assert.deepEqual(backendCommand(bundle,{PINOTE_ELECTRON_BACKEND:old}),{executable:old,args:[]});
+    assert.throws(()=>backendCommand(bundle,{PINOTE_BRIDGE_COMMAND:'relative'}),/Install Pinote/);
+    assert.deepEqual(backendCommand(bundle,{PINOTE_BRIDGE_COMMAND:old}),{executable:old,args:[]});
+    // A Python desktop launcher's old override no longer selects a backend.
+    assert.deepEqual(backendCommand(bundle,{PINOTE_NODE:process.execPath,PINOTE_ELECTRON_BACKEND:old}),{executable:process.execPath,args:[bundle]});
     assert.deepEqual(backendEnvironment({PATH:'/usr/bin',NODE_OPTIONS:'bad',NODE_PATH:'bad',ELECTRON_RUN_AS_NODE:'1'}),{PATH:'/usr/bin'});
   } finally { rmSync(root,{recursive:true,force:true}); }
 });

@@ -110,7 +110,7 @@ jobs:
           npm run build
           run() { xvfb-run -n "$1" -s "-screen 0 $SCREEN" dbus-run-session -- sh -c "$2" > "$RUNNER_TEMP/e2e-$1.log" 2>&1; }
           run 101 'node tests/e2e.mjs --part=1' & lifecycle=$!
-          run 102 'node tests/backend-switch-e2e.mjs && node tests/e2e.mjs --part=2' & workflows=$!
+          run 102 'node tests/e2e.mjs --part=2' & workflows=$!
           run 103 'node tests/watchers-e2e.mjs && node tests/e2e.mjs --part=3' & editor=$!
           status=0
           wait "$lifecycle" || status=1
