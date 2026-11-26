@@ -287,8 +287,9 @@ If discovery finds no reachable instance, Pinote opens a new window without
 restoring saved tabs. **Menu → Kitty tabs…** sets the tab name; the default
 `{tag}{title:30}` gives a `[tag] ` prefix if tagged, then the task's first line
 without a leading Markdown heading marker, cut to 30 characters. `{title}` keeps
-the whole line and `{id}` adds the task number; other text is literal. The name is
-saved with Electron's working state, not in `pi-note.json`. Saved text and tags are unchanged.
+the whole line and `{id}` adds the task number; other text is literal. The expanded
+name is cut to 1024 characters. The setting is saved with Electron's working
+state, not in `pi-note.json`. Saved text and tags are unchanged.
 
 On macOS, Pinote also looks for `kitty` in `/Applications/kitty.app` and
 `~/Applications/kitty.app`, for `pi` in `~/.pi/agent/bin`, and for both in
