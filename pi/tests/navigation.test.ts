@@ -43,10 +43,10 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
     }
     assert.equal(menuView(current, 'settings').controls[2], current.controls[2]);
     current.controls.push(
-      { id: 'bar:Worktree', kind: 'action', label: '1 Worktree', description: 'Shown as bottom-bar field 1.' },
+      { id: 'bar:Worktrees', kind: 'action', label: '1 Worktrees', description: 'Shown as bottom-bar field 1.' },
       { id: 'bar:PRs', kind: 'action', label: 'PRs', description: 'Hidden.' },
     );
-    assert.deepEqual(menuView(current, 'footer').controls.map((control) => control.id), ['titleWidth', 'bar:Worktree', 'bar:PRs']);
+    assert.deepEqual(menuView(current, 'footer').controls.map((control) => control.id), ['titleWidth', 'bar:Worktrees', 'bar:PRs']);
     assert.equal(menuView(current, 'footer').controls[1], current.controls.at(-2));
     assert.ok(menuView(current, 'settings').controls.every((control) => !control.id.startsWith('bar:')));
     current.controls.push({ id: 'watcher:abc', label: 'GitHub PR', kind: 'toggle', value: false, revision: 'watcher-revision' });

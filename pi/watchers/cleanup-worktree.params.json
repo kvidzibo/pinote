@@ -1,8 +1,8 @@
 {
   "name": "Worktree cleanup",
-  "description": "When a task is completed, removes its recorded Git worktree if it is clean and unlocked. Ignored files in it, such as a local .env, are deleted too.",
+  "description": "When a task is completed, removes each recorded Git worktree that is clean and unlocked. Ignored files in them, such as a local .env, are deleted too.",
   "taskEvents": ["completed"],
-  "fields": ["Worktree"],
+  "fields": ["Worktrees"],
   "params": [
     {
       "key": "dir",
@@ -10,7 +10,7 @@
       "type": "directory",
       "default": "/tmp",
       "required": true,
-      "help": "Only a worktree inside this directory is removed."
+      "help": "Only worktrees inside this directory are removed."
     }
   ]
 }

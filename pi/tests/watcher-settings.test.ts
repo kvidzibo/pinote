@@ -73,7 +73,7 @@ test('watcher settings save validated entries and the shared keys their scripts 
   const forgejo = discoverFieldWatchers(value).find((watcher) => watcher.name === 'Forgejo PR')!;
   assert.deepEqual([forgejo.fields, forgejo.params.instances], [['PRs', 'PR'], [{ url: 'https://forgejo.example', tokenEnv: 'TOKEN' }]]);
   const cleanup = discoverFieldWatchers(value).find((watcher) => watcher.name === 'Worktree cleanup')!;
-  assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.params], [['completed'], [], ['Worktree'], { dir: '/tmp' }]);
+  assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.params], [['completed'], [], ['Worktrees'], { dir: '/tmp' }]);
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },
@@ -115,7 +115,7 @@ test('worktree cleanup removes only a clean linked worktree inside the configure
   git('worktree', 'add', '-q', '-b', 'outside', join(dir, 'outside'));
   writeFileSync(join(inside, 'dirty', 'new.txt'), 'unsaved');
   git('worktree', 'lock', join(inside, 'locked'));
-  const complete = (Worktree: string, event = 'completed'): Promise<{ state?: string }> => handleTaskEvent({ version: 1, scope: 'task', event, taskId: 1, eventId: '1', fields: { Worktree }, params: { dir: inside } });
+  const complete = (Worktrees: string, event = 'completed'): Promise<{ state?: string }> => handleTaskEvent({ version: 1, scope: 'task', event, taskId: 1, eventId: '1', fields: { Worktrees }, params: { dir: inside } });
   for (const [path, event] of [[join(inside, 'dirty')], [join(inside, 'locked')], [join(dir, 'outside')], [repo], [inside], [join(inside, 'clean'), 'removed']]) {
     assert.notEqual((await complete(path, event)).state, 'removed');
     assert.ok(existsSync(path), `${path} is kept`);
@@ -127,6 +127,9 @@ test('worktree cleanup removes only a clean linked worktree inside the configure
   assert.equal(existsSync(join(inside, 'clean')), false);
   assert.match(git('branch', '--list', 'clean').toString(), /clean/, 'The branch is kept');
   assert.equal((await complete(join(inside, 'clean'))).state, 'kept', 'A repeated event is harmless');
+  for (const name of ['first', 'second']) git('worktree', 'add', '-q', '-b', name, join(inside, name));
+  const several = await complete([join(inside, 'first'), join(inside, 'dirty'), join(inside, 'second')].join('\n'));
+  assert.deepEqual([several.state, existsSync(join(inside, 'first')), existsSync(join(inside, 'dirty')), existsSync(join(inside, 'second'))], ['kept', false, true, false], 'Each recorded worktree is handled on its own');
 });
 
 test('task events survive a failed read, skip field history, and start at enablement for each watcher and setting', async (t) => {
@@ -141,11 +144,11 @@ console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [
   const script = (name: string) => {
     const path = join(dir, `${name}.mjs`);
     writeFileSync(path, `#!${process.execPath}\nimport fs from 'node:fs';fs.appendFileSync(${JSON.stringify(calls)},'${name}:'+JSON.parse(fs.readFileSync(0,'utf8')).eventId+'\\n');console.log('{}');`, { mode: 0o700 });
-    writeFileSync(join(dir, `${name}.params.json`), JSON.stringify({ taskEvents: ['completed'], fields: ['Worktree'] }));
+    writeFileSync(join(dir, `${name}.params.json`), JSON.stringify({ taskEvents: ['completed'], fields: ['Worktrees'] }));
     return path;
   };
   const history = (value: Record<string, unknown>) => writeFileSync(state, JSON.stringify(value));
-  const completed = (id: number) => ({ id, taskId: id, event: 'completed', fields: { Worktree: `/tmp/${id}` } });
+  const completed = (id: number) => ({ id, taskId: id, event: 'completed', fields: { Worktrees: `/tmp/${id}` } });
   let entries: Record<string, unknown>[] = [{ path: script('first'), enabled: true }], failures = 0;
   const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, log: () => { failures++; },
     watchers: () => discoverFieldWatchers({ fieldWatchers: entries }) });

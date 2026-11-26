@@ -237,7 +237,7 @@ Settings live in `pi-note.json` under `PI_CODING_AGENT_DIR` (default
 `~/.pi/agent`) and apply to every Pi session using that directory. The `/pinote`
 settings edit prompts, injected agent guidance and footer definitions with
 confirmation and revision checks. A malformed configuration fails closed; fix
-the file rather than replacing it with defaults. Task fields such as `PRs`, `Worktree` and `Next` remain task data,
+the file rather than replacing it with defaults. Task fields such as `PRs`, `Worktrees` and `Next` remain task data,
 separate from global display settings. The **New session prompt** setting
 is stored for compatibility; `/new` does not insert it. Selected-task previews
 above the 20,000-character display limit show explicit guidance to read through the
@@ -245,14 +245,14 @@ CLI instead of silently truncating.
 
 ### Automatic field updates
 
-Open **Settings → Fields → Worktree / PRs** and turn **Enabled** on.
+Open **Settings → Fields → Worktrees / PRs** and turn **Enabled** on.
 Both presets are offered disabled by default; existing configured fields remain
 enabled unless explicitly disabled. Legacy `PR`/`Bar` task display remains readable.
 **Add field** creates a definition, not a task value.
 
 Each field has editable **Agent instructions** describing what to save and when.
 Enabled instructions are injected before untrusted task data on every agent run:
-Worktree records the verified absolute worktree root after choosing/creating it;
+Worktrees appends the verified absolute root of each worktree after choosing/creating it;
 PRs appends a URL after creating each PR. Default guidance also asks agents to
 check missing/changed relevant values before ending implementation or handing off.
 This is model guidance, not a guaranteed filesystem hook. It does not create

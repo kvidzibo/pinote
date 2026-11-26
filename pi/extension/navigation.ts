@@ -36,7 +36,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       controls = [...take('titleWidth', 'fieldWidth', 'maxFields'), ...view.controls.filter((c) => c.id.startsWith('bar:'))];
       break;
     case 'fields':
-      title = 'Pinote / Settings / Fields'; body = 'Enable fields for automatic agent updates. Bottom-bar display is set in Footer layout. Electron retains all saved values. Worktree and PRs presets start disabled.';
+      title = 'Pinote / Settings / Fields'; body = 'Enable fields for automatic agent updates. Bottom-bar display is set in Footer layout. Electron retains all saved values. Worktrees and PRs presets start disabled.';
       controls = [group('watchers', 'Watchers…', 'Bundled and custom field watchers; explicitly enable trusted code and automatic worker actions.'),
         ...view.controls.filter((c) => c.id.startsWith('field:')), ...take('add-field')];
       break;

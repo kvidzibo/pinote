@@ -57,12 +57,12 @@ export const defaultFooterConfig: FooterConfig = { titleWidth: 60, fieldWidth: 6
 export const defaultFooterField = (name: string): FooterField => ({
   name, label: name, link: true, format: name === "PR" || name === "PRs" ? "#<number>" : "<value>",
 });
-export const defaultFieldInstructions = (name: string): string => name === "Worktree"
-  ? "Set the verified absolute Git worktree root immediately after choosing or creating the worktree used for this task. Update it when the working location changes; do not guess a path or create a worktree solely to fill this field."
+export const defaultFieldInstructions = (name: string): string => name === "Worktrees"
+  ? "Append the verified absolute Git worktree root immediately after choosing or creating each worktree used for this task, one per line. Preserve existing entries; do not add duplicates, guess a path or create a worktree solely to fill this field."
   : name === "PRs" || name === "PR"
     ? "Append each GitHub or Forgejo pull-request URL immediately after creating the PR, one per line. Preserve existing entries; do not add duplicates."
     : "";
-export const defaultFieldPresets = (): FooterField[] => ["Worktree", "PRs"].map((name) => ({
+export const defaultFieldPresets = (): FooterField[] => ["Worktrees", "PRs"].map((name) => ({
   ...defaultFooterField(name), enabled: false, instructions: defaultFieldInstructions(name),
 }));
 const object = (value: unknown): value is Record<string, unknown> =>
