@@ -100,6 +100,11 @@ export function validate_tab_title(template: string): void {
   if (!pythonStrip(template) || Array.from(template).length > 256 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(template))
     throw new NoteError('The Kitty tab name must be one line of at most 256 characters without control characters.');
 }
+// Start in Kitty's draft for an empty Pi editor; empty disables it.
+export function validate_start_prompt(prompt: string): void {
+  if (Array.from(prompt).length > 4000 || /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(prompt))
+    throw new NoteError('The Kitty start prompt must be at most 4000 characters without control characters (except tabs/newlines).');
+}
 export function tab_title(note: Note, template = DEFAULT_TAB_TITLE): string {
   const summary = Array.from(note.text.split(/[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u)[0].replace(/^ {0,3}#{1,6}[ \t]+/, ''));
   // Repeated placeholders can expand far beyond a useful name; stay well within one process argument.

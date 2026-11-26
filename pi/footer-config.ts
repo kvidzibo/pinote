@@ -41,6 +41,14 @@ export function parseKittyOneTaskPerTab(root: Record<string, unknown>): boolean 
   if (typeof value !== "boolean") throw new Error("kittyOneTaskPerTab in pi-note.json must be true or false.");
   return value;
 }
+/** What Pi does after you complete its selected task from Pinote: stay, exit, or exit and close its Kitty pane. */
+export const taskCompletionActions = ["keep-open", "close-pi", "close-pane"] as const;
+export type TaskCompletionAction = typeof taskCompletionActions[number];
+export function parseTaskCompletion(root: Record<string, unknown>): TaskCompletionAction {
+  const value = Object.hasOwn(root, "onTaskComplete") ? root.onTaskComplete : "close-pi";
+  if (!taskCompletionActions.includes(value as TaskCompletionAction)) throw new Error(`onTaskComplete in pi-note.json must be one of ${taskCompletionActions.join(", ")}.`);
+  return value as TaskCompletionAction;
+}
 export type PinoteSettings = { footer: FooterConfig; handoffPrompt: string; newSessionPrompt?: string };
 
 export type FooterField = { name: string; label: string; link: boolean; format: string; width?: number; enabled?: boolean; instructions?: string };
@@ -193,10 +201,11 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
   });
   return { config: checked, raw };
 }
-/** The desktop's Kitty tabs setting: replaces only this key. */
-export function saveKittyOneTaskPerTab(enabled: unknown, expectedRaw: string | null): string {
+/** The desktop's Kitty settings shared with Pi: replaces only these keys. */
+export function saveKittySettings(enabled: unknown, completion: unknown, expectedRaw: string | null): string {
   const kittyOneTaskPerTab = parseKittyOneTaskPerTab({ kittyOneTaskPerTab: enabled });
-  return replaceConfigDocument(expectedRaw, (root) => ({ ...root, kittyOneTaskPerTab }));
+  const onTaskComplete = parseTaskCompletion({ onTaskComplete: completion });
+  return replaceConfigDocument(expectedRaw, (root) => ({ ...root, kittyOneTaskPerTab, onTaskComplete }));
 }
 /** The desktop's Watchers settings: replaces the watcher list and the shared keys its scripts declare. */
 export function saveFieldWatchers(input: unknown, expectedRaw: string | null): string {

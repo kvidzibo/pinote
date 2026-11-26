@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
@@ -12,6 +13,19 @@ function pane(): { window: string; socket: string } | undefined {
   const window = process.env.KITTY_WINDOW_ID, socket = process.env.KITTY_LISTEN_ON;
   if (!window || !/^[1-9]\d*$/.test(window) || !socket || process.env.SSH_CONNECTION || process.env.SSH_TTY) return undefined;
   return { window, socket };
+}
+
+let closing = false;
+/** After Pi exits, close this Kitty pane too, ending any shell Pi ran in. Best effort; a pane whose
+ * only program was Pi is already gone. The command is detached so Pi can finish exiting first. */
+export function closePaneOnExit(): void {
+  const target = pane();
+  if (!target || closing) return;
+  closing = true;
+  process.once('exit', () => {
+    try { spawn('kitty', ['@', '--to', target.socket, 'close-window', `--match=id:${target.window}`], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); }
+    catch { /* Pi still exits. */ }
+  });
 }
 
 /** Best-effort Kitty tab control for one Pi pane. Failures never affect task state. */

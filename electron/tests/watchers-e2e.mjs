@@ -160,23 +160,26 @@ try {
   await save.click();
   await status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true}).waitFor();
 
-  // Kitty tabs: Pi's one-task-per-tab key, saved without touching the rest of the shared file.
+  // Kitty: Pi's one-task-per-tab and completion keys, saved without touching the rest of the shared file.
   await page.keyboard.press('Escape'); await dialog.waitFor({state:'detached'});
-  await app.evaluate(({ipcMain})=>{ ipcMain.removeHandler('popup-menu'); ipcMain.handle('popup-menu',()=>'kitty-tabs'); });
-  const kitty = page.getByRole('dialog',{name:'Kitty tabs',exact:true}), oneTask = kitty.getByRole('checkbox',{name:'One task per tab',exact:true});
-  const openKitty = async () => { await page.getByRole('button',{name:'Menu',exact:true}).click(); await until(async()=>!await oneTask.isDisabled(),'Kitty tab settings must load'); };
+  await app.evaluate(({ipcMain})=>{ ipcMain.removeHandler('popup-menu'); ipcMain.handle('popup-menu',()=>'kitty'); });
+  const kitty = page.getByRole('dialog',{name:'Kitty',exact:true}), oneTask = kitty.getByRole('checkbox',{name:'One task per tab',exact:true});
+  const completion = (name) => kitty.getByRole('radio',{name,exact:true});
+  const openKitty = async () => { await page.getByRole('button',{name:'Menu',exact:true}).click(); await until(async()=>!await oneTask.isDisabled(),'Kitty settings must load'); };
   const shared = await saved();
   await openKitty();
   assert.equal(await oneTask.isChecked(),false,'Off by default');
-  await oneTask.check();
+  assert.equal(await completion('Close Pi').isChecked(),true,'Completion closes Pi by default');
+  await oneTask.check(); await completion('Close Pi and its pane').check();
   for (const width of [280,420]) {
     await resize(width);
     assert.equal(await kitty.evaluate(node=>node.scrollWidth<=node.clientWidth),true,`No horizontal overflow at ${width}px`);
-    await page.screenshot({path:join(root,`kitty-tabs-${width}.png`)});
+    await page.screenshot({path:join(root,`kitty-${width}.png`)});
   }
-  await kitty.getByRole('button',{name:'Save Kitty tab settings',exact:true}).click(); await kitty.waitFor({state:'detached'});
-  assert.deepEqual(await saved(),{...shared,kittyOneTaskPerTab:true},'Only the Kitty key changes');
+  await kitty.getByRole('button',{name:'Save Kitty settings',exact:true}).click(); await kitty.waitFor({state:'detached'});
+  assert.deepEqual(await saved(),{...shared,kittyOneTaskPerTab:true,onTaskComplete:'close-pane'},'Only the Kitty keys change');
   await openKitty(); assert.equal(await oneTask.isChecked(),true,'The saved value loads');
+  assert.equal(await completion('Close Pi and its pane').isChecked(),true,'The saved completion loads');
   await page.keyboard.press('Escape');
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');

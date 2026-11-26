@@ -61,7 +61,8 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
     },
   } as unknown as ExtensionContext;
   const emit = async (name: string) => { for (const handler of handlers.get(name) ?? []) await handler({}, ctx); };
-  registerExit(pi, () => session as unknown as PinoteSession);
+  let completedExits = 0; // Only an acknowledged completion that exits may close the pane.
+  registerExit(pi, () => session as unknown as PinoteSession, () => { completedExits++; });
   await emit('session_start');
   let editor = factory!({} as any, {} as any, { matches: (data: string, action: string) => action === 'app.exit' && data === 'configured-exit' } as any);
   const press = async () => { editor.handleInput('configured-exit'); await tick(); };
@@ -93,10 +94,10 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
   assert.match(notices.at(-1)!, /refresh .*before retrying/);
   uncertain = false;
   await press(); await choose('Complete task and exit');
-  assert.equal(actions, 2); assert.equal(shutdowns, 1); assert.equal(aborts, 0);
+  assert.equal(actions, 2); assert.equal(shutdowns, 1); assert.equal(aborts, 0); assert.equal(completedExits, 1);
   idle = false;
   await press(); await choose('Exit without completing');
-  assert.equal(actions, 2); assert.equal(shutdowns, 2); assert.equal(aborts, 1);
+  assert.equal(actions, 2); assert.equal(shutdowns, 2); assert.equal(aborts, 1); assert.equal(completedExits, 1);
   session.refresh = async () => { session.view = { ...selected(), state: { selectedId: null } }; };
   await press(); assert.equal(shutdowns, 3);
   await emit('session_shutdown'); assert.equal(factory, previous);
@@ -163,7 +164,7 @@ test('/new gates replacement on exact task approval without exiting Pi', async (
   const decide = async (choice?: string, change = () => {}) => {
     const result = startNew(); await tick(); change(); choose(choice); return result;
   };
-  registerExit(pi, () => session as unknown as PinoteSession);
+  registerExit(pi, () => session as unknown as PinoteSession, () => assert.fail('/new must not close the pane'));
   await emit('session_start');
   assert.equal(await emit('session_before_switch', { reason: 'resume' }), undefined);
   assert.equal(refreshes, 0, 'resume must not show the new-session prompt');

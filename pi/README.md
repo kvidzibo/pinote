@@ -85,7 +85,7 @@ Requires local Kitty with remote control enabled, `kitty` on PATH, and
 Rename failures warn without undoing selection. Completion and deselection leave
 the tab name unchanged; reload/resume and external task edits do not rename it.
 
-**One task per Kitty tab** (off by default; also in Electron's **Kitty tabs…**)
+**One task per Kitty tab** (off by default; also in Electron's **Kitty…**)
 keeps split panes from sharing a tab name. Each interactive Pi records its
 selected task in its Kitty window's `pinote_task` user variable, cleared on
 deselection, completion or exit. When another pane in the tab holds a different
@@ -94,8 +94,7 @@ then names it. A pane that is not focused within its Kitty OS window stays put a
 the shared tab keeps its name, with a warning; select the task again after focusing it.
 Verified with Kitty 0.48.
 
-Completion keeps the conversation and editor, except for dedicated **Start in Kitty…**
-sessions (see below). With an empty editor, **Ctrl+D**
+Completion follows `onTaskComplete` (see below). With an empty editor, **Ctrl+D**
 (or your configured exit key) offers Cancel, Exit without completing, or Complete
 task and exit. **`/new`** offers Cancel, Start new session without completing, or
 Complete task and start new session. With no selected task, `/new` proceeds normally.
@@ -120,22 +119,29 @@ Electron's **Start in Kitty…** action chooses a working directory and opens a
 named tab with this task selected, without submitting a prompt. It uses the tag's
 default folder when available, otherwise keeps the directory chooser. Set or
 clear defaults in **Manage tags…**.
-With pi-note 0.32.0+, successful selection prefills an empty Pi editor
-with `is task clear?`. Configure `gui.kitty_start_prompt` in the
-[Electron configuration](../docs/electron.md#configuration), or set it to `""` to disable; existing
-drafts are never replaced.
+Successful selection prefills an empty Pi editor with Electron's **Kitty… →
+Start prompt** (default `is task clear?`; empty disables it); existing drafts are
+never replaced.
 The one-shot `PINOTE_LAUNCH_TASK` environment handoff carries the task ID, displayed
 revision and optional editor draft, never task text or tokens. The draft is
 never persisted as launch state.
 Only a fresh session can consume it; missing/stale revisions fail closed. Resume, reload and `/new` never replay the
 handoff or replace another selection.
-With pi-note 0.33.4+, completing the launched task from the menu or
-**Complete task and exit** exits Pi directly, so Kitty closes its dedicated tab
-(or the standalone window's last tab). Pinote itself never runs Git commands;
+### After completing a task
+
+`onTaskComplete` in `pi-note.json` (Electron: **Kitty… → When a task is completed
+in Pi**) decides what happens after you complete the selected task from the menu
+or footer:
+
+- `close-pi` (default): exit Pi. A **Start in Kitty…** tab closes with it.
+- `close-pane`: exit Pi, then close its Kitty pane, ending the shell Pi ran in.
+  **Complete task and exit** closes the pane too. Needs local Kitty remote control,
+  as for tab names.
+- `keep-open`: keep the conversation and editor.
+
+It applies to every Pi session. An externally completed task, or a failed or
+uncertain completion, never closes Pi. Pinote itself never runs Git commands;
 optional local completion hooks can briefly delay closing (see below).
-This ownership survives `/reload`, but not `/new`, resume, fork, tree navigation
-or process restart. Completing a different task or an externally completed task
-does not close Pi; failed/uncertain completion stays open.
 
 ### Local completion event (pi-note 0.35.0+)
 

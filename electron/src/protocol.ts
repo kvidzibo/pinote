@@ -6,7 +6,7 @@ export type Task = {
   archived_at: string | null; agent_notes: Record<string, string>; agent_event_id: number; pi_sessions: string[];
 };
 export type Tag = { name: string; folder: string | null; available?: boolean };
-export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean; kittyStartPrompt: string } };
+export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean } };
 export type Target = { id: number; revision: string };
 export type Mutation = { changed: boolean; id?: number; tag?: string; revision?: string; agentEvent?: number };
 export type Operations = {
@@ -23,7 +23,7 @@ export type Operations = {
   delete_tag: { params: { name: string }; result: Mutation };
   tag_folder: { params: { name: string; folder: string | null }; result: Mutation };
   completions: { params: { ids: number[] }; result: number[] };
-  kitty: { params: Target & { directory: string; tabTitle?: string }; result: Mutation };
+  kitty: { params: Target & { directory: string; tabTitle?: string; prompt?: string }; result: Mutation };
 };
 export type Operation = keyof Operations;
 export type Result<T> = { protocol: 1; ok: true; result: T; warning?: string } | { protocol: 1; ok: false; error: { code: 'invalid' | 'conflict' | 'busy' | 'internal' | 'unknown'; message: string } };
@@ -63,14 +63,14 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; fields?: Record<string, string> };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; scroll?: { ordinary: number; pinned: number };
+  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; kittyStartPrompt?: string; scroll?: { ordinary: number; pinned: number };
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty-tabs' | 'window-settings' | 'backend-settings' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty' | 'window-settings' | 'backend-settings' | 'drafts' | 'close';
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
 export type WatcherValue = string | number | boolean | Record<string, string>[];
@@ -82,10 +82,17 @@ export type WatcherEntry = { path: string; enabled: boolean; taskEvents: string[
 /** A script with its effective settings; `spec` is what its parameter file declares. */
 export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; description?: string; problem?: string };
 export type WatcherSettings = { raw: string | null; watchers: Watcher[]; fieldNames: string[] };
-export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
+/** What Pi does after you complete its selected task: stay, exit, or exit and close its Kitty pane. */
+export const TASK_COMPLETION_ACTIONS = ['keep-open', 'close-pi', 'close-pane'] as const;
+export type TaskCompletionAction = typeof TASK_COMPLETION_ACTIONS[number];
+/** Kitty settings shared with Pi in pi-note.json. */
+export type KittySettings = { raw: string | null; oneTaskPerTab: boolean; onTaskComplete: TaskCompletionAction };
 /** Start in Kitty's tab name when none is saved; the backend expands the placeholders. */
 export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
 export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
+/** Start in Kitty's draft for Pi's empty editor when none is saved; empty disables it. Never submitted. */
+export const DEFAULT_KITTY_START_PROMPT = 'is task clear?';
+export const validKittyStartPrompt = (value: string) => Array.from(value).length <= 4000 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\uD800-\uDFFF]/u.test(value);
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
 export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };
@@ -109,7 +116,7 @@ export type PinoteApi = BackendApi & {
   loadState(): Promise<UIState>; saveState(state: UIState): Promise<void>; acknowledgeWarning(): Promise<boolean>;
   watcherSettings(): Promise<WatcherSettings>; chooseWatcher(): Promise<Watcher | null>;
   saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<boolean>;
-  kittyTabSettings(): Promise<KittyTabSettings>; saveKittyTabSettings(oneTaskPerTab: boolean, raw: string | null): Promise<void>;
+  kittySettings(): Promise<KittySettings>; saveKittySettings(oneTaskPerTab: boolean, onTaskComplete: TaskCompletionAction, raw: string | null): Promise<void>;
   windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup): Promise<void>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;

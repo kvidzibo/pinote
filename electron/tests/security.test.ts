@@ -26,7 +26,7 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(validPreviewRequest(request));
   const snapshot = (pi_sessions: unknown) => ({ protocol: 1, ok: true, result: {
     notes: [{ ...task, pi_sessions }], tags: [],
-    config: { maxVisibleNotes: 10, markdownPreview: true, kittyStartPrompt: '' },
+    config: { maxVisibleNotes: 10, markdownPreview: true },
   } });
   for (const pi_sessions of [[], ['abc-123', 'a.b_c'], ['a'.repeat(256)]]) {
     assert.ok(validPreviewData({ ...data, task: { ...task, pi_sessions } }));
@@ -53,9 +53,11 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(validState({ ...initialState(), creationTag: null, collapsed: false }));
   for (const composerStartAsMarkdown of [false, true]) assert.ok(validState({ ...initialState(), composerStartAsMarkdown }));
   assert.ok(validState({ ...initialState(), kittyTabTitle: '{tag}{title}' }));
+  for (const kittyStartPrompt of ['', 'Check scope\n\tthen wait 🌱', '🌱'.repeat(4000)]) assert.ok(validState({ ...initialState(), kittyStartPrompt }));
   for (const extra of [
     ...[null, 'true', 1, {}].map(composerStartAsMarkdown => ({ composerStartAsMarkdown })),
-    ...[1, '', ' ', 'a\tb', '\ud800', 'x'.repeat(257)].map(kittyTabTitle => ({ kittyTabTitle })), { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
+    ...[1, '', ' ', 'a\tb', '\ud800', 'x'.repeat(257)].map(kittyTabTitle => ({ kittyTabTitle })),
+    ...[1, null, '\x1b[31m', '\u202e', '\ud800', '🌱'.repeat(4001)].map(kittyStartPrompt => ({ kittyStartPrompt })), { creationTag: '' }, { creationTag: 1 }, { creationTag: 'x'.repeat(257) }, { collapsed: 'yes' },
     { scroll: null }, { scroll: { ordinary: 0 } }, { scroll: { ordinary: -1, pinned: 0 } },
     { scroll: { ordinary: Infinity, pinned: 0 } }, { scroll: { ordinary: 0, pinned: 0, extra: 1 } },
   ]) assert.ok(!validState({ ...initialState(), ...extra }));

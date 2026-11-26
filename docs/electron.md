@@ -285,12 +285,15 @@ and point `KITTY_LISTEN_ON` at its socket. Without that variable, Pinote searche
 for same-user Kitty instances on the same X11 display at `unix:@mykitty-<pid>`
 (`listen_on unix:@mykitty`). If the explicit address is unreachable, launch fails.
 If discovery finds no reachable instance, Pinote opens a new window without
-restoring saved tabs. **Menu → Kitty tabs…** sets the tab name; the default
+restoring saved tabs. **Menu → Kitty…** sets the tab name; the default
 `{tag}{title:30}` gives a `[tag] ` prefix if tagged, then the task's first line
 without a leading Markdown heading marker, cut to 30 characters. `{title}` keeps
 the whole line and `{id}` adds the task number; other text is literal. The expanded
-name is cut to 1024 characters. The setting is saved with Electron's working
-state, not in `pi-note.json`. Saved text and tags are unchanged.
+name is cut to 1024 characters. **Start prompt** (default `is task clear?`) is
+placed in Pi's empty editor as a draft, never submitted; leave it empty to disable.
+It accepts up to 4000 characters; tabs and newlines are allowed, other terminal
+controls are not. Both are saved with Electron's working state, not in
+`pi-note.json`. Saved text and tags are unchanged.
 
 On macOS, Pinote also looks for `kitty` in `/Applications/kitty.app` and
 `~/Applications/kitty.app`, for `pi` in `~/.pi/agent/bin`, and for both in
@@ -300,10 +303,15 @@ configure `allow_remote_control socket-only` and `listen_on unix:mykitty`. New
 windows also listen in `$TMPDIR`; a shared one, such as `/tmp`, is refused.
 Pi tabs get Pinote's `PATH`, because Kitty opened from the Dock lacks `node`.
 
-**Kitty tabs…** in the menu sets **One task per tab**, shared with Pi's settings
-in `pi-note.json`. When on, selecting a task in Pi moves a split pane whose tab
-already shows another task to a new tab beside it; see the
-[pi-note README](../pi/README.md).
+**Kitty…** also sets two Pi settings, shared through `pi-note.json`:
+
+- **One task per tab**: selecting a task in Pi moves a split pane whose tab
+  already shows another task to a new tab beside it.
+- **When a task is completed in Pi**: **Keep Pi open**, **Close Pi** (default) or
+  **Close Pi and its pane**. Closing Pi also closes a **Start in Kitty…** tab;
+  closing the pane also ends the shell Pi ran in.
+
+See the [pi-note README](../pi/README.md).
 
 Pi needs the [pi-note extension](../pi/README.md) and a `note` CLI using the same
 database. The launch passes the task ID, revision, and an optional editor draft.
@@ -319,7 +327,6 @@ The Node backend reads `$XDG_CONFIG_HOME/pinote/config.toml` (default
 [gui]
 max_visible_notes = 10
 markdown_preview = true
-kitty_start_prompt = "is task clear?"
 ```
 
 - `max_visible_notes` is a positive integer. It caps the row count used to
@@ -328,9 +335,6 @@ kitty_start_prompt = "is task clear?"
 - `markdown_preview` is a boolean. Set it to `false` to show task text and agent
   field values literally in the floating preview and expanded Archive and Scheduled
   reminders entries. It does not change saved text or editor styling.
-- `kitty_start_prompt` is an editable draft for an empty Pi input, not a submitted
-  prompt. Set it to `""` to disable prefilling. It accepts up to 4000 characters;
-  tabs and newlines are allowed, but other terminal controls are not.
 
 Missing configuration uses the defaults. Invalid configuration reports an error;
 Pinote does not create or overwrite the file.

@@ -5,7 +5,7 @@ import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
 import { GuiConfig, ConfigError, guiConfigPath } from './config.ts';
 import { ReminderModel, folder_available } from './model.ts';
-import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch, tab_title, validate_tab_title } from './kitty.ts';
+import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch, tab_title, validate_tab_title, validate_start_prompt } from './kitty.ts';
 export const PROTOCOL = 1, MAX_REQUEST = 1024 * 1024, MAX_ID = 9007199254740991;
 export class BridgeError extends Error { readonly code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge request.'); };
@@ -61,7 +61,7 @@ export function validate(request: any): [string, Record<string, any>] {
   if (typeof op !== 'string' || !Object.hasOwn(fields, op) || !isObject(p)) invalid();
   let allowed = fields[op];
   if (op === 'create_tag' && (Object.hasOwn(p, 'id') || Object.hasOwn(p, 'revision'))) allowed = [...allowed, 'id', 'revision'];
-  if (op === 'kitty' && Object.hasOwn(p, 'tabTitle')) allowed = [...allowed, 'tabTitle'];
+  if (op === 'kitty') allowed = [...allowed, ...['tabTitle', 'prompt'].filter(key => Object.hasOwn(p, key))];
   if (!exact(p, allowed)) invalid();
   for (const [key, v] of Object.entries(p)) {
     if (key === 'id') { if (!safe_id(v)) invalid(); }
@@ -86,6 +86,7 @@ export function validate(request: any): [string, Record<string, any>] {
   if (Object.hasOwn(p, 'folder')) validate_folder(p.folder);
   if (op === 'kitty') validate_directory(p.directory);
   if (Object.hasOwn(p, 'tabTitle')) validate_tab_title(p.tabTitle);
+  if (Object.hasOwn(p, 'prompt')) validate_start_prompt(p.prompt);
   if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   return [op, p];
 }
@@ -102,7 +103,7 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
     const notes = p.view === 'active' ? await model.notes() : p.view === 'archive' ? model.archive() : model.reminders();
     if (notes.some(n => n.id < 1n || n.id > BigInt(MAX_ID) || n.agent_event_id < 0n || n.agent_event_id > BigInt(MAX_ID))) throw new BridgeError('internal', 'Database IDs exceed the supported range.');
     const folders = model.tag_folders();
-    return { notes, tags: model.tags().map(name => { const folder = Object.hasOwn(folders, name) ? folders[name] : null; return { name, folder, available: folder_available(folder) }; }), config: { maxVisibleNotes: config.max_visible_notes, markdownPreview: config.markdown_preview, kittyStartPrompt: config.kitty_start_prompt } };
+    return { notes, tags: model.tags().map(name => { const folder = Object.hasOwn(folders, name) ? folders[name] : null; return { name, folder, available: folder_available(folder) }; }), config: { maxVisibleNotes: config.max_visible_notes, markdownPreview: config.markdown_preview } };
   }
   if (op === 'completions') return [...model.completed_ids(new Set(p.ids.map((id: number) => BigInt(id))))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   return withDisplayLock(paths, false, async () => {
@@ -130,10 +131,10 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
       else if (op === 'delete_tag') changed = store.delete_tag(p.name);
       else if (op === 'tag_folder') changed = store.set_tag_folder(p.name, p.folder);
       else if (op === 'kitty') {
-        const config = GuiConfig.load(), note = store.get(id!);
+        const note = store.get(id!);
         if (note.updated_at !== p.revision || !['active', 'in_progress'].includes(note.state)) conflict();
         const title = tab_title(note, p.tabTitle);
-        try { await start_in_kitty(p.directory, note, title, config.kitty_start_prompt); }
+        try { await start_in_kitty(p.directory, note, title, p.prompt ?? ''); }
         catch (error) {
           // NoteError: nothing was launched. Otherwise a tab or window may exist.
           if (error instanceof NoteError) throw error;
