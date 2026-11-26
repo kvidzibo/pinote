@@ -131,9 +131,10 @@ jobs:
           xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session --
           npm --prefix electron run test:package
 
-  # Basic macOS checks on a disposable runner session: Pi unit tests, the Electron
-  # workflow and Start in Kitty. Hosted runners lack the OpenGL Kitty needs, so a
-  # stand-in implements the Kitty remote-control subset Pinote uses.
+  # Basic macOS checks on a disposable runner session: the Electron workflow and
+  # Start in Kitty. Platform-neutral Pi unit tests run only on Linux. Hosted runners
+  # lack the OpenGL Kitty needs, so a stand-in implements the Kitty remote-control
+  # subset Pinote uses.
   macos:
     runs-on: macos-26
     timeout-minutes: 20
@@ -160,11 +161,6 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: electron
         run: npm run build && npm run test:macos
-      # The long engine scenario stays on Linux.
-      - name: Pi unit tests
-        if: ${{ !cancelled() }}
-        working-directory: pi
-        run: node --test --experimental-strip-types $(ls tests/*.test.ts | grep -vx tests/engine.test.ts)
       - if: always()
         uses: actions/upload-artifact@v4
         with:
