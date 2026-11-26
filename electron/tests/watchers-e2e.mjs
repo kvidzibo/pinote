@@ -111,6 +111,14 @@ try {
   await enabled.check();
   await dialog.getByRole('spinbutton',{name:'Timeout seconds',exact:true}).fill('45');
   await dialog.getByRole('group',{name:'Task events',exact:true}).getByRole('checkbox',{name:'completed',exact:true}).check();
+  // Startup, the time limit and the cooldown; enabling a startup watcher does not run it until the next start.
+  await dialog.getByRole('group',{name:'App events',exact:true}).getByRole('checkbox',{name:'startup',exact:true}).check();
+  const timeLimit = dialog.getByRole('spinbutton',{name:'Time limit (seconds)',exact:true}), cooldown = dialog.getByRole('spinbutton',{name:'Cooldown (seconds)',exact:true});
+  assert.deepEqual([await timeLimit.inputValue(),await cooldown.inputValue()],['30','0'],'Defaults: 30-second time limit, no cooldown');
+  await timeLimit.fill('0');
+  assert.equal(await dialog.locator('.watcher-problem').textContent(),'Time limit must be a whole number of seconds from 1 to 600');
+  await timeLimit.fill('45'); await cooldown.fill('2');
+  assert.equal(await dialog.locator('.watcher-problem').isHidden(),true);
   const addField = dialog.getByRole('combobox',{name:'Add field',exact:true});
   assert.ok((await dialog.locator('#watcher-field-names option').evaluateAll(nodes=>nodes.map(node=>node.value))).includes('Deploy'),'Configured fields are suggested');
   await addField.fill('Deploy'); await addField.press('Enter');
@@ -118,7 +126,7 @@ try {
   await capture('watchers-custom-760');
   await saveAll();
   assert.deepEqual((await saved()).fieldWatchers.find(entry=>entry.path===custom),
-    {path:custom,enabled:true,taskEvents:['completed'],fields:['Deploy'],params:{environment:'production',timeout:45}});
+    {path:custom,enabled:true,taskEvents:['completed'],fields:['Deploy'],appEvents:['startup'],timeoutSeconds:45,cooldownSeconds:2,params:{environment:'production',timeout:45}});
   const task = withField('Deploy',{Deploy:'1',Other:'x'});
   const changed = note('agent','update',String(task.id),'--expected-updated-at',task.updated_at,'--set-json',JSON.stringify({Deploy:'2',Other:'y'}));
   const received = async () => existsSync(calls) ? (await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line)) : [];

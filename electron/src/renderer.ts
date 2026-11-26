@@ -5,7 +5,7 @@ import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STA
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
 import type { BackendSettings, KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
-import { DEFAULT_KITTY_START_PROMPT, DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, savedTagName, tagFolderPath, validKittyStartPrompt, validKittyTabTitle } from './protocol';
+import { APP_EVENTS, DEFAULT_KITTY_START_PROMPT, DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, WATCHER_LIMITS, savedTagName, tagFolderPath, validKittyStartPrompt, validKittyTabTitle } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -1384,12 +1384,15 @@ function configureWatchers(): void {
   let refreshEditor = () => {};
   const empty = (value: WatcherValue | undefined) => value === undefined || value === '' || Array.isArray(value) && !value.length;
   // Rows left blank in a list are not saved.
-  const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
+  const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, appEvents: w.appEvents, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
+    timeoutSeconds: w.timeoutSeconds, cooldownSeconds: w.cooldownSeconds,
     params: Object.fromEntries(Object.entries(w.params).map(([key, value]) => [key, Array.isArray(value) ? value.filter(row => Object.keys(row).length) : value] as const).filter(([, value]) => !empty(value))) });
   const dirty = () => !!settings && JSON.stringify(draft.map(entry)) !== JSON.stringify(settings.watchers.map(entry));
+  const limitLabels = { timeoutSeconds: 'Time limit', cooldownSeconds: 'Cooldown' } as const;
   const problem = (w: Watcher) => {
     const missing = w.spec.find(param => param.required && empty(entry(w).params[param.key]));
-    return missing ? `Needs parameter: ${missing.label}` : w.problem && !/^(Needs|Invalid) parameter/.test(w.problem) ? w.problem : undefined;
+    const limit = (Object.keys(WATCHER_LIMITS) as (keyof typeof WATCHER_LIMITS)[]).find(key => !Number.isInteger(w[key]) || w[key] < WATCHER_LIMITS[key].min || w[key] > WATCHER_LIMITS[key].max);
+    return missing ? `Needs parameter: ${missing.label}` : limit ? `${limitLabels[limit]} must be a whole number of seconds from ${WATCHER_LIMITS[limit].min} to ${WATCHER_LIMITS[limit].max}` : w.problem && !/^(Needs|Invalid) parameter/.test(w.problem) ? w.problem : undefined;
   };
   const load = async () => {
     try {
@@ -1510,11 +1513,22 @@ function configureWatchers(): void {
       chips.append(chip);
     }
     chips.append(input, options);
+    const limits = el('div', undefined, 'watcher-row');
+    for (const key of Object.keys(WATCHER_LIMITS) as (keyof typeof WATCHER_LIMITS)[]) {
+      const named = field(`${limitLabels[key]} (seconds)`, String(w[key]));
+      Object.assign(named.input, { type: 'number', min: String(WATCHER_LIMITS[key].min), max: String(WATCHER_LIMITS[key].max), step: '1' });
+      // Blank or invalid stays visible as a problem rather than silently becoming a default.
+      named.input.addEventListener('input', () => { w[key] = named.input.value === '' ? NaN : Number(named.input.value); update(); });
+      limits.append(named.wrapper);
+    }
     editor.append(el('h3', w.name), el('p', `${w.bundled ? 'Bundled' : 'Custom'} · ${w.path}`, 'tag-hint watcher-path'),
       ...w.description ? [el('p', w.description)] : [], issue, toggle,
+      ...checks('App events', APP_EVENTS, w.appEvents), el('p', 'startup: once each time Pinote starts.', 'tag-hint'),
       ...checks('Task events', TASK_EVENTS, w.taskEvents), ...checks('Field events', FIELD_EVENTS, w.fieldEvents),
       el('p', 'Fields', 'tag-editor-label'), chips,
-      el('p', 'Field events: only these fields. Task events: only tasks that have one. Empty: all.', 'tag-hint'));
+      el('p', 'Field events: only these fields. Task events: only tasks that have one. Empty: all.', 'tag-hint'),
+      el('p', 'Limits', 'tag-editor-label'), limits,
+      el('p', 'Cooldown: the least time between two runs of this watcher; 0 for none. Events meanwhile wait.', 'tag-hint'));
     if (w.spec.length) editor.append(el('p', 'Parameters', 'tag-editor-label'), ...w.spec.map(param => parameter(w, param)));
     if (!w.bundled) {
       const danger = el('div', undefined, 'tag-danger'), explanation = el('div');
@@ -1528,7 +1542,7 @@ function configureWatchers(): void {
   const update = () => {
     for (const row of list.querySelectorAll<HTMLElement>('[data-watcher]')) {
       const w = draft.find(item => item.id === row.dataset.watcher); if (!w) continue;
-      const state = problem(w) ? 'needs a parameter' : w.enabled ? 'enabled' : 'disabled';
+      const state = problem(w) ? 'needs attention' : w.enabled ? 'enabled' : 'disabled';
       row.querySelector('.watcher-dot')!.className = `watcher-dot ${problem(w) ? 'warn' : w.enabled ? 'on' : 'off'}`;
       row.title = `${w.name}: ${state}`; row.setAttribute('aria-label', row.title);
     }

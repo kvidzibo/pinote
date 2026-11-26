@@ -31,7 +31,7 @@ else process.exit(1);
   await writeFile(watcher, `#!/usr/bin/env node
 import {readFileSync} from 'node:fs';const event=JSON.parse(readFileSync(0,'utf8'));console.log(JSON.stringify(JSON.parse(readFileSync(${JSON.stringify(mode)},'utf8'))[event.field]??{}));
 `, { mode: 0o700 });
-  const open = () => FieldAutomation.open({ path, noteCommand: note, watchers: () => [{ id: 'github-test', path: watcher, enabled: true, bundled: true, name: 'GitHub PR', config: { path: watcher, enabled: true }, spec: [], declared: 'null', taskEvents: [], fieldEvents: ['added', 'changed', 'removed'], fields: [], params: {} }] });
+  const open = () => FieldAutomation.open({ path, noteCommand: note, watchers: () => [{ id: 'github-test', path: watcher, enabled: true, bundled: true, name: 'GitHub PR', config: { path: watcher, enabled: true }, spec: [], declared: 'null', taskEvents: [], fieldEvents: ['added', 'changed', 'removed'], fields: [], params: {}, appEvents: [], timeoutSeconds: 30, cooldownSeconds: 0 }] });
   const due = (field: string) => {
     const db = new DatabaseSync(path);
     try { db.prepare("UPDATE fw_jobs SET job=json_set(job,'$.due',0) WHERE field=?").run(field); } finally { db.close(); }
