@@ -217,7 +217,8 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   assignment together, even when closing during the save. **Undo** (or **Ctrl+Z**)
   reverts text edits within the open editor and autosaves the result; it does not
   undo tag changes.
-  Copy remains available when saving is paused.
+  Copy remains available when saving is paused; choosing a tag then retries saving
+  with that choice, so a failed tag change (such as an uncreatable folder) can be corrected.
 - Below the text, **Agent fields** lists the task's saved handoff fields plus
   those configured in Pi's field settings (`pi-note.json`), even when unset or
   disabled. Edits autosave like text, one revision-bound write at a time;

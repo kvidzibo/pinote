@@ -93,15 +93,15 @@ test('all routes, canonical tags, revision acknowledgements, schedules and metad
   assert.equal((await call('tag', { ...target(id), tag: null })).changed, true);
   const attached = await call('create_tag', { ...target(id), name: 'WORK', folder: root }); assert.equal(attached.tag, 'Work'); assert.equal(attached.revision, target(id).revision);
   // folderIfNew is created and saved only for a tag the call inserts; an existing (case-folded) tag keeps its folder.
-  const fresh = join(root, 'Fresh'), unused = join(root, 'WORK'); writeFileSync(join(root, 'Blocked'), '');
-  await call('tag_folder', { name: 'Work', folder: null }); await call('create_tag', { name: 'WORK', folder: null, folderIfNew: unused });
+  const fresh = join(root, 'Fresh'), loop = join(root, 'loop'); writeFileSync(join(root, 'Blocked'), ''); symlinkSync(loop, loop);
+  await call('tag_folder', { name: 'Work', folder: null }); await call('create_tag', { name: 'WORK', folder: null, folderIfNew: loop }); // never touched for an existing tag
   await call('create_tag', { ...target(id), name: 'Fresh', folder: null, folderIfNew: fresh });
   assert.match((await respond(request('create_tag', { name: 'Blocked', folder: null, folderIfNew: join(root, 'Blocked') }), paths)).error.message, /exists but is not a folder/);
   symlinkSync(join(root, 'outside'), join(root, 'Dangling'));
   assert.match((await respond(request('create_tag', { name: 'Dangling', folder: null, folderIfNew: join(root, 'Dangling') }), paths)).error.message, /exists but is not a folder/);
   assert.equal(existsSync(join(root, 'outside')), false);
   assert.deepEqual((await call('snapshot', { view: 'active' })).tags.filter((t: { name: string }) => ['Work', 'Fresh', 'Blocked', 'Dangling'].includes(t.name)).map((t: { name: string; folder: string | null }) => [t.name, t.folder]).sort(), [['Fresh', fresh], ['Work', null]]);
-  assert.equal(statSync(fresh).isDirectory(), true); assert.equal(existsSync(unused), false);
+  assert.equal(statSync(fresh).isDirectory(), true);
   await call('tag', { ...target(id), tag: 'Work' }); await call('tag_folder', { name: 'Work', folder: root }); await call('delete_tag', { name: 'Fresh' });
   for (const [op, params] of [['rename_tag', { name: 'Work', newName: 'Project' }], ['tag_folder', { name: 'Project', folder: null }], ['delete_tag', { name: 'Project' }]] as const) assert.equal((await call(op, params)).changed, true);
   for (const [action, state] of [['start', 'active'], ['reset', 'in_progress'], ['done', 'active']]) assert.equal((await call('transition', { ...target(id), action, state })).changed, true);
