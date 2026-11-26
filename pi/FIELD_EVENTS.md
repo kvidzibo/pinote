@@ -191,7 +191,7 @@ worktrees and the main working tree; nothing is forced, no branch is deleted and
 the directory is never scanned. **Ignored files are deleted with the worktree**:
 dependencies and build output, but also a local `.env` or ignored backups. Keep
 anything you need outside the worktree, or lock it with `git worktree lock`. Each recorded path is used exactly as saved. All paths share one
-120-second time limit; a worktree not reached in time is kept. It is
+invocation time limit (default 120 seconds); a worktree not reached in time is kept. It is
 disabled until you enable it and needs `git` on the desktop's `PATH`.
 
 ## Forgejo PRs
