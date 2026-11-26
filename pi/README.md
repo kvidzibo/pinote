@@ -90,8 +90,8 @@ keeps split panes from sharing a tab name. Each interactive Pi records its
 selected task in its Kitty window's `pinote_task` user variable, cleared on
 deselection, completion or exit. When another pane in the tab holds a different
 task, selecting one first moves this pane to a new tab beside the current one,
-then names it. A pane that is not Kitty's active window stays put and the shared
-tab keeps its name, with a warning; select the task again after focusing it.
+then names it. A pane that is not focused within its Kitty OS window stays put and
+the shared tab keeps its name, with a warning; select the task again after focusing it.
 Verified with Kitty 0.48.
 
 Completion keeps the conversation and editor, except for dedicated **Start in Kitty…**

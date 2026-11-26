@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
 const TASK_VAR = 'pinote_task';
 type Exec = ExtensionAPI['exec'];
 type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown> };
-type OsWindow = { is_active?: unknown; tabs?: { is_active?: unknown; windows?: Window[] }[] };
+type OsWindow = { tabs?: { is_active?: unknown; windows?: Window[] }[] };
 
 /** This pane in a local Kitty with remote control; SSH and other terminals are left alone. */
 function pane(): { window: string; socket: string } | undefined {
@@ -67,20 +68,22 @@ export class KittyPane {
         for (const os of JSON.parse((await this.kitty(target.socket, ['ls'], signal)).stdout) as OsWindow[]) for (const tab of os.tabs ?? []) {
           const self = tab.windows?.find((window) => window.id === id);
           if (!self) continue;
-          active = os.is_active === true && tab.is_active === true && self.is_active === true;
+          active = tab.is_active === true && self.is_active === true;
           shared = tab.windows!.some((window) => {
             const task = window.user_vars?.[TASK_VAR];
             return window.id !== id && typeof task === 'string' && task !== '' && task !== String(taskId);
           });
         }
         if (shared) {
-          // Kitty places a new tab after the active one.
+          // Kitty places a new tab after the active tab of this pane's OS window.
           if (!active) return 'Pinote task selected, but this pane was not focused, so it stays in its shared Kitty tab.';
-          // Every step names its window or tab: a focus change can shift the placement, never move another pane or tab.
-          const holder = (await this.kitty(target.socket, ['launch', '--type=tab', '--location=after', `--next-to=id:${target.window}`, `--tab-title=${name}`, 'sleep', '60'], signal)).stdout.trim();
-          if (!/^[1-9]\d*$/.test(holder)) throw new Error('Kitty did not report the new tab');
-          try { await this.kitty(target.socket, ['detach-window', `--match=id:${target.window}`, `--target-tab=window_id:${holder}`], signal); }
-          finally { await this.kitty(target.socket, ['close-window', `--match=id:${holder}`]).catch(() => {}); }
+          // Every step names this pane or a tagged placeholder tab: a focus change can shift the placement,
+          // never move another pane or tab. The placeholder is closed by tag, even if launch's reply is lost.
+          const placeholder = `pinote_placeholder=${randomUUID()}`;
+          try {
+            await this.kitty(target.socket, ['launch', '--type=tab', '--location=after', `--match=window_id:${target.window}`, `--var=${placeholder}`, `--tab-title=${name}`, 'sleep', '60'], signal);
+            await this.kitty(target.socket, ['detach-window', `--match=id:${target.window}`, `--target-tab=var:${placeholder}`], signal);
+          } finally { await this.kitty(target.socket, ['close-window', `--match=var:${placeholder}`]).catch(() => {}); }
         }
       }
     } catch {

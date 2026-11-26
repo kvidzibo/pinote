@@ -90,14 +90,14 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
   const signal = new AbortController().signal;
   const calls: string[][] = [], notices: string[] = [];
   // Another pane in this tab holds `other`; `active` is whether this pane is Kitty's active window. A later tab follows.
-  let other: string | undefined = '3', active = true, failList = false, timeouts = 0, marker: string | undefined, gate: Promise<void> | undefined;
+  let other: string | undefined = '3', active = true, failList = false, lostLaunch = false, timeouts = 0, marker: string | undefined, gate: Promise<void> | undefined;
   const unselected: NativeView = { version: 1, title: 'Pinote', revision: '1', state: { selectedId: null }, controls: [] };
   const selected = (id: number, text = `Task ${id}`): NativeView => ({ ...unselected, state: { selectedId: id }, footer: [{ action: 'preview', text }] });
   let next = unselected;
   const session: any = { view: unselected, signal, current: () => () => true,
     action: async () => { session.view = next; session.onChange(); return {}; }, refresh: async () => {} };
   const ui = new PinoteUI({ exec: async (_command: string, args: string[]) => {
-    const command = args.slice(3);
+    const command = args.slice(3).map((arg) => arg.replace(/pinote_placeholder=[0-9a-f-]{36}$/, 'pinote_placeholder=ID'));
     calls.push(command);
     if (command[0] === 'set-user-vars') {
       await gate;
@@ -105,7 +105,7 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
       if (timeouts && timeouts--) return { code: 0, killed: true, stdout: '', stderr: '' };
       marker = command[2].split('=')[1];
     }
-    if (command[0] === 'launch') return { code: 0, stdout: '99\n', stderr: '' };
+    if (command[0] === 'launch' && lostLaunch) return { code: 143, killed: true, stdout: '', stderr: '' };
     if (command[0] !== 'ls') return { code: 0, stdout: '', stderr: '' };
     if (failList) return { code: 1, stdout: '', stderr: 'denied' };
     return { code: 0, stderr: '', stdout: JSON.stringify([{ is_active: true, tabs: [
@@ -131,9 +131,10 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
   };
   const marks = () => calls.filter((call) => call[0] === 'set-user-vars').map((call) => call[2]);
   const title = (id: number, name = `Task ${id}`) => ['set-tab-title', '--match=window_id:42', '--', name];
-  // A placeholder tab opens beside this one; this pane moves into it by ID, then the placeholder closes.
-  const move = (name: string) => [['launch', '--type=tab', '--location=after', '--next-to=id:42', `--tab-title=${name}`, 'sleep', '60'],
-    ['detach-window', '--match=id:42', '--target-tab=window_id:99'], ['close-window', '--match=id:99']];
+  // A tagged placeholder tab opens beside this one; this pane moves into it by ID, then the placeholder closes.
+  const launch = (name: string) => ['launch', '--type=tab', '--location=after', '--match=window_id:42', '--var=pinote_placeholder=ID', `--tab-title=${name}`, 'sleep', '60'];
+  const close = ['close-window', '--match=var:pinote_placeholder=ID'];
+  const move = (name: string) => [launch(name), ['detach-window', '--match=id:42', '--target-tab=var:pinote_placeholder=ID'], close];
   try {
     settings(true);
     assert.deepEqual(await select(7), [['ls'], ...move('Task 7'), title(7)]);
@@ -147,7 +148,10 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
     other = '3'; active = false;
     assert.deepEqual(await select(10), [['ls']], 'An unfocused pane is neither moved nor allowed to rename the shared tab');
     assert.deepEqual(notices, ['Pinote task selected, but this pane was not focused, so it stays in its shared Kitty tab.']);
-    active = true; failList = true;
+    active = true; lostLaunch = true;
+    assert.deepEqual(await select(15), [['ls'], launch('Task 15'), close], 'A lost launch reply still closes any placeholder');
+    assert.deepEqual(notices, ['Pinote task selected, but this pane could not be moved to its own Kitty tab.']);
+    lostLaunch = false; failList = true;
     assert.deepEqual(await select(11), [['ls']]);
     assert.deepEqual(notices, ['Pinote task selected, but this pane could not be moved to its own Kitty tab.']);
     settings(false);
