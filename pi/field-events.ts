@@ -86,12 +86,13 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
     const alive = () => { try { return group && !!child.pid && process.kill(-child.pid, 0); } catch { return false; } };
     // SIGTERM lets the script stop the processes it started; the group is killed after a grace period,
     // within the desktop's 5-second shutdown allowance.
-    let escalation: ReturnType<typeof setTimeout> | undefined;
+    let escalation: ReturnType<typeof setTimeout> | undefined, deadline = 0;
     const kill = (reason = 'Watcher cancelled') => {
       if (failure) return;
       failure = reason;
       send('SIGTERM');
-      escalation = setTimeout(() => send('SIGKILL'), KILL_GRACE_MS);
+      deadline = Date.now() + KILL_GRACE_MS + 250;
+      escalation = setTimeout(() => { if (alive()) send('SIGKILL'); }, KILL_GRACE_MS);
     };
     const timer = setTimeout(() => kill('Watcher timed out'), timeoutMs);
     const abort = () => kill();
@@ -108,9 +109,10 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
     });
     child.on('close', async (code) => {
       cleanup();
-      // A stopped invocation ends with its whole process group, so the next one cannot overlap it. The
-      // escalation is cleared only then: a SIGKILL never reaches a reused group ID.
-      while (failure && alive()) await new Promise((resolve) => setTimeout(resolve, 50));
+      // A stopped invocation ends with its process group, so the next one cannot overlap it. After the
+      // SIGKILL, members still listed are zombies awaiting another parent's reaping: stop waiting.
+      // Signals go only to a group just seen to exist, which a reused ID would need a PID wraparound to fake.
+      while (failure && alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
       clearTimeout(escalation);
       if (failure || code !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
         (code === 127 ? 'Watcher exited with code 127; check interpreter and PATH' : 'Watcher exited unsuccessfully')));

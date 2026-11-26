@@ -283,7 +283,7 @@ test('run command passes arguments without a shell; a coalescing watcher runs on
   writeFileSync(stubborn, `#!/bin/sh\ntrap '' TERM\nsleep 30\n`, { mode: 0o700 });
   const started = Date.now(), watcherPath = fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url));
   await assert.rejects(runFieldHandler(watcherPath, { params: { command: stubborn } }, new AbortController().signal, 300), /Watcher timed out/);
-  assert.ok(Date.now() - started >= 3000, 'The invocation waits for its process group');
+  assert.ok(Date.now() - started >= 3000 && Date.now() - started < 4500, 'The invocation waits for its process group, within the grace period');
   assert.throws(() => execFileSync('pgrep', ['-f', stubborn]), 'Nothing from the stopped run survives');
 
   writeFileSync(note, `#!${process.execPath}
