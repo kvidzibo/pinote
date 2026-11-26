@@ -1,4 +1,4 @@
-import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds, validKittyTabTitle } from './protocol.ts';
+import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds, validKittyTabTitle, validTagBaseFolder } from './protocol.ts';
 import type { MenuRequest, Operation, PreviewData, PreviewRequest, UIState, WindowStartup } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
@@ -15,7 +15,7 @@ const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   add: { text: str, tag: nullable }, edit: { id, revision: str, text: str },
   transition: { id, revision: str, state: v => ['active','in_progress','done','removed','scheduled'].includes(String(v)), action: v => ['start','reset','done','rm','restore'].includes(String(v)) },
   tag: { id, revision: str, tag: nullable }, agent: { id, revision: str, fields: v => agentFields(v, true) }, schedule: { id, revision: str, when: str },
-  create_tag: { name: str, folder: nullable, id: v => v === undefined || id(v), revision: v => v === undefined || str(v) },
+  create_tag: { name: str, folder: nullable, folderIfNew: v => v === undefined || nullable(v), id: v => v === undefined || id(v), revision: v => v === undefined || str(v) },
   rename_tag: { name: str, newName: str }, delete_tag: { name: str }, tag_folder: { name: str, folder: nullable },
   completions: { ids: v => Array.isArray(v) && v.length <= 1000 && v.every(id) },
   kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || typeof v === 'string' && validKittyTabTitle(v) },
@@ -77,11 +77,12 @@ function validTaskActions(value: unknown): boolean {
     Object.hasOwn(value, state) && validTaskActionPreferences(value[state], taskActionIds(state).filter(id => !legacy || id !== 'preview'), legacy));
 }
 export function validState(value: unknown): value is UIState {
-  if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions','creationTag','collapsed','scroll','composerStartAsMarkdown','kittyTabTitle'].includes(k))) return false;
+  if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions','creationTag','collapsed','scroll','composerStartAsMarkdown','kittyTabTitle','tagBaseFolder'].includes(k))) return false;
   if (Object.hasOwn(value, 'creationTag') && value.creationTag !== null && (typeof value.creationTag !== 'string' || !str(value.creationTag, 256) || !value.creationTag.length)) return false;
   if (Object.hasOwn(value, 'collapsed') && typeof value.collapsed !== 'boolean') return false;
   if (Object.hasOwn(value, 'composerStartAsMarkdown') && typeof value.composerStartAsMarkdown !== 'boolean') return false;
   if (Object.hasOwn(value, 'kittyTabTitle') && (typeof value.kittyTabTitle !== 'string' || !validKittyTabTitle(value.kittyTabTitle))) return false;
+  if (Object.hasOwn(value, 'tagBaseFolder') && (typeof value.tagBaseFolder !== 'string' || !validTagBaseFolder(value.tagBaseFolder))) return false;
   const scroll = value.scroll;
   if (Object.hasOwn(value, 'scroll') && (!record(scroll) || Object.keys(scroll).length !== 2 ||
     !['ordinary','pinned'].every(k => typeof scroll[k] === 'number' && Number.isFinite(scroll[k]) && scroll[k] >= 0 && scroll[k] <= 100000000))) return false;
@@ -89,7 +90,7 @@ export function validState(value: unknown): value is UIState {
   if (!str(value.draft, 65536) || !str(value.warning, 4096)) return false;
   if (value.filters !== null && (!Array.isArray(value.filters) || value.filters.length > 10000 || !value.filters.every(v => str(v, 256)))) return false;
   if (!record(value.read) || !Object.entries(value.read).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)) return false;
-  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision','pendingTag','pendingTagFolder','fields'].includes(x)) && (!Object.hasOwn(v, 'fields') || agentFields(v.fields)) && str(v.text,65536) && str(v.revision,128) && (!Object.hasOwn(v, 'pendingTag') || v.pendingTag === null || str(v.pendingTag,256)) && (!Object.hasOwn(v, 'pendingTagFolder') || typeof v.pendingTag === 'string' && (v.pendingTagFolder === null || str(v.pendingTagFolder)))) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
+  return record(value.edits) && Object.keys(value.edits).length <= 1000 && Object.entries(value.edits).every(([k,v]) => /^[1-9]\d*$/.test(k) && Number.isSafeInteger(Number(k)) && record(v) && Object.keys(v).every(x => ['text','revision','pendingTag','pendingTagFolder','pendingTagFolderIfNew','fields'].includes(x)) && (!Object.hasOwn(v, 'fields') || agentFields(v.fields)) && str(v.text,65536) && str(v.revision,128) && (!Object.hasOwn(v, 'pendingTag') || v.pendingTag === null || str(v.pendingTag,256)) && (!Object.hasOwn(v, 'pendingTagFolder') || typeof v.pendingTag === 'string' && (v.pendingTagFolder === null || str(v.pendingTagFolder))) && (!Object.hasOwn(v, 'pendingTagFolderIfNew') || typeof v.pendingTag === 'string' && str(v.pendingTagFolderIfNew))) && Buffer.byteLength(JSON.stringify({ ...value, warning: '' })) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function safeLink(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x20\x7f]/.test(value)) return false;

@@ -18,7 +18,7 @@ export type Operations = {
   tag: { params: Target & { tag: string | null }; result: Mutation };
   agent: { params: Target & { fields: Record<string, string | null> }; result: Mutation };
   schedule: { params: Target & { when: string }; result: Mutation };
-  create_tag: { params: { name: string; folder: string | null; id?: number; revision?: string }; result: Mutation };
+  create_tag: { params: { name: string; folder: string | null; folderIfNew?: string | null; id?: number; revision?: string }; result: Mutation };
   rename_tag: { params: { name: string; newName: string }; result: Mutation };
   delete_tag: { params: { name: string }; result: Mutation };
   tag_folder: { params: { name: string; folder: string | null }; result: Mutation };
@@ -60,10 +60,10 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
   return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
 }
 // fields holds unsaved agent field values by name; an empty value removes the field.
-export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; fields?: Record<string, string> };
+export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, string> };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; scroll?: { ordinary: number; pinned: number };
+  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; tagBaseFolder?: string; scroll?: { ordinary: number; pinned: number };
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
@@ -86,6 +86,18 @@ export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
 /** Start in Kitty's tab name when none is saved; the backend expands the placeholders. */
 export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
 export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
+export const validTagBaseFolder = (value: string) => value.length <= 4096 && value.startsWith('/') && !/[\p{Cc}\p{Cs}]/u.test(value);
+/** The name the backend saves for a new tag (its validate_tag: Python strip, NFC, 64 code points); null if rejected. */
+export function savedTagName(tag: string): string | null {
+  if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(tag)) return null;
+  const name = tag.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, '').normalize('NFC');
+  return name && Array.from(name).length <= 64 ? name : null;
+}
+/** A new tag's default folder inside the base folder, named after the tag ("/" becomes "-"); null when the name cannot be a tag or folder. */
+export function tagFolderPath(base: string, tag: string): string | null {
+  const name = savedTagName(tag)?.replaceAll('/', '-');
+  return name && name !== '.' && name !== '..' ? `${base.replace(/\/+$/, '')}/${name}` : null;
+}
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
 export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -1143,6 +1143,17 @@ try {
     await page.getByRole('button',{name:'Confirm',exact:true}).click();
     await page.keyboard.press('Escape');
     await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    // The base folder stays set through the editor's tag-creation checks below.
+    const tagBase=join(root,'editor-tag-base'); await mkdir(tagBase);
+    const baseFolder=async(action)=>{
+      await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'manage-tags');
+      const manage=page.getByRole('dialog',{name:'Manage tags',exact:true});
+      await manage.getByRole('button',{name:action,exact:true}).click();
+      await manage.locator('.tag-sidebar .folder-path').filter({hasText:action==='Clear base folder' ? 'No base folder' : tagBase}).waitFor();
+      await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
+    };
+    await app.evaluate(({dialog},folder)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},tagBase);
+    await baseFolder('Choose base folder for new tags');
     await selectTaskAction(page, added.id, 'Edit text…');
     await text.fill('Text and tag saved together');
     await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
@@ -1172,6 +1183,40 @@ try {
     await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
     assert.equal(snapshot().tag,null);
     call('delete_tag',{name:'Editor tag'});
+    // The editor journals the automatic folder, which a retry still applies.
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Auto tag');
+    await page.getByRole('button',{name:'Create tag “Auto tag”…',exact:true}).click();
+    await writeFile(faultFile,'busy-create-tag');
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].pendingTagFolderIfNew,join(tagBase,'Auto tag'));
+    await writeFile(faultFile,'');
+    await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Auto tag',exact:true}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Auto tag').folder,join(tagBase,'Auto tag'));
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Auto tag',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
+    call('delete_tag',{name:'Auto tag'});
+    // A folder that cannot be created fails the tag change; clearing the folder corrects it.
+    await writeFile(join(tagBase,'Blocked tag'),'');
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Blocked tag');
+    await page.getByRole('button',{name:'Create tag “Blocked tag”…',exact:true}).click();
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Clear default folder',exact:true}).click();
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Blocked tag',exact:true}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Blocked tag').folder,null);
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Blocked tag',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
+    call('delete_tag',{name:'Blocked tag'});
     await text.fill('# Redesign the task editor\n\nKeep writing focused.\n\n- Save after a typing pause\n- Change tags in the header\n- Keep local text on failure');
     await saved();
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
@@ -1190,6 +1235,7 @@ try {
     await text.fill('Close flushes the debounce');
     await page.keyboard.press('Escape');
     await editDialog.waitFor({state:'detached'});
+    await baseFolder('Clear base folder');
     await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Close flushes the debounce$/}).waitFor();
     // Fields configured in Pi are editable before any agent has set them.
     await mkdir(env.PI_CODING_AGENT_DIR,{recursive:true});
@@ -1359,6 +1405,71 @@ try {
     await manage.getByRole('heading',{name:'docs',exact:true}).waitFor();
     call('delete_tag',{name:'docs'});
     await manage.getByRole('textbox',{name:'Tag name',exact:true}).waitFor({state:'detached'});
+    // Base folder: a new tag's folder follows its name and is created with the tag.
+    const base=join(root,'tag-base'), basePath=manage.locator('.tag-sidebar .folder-path');
+    await mkdir(base); await writeFile(join(base,'blocked'),'');
+    await app.evaluate(({dialog},folder)=>{globalThis.__baseFolderDialog=dialog.showOpenDialog; dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},base);
+    try { await manage.getByRole('button',{name:'Choose base folder for new tags',exact:true}).click(); await basePath.filter({hasText:base}).waitFor(); }
+    finally { await app.evaluate(({dialog})=>{dialog.showOpenDialog=globalThis.__baseFolderDialog;}); }
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).tagBaseFolder,base);
+    const tagName=create.getByRole('textbox',{name:'Name',exact:true}), tagFolder=create.locator('.folder-path');
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    await tagName.fill('web/app');
+    assert.equal(await tagFolder.textContent(),join(base,'web-app'),'"/" in a tag name cannot nest folders');
+    await page.screenshot({path:join(root,'new-tag-base-folder.png')});
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await create.waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='web/app').folder,join(base,'web-app'));
+    // An existing tag keeps its folder; a name the backend rejects creates no folder.
+    call('tag_folder',{name:'web/app',folder:root});
+    await page.waitForFunction(folder=>document.querySelector('.tag-editor .folder-path')?.textContent===folder,root);
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    await tagName.fill('Web/App');
+    assert.equal(await tagFolder.textContent(),root);
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await create.waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='web/app').folder,root);
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    await tagName.fill('x'.repeat(65));
+    assert.equal(await tagFolder.textContent(),'No default folder');
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('cannot exceed 64'));
+    assert.deepEqual((await readdir(base)).sort(),['blocked','web-app']);
+    await page.keyboard.press('Escape'); await create.waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    // Full case folding, and a tag created elsewhere while the dialog is open, keep the existing folder.
+    call('create_tag',{name:'Straße',folder:root});
+    for (const typed of ['STRAẞE','race']) {
+      await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+      await tagName.fill(typed);
+      if (typed==='race') call('create_tag',{name:'race',folder:root});
+      await create.getByRole('button',{name:'Create tag',exact:true}).click();
+      await create.waitFor({state:'detached'});
+    }
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Straße').folder,root);
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='race').folder,root);
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    await tagName.fill('blocked');
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('exists but is not a folder'));
+    assert.equal(call('snapshot',{view:'active'}).tags.some(t=>t.name==='blocked'),false,'A failed folder must not create the tag');
+    await create.getByRole('button',{name:'Clear default folder',exact:true}).click();
+    await tagFolder.filter({hasText:'No default folder'}).waitFor();
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await create.waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='blocked').folder,null);
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    for (const [width,height] of [[760,560],[280,360]]) {
+      await app.evaluate(({BrowserWindow},{width,height})=>BrowserWindow.getAllWindows()[0].setSize(width,height),{width,height});
+      await page.waitForFunction(width=>innerWidth===width,width);
+      assert.equal(await manage.evaluate(n=>n.scrollWidth<=n.clientWidth),true,`No horizontal overflow at ${width}px`);
+      await basePath.scrollIntoViewIfNeeded();
+      await page.screenshot({path:join(root,`manage-tags-base-folder-${width}.png`)});
+    }
+    await manage.getByRole('button',{name:'Clear base folder',exact:true}).click();
+    await basePath.filter({hasText:'No base folder'}).waitFor();
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).tagBaseFolder,undefined);
+    for (const name of ['web/app','blocked','Straße','race']) call('delete_tag',{name});
     await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }

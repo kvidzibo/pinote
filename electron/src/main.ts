@@ -10,7 +10,7 @@ import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
-import { initialState } from './protocol.ts';
+import { initialState, tagFolderPath } from './protocol.ts';
 import type { MenuAction, MenuRequest, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
@@ -27,6 +27,8 @@ let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
 let watchers: Promise<{ close(): Promise<void> } | undefined> | undefined;
 let watchersStop: Promise<void> | undefined; let watchersStopped = false;
+// Folders picked in this session or saved as the tag base folder; only these can become it.
+const approvedFolders = new Set<string>();
 // Bounded and never rejects: quitting must not hang on a watcher.
 const stopWatchers = () => watchersStop ??= Promise.race([
   Promise.resolve(watchers).then(started => started?.close()).catch(() => log('Pinote field watchers did not stop cleanly.')),
@@ -300,10 +302,25 @@ async function boot() {
     },
     // Field names configured in Pi's settings; the editor offers them even when a task has no value yet.
     'agent-fields': async () => { try { return agentFieldNames(JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8'))); } catch { return []; } },
-    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value)) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
+    // A new base folder must come from the folder picker: the backend creates tag folders inside it.
+    'save-state': async (_event, value: unknown) => {
+      if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);
+      if (readonly || !validState(value) || value.tagBaseFolder !== undefined && !approvedFolders.has(value.tagBaseFolder)) throw new Error('Cannot save invalid or unreadable state');
+      const next = structuredClone(value), previousBase = state.tagBaseFolder; next.warning = state.warning; state = next;
+      // A base folder takes effect only once saved; the renderer keeps its previous one on failure.
+      try { await persist(); } catch (error) {
+        if (state === next && next.tagBaseFolder !== previousBase) { if (previousBase === undefined) delete next.tagBaseFolder; else next.tagBaseFolder = previousBase; }
+        throw error;
+      }
+    },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };
+      // The backend may create only the new tag's own folder inside the saved base folder.
+      if (op === 'create_tag' && (params as { folderIfNew?: string | null }).folderIfNew != null) {
+        const { name, folderIfNew } = params as { name: string; folderIfNew: string };
+        if (state.tagBaseFolder === undefined || folderIfNew !== tagFolderPath(state.tagBaseFolder, name)) return { protocol:1,ok:false,error:{code:'invalid',message:'The new tag folder no longer matches the base folder. Choose the tag again.'} };
+      }
       const work = tasks.then(async () => {
         if (mutating(op) && (readonly || state.warning)) return { protocol:1 as const,ok:false as const,error:{code:'invalid' as const,message:'Resolve the previous warning before making further changes.'} };
         if (mutating(op)) { uncertain = true; await persist(); }
@@ -361,7 +378,11 @@ async function boot() {
       geometryWrites = write.catch(() => {});
       try { await write; } catch { throw new Error('Cannot save window settings.'); }
     },
-    'choose-folder': async () => { const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0] ?? null; },
+    'choose-folder': async () => {
+      const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }), folder = result.canceled ? null : result.filePaths[0] ?? null;
+      if (folder !== null) approvedFolders.add(folder);
+      return folder;
+    },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top); },
