@@ -35,7 +35,9 @@ const Param = z.object({
   configKey: z.literal('forgejoInstances').optional(),
 }).strict().refine((param) => (param.type === 'select') === (param.options !== undefined)
   && (param.type === 'list') === (param.columns !== undefined) && (!param.configKey || param.type === 'list'));
+// `coalesceTaskEvents`: declared by the script, not saved per entry. A newer queued task event replaces the older one.
 const Manifest = z.object({ name: text(64).optional(), description: text(256).optional(), taskEvents: taskEvents.optional(), fieldEvents: fieldEvents.optional(), fields: fields.optional(), ...limits,
+  coalesceTaskEvents: z.boolean().optional(),
   params: z.array(Param).max(32).refine((params) => unique(params.map((param) => param.key))).optional() }).strict();
 
 export type WatcherParam = z.infer<typeof Param>;
@@ -45,7 +47,7 @@ export type FieldWatcherConfig = { path: string; enabled: boolean; taskEvents?: 
   appEvents?: typeof APP_EVENTS[number][]; timeoutSeconds?: number; cooldownSeconds?: number };
 /** Effective settings: saved values, else the script's declared defaults. `config` is the saved entry. */
 export type FieldWatcher = Required<FieldWatcherConfig> & { id: string; name: string; bundled: boolean; config: FieldWatcherConfig;
-  spec: WatcherParam[]; declared: string; description?: string; problem?: string };
+  spec: WatcherParam[]; declared: string; description?: string; problem?: string; coalesceTaskEvents: boolean };
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 // Beside this module in the package, and beside the bundle the desktop builds.
 const bundledDirectory = join(moduleDirectory, 'watchers');
@@ -125,6 +127,7 @@ export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatch
     }
     const file = basename(config.path);
     return { ...defaults(manifest), ...config, id: createHash('sha256').update(config.path).digest('hex'), bundled: bundled.has(config.path), config, spec, params, declared: JSON.stringify(manifest ?? null),
+      coalesceTaskEvents: manifest?.coalesceTaskEvents ?? false,
       // A custom script cannot take a built-in watcher's name, which selects PR alert handling.
       name: names[file] ?? (manifest?.name && !Object.values(names).includes(manifest.name) ? manifest.name : basename(file, '.mjs')),
       ...(manifest?.description ? { description: manifest.description } : {}), ...(problem ? { problem } : {}) };

@@ -444,7 +444,13 @@ export class FieldAutomation {
             if (!valid()) return;
             if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
             for (const event of batch.events) {
-              for (const key of keys) if (wantsTask(subscribed.get(key)!, event)) this.taskQueue.push({ subscription: key, event });
+              for (const key of keys) {
+                const watcher = subscribed.get(key)!;
+                if (!wantsTask(watcher, event)) continue;
+                // One later run covers every event queued before it starts.
+                if (watcher.coalesceTaskEvents) this.taskQueue = this.taskQueue.filter((item) => item.subscription !== key);
+                this.taskQueue.push({ subscription: key, event });
+              }
             }
             if (batch.cursor !== cursor) more = true;
             for (const key of keys) this.taskCursors.set(key, batch.cursor);

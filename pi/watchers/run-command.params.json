@@ -1,0 +1,25 @@
+{
+  "name": "Run command",
+  "description": "Runs a trusted command, without a shell, when Pinote starts and when a task is completed. Completions during the cooldown are merged into one run.",
+  "appEvents": ["startup"],
+  "taskEvents": ["completed"],
+  "coalesceTaskEvents": true,
+  "timeoutSeconds": 300,
+  "cooldownSeconds": 60,
+  "params": [
+    {
+      "key": "command",
+      "label": "Command",
+      "type": "string",
+      "required": true,
+      "help": "Absolute path of an executable file. It runs from its own directory; its output is discarded."
+    },
+    {
+      "key": "args",
+      "label": "Arguments",
+      "type": "list",
+      "columns": [{ "key": "value", "label": "Argument" }],
+      "help": "Passed exactly as written, one per row."
+    }
+  ]
+}

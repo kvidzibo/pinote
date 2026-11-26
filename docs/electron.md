@@ -70,7 +70,9 @@ the app, task and field events it listens for, name its fields and fill in the
 confirmation, naming each enabled script and Forgejo instance, and applies to the
 next check. Settings that differ from a script's defaults need pi-note 0.48.0+ in Pi;
 app events, time limits and cooldowns need pi-note 0.53.0+. The bundled **Worktree cleanup**
-watcher removes a completed task's clean Git worktrees (the `Worktrees` field since Electron 0.27.0). Task events need the Node
+watcher removes a completed task's clean Git worktrees (the `Worktrees` field since Electron 0.27.0).
+Since Electron 0.28.0, the bundled **Run command** watcher runs a configured command at startup
+and after task completions, merging completions held by its cooldown into one run. Task events need the Node
 `note` 0.27.0+ CLI; with an older one they are skipped and field watchers keep running.
 
 Watchers can also be enabled in Pi's `/pinote` settings, which list the pi-note package's

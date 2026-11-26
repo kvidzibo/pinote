@@ -10,6 +10,7 @@ import { FieldAutomation, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { readConfigDocument, saveFieldWatchers } from '../footer-config.ts';
 import { handleTaskEvent } from '../watchers/cleanup-worktree.mjs';
+import { runCommand } from '../watchers/run-command.mjs';
 
 const exec = promisify(execFile);
 const command = fileURLToPath(new URL('../../backend/bin/note', import.meta.url));
@@ -239,4 +240,46 @@ setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:
   await automation.close(); automation = await open();
   await automation.tick();
   assert.deepEqual(delivered().filter((call) => call.event === 'startup').map((call) => call.name).sort(), ['a', 'a', 'b', 'b', 'late']);
+});
+
+test('run command passes arguments without a shell; a coalescing watcher runs once for completions held by its cooldown', { timeout: 30_000 }, async (t) => {
+  const dir = profile(t), note = join(dir, 'note.mjs'), state = join(dir, 'history.json'), calls = join(dir, 'calls.log'), command = join(dir, 'record.sh');
+  writeFileSync(command, `#!/bin/sh\nprintf '%s|' "$PWD" "$@" >> ${JSON.stringify(calls)}\necho >> ${JSON.stringify(calls)}\n[ "$1" != fail ]\n`, { mode: 0o700 });
+  const args = (...values: string[]) => values.map((value) => ({ value }));
+  assert.deepEqual(await runCommand({ params: { command, args: args('$(touch pwned)', 'two words') } }), {});
+  assert.equal(readFileSync(calls, 'utf8'), `${dir}|$(touch pwned)|two words|\n`, 'Arguments are passed as written, from the command directory');
+  assert.ok(!existsSync(join(dir, 'pwned')));
+  for (const params of [{ command, args: args('fail') }, { command: 'record.sh' }, { command: join(dir, 'missing') }, { command, args: ['bare'] }]) {
+    await assert.rejects(runCommand({ params }));
+  }
+  rmSync(calls);
+
+  writeFileSync(note, `#!${process.execPath}
+import fs from 'node:fs';
+const args = process.argv.slice(2), state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined, limit = Number(args[args.indexOf('--limit') + 1]);
+const events = after === undefined ? [] : state.events.filter((event) => event.id > after).slice(0, limit);
+console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id : state.tail, events }));`, { mode: 0o700 });
+  const history = (ids: number[]) => writeFileSync(state, JSON.stringify({ tail: ids.at(-1) ?? 0, events: ids.map((id) => ({ id, taskId: id, event: 'completed', fields: {} })) }));
+  history([]);
+  const script = fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url));
+  const entries = [{ path: script, enabled: true, cooldownSeconds: 2, params: { command, args: args('check') } }];
+  const watcher = discoverFieldWatchers({ fieldWatchers: entries })[0];
+  assert.deepEqual([watcher.name, watcher.appEvents, watcher.taskEvents, watcher.coalesceTaskEvents, watcher.timeoutSeconds, watcher.problem], ['Run command', ['startup'], ['completed'], true, 300, undefined]);
+  const automation = await FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, watchers: () => discoverFieldWatchers({ fieldWatchers: entries }) });
+  t.after(() => automation.close());
+  const runs = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').length : 0;
+  const until = async (count: number) => { for (let i = 0; i < 50 && runs() < count; i++) { await automation.tick(); await new Promise((resolve) => setTimeout(resolve, 100)); } };
+  await until(1);
+  assert.equal(runs(), 1, 'Startup runs the command');
+  // 40 completions during the cooldown take two history reads; they queue as one run.
+  history(Array.from({ length: 40 }, (_, i) => i + 1));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 1, 'The cooldown holds the completions');
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await until(2);
+  for (let i = 0; i < 3; i++) await automation.tick();
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 2, 'One run covers every completion queued before it');
 });
