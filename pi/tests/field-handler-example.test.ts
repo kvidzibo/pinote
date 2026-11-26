@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +13,10 @@ test('published watchers run from node_modules, where Node refuses to strip type
   const root = fileURLToPath(new URL('../', import.meta.url)), installed = join(directory, 'node_modules/pi-note');
   mkdirSync(installed, { recursive: true });
   for (const file of JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).files) cpSync(join(root, file), join(installed, file), { recursive: true });
+  // Through a symlink, as with macOS /var or linked installs: Node runs the real path.
+  symlinkSync(join(directory, 'node_modules'), join(directory, 'linked'));
   for (const name of ['github-pr.mjs', 'forgejo-pr.mjs']) {
-    const result = spawnSync(join(installed, 'watchers', name), [], { encoding: 'utf8', timeout: 5000,
+    const result = spawnSync(join(directory, 'linked/pi-note/watchers', name), [], { encoding: 'utf8', timeout: 5000,
       input: JSON.stringify({ version: 1, event: 'added', taskId: 1, field: 'Build', value: 'x', previousValue: null, eventId: 'event-1' }) });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), {}, 'Other fields are ignored');

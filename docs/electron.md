@@ -39,7 +39,8 @@ Installation does not change desktop login startup, i3 rules, or user configurat
 Install Homebrew `flock` (`brew install flock`) and start Pinote from a terminal
 with the commands above, so `PATH` contains `node` and `flock`. Reminders need GNU
 `/usr/bin/date` and are unavailable. Only Start in Kitty has macOS-specific
-handling; macOS is not a validation target.
+handling. CI runs only a [basic macOS check](development.md#macos); Start in Kitty
+is checked against a Kitty stand-in, not real Kitty.
 
 ## Field watchers
 

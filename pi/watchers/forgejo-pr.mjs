@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { getAgentDir } from '../config-path.js';
 import { instanceURL, parseInstances } from '../forgejo-instances.js';
 import { checkPRBatch, withInterval } from '../pr-batch.js';
@@ -145,7 +145,9 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
     display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.
+const main = import.meta.main ?? (() => { try { return import.meta.filename === realpathSync(process.argv[1]); } catch { return false; } })();
+if (main) {
   let event;
   try {
     let input = '';
