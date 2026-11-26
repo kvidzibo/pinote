@@ -1759,6 +1759,8 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  // Enabling writes re-renders the rows, which would close an action bar opened before it applies.
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await selectTaskAction(reopened, added.id, 'Edit text…');
   await writeFile(faultFile,'edit');
   await reopened.evaluate(()=>{const input=document.querySelector('.cm-content[aria-label="Task text"]');input.focus();window.getSelection().selectAllChildren(input);const data=new DataTransfer();data.setData('text/plain','Rapid uncertain edit draft');input.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,ctrlKey:true,bubbles:true}));});
@@ -1779,6 +1781,8 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  // Enabling writes re-renders the rows, which would close an action bar opened before it applies.
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await selectTaskAction(reopened, added.id, 'Edit text…');
   const closingText='Private editor draft frozen at final close';
   const closingEditor=reopened.locator('.cm-content[aria-label="Task text"]');
