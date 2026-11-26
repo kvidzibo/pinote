@@ -4,13 +4,13 @@
 
 Electron is Pinote's desktop frontend. It uses the Node backend; Python is not
 required. Only Linux/X11/i3 is a validation target; local validation is not a
-performance guarantee.
+performance guarantee. [macOS](#macos-experimental) support is experimental.
 
 ## Install and launch from a checkout
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
 for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
-The private `electron/` package (0.20.0) bundles the matching Node backend;
+The private `electron/` package (0.21.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -33,6 +33,13 @@ Node/Electron injection environment flags are cleared in backend children.
 `PINOTE_ELECTRON_BACKEND` remains an explicit trusted absolute executable override
 for compatibility and diagnostics; there is no automatic Python fallback.
 Installation does not change desktop login startup, i3 rules, or user configuration.
+
+### macOS (experimental)
+
+Install Homebrew `flock` (`brew install flock`) and start Pinote from a terminal
+with the commands above, so `PATH` contains `node` and `flock`. Reminders need GNU
+`/usr/bin/date` and are unavailable. Only Start in Kitty has macOS-specific
+handling; macOS is not a validation target.
 
 ## Field watchers
 
@@ -266,8 +273,10 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
 
 **Start in Kitty…** uses the tag's default folder if available, or opens a directory
 chooser. Cancelling changes nothing. Electron saves the task as in progress and
-updates its row before launching; on failure, progress is retained. Check for a
-new tab or window before retrying.
+updates its row before launching; on failure, progress is retained. Errors name
+the cause, such as a missing `kitty` or `pi` with the searched `PATH`, or Kitty's
+remote-control error. If Kitty may already have opened a tab or window, the error
+says the outcome is uncertain: check for a new tab or window before retrying.
 
 The Node backend requires `kitty` and `pi` in absolute `PATH` directories. To
 reuse Kitty, enable socket remote control (`allow_remote_control socket-only`)
@@ -278,6 +287,13 @@ If discovery finds no reachable instance, Pinote opens a new window without
 restoring saved tabs. It names the tab from the first line of the task, stripping a
 leading Markdown heading marker and taking up to 30 characters, plus a `[tag]`
 prefix if tagged. Saved text and tags are unchanged.
+
+On macOS, Pinote also looks for `kitty` in `/Applications/kitty.app` and
+`~/Applications/kitty.app`, for `pi` in `~/.pi/agent/bin`, and for both in
+`/opt/homebrew/bin` and `/usr/local/bin`. Without `KITTY_LISTEN_ON`, it reuses
+same-user Kitty sockets named `mykitty-<pid>` in `/tmp` or `$TMPDIR`; configure
+`allow_remote_control socket-only` and `listen_on unix:/tmp/mykitty`. New windows
+listen in `$TMPDIR`.
 
 **Kitty tabs…** in the menu sets **One task per tab**, shared with Pi's settings
 in `pi-note.json`. When on, selecting a task in Pi moves a split pane whose tab

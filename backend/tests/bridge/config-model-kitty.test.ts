@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, renameSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -87,7 +88,7 @@ test('application id uses canonical database without exposing paths', () => {
 });
 function fakeTools() {
   const bin = join(root, 'bin'); mkdirSync(bin); const log = join(root, 'kitty.log');
-  writeFileSync(join(bin, 'kitty'), `#!${process.execPath}\nconst fs = require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_KITTY_LOG,JSON.stringify(args)+'\\n');if(process.env.TEST_KITTY_FAIL==='yes')process.exit(1);if(args.includes('launch'))process.stdout.write('42\\n');if(args[0]!=='@')setTimeout(()=>{},200);if(args.includes('ls')&&process.env.TEST_KITTY_DELAY_LS)setTimeout(()=>{},500);\n`, { mode: 0o700 });
+  writeFileSync(join(bin, 'kitty'), `#!${process.execPath}\nconst fs = require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_KITTY_LOG,JSON.stringify(args)+'\\n');const fail=process.env.TEST_KITTY_FAIL;if(fail==='yes'||fail&&args.includes(fail)||args[0]==='@'&&!args[2].startsWith(process.env.TEST_KITTY_PREFIX||'')){process.stderr.write('Error: simulated failure\\n');process.exit(1);}if(args.includes('launch'))process.stdout.write('42\\n');if(args[0]!=='@')setTimeout(()=>{},200);if(args.includes('ls')&&process.env.TEST_KITTY_DELAY_LS)setTimeout(()=>{},500);\n`, { mode: 0o700 });
   writeFileSync(join(bin, 'pi'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
   process.env.PATH = bin + ':' + env.PATH; process.env.TEST_KITTY_LOG = log;
   return { bin, log, calls: () => readFileSync(log, 'utf8').trim().split('\n').map(x => JSON.parse(x)) };
@@ -130,7 +131,26 @@ test('Kitty new-window argv and unavailable tool/directory validation', async ()
   const calls = tools.calls(), launch = calls.find((a: string[]) => a[0] === '--session=none');
   assert.ok(launch.includes('--listen-on=unix:@mykitty-{kitty_pid}')); assert.ok(launch.includes('--override=allow_remote_control=socket-only')); assert.ok(launch.includes('/usr/bin/env')); assert.equal(launch.at(-1), join(tools.bin, 'pi'));
   await assert.rejects(() => start_in_kitty(join(root, 'absent'), note, 'title', 'prompt'));
-  process.env.PATH = '/nonexistent'; await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /requires kitty and pi/);
+  process.env.PATH = '/nonexistent'; await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /cannot find kitty and pi on PATH\. PATH: \/nonexistent$/);
+});
+test('Kitty on macOS finds usual install locations and same-user filesystem sockets', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id)), temp = join(root, 'tmp');
+  const app = join(process.env.HOME!, 'Applications/kitty.app/Contents/MacOS'), agent = join(process.env.HOME!, '.pi/agent/bin');
+  mkdirSync(app, { recursive: true }); mkdirSync(agent, { recursive: true }); mkdirSync(temp);
+  renameSync(join(tools.bin, 'kitty'), join(app, 'kitty')); renameSync(join(tools.bin, 'pi'), join(agent, 'pi'));
+  process.env.PATH = join(root, 'empty'); process.env.TMPDIR = temp; process.env.DISPLAY = ':0'; process.env.TEST_KITTY_PREFIX = `unix:${temp}/`;
+  const server = createServer(); await new Promise<void>(done => server.listen(join(temp, 'mykitty-1'), done));
+  Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+  try {
+    await start_in_kitty(root, note, 'title', 'prompt');
+    let calls = tools.calls(); assert.deepEqual(calls[0], ['@', '--to', `unix:${temp}/mykitty-1`, 'ls']);
+    assert.deepEqual(calls[1].slice(2, 5), [`unix:${temp}/mykitty-1`, 'launch', '--type=tab']); assert.equal(calls[1].at(-1), join(agent, 'pi'));
+    await new Promise(done => server.close(done)); rmSync(tools.log);
+    await start_in_kitty(root, note, 'title', 'prompt'); await sleep(300);
+    calls = tools.calls(); const launch = calls.find((a: string[]) => a[0] === '--session=none');
+    assert.ok(launch.includes(`--listen-on=unix:${temp}/mykitty-{kitty_pid}`)); assert.match(calls.at(-1)[2], new RegExp(`^unix:${temp}/mykitty-\\d+$`));
+  } finally { Object.defineProperty(process, 'platform', platform); server.close(); }
 });
 test('bridge Kitty headings, stale revisions and unknown partial launch outcomes', async () => {
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit';
@@ -140,8 +160,11 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
     const result = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(result.ok, true);
     assert.equal(tools.calls().at(-2).at(-1), expected); assert.deepEqual(store(s => s.get(id)), note);
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { ...params, revision: 'old' } }, paths)).error.code, 'conflict');
-    process.env.TEST_KITTY_FAIL = 'yes'; const failed = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(failed.error.code, 'unknown'); assert.match(failed.error.message, /Check the tab/); delete process.env.TEST_KITTY_FAIL;
+    process.env.TEST_KITTY_FAIL = 'set-tab-title'; const failed = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(failed.error.code, 'unknown'); assert.match(failed.error.message, /uncertain \(Kitty remote control failed at unix:@explicit: Error: simulated failure\)\. Check the tab/); delete process.env.TEST_KITTY_FAIL;
   }
+  const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_FAIL = 'yes';
+  // Nothing launches when the explicit address is unreachable.
+  assert.deepEqual((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).error, { code: 'invalid', message: 'Kitty remote control failed at unix:@explicit: Error: simulated failure' });
 });
 test('interruption preserves signal status and prevents later Kitty launch steps', async () => {
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit'; process.env.TEST_KITTY_DELAY_LS = 'yes';
