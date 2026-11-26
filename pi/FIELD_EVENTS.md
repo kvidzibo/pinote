@@ -380,9 +380,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   turn between its task events and field checks, after its startup event. Each
   invocation has the watcher's time limit (30 seconds by default) and a
   combined 64 KiB stdout/stderr limit. On Unix, a timeout or cancellation sends
-  SIGTERM to its process group and, if any of it remains, SIGKILL 3 seconds later; the
-  invocation ends with the group, at most about 3 seconds after the stop (pi-note
-  0.55.0+; earlier versions send SIGKILL at once). Scripts must not detach child processes. Invalid JSON/schema, nonzero
+  SIGTERM to its process group and, if any of it remains, SIGKILL 3 seconds later. The
+  invocation ends once the group is gone, or shortly after the SIGKILL when only
+  unreaped members remain (pi-note 0.55.0+; earlier versions send SIGKILL at once). Scripts must not detach child processes. Invalid JSON/schema, nonzero
   exit, timeout or `state: "error"` preserve the last good result as stale and
   retry with exponential backoff (30 seconds to one hour, or a longer requested
   retry). First-check failure appears as unavailable. Stale results don't alert.

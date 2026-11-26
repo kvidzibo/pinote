@@ -86,13 +86,12 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
     const alive = () => { try { return group && !!child.pid && process.kill(-child.pid, 0); } catch { return false; } };
     // SIGTERM lets the script stop the processes it started; the group is killed after a grace period,
     // within the desktop's 5-second shutdown allowance.
-    let escalation: ReturnType<typeof setTimeout> | undefined, deadline = 0;
+    let escalation: ReturnType<typeof setTimeout> | undefined, killed: number | undefined;
     const kill = (reason = 'Watcher cancelled') => {
       if (failure) return;
       failure = reason;
       send('SIGTERM');
-      deadline = Date.now() + KILL_GRACE_MS + 250;
-      escalation = setTimeout(() => { if (alive()) send('SIGKILL'); }, KILL_GRACE_MS);
+      escalation = setTimeout(() => { killed = performance.now(); if (alive()) send('SIGKILL'); }, KILL_GRACE_MS);
     };
     const timer = setTimeout(() => kill('Watcher timed out'), timeoutMs);
     const abort = () => kill();
@@ -112,7 +111,7 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
       // A stopped invocation ends with its process group, so the next one cannot overlap it. After the
       // SIGKILL, members still listed are zombies awaiting another parent's reaping: stop waiting.
       // Signals go only to a group just seen to exist, which a reused ID would need a PID wraparound to fake.
-      while (failure && alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+      while (failure && alive() && (killed === undefined || performance.now() - killed < 250)) await new Promise((resolve) => setTimeout(resolve, 50));
       clearTimeout(escalation);
       if (failure || code !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
         (code === 127 ? 'Watcher exited with code 127; check interpreter and PATH' : 'Watcher exited unsuccessfully')));
