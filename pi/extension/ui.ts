@@ -129,7 +129,8 @@ export class PinoteUI {
         () => this.session.action(view, control, value, () => control.id !== 'done' || ctx.isIdle()), signal);
       if (!current() || !result) return false;
       const selected = this.session.view;
-      if (selected && typeof selected.state.selectedId === 'number' && selected.state.selectedId !== view.state.selectedId) {
+      // An explicit selection, even of the current task (e.g. to retry a skipped move), names the Kitty tab.
+      if (selected && typeof selected.state.selectedId === 'number' && (control.id.startsWith('select:') || control.id === 'add' || control.id === 'proposal:accept')) {
         const title = line(selected.footer?.find((item) => item.action === 'preview')?.text ?? '').trim();
         let oneTaskPerTab = false;
         try { oneTaskPerTab = parseKittyOneTaskPerTab(readConfigDocument().value); } catch { /* Invalid settings: rename only. */ }

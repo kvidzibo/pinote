@@ -77,9 +77,9 @@ it, right-click to dismiss. It keeps up to 24 columns when the row is full.
 Regular mode shows status; `/pinote` provides all actions. No Kitty action handler
 is needed.
 
-Accepting a suggestion, selecting a different task, or creating and selecting one
-renames the current Kitty tab to `[tag] task title` (tag omitted when unset),
-using the footer's first-line title rather than the GUI launcher's shortened name.
+Accepting a suggestion, selecting a task (including the current one), or creating
+and selecting one renames the current Kitty tab to `[tag] task title` (tag omitted
+when unset), using the footer's first-line title rather than the GUI launcher's shortened name.
 Requires local Kitty with remote control enabled, `kitty` on PATH, and
 `KITTY_LISTEN_ON` / `KITTY_WINDOW_ID`; SSH and other terminals are unchanged.
 Rename failures warn without undoing selection. Completion and deselection leave
@@ -91,8 +91,8 @@ selected task in its Kitty window's `pinote_task` user variable, cleared on
 deselection, completion or exit. When another pane in the tab holds a different
 task, selecting one first moves this pane to a new tab beside the current one,
 then names it. A pane that is not Kitty's active window stays put and the shared
-tab keeps its name, with a warning. Moving uses Kitty's `detach_window new-tab-right`
-action (verified with Kitty 0.48).
+tab keeps its name, with a warning; select the task again after focusing it.
+Verified with Kitty 0.48.
 
 Completion keeps the conversation and editor, except for dedicated **Start in Kitty…**
 sessions (see below). With an empty editor, **Ctrl+D**
