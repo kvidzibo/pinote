@@ -32,8 +32,8 @@ export const FieldResult = SingleFieldResult.extend({
 export type FieldResult = z.infer<typeof FieldResult>;
 type FieldEvent = z.infer<typeof Event>;
 type Job = { watcherId: string; event: FieldEvent; result?: FieldResult; due: number | null; attempts: number; checkedAt?: string; stale?: boolean };
-/** `field` is `task:<event>` for a task event, which is never retried. */
-export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: number; field: string; reason: string; lastSuccess: string | null; retryAt: string | null };
+/** `field` is `task:<event>` for a task event and `app:startup` (without a task) for the startup event; neither is retried. */
+export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: number | null; field: string; reason: string; lastSuccess: string | null; retryAt: string | null };
 class FieldHandlerFailure extends Error {}
 export type FieldStatus = { watcherId: string; field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
 export type FieldNotice = { id: string; taskId: number; field: string; message: string; receiptIds?: string[] };
@@ -60,6 +60,11 @@ const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)
 const settings = (watcher: FieldWatcher) => JSON.stringify([watcher.fieldEvents, watcher.fields, watcher.params]);
 /** A task watcher's enablement with its current settings; each starts at the history tail read once it appears. */
 const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
+/** An invocation in flight is cancelled when these change; its time limit and cooldown can change meanwhile. */
+const runKey = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.path, watcher.appEvents, watcher.taskEvents, settings(watcher)]);
+/** Watchers invoked at once; each watcher runs one invocation at a time. */
+const CONCURRENCY = 4;
+type Run = { key: string; controller: AbortController; promise: Promise<void> };
 type TaskEvent = { id: number; taskId: number; event: typeof TASK_EVENTS[number]; fields: Record<string, string> };
 const wantsTask = (watcher: FieldWatcher, event: TaskEvent) => watcher.taskEvents.includes(event.event)
   && (!watcher.fields.length || watcher.fields.some((name) => Object.hasOwn(event.fields, name)));
@@ -110,7 +115,13 @@ export class FieldAutomation {
   private signature = '';
   private stored?: string;
   private generation = 0;
-  private invocation?: AbortController;
+  private running = new Map<string, Run>();
+  private poll?: ReturnType<typeof setInterval>;
+  // In memory: cooldowns count from this process's own invocations.
+  private started = new Map<string, number>();
+  private rotation = 0;
+  // Watchers selected for the startup event when this process first held the lease.
+  private startup?: Set<string>;
   private ticking = false;
   private notes = notesVersion();
   private drained?: string;
@@ -119,7 +130,8 @@ export class FieldAutomation {
   private taskCursor?: number;
   private taskSince = new Map<string, number>();
   private taskQueue: { subscription: string; event: TaskEvent }[] = [];
-  private taskTurn = true;
+  // Watchers whose last invocation was a task event: field work goes next, so neither backlog starves the other.
+  private taskTurn = new Set<string>();
   private taskEventsFailed = false;
   private noteCommand: string;
   private changed: () => void;
@@ -181,21 +193,26 @@ export class FieldAutomation {
   private leased(): boolean {
     return Boolean(this.db.prepare('SELECT 1 FROM fw_scheduler WHERE id=1 AND owner=? AND lease_until>?').get(this.owner, Date.now()));
   }
-  private transaction(work: () => void): void {
+  private transaction<T>(work: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (!this.leased()) throw new Error('Field scheduler lease expired');
-      work(); this.db.exec('COMMIT');
+      const result = work(); this.db.exec('COMMIT'); return result;
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  private release(): void {
+    this.db.prepare('UPDATE fw_scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);
   }
   /** Readers only filter by their enabled watchers. Saved state is cleaned up by the
    * scheduler alone (durable): a reader with another configuration must not erase it. */
   private reconcile(durable = false): void {
     const enabled = this.watchers().filter((watcher) => watcher.enabled && !watcher.problem);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
-    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.taskEvents, settings(w)]));
+    const signature = JSON.stringify(enabled.map((w) => [runKey(w), w.timeoutSeconds, w.cooldownSeconds]));
     if (signature !== this.signature) {
-      this.generation++; this.invocation?.abort();
+      this.generation++;
+      const keys = new Set(enabled.map(runKey));
+      for (const run of this.running.values()) if (!keys.has(run.key)) run.controller.abort();
       this.enabled = enabled; this.signature = signature; this.changed();
       // A subscription that ended takes its queued events with it: enabling it again starts afresh.
       const current = new Set(enabled.filter((watcher) => watcher.taskEvents.length).map(subscription));
@@ -340,7 +357,7 @@ export class FieldAutomation {
     const schedule = () => {
       if (this.lifetime.signal.aborted) return;
       let delay = 1000;
-      this.work = this.tick().catch(() => {
+      this.work = this.step().catch(() => {
         if (this.lifetime.signal.aborted) return; // Closing cancels the tick in flight; that is not a failed check.
         delay = 30_000; this.log();
       }).finally(() => {
@@ -350,12 +367,20 @@ export class FieldAutomation {
     };
     schedule();
   }
-  tick(): Promise<void> {
+  /** One scheduler step, then the invocations it or an earlier step started. */
+  async tick(): Promise<void> {
+    await this.step();
+    await this.idle();
+  }
+  private step(): Promise<void> {
     if (this.ticking) return this.work ?? Promise.resolve();
     this.ticking = true;
     const work = this.performTick().finally(() => { this.ticking = false; if (this.work === work) this.work = undefined; });
     this.work = work;
     return work;
+  }
+  private async idle(): Promise<void> {
+    while (this.running.size) await Promise.all([...this.running.values()].map((run) => run.promise));
   }
   private async performTick(): Promise<void> {
     this.lifetime.signal.throwIfAborted();
@@ -364,6 +389,7 @@ export class FieldAutomation {
     if (!acquired) return;
     try {
       this.reconcile(true);
+      this.startup ??= new Set(this.enabled.filter((watcher) => watcher.appEvents.includes('startup')).map((watcher) => watcher.id));
       const generation = this.generation;
       const valid = () => {
         this.reconcile(true);
@@ -413,18 +439,6 @@ export class FieldAutomation {
           if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
         }
       }
-      // Task events run before field intake, so reading a new watcher's field history does not delay them,
-      // and take turns with field work, so a backlog of either cannot starve the other.
-      const queued = this.taskTurn ? this.taskQueue.shift() : undefined;
-      this.taskTurn = !queued;
-      if (queued) {
-        const watcher = subscribed.get(queued.subscription)!;
-        const { id, taskId, event, fields } = queued.event;
-        const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields });
-        if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId, field: `task:${event}`,
-          reason: 'error' in run && run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed', lastSuccess: null, retryAt: null });
-        return;
-      }
       // A watcher without field events has no field history to read.
       for (const watcher of intake ? this.enabled.filter((w) => w.fieldEvents.length) : []) {
         const state = this.db.prepare('SELECT cursor FROM fw_watchers WHERE id=?').get(watcher.id) as { cursor: number };
@@ -443,84 +457,151 @@ export class FieldAutomation {
           drained = true;
         }
       }
-      if (drained) { this.changed(); return; }
-      if (intake && !more) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
-      const jobs = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => JSON.parse(job) as Job);
-      const job = jobs.filter((j) => j.due !== null && j.due <= Date.now()).sort((a, b) => a.due! - b.due!)[0];
-      if (!job) return;
-      const event = job.event;
-      const watcher = this.enabled.find((w) => w.id === job.watcherId);
-      if (!watcher) return;
-      const task = await this.note(['agent', 'get', String(event.taskId)]) as Task;
-      if (!valid()) return;
-      const currentValue = task && ['active', 'in_progress'].includes(task.state) ? task.agent_notes[event.field] ?? null : null;
-      if (event.value !== currentValue) { this.transaction(() => { this.clear(job.watcherId, event.taskId, event.field); this.prunePRNotices(job.watcherId, event.taskId); }); this.changed(); return; }
-      const run = await this.invoke(watcher, {
-        version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,
-        event: job.checkedAt ? 'check' : event.event, value: event.value, previousValue: event.previousValue,
-        ...(job.result ? { previousResult: job.result } : {}),
-      });
-      if (!valid() || !run) return;
-      if ('error' in run || run.result.state === 'error') {
-        const retryAfterSeconds = 'result' in run ? run.result.recheckAfterSeconds ?? 0 : 0;
-        job.attempts++; job.stale = true;
-        job.result ??= { state: 'error', summary: 'Field handler unavailable', display: { color: 'muted' } };
-        job.due = Date.now() + Math.max(retryAfterSeconds, Math.min(3600, 30 * 2 ** Math.min(job.attempts - 1, 7))) * 1000;
-        this.transaction(() => this.save(job)); this.changed();
-        this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
-          reason: 'result' in run ? 'Watcher reported unavailable data; check dependencies, authentication and connectivity'
-            : run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed',
-          lastSuccess: job.checkedAt ?? null, retryAt: new Date(job.due).toISOString() });
-        return;
-      }
-      const result = run.result;
-      const latest = await this.note(['agent', 'get', String(event.taskId)]) as Task;
-      if (!valid()) return;
-      if (latest?.updated_at !== task?.updated_at) return; // Includes remove/re-add (ABA); next tick drains new events.
-      this.transaction(() => {
-        if (event.value === null) { this.clear(job.watcherId, event.taskId, event.field); this.prunePRNotices(job.watcherId, event.taskId); }
-        else {
-          const managed = this.recordPRNotices(watcher, job, latest, result);
-          const notification = result.notification;
-          if (managed || !notification) this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(job.watcherId, event.taskId, event.field);
-          else if (notification.key !== job.result?.notification?.key || notification.message !== job.result?.notification?.message) {
-            this.db.prepare('INSERT INTO fw_notices(watcher_id,task_id,field,id,message) VALUES (?,?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET id=excluded.id,message=excluded.message')
-              .run(job.watcherId, event.taskId, event.field, randomUUID(), notification.message);
-          }
-          this.save({ watcherId: job.watcherId, event, result, due: result.recheckAfterSeconds ? Date.now() + result.recheckAfterSeconds * 1000 : null,
-            attempts: 0, checkedAt: new Date().toISOString(), stale: false });
-        }
-      });
-      if (result.items?.some((item) => item.state === 'error')) {
-        this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
-          reason: 'Watcher reported unavailable data for some items', lastSuccess: job.checkedAt ?? null,
-          retryAt: new Date(Date.now() + (result.recheckAfterSeconds ?? 60) * 1000).toISOString() });
-      }
-      this.changed();
+      if (drained) this.changed();
+      else if (intake && !more) { this.drained = version; this.drainDue = Date.now() + RECHECK_MS; }
+      // Superseded pending changes are coalesced before any field check runs; startup and task events need not wait.
+      this.dispatch(!drained);
     } finally {
-      this.db.prepare('UPDATE fw_scheduler SET lease_until=0 WHERE id=1 AND owner=?').run(this.owner);
+      // Invocations in flight keep the lease; the last one to finish releases it.
+      if (!this.running.size) this.release();
     }
   }
-  /** One invocation with the watcher's parameters; undefined when settings changed or the scheduler closed meanwhile. */
-  private async invoke(watcher: FieldWatcher, input: Record<string, unknown>): Promise<{ result: FieldResult } | { error: unknown } | undefined> {
-    const invocation = new AbortController();
-    this.invocation = invocation;
-    const abort = () => invocation.abort();
-    this.lifetime.signal.addEventListener('abort', abort, { once: true });
-    const poll = setInterval(() => { try { this.reconcile(true); } catch { invocation.abort(); } }, 100);
-    let outcome: { result: FieldResult } | { error: unknown };
-    try { outcome = { result: await runFieldHandler(watcher.path, { ...input, params: watcher.params }, invocation.signal) }; }
-    catch (error) { outcome = { error }; }
-    finally {
-      clearInterval(poll); this.lifetime.signal.removeEventListener('abort', abort);
-      if (this.invocation === invocation) this.invocation = undefined;
+  /** Start the next invocation of each idle watcher outside its cooldown, up to CONCURRENCY at once.
+   * Startup goes first; task events and field checks take turns. Without `fieldChecks`, only events start. */
+  private dispatch(fieldChecks: boolean): void {
+    const due = (this.db.prepare('SELECT job FROM fw_jobs').all() as Row[]).map(({ job }) => ({ raw: job, job: JSON.parse(job) as Job }))
+      .filter(({ job }) => job.due !== null && job.due <= Date.now()).sort((a, b) => a.job.due! - b.job.due!);
+    // Rotate the starting watcher, so the first ones cannot hold every slot.
+    const offset = this.rotation++ % Math.max(1, this.enabled.length);
+    for (const watcher of [...this.enabled.slice(offset), ...this.enabled.slice(0, offset)]) {
+      if (this.running.size >= CONCURRENCY) return;
+      const last = this.started.get(watcher.id);
+      if (this.running.has(watcher.id) || last !== undefined && Date.now() < last + watcher.cooldownSeconds * 1000) continue;
+      let work: ((signal: AbortSignal) => Promise<void>) | undefined;
+      if (this.startup?.has(watcher.id)) {
+        this.startup.delete(watcher.id);
+        if (watcher.appEvents.includes('startup')) work = (signal) => this.runStartup(watcher, signal);
+      }
+      if (!work) {
+        const queued = this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
+        const job = due.find((item) => item.job.watcherId === watcher.id);
+        if (queued >= 0 && (!job || !fieldChecks || !this.taskTurn.has(watcher.id))) {
+          const { event } = this.taskQueue.splice(queued, 1)[0];
+          this.taskTurn.add(watcher.id); work = (signal) => this.runTask(watcher, event, signal);
+        } else if (job && fieldChecks) {
+          this.taskTurn.delete(watcher.id); work = (signal) => this.runCheck(watcher, job.raw, job.job, signal);
+        }
+      }
+      if (!work) continue;
+      this.started.set(watcher.id, Date.now());
+      const controller = new AbortController(), start = work;
+      const promise = (async () => { await start(controller.signal); })().catch(() => {
+        if (!controller.signal.aborted && !this.lifetime.signal.aborted) this.log();
+      }).finally(() => {
+        this.running.delete(watcher.id);
+        if (this.running.size) return;
+        clearInterval(this.poll); this.poll = undefined;
+        if (!this.ticking && this.db.isOpen) this.release();
+      });
+      this.running.set(watcher.id, { key: runKey(watcher), controller, promise });
+      // Settings changes cancel affected invocations; the lease is renewed while any run.
+      this.poll ??= setInterval(() => {
+        try {
+          this.reconcile(true);
+          this.db.prepare('UPDATE fw_scheduler SET lease_until=? WHERE id=1 AND owner=? AND lease_until>?').run(Date.now() + 90_000, this.owner, Date.now());
+        } catch { for (const run of this.running.values()) run.controller.abort(); }
+      }, 100);
     }
-    return invocation.signal.aborted ? undefined : outcome;
+  }
+  /** After each await: still the same watcher settings, scheduler and lease. */
+  private current(signal: AbortSignal): boolean {
+    this.reconcile(true);
+    return !signal.aborted && !this.lifetime.signal.aborted && this.leased();
+  }
+  private failure(run: { result: FieldResult } | { error: unknown }): string {
+    return 'error' in run && run.error instanceof FieldHandlerFailure ? run.error.message : 'Watcher check failed';
+  }
+  private async runStartup(watcher: FieldWatcher, signal: AbortSignal): Promise<void> {
+    const run = await this.invoke(watcher, { version: 1, scope: 'app', eventId: `startup:${this.owner}`, event: 'startup' }, signal);
+    if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: null, field: 'app:startup',
+      reason: this.failure(run), lastSuccess: null, retryAt: null });
+  }
+  private async runTask(watcher: FieldWatcher, queued: TaskEvent, signal: AbortSignal): Promise<void> {
+    const { id, taskId, event, fields } = queued;
+    const run = await this.invoke(watcher, { version: 1, scope: 'task', eventId: String(id), event, taskId, fields }, signal);
+    if (run && ('error' in run || run.result.state === 'error')) this.log({ watcher: watcher.name, watcherId: watcher.id, taskId, field: `task:${event}`,
+      reason: this.failure(run), lastSuccess: null, retryAt: null });
+  }
+  /** `raw` is the saved job this check started from: intake or a reset meanwhile supersedes its outcome. */
+  private async runCheck(watcher: FieldWatcher, raw: string, job: Job, signal: AbortSignal): Promise<void> {
+    const event = job.event;
+    const unchanged = () => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=? AND field=?')
+      .get(job.watcherId, event.taskId, event.field) as Row | undefined)?.job === raw;
+    const task = await this.note(['agent', 'get', String(event.taskId)]) as Task;
+    if (!this.current(signal)) return;
+    const currentValue = task && ['active', 'in_progress'].includes(task.state) ? task.agent_notes[event.field] ?? null : null;
+    if (event.value !== currentValue) {
+      if (this.transaction(() => unchanged() && (this.clear(job.watcherId, event.taskId, event.field), this.prunePRNotices(job.watcherId, event.taskId), true))) this.changed();
+      return;
+    }
+    const run = await this.invoke(watcher, {
+      version: 1, eventId: `${event.id}:${event.field}`, taskId: event.taskId, field: event.field,
+      event: job.checkedAt ? 'check' : event.event, value: event.value, previousValue: event.previousValue,
+      ...(job.result ? { previousResult: job.result } : {}),
+    }, signal);
+    // Reconciled first: a cancellation by disabling also clears the watcher's saved state now.
+    if (!this.current(signal) || !run) return;
+    if ('error' in run || run.result.state === 'error') {
+      const retryAfterSeconds = 'result' in run ? run.result.recheckAfterSeconds ?? 0 : 0;
+      job.attempts++; job.stale = true;
+      job.result ??= { state: 'error', summary: 'Field handler unavailable', display: { color: 'muted' } };
+      job.due = Date.now() + Math.max(retryAfterSeconds, Math.min(3600, 30 * 2 ** Math.min(job.attempts - 1, 7))) * 1000;
+      if (!this.transaction(() => unchanged() && (this.save(job), true))) return;
+      this.changed();
+      this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
+        reason: 'result' in run ? 'Watcher reported unavailable data; check dependencies, authentication and connectivity' : this.failure(run),
+        lastSuccess: job.checkedAt ?? null, retryAt: new Date(job.due).toISOString() });
+      return;
+    }
+    const result = run.result;
+    const latest = await this.note(['agent', 'get', String(event.taskId)]) as Task;
+    if (!this.current(signal)) return;
+    if (latest?.updated_at !== task?.updated_at) return; // Includes remove/re-add (ABA); next tick drains new events.
+    const saved = this.transaction(() => {
+      if (!unchanged()) return false;
+      if (event.value === null) { this.clear(job.watcherId, event.taskId, event.field); this.prunePRNotices(job.watcherId, event.taskId); return true; }
+      const managed = this.recordPRNotices(watcher, job, latest, result);
+      const notification = result.notification;
+      if (managed || !notification) this.db.prepare('DELETE FROM fw_notices WHERE watcher_id=? AND task_id=? AND field=?').run(job.watcherId, event.taskId, event.field);
+      else if (notification.key !== job.result?.notification?.key || notification.message !== job.result?.notification?.message) {
+        this.db.prepare('INSERT INTO fw_notices(watcher_id,task_id,field,id,message) VALUES (?,?,?,?,?) ON CONFLICT(watcher_id,task_id,field) DO UPDATE SET id=excluded.id,message=excluded.message')
+          .run(job.watcherId, event.taskId, event.field, randomUUID(), notification.message);
+      }
+      this.save({ watcherId: job.watcherId, event, result, due: result.recheckAfterSeconds ? Date.now() + result.recheckAfterSeconds * 1000 : null,
+        attempts: 0, checkedAt: new Date().toISOString(), stale: false });
+      return true;
+    });
+    if (!saved) return;
+    if (result.items?.some((item) => item.state === 'error')) {
+      this.log({ watcher: watcher.name, watcherId: watcher.id, taskId: event.taskId, field: event.field,
+        reason: 'Watcher reported unavailable data for some items', lastSuccess: job.checkedAt ?? null,
+        retryAt: new Date(Date.now() + (result.recheckAfterSeconds ?? 60) * 1000).toISOString() });
+    }
+    this.changed();
+  }
+  /** One invocation with the watcher's parameters and time limit; undefined when cancelled meanwhile. */
+  private async invoke(watcher: FieldWatcher, input: Record<string, unknown>, signal: AbortSignal): Promise<{ result: FieldResult } | { error: unknown } | undefined> {
+    let outcome: { result: FieldResult } | { error: unknown };
+    try { outcome = { result: await runFieldHandler(watcher.path, { ...input, params: watcher.params }, signal, watcher.timeoutSeconds * 1000) }; }
+    catch (error) { outcome = { error }; }
+    return signal.aborted ? undefined : outcome;
   }
   async close(): Promise<void> {
     this.lifetime.abort(); clearTimeout(this.timer);
-    await this.work;
+    for (const run of this.running.values()) run.controller.abort();
+    await this.work; await this.idle();
     this.notes.close();
+    try { this.release(); } catch { /* Expires by itself. */ }
     this.db.close();
   }
 }

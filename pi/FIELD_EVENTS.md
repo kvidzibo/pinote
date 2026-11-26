@@ -9,8 +9,8 @@ never runs watchers, and no extra daemon is installed. Requires **note 0.25.0+**
 ## Enable
 
 In the desktop (Electron 0.19.0+), open **Menu → Watchers…**: choose a script,
-tick the task and field events it listens for, name its fields and fill in the
-parameters it declares. See [Watcher settings](#watcher-settings).
+tick the app, task and field events it listens for, name its fields, set its time
+limit and cooldown, and fill in the parameters it declares. See [Watcher settings](#watcher-settings).
 
 In Pi, open **Settings → Footer fields → Watchers** to enable, add or remove
 watchers; events, fields and parameters are edited in the desktop only. The fixed package `watchers/` folder
@@ -30,8 +30,8 @@ The corresponding `pi-note.json` setting is:
 }
 ```
 
-Entries can also carry `taskEvents`, `fieldEvents`, `fields` and `params`; see
-[Watcher settings](#watcher-settings).
+Entries can also carry `appEvents`, `taskEvents`, `fieldEvents`, `fields`,
+`timeoutSeconds`, `cooldownSeconds` and `params`; see [Watcher settings](#watcher-settings).
 
 Restart the desktop and `/reload` Pi once after upgrading.
 Subsequent watcher changes apply live. Disable a watcher to stop checks and hide
@@ -80,13 +80,18 @@ settings.
 {
   "path": "/absolute/path/deploy-status.mjs",
   "enabled": true,
+  "appEvents": ["startup"],
   "taskEvents": ["completed"],
   "fieldEvents": ["changed"],
   "fields": ["Deploy"],
+  "timeoutSeconds": 60,
+  "cooldownSeconds": 300,
   "params": { "environment": "production", "timeout": 30 }
 }
 ```
 
+- `appEvents`: `startup` runs the script once each time the desktop starts; see
+  [Startup event](#startup-event). Default: none.
 - `taskEvents`: any of `created`, `edited`, `tagged`, `started`, `completed`,
   `removed`, `restored`, `scheduled`. Default: none.
 - `fieldEvents`: any of `added`, `changed`, `removed`. Default: all three for a
@@ -96,6 +101,16 @@ settings.
   The desktop suggests the configured footer fields; any name is accepted.
 - `params`: values for the parameters the script declares, sent as `params` with
   every event.
+- `timeoutSeconds`: each invocation's time limit, 1–600. Default: 30.
+- `cooldownSeconds`: the least time between the starts of two invocations of this
+  watcher, 0–86,400; 0 means none. Events and checks due meanwhile wait and run
+  when it ends (field changes coalesce to the current value). Counted from the
+  desktop's own invocations: a restart starts without one. Default: 0.
+
+`appEvents`, `timeoutSeconds` and `cooldownSeconds` need pi-note 0.53.0+ and
+Electron 0.26.0+; earlier versions reject entries that contain them. They are
+written only when they differ from the script's defaults. Changing the time limit
+or cooldown keeps saved results and applies to the next invocation.
 
 Changing `fieldEvents`, `fields` or `params` checks that watcher's current fields
 afresh, like disabling and enabling it; still failing checks can alert once more.
@@ -110,6 +125,9 @@ never executed. All keys are optional:
 {
   "name": "Deploy status",
   "description": "Reports the deployment state of a task.",
+  "appEvents": ["startup"],
+  "timeoutSeconds": 60,
+  "cooldownSeconds": 0,
   "taskEvents": ["completed"],
   "fieldEvents": ["changed"],
   "fields": ["Deploy"],
@@ -149,6 +167,17 @@ the script does its work itself. The input replaces `field`, `value` and
   "fields": { "Worktree": "/tmp/pinote-505-watchers" },
   "params": { "dir": "/tmp" }
 }
+```
+
+### Startup event
+
+A watcher with `appEvents: ["startup"]` runs once each time the desktop starts,
+without a task. Enabling it while the desktop runs does not run it; the next start
+does. Like task events, a failure is logged and not retried, and the result is not
+shown or sent to Pi. `eventId` differs on each start:
+
+```json
+{ "version": 1, "scope": "app", "eventId": "startup:4f0c…", "event": "startup", "params": {} }
 ```
 
 ### Worktree cleanup
@@ -317,7 +346,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
   after recovery, disabling a watcher or removing its failing fields. An unavailable
   CLI is not treated as recovery. These notices use native Pi
   notifications only: no model turn, transcript entry, or model-context diagnostics.
-- One handler runs at a time. Each invocation has a 30-second deadline and a
+- Up to four watchers run at once; each watcher runs one invocation at a time, in
+  turn between its task events and field checks, after its startup event. Each
+  invocation has the watcher's time limit (30 seconds by default) and a
   combined 64 KiB stdout/stderr limit. On Unix, cancellation kills its process
   group. Scripts must not detach child processes. Invalid JSON/schema, nonzero
   exit, timeout or `state: "error"` preserve the last good result as stale and

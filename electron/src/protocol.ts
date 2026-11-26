@@ -73,12 +73,16 @@ export type MenuRequest = MenuPoint & { kind: 'app' };
 export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty' | 'window-settings' | 'backend-settings' | 'drafts' | 'close';
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
+export const APP_EVENTS = ['startup'] as const;
+/** Seconds: one invocation's time limit, and the least time between the starts of two invocations. */
+export const WATCHER_LIMITS = { timeoutSeconds: { min: 1, max: 600 }, cooldownSeconds: { min: 0, max: 86400 } } as const;
 export type WatcherValue = string | number | boolean | Record<string, string>[];
 export type WatcherParam = { key: string; label: string; type: 'string' | 'number' | 'boolean' | 'select' | 'directory' | 'list';
   options?: string[]; columns?: { key: string; label: string }[]; required?: boolean; help?: string;
   /** The value is one shared setting: every watcher declaring the same key shows and saves the same value. */
   configKey?: string };
-export type WatcherEntry = { path: string; enabled: boolean; taskEvents: string[]; fieldEvents: string[]; fields: string[]; params: Record<string, WatcherValue> };
+export type WatcherEntry = { path: string; enabled: boolean; appEvents: string[]; taskEvents: string[]; fieldEvents: string[]; fields: string[];
+  timeoutSeconds: number; cooldownSeconds: number; params: Record<string, WatcherValue> };
 /** A script with its effective settings; `spec` is what its parameter file declares. */
 export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; description?: string; problem?: string };
 export type WatcherSettings = { raw: string | null; watchers: Watcher[]; fieldNames: string[] };

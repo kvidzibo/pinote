@@ -7,18 +7,25 @@ import { parseInstances } from './forgejo-instances.js';
 
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
+/** `startup`: once each time the scheduler's host (the desktop) starts. */
+export const APP_EVENTS = ['startup'] as const;
 const unique = (items: unknown[]) => new Set(items).size === items.length;
 const text = (max: number) => z.string().min(1).max(max).regex(/^[^\u0000-\u001f\u007f-\u009f]*$/u);
 const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
 const taskEvents = z.array(z.enum(TASK_EVENTS)).refine(unique);
 const fieldEvents = z.array(z.enum(FIELD_EVENTS)).refine(unique);
+const appEvents = z.array(z.enum(APP_EVENTS)).refine(unique);
+// Seconds: one invocation's deadline, and the least time between the starts of two invocations.
+const timeoutSeconds = z.number().int().min(1).max(600);
+const cooldownSeconds = z.number().int().min(0).max(86400);
+const limits = { appEvents: appEvents.optional(), timeoutSeconds: timeoutSeconds.optional(), cooldownSeconds: cooldownSeconds.optional() };
 const fields = z.array(text(128)).max(64).refine(unique);
 const scalar = z.union([z.string().max(4096), z.number().finite(), z.boolean()]);
 const rows = z.array(z.record(key, z.string().max(4096))).max(64);
 const value = z.union([scalar, rows]);
 const Params = z.record(key, value).refine((params) => Object.keys(params).length <= 32);
 const Config = z.object({ path: z.unknown(), enabled: z.boolean(), taskEvents: taskEvents.optional(), fieldEvents: fieldEvents.optional(),
-  fields: fields.optional(), params: Params.optional() }).strict();
+  fields: fields.optional(), params: Params.optional(), ...limits }).strict();
 const Param = z.object({
   key, label: text(64), type: z.enum(['string', 'number', 'boolean', 'select', 'directory', 'list']),
   options: z.array(text(256)).min(1).max(64).optional(),
@@ -28,13 +35,14 @@ const Param = z.object({
   configKey: z.literal('forgejoInstances').optional(),
 }).strict().refine((param) => (param.type === 'select') === (param.options !== undefined)
   && (param.type === 'list') === (param.columns !== undefined) && (!param.configKey || param.type === 'list'));
-const Manifest = z.object({ name: text(64).optional(), description: text(256).optional(), taskEvents: taskEvents.optional(), fieldEvents: fieldEvents.optional(), fields: fields.optional(),
+const Manifest = z.object({ name: text(64).optional(), description: text(256).optional(), taskEvents: taskEvents.optional(), fieldEvents: fieldEvents.optional(), fields: fields.optional(), ...limits,
   params: z.array(Param).max(32).refine((params) => unique(params.map((param) => param.key))).optional() }).strict();
 
 export type WatcherParam = z.infer<typeof Param>;
 export type WatcherValue = z.infer<typeof value>;
 export type FieldWatcherConfig = { path: string; enabled: boolean; taskEvents?: typeof TASK_EVENTS[number][];
-  fieldEvents?: typeof FIELD_EVENTS[number][]; fields?: string[]; params?: Record<string, WatcherValue> };
+  fieldEvents?: typeof FIELD_EVENTS[number][]; fields?: string[]; params?: Record<string, WatcherValue>;
+  appEvents?: typeof APP_EVENTS[number][]; timeoutSeconds?: number; cooldownSeconds?: number };
 /** Effective settings: saved values, else the script's declared defaults. `config` is the saved entry. */
 export type FieldWatcher = Required<FieldWatcherConfig> & { id: string; name: string; bundled: boolean; config: FieldWatcherConfig;
   spec: WatcherParam[]; declared: string; description?: string; problem?: string };
@@ -92,6 +100,7 @@ function paramProblem(param: WatcherParam, current: WatcherValue | undefined): s
 /** What a watcher uses for keys its saved entry leaves out. Scripts without a declaration keep receiving every field event. */
 const defaults = (manifest: z.infer<typeof Manifest> | undefined) => ({
   taskEvents: manifest?.taskEvents ?? [], fieldEvents: manifest?.fieldEvents ?? (manifest ? [] : [...FIELD_EVENTS]), fields: manifest?.fields ?? [],
+  appEvents: manifest?.appEvents ?? [], timeoutSeconds: manifest?.timeoutSeconds ?? 30, cooldownSeconds: manifest?.cooldownSeconds ?? 0,
 });
 export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatcher[] {
   const stored = parseFieldWatchers(root);
@@ -143,8 +152,8 @@ export function watcherEntries(input: unknown): { entries: FieldWatcherConfig[];
     }
     if (entry.enabled) { if (typeof read === 'string') throw new Error(read); validateWatcherExecutable(entry.path); }
     const saved: FieldWatcherConfig = { path: entry.path, enabled: entry.enabled };
-    for (const [key, value] of Object.entries(defaults(manifest)) as [keyof ReturnType<typeof defaults>, string[]][]) {
-      if (entry[key] && !same(entry[key], value)) Object.assign(saved, { [key]: entry[key] });
+    for (const [key, value] of Object.entries(defaults(manifest)) as [keyof ReturnType<typeof defaults>, unknown][]) {
+      if (entry[key] !== undefined && !same(entry[key], value)) Object.assign(saved, { [key]: entry[key] });
     }
     return Object.keys(params).length ? { ...saved, params } : saved;
   });

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { FieldAutomation } from '../field-events.ts';
+import { FieldAutomation, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { readConfigDocument, saveFieldWatchers } from '../footer-config.ts';
 import { handleTaskEvent } from '../watchers/cleanup-worktree.mjs';
@@ -76,7 +76,7 @@ test('watcher settings save validated entries and the shared keys their scripts 
   assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.params], [['completed'], [], ['Worktree'], { dir: '/tmp' }]);
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
-    { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' } },
+    { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },
   ];
   assert.throws(() => saveFieldWatchers(entries, raw), /Invalid parameter: Directory/);
   entries[1].params = { dir: '/tmp' } as never;
@@ -84,10 +84,13 @@ test('watcher settings save validated entries and the shared keys their scripts 
     assert.throws(() => saveFieldWatchers([{ ...entries[0], params: { instances } }], raw), /Invalid Instances/, 'An instance the script would refuse is not saved');
   }
   assert.throws(() => saveFieldWatchers([{ ...entries[1], bad: true }], raw), /Invalid field watcher/);
+  for (const limit of [{ timeoutSeconds: 0 }, { timeoutSeconds: 601 }, { cooldownSeconds: -1 }, { cooldownSeconds: 1.5 }]) {
+    assert.throws(() => saveFieldWatchers([{ ...entries[1], ...limit }], raw), /Invalid field watcher/);
+  }
   const saved = JSON.parse(saveFieldWatchers(entries, raw));
   assert.deepEqual(saved, { handoffPrompt: 'Keep', forgejoInstances: [{ url: 'http://127.0.0.1:3000' }], fieldWatchers: [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'] },
-    { path: script, enabled: true, taskEvents: ['completed'], params: { dir: '/tmp' } },
+    { path: script, enabled: true, taskEvents: ['completed'], appEvents: ['startup'], cooldownSeconds: 5, params: { dir: '/tmp' } },
   ] });
   assert.throws(() => saveFieldWatchers(entries, raw), /changed while settings were open/);
   // Settings equal to the script's defaults are not written: versions without them reject unknown keys.
@@ -164,8 +167,8 @@ console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [
   await ticks(3);
   assert.deepEqual(delivered(), ['first:6', 'first:7']);
   history({ tail: 9, events: [completed(8), completed(9)] });
-  await ticks(4);
-  assert.deepEqual(delivered(), ['first:6', 'first:7', 'first:8', 'second:8'], 'One invocation per turn');
+  await ticks(1);
+  assert.deepEqual(delivered().slice(2).sort(), ['first:8', 'second:8'], 'Watchers run at once, each one invocation at a time');
   // Disabled with an event still queued, then enabled again with the same settings: it starts afresh.
   const second = entries.pop()!;
   await ticks(1);
@@ -174,8 +177,56 @@ console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [
   assert.deepEqual(delivered().slice(4), ['first:9']);
   history({ tail: 11, events: [completed(10), completed(11)] });
   await ticks(1);
+  const ran = delivered().length;
   entries = entries.map((entry) => ({ ...entry, fields: ['Other'] }));
   await ticks(4);
-  assert.equal(delivered().filter((call) => /:1[01]$/.test(call)).length <= 1, true, 'A queued task no longer selected by Fields does not run');
+  assert.equal(delivered().length, ran, 'A queued task no longer selected by Fields does not run');
   assert.ok(!readFileSync(requests, 'utf8').includes('field-events'), 'A watcher without field events reads no field history');
+});
+
+test('startup runs once per scheduler start; watchers run at once within their time limits and cooldowns', { timeout: 30_000 }, async (t) => {
+  const dir = profile(t), note = join(dir, 'note.mjs'), state = join(dir, 'history.json'), calls = join(dir, 'calls.log');
+  writeFileSync(note, `#!${process.execPath}
+import fs from 'node:fs';
+const args = process.argv.slice(2), state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined;
+console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [] : state.events.filter((event) => event.id > after) }));`, { mode: 0o700 });
+  writeFileSync(state, JSON.stringify({ tail: 0, events: [] }));
+  const script = (name: string, sleep = 0) => {
+    const path = join(dir, `${name}.mjs`);
+    writeFileSync(path, `#!${process.execPath}\nimport fs from 'node:fs';const input=JSON.parse(fs.readFileSync(0,'utf8')),start=Date.now();
+setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:'${name}',scope:input.scope,event:input.event,eventId:input.eventId,start,end:Date.now()})+'\\n');console.log('{}');},${sleep});`, { mode: 0o700 });
+    return path;
+  };
+  // Without field events: this fake history serves task events only.
+  let entries: Record<string, unknown>[] = [
+    { path: script('a', 600), enabled: true, appEvents: ['startup'] }, { path: script('b', 600), enabled: true, appEvents: ['startup'] },
+    { path: script('slow', 10_000), enabled: true, appEvents: ['startup'], timeoutSeconds: 1 },
+    { path: script('cool'), enabled: true, taskEvents: ['completed'], cooldownSeconds: 2 },
+  ].map((entry) => ({ ...entry, fieldEvents: [] }));
+  const failures: WatcherFailureLog[] = [];
+  const open = () => FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, log: (failure) => { if (failure) failures.push(failure); },
+    watchers: () => discoverFieldWatchers({ fieldWatchers: entries }) });
+  let automation = await open();
+  t.after(() => automation.close());
+  const delivered = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : [];
+
+  const began = Date.now();
+  await automation.tick();
+  assert.ok(Date.now() - began < 5000, 'The 1-second time limit replaces the default 30 seconds');
+  const [a, b] = ['a', 'b'].map((name) => delivered().find((call) => call.name === name));
+  assert.deepEqual([a.scope, a.event, b.event], ['app', 'startup', 'startup']);
+  assert.ok(a.start < b.end && b.start < a.end, 'Different watchers run at the same time');
+  assert.deepEqual(failures.map(({ watcher, taskId, field, reason }) => [watcher, taskId, field, reason]), [['slow', null, 'app:startup', 'Watcher timed out']]);
+  // Enabling a startup watcher later does not run it: only the next start does.
+  entries = [...entries, { path: script('late'), enabled: true, appEvents: ['startup'], fieldEvents: [] }];
+  writeFileSync(state, JSON.stringify({ tail: 2, events: [1, 2].map((id) => ({ id, taskId: id, event: 'completed', fields: {} })) }));
+  await automation.tick(); await automation.tick();
+  assert.deepEqual(delivered().filter((call) => call.name !== 'a' && call.name !== 'b').map((call) => `${call.name}:${call.eventId}`), ['cool:1'], 'Startup runs once; the cooldown holds the next event');
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await automation.tick();
+  assert.deepEqual(delivered().filter((call) => call.name === 'cool').map((call) => call.eventId), ['1', '2'], 'A held event runs once the cooldown ends');
+  await automation.close(); automation = await open();
+  await automation.tick();
+  assert.deepEqual(delivered().filter((call) => call.event === 'startup').map((call) => call.name).sort(), ['a', 'a', 'b', 'b', 'late']);
 });

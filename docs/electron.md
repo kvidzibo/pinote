@@ -63,8 +63,10 @@ still pending, first let that version finish its recovery. Then stop and disable
 the unit and remove its leftover `pinote.service.d/90-node-backend.conf` drop-in.
 
 Since Electron 0.19.0, **Menu → Watchers…** edits them: add a script, choose
-the task and field events it listens for, name its fields and fill in the
-[parameters it declares](../pi/FIELD_EVENTS.md#watcher-settings). Saving asks for
+the app, task and field events it listens for, name its fields and fill in the
+[parameters it declares](../pi/FIELD_EVENTS.md#watcher-settings). Since Electron
+0.26.0, the **startup** app event runs a watcher once each time the desktop starts,
+**Limits** sets its time limit and cooldown, and up to four watchers run at once. Saving asks for
 confirmation, naming each enabled script and Forgejo instance, and applies to the
 next check. Settings that differ from a script's defaults need pi-note 0.48.0+ in Pi. The bundled **Worktree cleanup**
 watcher removes a completed task's clean Git worktree. Task events need the Node
