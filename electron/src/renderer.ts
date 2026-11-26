@@ -5,7 +5,7 @@ import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STA
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
 import type { BackendSettings, KittyTabSettings, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
-import { FIELD_EVENTS, TASK_EVENTS } from './protocol';
+import { DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, validKittyTabTitle } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -318,14 +318,27 @@ function configureKittyTabs(): void {
   const toggle = el('input'); toggle.type = 'checkbox'; toggle.disabled = true;
   const label = el('label', undefined, 'setting-toggle'); label.append(toggle, el('span', 'One task per tab'));
   const status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
-  modal.panel.append(label, el('p', 'When you select a task in Pi and another pane in its Kitty tab has a different task, the pane moves to a new tab beside it, named after the task. Off renames the shared tab. Shared with Pi settings.'), status);
+  const name = field('Tab name for Start in Kitty', state.kittyTabTitle ?? DEFAULT_KITTY_TAB_TITLE);
+  name.input.maxLength = 256; name.input.spellcheck = false;
+  name.input.addEventListener('input', () => update());
+  modal.panel.append(label, el('p', 'When you select a task in Pi and another pane in its Kitty tab has a different task, the pane moves to a new tab beside it, named after the task. Off renames the shared tab. Shared with Pi settings.'),
+    name.wrapper, el('p', '{tag} adds "[tag] " for tagged tasks, {id} the task number and {title} its first line; {title:30} keeps the first 30 characters.', 'tag-hint'), status);
   let settings: KittyTabSettings | undefined, saving = false;
-  const update = () => { toggle.disabled = save.disabled = !settings || saving || readonly; };
+  const update = () => {
+    toggle.disabled = name.input.disabled = !settings || saving || readonly;
+    save.disabled = toggle.disabled || !stateLoaded || !validKittyTabTitle(name.input.value);
+  };
   const save = button('save', 'Save Kitty tab settings', async () => {
-    if (!settings || saving || readonly || closing) return;
+    if (!settings || saving || readonly || closing || !stateLoaded || !validKittyTabTitle(name.input.value)) return;
     saving = true; status.textContent = ''; update();
-    try { await api.saveKittyTabSettings(toggle.checked, settings.raw); modal.close(); }
-    catch (error) { status.textContent = ipcMessage(error); }
+    const previous = state.kittyTabTitle, title = name.input.value.trim();
+    try {
+      await api.saveKittyTabSettings(toggle.checked, settings.raw);
+      // Electron-only: kept with the working state and sent with each launch.
+      state.kittyTabTitle = title === DEFAULT_KITTY_TAB_TITLE ? undefined : title;
+      if (state.kittyTabTitle !== previous) await persist();
+      modal.close();
+    } catch (error) { state.kittyTabTitle = previous; status.textContent = ipcMessage(error); }
     finally { saving = false; update(); }
   }, true);
   controls(modal.panel).append(save);
@@ -858,7 +871,7 @@ async function startKitty(task: Task): Promise<void> {
     }
     // Progress is already saved and visible, even if launching fails.
     // call() owns uncertain-outcome recovery; never replay a launch automatically.
-    await call('kitty', { ...target(launchTask), directory });
+    await call('kitty', { ...target(launchTask), directory, ...(state.kittyTabTitle ? { tabTitle: state.kittyTabTitle } : {}) });
   } finally { busyTasks.delete(task.id); renderTasks(); await refresh(); }
 }
 

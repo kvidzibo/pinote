@@ -1,11 +1,11 @@
 import { Store, NoteError } from './store.ts';
-import { validate_tag, validate_text, validate_folder, validateAgentPatch, pythonStrip, timestamp } from './compat.ts';
+import { validate_tag, validate_text, validate_folder, validateAgentPatch, timestamp } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
 import { GuiConfig, ConfigError, guiConfigPath } from './config.ts';
 import { ReminderModel, folder_available } from './model.ts';
-import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch } from './kitty.ts';
+import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch, tab_title, validate_tab_title } from './kitty.ts';
 export const PROTOCOL = 1, MAX_REQUEST = 1024 * 1024, MAX_ID = 9007199254740991;
 export class BridgeError extends Error { readonly code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge request.'); };
@@ -61,6 +61,7 @@ export function validate(request: any): [string, Record<string, any>] {
   if (typeof op !== 'string' || !Object.hasOwn(fields, op) || !isObject(p)) invalid();
   let allowed = fields[op];
   if (op === 'create_tag' && (Object.hasOwn(p, 'id') || Object.hasOwn(p, 'revision'))) allowed = [...allowed, 'id', 'revision'];
+  if (op === 'kitty' && Object.hasOwn(p, 'tabTitle')) allowed = [...allowed, 'tabTitle'];
   if (!exact(p, allowed)) invalid();
   for (const [key, v] of Object.entries(p)) {
     if (key === 'id') { if (!safe_id(v)) invalid(); }
@@ -84,6 +85,7 @@ export function validate(request: any): [string, Record<string, any>] {
   }
   if (Object.hasOwn(p, 'folder')) validate_folder(p.folder);
   if (op === 'kitty') validate_directory(p.directory);
+  if (Object.hasOwn(p, 'tabTitle')) validate_tab_title(p.tabTitle);
   if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   return [op, p];
 }
@@ -130,8 +132,7 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
       else if (op === 'kitty') {
         const config = GuiConfig.load(), note = store.get(id!);
         if (note.updated_at !== p.revision || !['active', 'in_progress'].includes(note.state)) conflict();
-        const summary = Array.from(note.text.split(/[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u)[0].replace(/^ {0,3}#{1,6}[ \t]+/, '')).slice(0, 30).join('');
-        const title = pythonStrip(note.tag ? `[${note.tag}] ${summary}` : summary);
+        const title = tab_title(note, p.tabTitle);
         try { await start_in_kitty(p.directory, note, title, config.kitty_start_prompt); }
         catch (error) {
           // NoteError: nothing was launched. Otherwise a tab or window may exist.

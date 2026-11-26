@@ -93,6 +93,18 @@ function locate(name: 'kitty' | 'pi'): string | undefined {
   const directories = name === 'kitty' ? ['/Applications/kitty.app/Contents/MacOS', `${home}/Applications/kitty.app/Contents/MacOS`] : [`${home}/.pi/agent/bin`];
   return [...directories, '/opt/homebrew/bin', '/usr/local/bin'].map(directory => findExecutable(join(directory, name))).find(Boolean);
 }
+// Tab name for Start in Kitty: {tag} is "[tag] " when tagged, {id} the task number,
+// {title} the first line without a Markdown heading marker; {title:N} keeps its first N characters.
+export const DEFAULT_TAB_TITLE = '{tag}{title:30}';
+export function validate_tab_title(template: string): void {
+  if (!pythonStrip(template) || Array.from(template).length > 256 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(template))
+    throw new NoteError('The Kitty tab name must be one line of at most 256 characters without control characters.');
+}
+export function tab_title(note: Note, template = DEFAULT_TAB_TITLE): string {
+  const summary = Array.from(note.text.split(/[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u)[0].replace(/^ {0,3}#{1,6}[ \t]+/, ''));
+  return pythonStrip(template.replace(/\{tag\}|\{id\}|\{title(?::([1-9]\d{0,3}))?\}/g, (match, limit?: string) =>
+    match === '{tag}' ? (note.tag ? `[${note.tag}] ` : '') : match === '{id}' ? String(note.id) : summary.slice(0, limit ? Number(limit) : undefined).join('')));
+}
 export async function start_in_kitty(directory: string, note: Note, title: string, prompt: string): Promise<void> {
   const folder = validate_directory(directory);
   const kitty = locate('kitty'), pi = locate('pi');

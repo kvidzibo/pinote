@@ -23,7 +23,7 @@ export type Operations = {
   delete_tag: { params: { name: string }; result: Mutation };
   tag_folder: { params: { name: string; folder: string | null }; result: Mutation };
   completions: { params: { ids: number[] }; result: number[] };
-  kitty: { params: Target & { directory: string }; result: Mutation };
+  kitty: { params: Target & { directory: string; tabTitle?: string }; result: Mutation };
 };
 export type Operation = keyof Operations;
 export type Result<T> = { protocol: 1; ok: true; result: T; warning?: string } | { protocol: 1; ok: false; error: { code: 'invalid' | 'conflict' | 'busy' | 'internal' | 'unknown'; message: string } };
@@ -63,7 +63,7 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; fields?: Record<string, string> };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; scroll?: { ordinary: number; pinned: number };
+  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; scroll?: { ordinary: number; pinned: number };
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
@@ -83,6 +83,9 @@ export type WatcherEntry = { path: string; enabled: boolean; taskEvents: string[
 export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; description?: string; problem?: string };
 export type WatcherSettings = { raw: string | null; watchers: Watcher[]; fieldNames: string[] };
 export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
+/** Start in Kitty's tab name when none is saved; the backend expands the placeholders. */
+export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
+export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value);
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
 export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };
