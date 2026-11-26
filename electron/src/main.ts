@@ -27,8 +27,8 @@ let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
 let watchers: Promise<{ close(): Promise<void> } | undefined> | undefined;
 let watchersStop: Promise<void> | undefined; let watchersStopped = false;
-// Folders the user picked in this session; only these can become the tag base folder.
-const pickedFolders = new Set<string>();
+// Folders picked in this session or saved as the tag base folder; only these can become it.
+const approvedFolders = new Set<string>();
 // Bounded and never rejects: quitting must not hang on a watcher.
 const stopWatchers = () => watchersStop ??= Promise.race([
   Promise.resolve(watchers).then(started => started?.close()).catch(() => log('Pinote field watchers did not stop cleanly.')),
@@ -303,7 +303,11 @@ async function boot() {
     // Field names configured in Pi's settings; the editor offers them even when a task has no value yet.
     'agent-fields': async () => { try { return agentFieldNames(JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8'))); } catch { return []; } },
     // A new base folder must come from the folder picker (see create-tag-folder).
-    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value) || ![undefined, state.tagBaseFolder].includes(value.tagBaseFolder) && !pickedFolders.has(value.tagBaseFolder!)) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
+    'save-state': async (_event, value: unknown) => {
+      if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);
+      if (readonly || !validState(value) || value.tagBaseFolder !== undefined && !approvedFolders.has(value.tagBaseFolder)) throw new Error('Cannot save invalid or unreadable state');
+      const next = structuredClone(value); next.warning = state.warning; state = next; await persist();
+    },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };
@@ -366,7 +370,7 @@ async function boot() {
     },
     'choose-folder': async () => {
       const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }), folder = result.canceled ? null : result.filePaths[0] ?? null;
-      if (folder !== null) pickedFolders.add(folder);
+      if (folder !== null) approvedFolders.add(folder);
       return folder;
     },
     // Creates only the tag's own folder inside the saved, user-picked base folder, which must exist.

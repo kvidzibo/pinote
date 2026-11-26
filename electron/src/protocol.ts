@@ -87,11 +87,16 @@ export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
 export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
 export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
 export const validTagBaseFolder = (value: string) => value.length <= 4096 && value.startsWith('/') && !/[\p{Cc}\p{Cs}]/u.test(value);
-/** A new tag's default folder inside the base folder, named after the tag ("/" becomes "-"); null for a name the backend rejects or that cannot be a folder. */
-export function tagFolderPath(base: string, tag: string): string | null {
+/** The name the backend saves for a new tag (its validate_tag: Python strip, NFC, 64 code points); null if rejected. */
+export function savedTagName(tag: string): string | null {
   if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(tag)) return null;
-  const name = tag.trim().normalize('NFC').replaceAll('/', '-');
-  return name && name !== '.' && name !== '..' && Array.from(name).length <= 64 ? `${base.replace(/\/+$/, '')}/${name}` : null;
+  const name = tag.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, '').normalize('NFC');
+  return name && Array.from(name).length <= 64 ? name : null;
+}
+/** A new tag's default folder inside the base folder, named after the tag ("/" becomes "-"); null when the name cannot be a tag or folder. */
+export function tagFolderPath(base: string, tag: string): string | null {
+  const name = savedTagName(tag)?.replaceAll('/', '-');
+  return name && name !== '.' && name !== '..' ? `${base.replace(/\/+$/, '')}/${name}` : null;
 }
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };

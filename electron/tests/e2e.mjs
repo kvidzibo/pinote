@@ -1390,6 +1390,18 @@ try {
     await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('cannot exceed 64'));
     assert.deepEqual((await readdir(base)).sort(),['blocked','web-app']);
     await page.keyboard.press('Escape'); await create.waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    // Full case folding, and a tag created elsewhere while the dialog is open, keep the existing folder.
+    call('create_tag',{name:'Straße',folder:root});
+    for (const typed of ['STRAẞE','race']) {
+      await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+      await tagName.fill(typed);
+      if (typed==='race') call('create_tag',{name:'race',folder:root});
+      await create.getByRole('button',{name:'Create tag',exact:true}).click();
+      await create.waitFor({state:'detached'});
+    }
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Straße').folder,root);
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='race').folder,root);
     await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
     await tagName.fill('blocked');
     await create.getByRole('button',{name:'Create tag',exact:true}).click();
@@ -1411,7 +1423,7 @@ try {
     await manage.getByRole('button',{name:'Clear base folder',exact:true}).click();
     await basePath.filter({hasText:'No base folder'}).waitFor();
     assert.equal((await page.evaluate(()=>window.pinote.loadState())).tagBaseFolder,undefined);
-    call('delete_tag',{name:'web/app'}); call('delete_tag',{name:'blocked'});
+    for (const name of ['web/app','blocked','Straße','race']) call('delete_tag',{name});
     await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
