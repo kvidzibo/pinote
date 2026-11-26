@@ -164,7 +164,7 @@ the script does its work itself. The input replaces `field`, `value` and
   "eventId": "9123",
   "event": "completed",
   "taskId": 505,
-  "fields": { "Worktree": "/tmp/pinote-505-watchers" },
+  "fields": { "Worktrees": "/tmp/pinote-505-watchers" },
   "params": { "dir": "/tmp" }
 }
 ```
@@ -183,13 +183,15 @@ shown or sent to Pi. `eventId` differs on each start:
 ### Worktree cleanup
 
 The bundled **Worktree cleanup** watcher runs when a task is completed in Pi, the
-desktop or the CLI, for tasks that have a `Worktree` field. It runs
-`git worktree remove` on that path when it lies inside the **Worktrees directory**
+desktop or the CLI, for tasks that have a `Worktrees` field (one path per line;
+pi-note 0.54.0+ — earlier versions read a single-path `Worktree` field). It runs
+`git worktree remove` on each path that lies inside the **Worktrees directory**
 parameter (default `/tmp`). Git refuses changed or untracked files, locked
 worktrees and the main working tree; nothing is forced, no branch is deleted and
 the directory is never scanned. **Ignored files are deleted with the worktree**:
 dependencies and build output, but also a local `.env` or ignored backups. Keep
-anything you need outside the worktree, or lock it with `git worktree lock`. The recorded path is used exactly as saved. It is
+anything you need outside the worktree, or lock it with `git worktree lock`. Each recorded path is used exactly as saved. All paths share one
+invocation time limit (default 120 seconds); a worktree not reached in time is kept. It is
 disabled until you enable it and needs `git` on the desktop's `PATH`.
 
 ## Forgejo PRs

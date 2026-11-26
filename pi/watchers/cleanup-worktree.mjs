@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Removes a completed task's recorded Git worktree. Git itself refuses the main
+// Removes a completed task's recorded Git worktrees. Git itself refuses the main
 // working tree and dirty or locked worktrees: nothing is forced, no branch is deleted.
 // Ignored files (dependencies, build output, local configuration) go with the worktree.
 import { execFile } from 'node:child_process';
@@ -12,15 +12,10 @@ const run = promisify(execFile);
 const git = async (...args) => (await run('git', args, { timeout: 20_000, maxBuffer: 1024 * 1024 })).stdout.trim();
 const kept = (reason) => ({ state: 'kept', summary: `Worktree kept: ${reason}` });
 
-export async function handleTaskEvent(event) {
-  if (event?.scope !== 'task' || event.event !== 'completed') return {};
-  // The exact recorded value: a repaired path could name another worktree.
-  const recorded = event.fields?.Worktree, directory = event.params?.dir;
-  if (typeof recorded !== 'string' || !isAbsolute(recorded)) return {};
-  if (typeof directory !== 'string' || !isAbsolute(directory)) return kept('no worktrees directory is configured');
-  let path, root;
-  try { [path, root] = await Promise.all([realpath(recorded), realpath(directory)]); }
-  catch { return kept('it or the worktrees directory no longer exists'); }
+async function remove(recorded, root) {
+  let path;
+  try { path = await realpath(recorded); }
+  catch { return kept('it no longer exists'); }
   const inside = relative(root, path);
   if (!inside || inside.startsWith('..') || isAbsolute(inside)) return kept('it is outside the worktrees directory');
   try {
@@ -29,6 +24,23 @@ export async function handleTaskEvent(event) {
     await git('--git-dir', repository, 'worktree', 'remove', path);
   } catch { return kept('Git refused; it may be changed, locked or not a linked worktree'); }
   return { state: 'removed', summary: 'Worktree removed' };
+}
+
+export async function handleTaskEvent(event) {
+  if (event?.scope !== 'task' || event.event !== 'completed') return {};
+  // Exact recorded values, one per line: a repaired path could name another worktree.
+  const recorded = event.fields?.Worktrees, directory = event.params?.dir;
+  const paths = typeof recorded === 'string' ? [...new Set(recorded.split(/\r?\n/))].filter((path) => isAbsolute(path)) : [];
+  if (!paths.length) return {};
+  if (typeof directory !== 'string' || !isAbsolute(directory)) return kept('no worktrees directory is configured');
+  let root;
+  try { root = await realpath(directory); }
+  catch { return kept('the worktrees directory no longer exists'); }
+  const results = [];
+  for (const path of paths) results.push(await remove(path, root));
+  const summaries = [...new Set(results.map((result) => result.summary))];
+  const state = results.every((result) => result.state === 'removed') ? 'removed' : 'kept';
+  return { state, summary: (paths.length > 1 ? `${results.filter((result) => result.state === 'removed').length} of ${paths.length} removed. ` : '') + summaries.join('; ').slice(0, 900) };
 }
 
 // import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.

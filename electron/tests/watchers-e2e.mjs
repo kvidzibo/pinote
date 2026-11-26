@@ -35,7 +35,7 @@ await writeFile(join(root,'deploy-status.params.json'), JSON.stringify({ name:'D
   {key:'environment',label:'Environment',type:'select',options:['staging','production'],required:true},
   {key:'timeout',label:'Timeout seconds',type:'number',default:30}, {key:'recovery',label:'Notify on recovery',type:'boolean',default:true}] }));
 const withField = (text, fields) => { const task = note('agent','add',`--text=${text}`); return note('agent','update',String(task.id),'--expected-updated-at',task.updated_at,'--set-json',JSON.stringify(fields)); };
-const before = withField('Completed before the watcher was enabled',{Worktree:worktree});
+const before = withField('Completed before the watcher was enabled',{Worktrees:worktree});
 note('agent','done',String(before.id),'--expected-updated-at',before.updated_at);
 
 let app; const errors = [];
@@ -77,7 +77,7 @@ try {
   // Bundled task-event watcher: declared defaults, a directory parameter and the trust confirmation.
   const events = dialog.getByRole('group',{name:'Task events',exact:true});
   assert.deepEqual(await events.getByRole('checkbox').evaluateAll(nodes=>nodes.filter(node=>node.checked).map(node=>node.parentElement.textContent)),['completed']);
-  assert.equal(await dialog.locator('.watcher-chip').textContent(),'Worktree');
+  assert.equal(await dialog.locator('.watcher-chip').textContent(),'Worktrees');
   const directory = dialog.getByRole('textbox',{name:'Worktrees directory *',exact:true});
   assert.equal(await directory.inputValue(),'/tmp');
   await dialog.getByRole('button',{name:'Choose Worktrees directory',exact:true}).click();
@@ -95,7 +95,7 @@ try {
   // Completing tasks as Pi does removes only the clean recorded worktree; the earlier completion is not replayed.
   await new Promise(r=>setTimeout(r,3000));
   assert.ok(existsSync(worktree),'A completion from before the watcher was enabled must not remove its worktree');
-  for (const path of [dirty,worktree]) { const task = withField('Clean up',{Worktree:path}); note('agent','done',String(task.id),'--expected-updated-at',task.updated_at); }
+  for (const path of [dirty,worktree]) { const task = withField('Clean up',{Worktrees:path}); note('agent','done',String(task.id),'--expected-updated-at',task.updated_at); }
   await until(()=>!existsSync(worktree),'Completing the task must remove its clean worktree');
   assert.ok(existsSync(join(dirty,'unsaved.txt')),'A changed worktree is kept');
   assert.match(git('-C',repo,'branch','--list','task').toString(),/task/,'The branch is kept');
