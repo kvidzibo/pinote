@@ -12,34 +12,40 @@ const macos = () => process.platform === 'darwin';
 const temporary = () => (checkedEnv('TMPDIR') || '/tmp').replace(/(.)\/+$/, '$1');
 // A launch request may have reached Kitty, so a tab or window can exist.
 export class UncertainLaunch extends Error {}
+// Keep diagnostics printable and well below Electron's 16 KiB error-message limit.
+const shown = (text: string, limit = 300) => {
+  const characters = Array.from(text.replace(/[\p{Cc}\p{Cf}]/gu, ''));
+  return characters.length > limit ? `${characters.slice(0, limit).join('')}…` : characters.join('');
+};
 function reason(error: any): string {
   if (error?.killed || error?.signal) return 'no response within 5 s';
-  const line = String(error?.stderr ?? '').split('\n').map(text => text.replace(/[\p{Cc}\p{Cf}]/gu, '').trim()).find(Boolean);
-  return line ? line.slice(0, 300) : typeof error?.code === 'number' ? `exit status ${error.code}` : String(error?.code ?? error?.message ?? 'unknown error');
+  const line = String(error?.stderr ?? '').split('\n').map(text => shown(text).trim()).find(Boolean);
+  return line || (typeof error?.code === 'number' ? `exit status ${error.code}` : shown(String(error?.code ?? error?.message ?? 'unknown error')));
 }
 export async function remote(kitty: string, address: string, ...args: string[]): Promise<string> {
   checkCancelled();
   try { return pythonStrip((await exec(kitty, ['@', '--to', address, ...args], { timeout: 5000, maxBuffer: Infinity })).stdout); }
-  catch (error) { throw new NoteError(`Kitty remote control failed at ${address}: ${reason(error)}`); }
+  catch (error) { throw new NoteError(`Kitty remote control failed at ${shown(address)}: ${reason(error)}`); }
 }
 export function kittyAddressEnv(): { explicit?: string; display?: string } {
   const explicit = checkedEnv('KITTY_LISTEN_ON');
   // macOS Kitty does not use X11; XQuartz's DISPLAY does not identify it.
   return explicit ? { explicit } : macos() ? {} : { display: checkedEnv('DISPLAY')?.replace(/\.0$/, '') };
 }
-// macOS has no /proc or abstract sockets: find same-user `listen_on unix:/tmp/mykitty`
-// or `unix:mykitty` (in $TMPDIR) sockets, which Kitty suffixes with -<pid>.
+// macOS has no /proc or abstract sockets. Find `listen_on unix:mykitty` sockets, which
+// Kitty suffixes with -<pid> in $TMPDIR. Only a private directory guarantees that the
+// socket still belongs to this user when the task is sent; shared /tmp is skipped.
 function macosSockets(): string[] {
-  const sockets: [number, string][] = [];
-  for (const directory of new Set([temporary(), '/tmp'])) {
-    let names: string[] = [];
-    try { names = readdirSync(directory); } catch { /* Missing or unreadable directory. */ }
-    for (const name of names) {
+  const directory = temporary(), uid = process.getuid!(), sockets: [number, string][] = [];
+  try {
+    const stat = statSync(directory);
+    if (!stat.isDirectory() || stat.uid !== uid || stat.mode & 0o022) return [];
+    for (const name of readdirSync(directory)) {
       const pid = /^mykitty-(\d+)$/.exec(name)?.[1], path = join(directory, name);
-      try { const stat = lstatSync(path); if (pid && stat.isSocket() && stat.uid === process.getuid!()) sockets.push([Number(pid), `unix:${path}`]); }
+      try { const socket = lstatSync(path); if (pid && socket.isSocket() && socket.uid === uid) sockets.push([Number(pid), `unix:${path}`]); }
       catch { /* Removed while listing. */ }
     }
-  }
+  } catch { /* Missing or unreadable directory. */ }
   return sockets.sort(([a], [b]) => a - b).map(([, target]) => target);
 }
 export async function address(kitty: string): Promise<string | null> {
@@ -84,13 +90,15 @@ export async function start_in_kitty(directory: string, note: Note, title: strin
   const kitty = locate('kitty'), pi = locate('pi');
   if (!kitty || !pi) {
     const missing = [kitty ? '' : 'kitty', pi ? '' : 'pi'].filter(Boolean).join(' and ');
-    throw new NoteError(`Start in Kitty cannot find ${missing} on PATH${macos() ? ' or in the usual macOS locations' : ''}. PATH: ${checkedEnv('PATH') || '(empty)'}`);
+    throw new NoteError(`Start in Kitty cannot find ${missing} on PATH${macos() ? ' or in the usual macOS locations' : ''}. PATH: ${shown(checkedEnv('PATH') || '(empty)', 1000)}`);
   }
   const launch = jsonStringify({ task_id: note.id, updated_at: note.updated_at, prompt });
+  // A Dock-launched macOS Kitty gives tabs launchd's minimal PATH, where pi cannot find node.
+  const path = checkedEnv('PATH'), env = macos() && path ? [`--env=PATH=${path}`] : [];
   let target = await address(kitty);
   if (target) {
     try {
-      const window = await remote(kitty, target, 'launch', '--type=tab', `--cwd=${folder}`, `--env=PINOTE_LAUNCH_TASK=${launch}`, pi);
+      const window = await remote(kitty, target, 'launch', '--type=tab', `--cwd=${folder}`, `--env=PINOTE_LAUNCH_TASK=${launch}`, ...env, pi);
       await remote(kitty, target, 'set-tab-title', `--match=window_id:${window}`, '--', title);
       await remote(kitty, target, 'focus-window', `--match=id:${window}`); return;
     } catch (error) { throw error instanceof NoteError ? new UncertainLaunch(error.message) : error; }
@@ -105,7 +113,8 @@ export async function start_in_kitty(directory: string, note: Note, title: strin
     checkCancelled();
     try { await remote(kitty, target, 'set-tab-title', '--', title); return; } catch (error) { last = (error as Error).message; await sleep(100); }
   }
-  if (failed) throw new NoteError(`Cannot start ${kitty}: ${failed.code ?? failed.message}`);
-  if (child.exitCode !== null || child.signalCode !== null) throw new NoteError(`Kitty exited (${child.exitCode ?? child.signalCode}) before accepting remote control at ${target}.`);
+  if (failed) throw new NoteError(`Cannot start ${shown(kitty)}: ${shown(failed.code ?? failed.message)}`);
+  // Pi may already have run in a window that has since closed.
+  if (child.exitCode !== null || child.signalCode !== null) throw new UncertainLaunch(`Kitty exited (${child.exitCode ?? child.signalCode}) before accepting remote control at ${shown(target)}`);
   throw new UncertainLaunch(`Kitty did not accept remote control within 5 s; ${last}`);
 }

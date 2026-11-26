@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, renameSync } from 'node:fs';
+import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, renameSync, chmodSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,16 +11,19 @@ import { GuiConfig, ConfigError } from '../../src/config.ts';
 import { ReminderModel, application_id } from '../../src/model.ts';
 import { Store } from '../../src/store.ts';
 import { discoverPaths, withDisplayLock, BusyError, type Paths } from '../../src/runtime.ts';
-import { start_in_kitty, address, remote } from '../../src/kitty.ts';
+import { start_in_kitty, address, remote, UncertainLaunch } from '../../src/kitty.ts';
 import { respond } from '../../src/bridge.ts';
 let root: string, paths: Paths, model: ReminderModel, env: NodeJS.ProcessEnv;
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { ...platform, value });
 beforeEach(() => {
+  setPlatform('linux'); // Same paths on every host; a Mac must not find its real Kitty.
   env = { ...process.env }; root = mkdtempSync(join(tmpdir(), 'pinote-model-'));
   process.env.HOME = join(root, 'home'); process.env.XDG_DATA_HOME = join(root, 'data'); process.env.XDG_STATE_HOME = join(root, 'state'); process.env.XDG_CONFIG_HOME = join(root, 'config');
   delete process.env.DISPLAY; delete process.env.KITTY_LISTEN_ON;
   paths = discoverPaths(); model = new ReminderModel(paths);
 });
-afterEach(() => { process.env = env; rmSync(root, { force: true, recursive: true }); });
+afterEach(() => { Object.defineProperty(process, 'platform', platform); process.env = env; rmSync(root, { force: true, recursive: true }); });
 const store = <T>(f: (s: Store) => T): T => { const s = new Store(paths.database); try { return f(s); } finally { s.close(); } };
 const configFile = () => { const dir = join(root, 'config/pinote'); mkdirSync(dir, { recursive: true }); return join(dir, 'config.toml'); };
 test('config defaults, ignored relative XDG, precise integer/boolean types and Unicode prompt limits', () => {
@@ -131,26 +134,26 @@ test('Kitty new-window argv and unavailable tool/directory validation', async ()
   const calls = tools.calls(), launch = calls.find((a: string[]) => a[0] === '--session=none');
   assert.ok(launch.includes('--listen-on=unix:@mykitty-{kitty_pid}')); assert.ok(launch.includes('--override=allow_remote_control=socket-only')); assert.ok(launch.includes('/usr/bin/env')); assert.equal(launch.at(-1), join(tools.bin, 'pi'));
   await assert.rejects(() => start_in_kitty(join(root, 'absent'), note, 'title', 'prompt'));
+  process.env.TEST_KITTY_FAIL = 'set-tab-title'; // Pi may have run before Kitty exited.
+  await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), (error: Error) => error instanceof UncertainLaunch && /^Kitty exited \(0\)/.test(error.message));
   process.env.PATH = '/nonexistent'; await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /cannot find kitty and pi on PATH\. PATH: \/nonexistent$/);
+  process.env.PATH = '/x'.repeat(10000); await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), (error: Error) => error.message.length < 1200 && error.message.endsWith('…'));
 });
-test('Kitty on macOS finds usual install locations and same-user filesystem sockets', async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
-  const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id)), temp = join(root, 'tmp');
-  const app = join(process.env.HOME!, 'Applications/kitty.app/Contents/MacOS'), agent = join(process.env.HOME!, '.pi/agent/bin');
-  mkdirSync(app, { recursive: true }); mkdirSync(agent, { recursive: true }); mkdirSync(temp);
-  renameSync(join(tools.bin, 'kitty'), join(app, 'kitty')); renameSync(join(tools.bin, 'pi'), join(agent, 'pi'));
-  process.env.PATH = join(root, 'empty'); process.env.TMPDIR = temp; process.env.DISPLAY = ':0'; process.env.TEST_KITTY_PREFIX = `unix:${temp}/`;
+test('Kitty on macOS finds pi in ~/.pi/agent/bin, passes PATH and reuses only private $TMPDIR sockets', async () => {
+  const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id)), temp = join(root, 'tmp'), agent = join(process.env.HOME!, '.pi/agent/bin');
+  mkdirSync(agent, { recursive: true }); mkdirSync(temp, { mode: 0o700 }); renameSync(join(tools.bin, 'pi'), join(agent, 'pi'));
+  process.env.PATH = tools.bin; process.env.TMPDIR = temp; process.env.DISPLAY = ':0'; process.env.TEST_KITTY_PREFIX = `unix:${temp}/`;
   const server = createServer(); await new Promise<void>(done => server.listen(join(temp, 'mykitty-1'), done));
-  Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+  setPlatform('darwin');
   try {
     await start_in_kitty(root, note, 'title', 'prompt');
     let calls = tools.calls(); assert.deepEqual(calls[0], ['@', '--to', `unix:${temp}/mykitty-1`, 'ls']);
-    assert.deepEqual(calls[1].slice(2, 5), [`unix:${temp}/mykitty-1`, 'launch', '--type=tab']); assert.equal(calls[1].at(-1), join(agent, 'pi'));
-    await new Promise(done => server.close(done)); rmSync(tools.log);
+    assert.deepEqual(calls[1].slice(2, 5), [`unix:${temp}/mykitty-1`, 'launch', '--type=tab']); assert.deepEqual(calls[1].slice(-2), [`--env=PATH=${tools.bin}`, join(agent, 'pi')]);
+    chmodSync(temp, 0o777); rmSync(tools.log); // A shared directory is not searched.
     await start_in_kitty(root, note, 'title', 'prompt'); await sleep(300);
-    calls = tools.calls(); const launch = calls.find((a: string[]) => a[0] === '--session=none');
-    assert.ok(launch.includes(`--listen-on=unix:${temp}/mykitty-{kitty_pid}`)); assert.match(calls.at(-1)[2], new RegExp(`^unix:${temp}/mykitty-\\d+$`));
-  } finally { Object.defineProperty(process, 'platform', platform); server.close(); }
+    calls = tools.calls(); assert.equal(calls[0][0], '--session=none'); assert.ok(calls[0].includes(`--listen-on=unix:${temp}/mykitty-{kitty_pid}`));
+    assert.match(calls.at(-1)[2], new RegExp(`^unix:${temp}/mykitty-\\d+$`));
+  } finally { server.close(); }
 });
 test('bridge Kitty headings, stale revisions and unknown partial launch outcomes', async () => {
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit';

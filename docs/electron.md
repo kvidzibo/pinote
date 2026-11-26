@@ -291,9 +291,10 @@ prefix if tagged. Saved text and tags are unchanged.
 On macOS, Pinote also looks for `kitty` in `/Applications/kitty.app` and
 `~/Applications/kitty.app`, for `pi` in `~/.pi/agent/bin`, and for both in
 `/opt/homebrew/bin` and `/usr/local/bin`. Without `KITTY_LISTEN_ON`, it reuses
-same-user Kitty sockets named `mykitty-<pid>` in `/tmp` or `$TMPDIR`; configure
-`allow_remote_control socket-only` and `listen_on unix:/tmp/mykitty`. New windows
-listen in `$TMPDIR`.
+same-user Kitty sockets named `mykitty-<pid>` in the private per-user `$TMPDIR`;
+configure `allow_remote_control socket-only` and `listen_on unix:mykitty`. Shared
+directories such as `/tmp` are not searched. New windows listen in `$TMPDIR`.
+Pi tabs get Pinote's `PATH`, because Kitty opened from the Dock lacks `node`.
 
 **Kitty tabs…** in the menu sets **One task per tab**, shared with Pi's settings
 in `pi-note.json`. When on, selecting a task in Pi moves a split pane whose tab
