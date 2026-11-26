@@ -1559,6 +1559,7 @@ try {
       for(const name of ['Starting position','Starting size']) assert.equal(await group(name).getByRole('radio',{name:'Remember last',exact:true}).isChecked(),true);
       assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).isDisabled(),true);
       await group('Starting position').getByRole('radio',{name:'Fixed',exact:true}).check();
+      await reopened.waitForFunction(()=>document.querySelector('[data-key="y"]')?.value!=='');
       assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).inputValue(),String(original.x),'Fixed values start from the current window');
       await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).fill('40');
       await group('Starting position').getByRole('spinbutton',{name:'Y',exact:true}).fill('60');

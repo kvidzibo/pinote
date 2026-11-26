@@ -349,9 +349,11 @@ function configureWindow(): void {
     const section = el('div', undefined, 'window-setting'); section.setAttribute('role', 'radiogroup'); section.setAttribute('aria-label', heading);
     const choice = el('div', undefined, 'window-choice'); choice.append(remember.label, fixed.label);
     section.append(el('p', heading, 'settings-heading'), choice, row); modal.panel.append(section);
+    // Empty fixed values start from the window's current bounds, not those at opening.
+    const fill = (current: WindowSettings['current']) => { if (fixed.input.checked) for (const input of inputs) if (!input.value) input.value = String(current[input.dataset.key as keyof WindowSettings['current']]); update(); };
     for (const input of [remember.input, fixed.input]) input.addEventListener('change', () => {
-      if (fixed.input.checked && settings) for (const input of inputs) if (!input.value) input.value = String(settings.current[input.dataset.key as keyof WindowSettings['current']]);
       update();
+      if (fixed.input.checked && inputs.some(input => !input.value)) void api.windowSettings().then(fresh => fill(fresh.current), () => { if (settings) fill(settings.current); });
     });
     const value = () => fixed.input.checked ? Object.fromEntries(inputs.map(input => [input.dataset.key!, Number(input.value)])) : undefined;
     const load = (saved?: Record<string, number>) => { remember.input.checked = !saved; fixed.input.checked = !!saved; inputs.forEach(input => { input.value = saved ? String(saved[input.dataset.key!]) : ''; }); };
@@ -361,7 +363,7 @@ function configureWindow(): void {
   const size = group('Starting size', 'window-size', [['Width', 'width', 280], ['Height', 'height', 120]]);
   modal.panel.append(el('p', 'Applies when Pinote starts, kept on screen. Positions are desktop coordinates. Your window manager may still tile or move it.'), status);
   const update = () => {
-    const off = !settings || saving;
+    const off = !settings || saving || readonly;
     for (const group of [position, size]) { group.remember.disabled = group.fixed.disabled = off; group.inputs.forEach(input => { input.disabled = off || !group.fixed.checked; }); }
     save.disabled = off || !position.valid() || !size.valid();
   };
