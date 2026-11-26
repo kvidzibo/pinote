@@ -60,11 +60,13 @@ const prMessage = (url: string, message: string) => `PR #${url.split('/').at(-1)
 const settings = (watcher: FieldWatcher) => JSON.stringify([watcher.fieldEvents, watcher.fields, watcher.params]);
 /** A task watcher's enablement with its current settings; each starts at the history tail read once it appears. */
 const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.taskEvents, settings(watcher)]);
-/** An invocation in flight is cancelled when these change; its time limit and cooldown can change meanwhile. */
-const runKey = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watcher.path, watcher.appEvents, watcher.taskEvents, settings(watcher)]);
+/** What an invocation in flight depends on: it is cancelled when that changes. Other settings apply to the next one. */
+const startupInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, watcher.params]);
+const taskInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, subscription(watcher)]);
+const checkInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, settings(watcher)]);
 /** Watchers invoked at once; each watcher runs one invocation at a time. */
 const CONCURRENCY = 4;
-type Run = { key: string; controller: AbortController; promise: Promise<void> };
+type Run = { input: (watcher: FieldWatcher) => string; key: string; controller: AbortController; promise: Promise<void> };
 type TaskEvent = { id: number; taskId: number; event: typeof TASK_EVENTS[number]; fields: Record<string, string> };
 const wantsTask = (watcher: FieldWatcher, event: TaskEvent) => watcher.taskEvents.includes(event.event)
   && (!watcher.fields.length || watcher.fields.some((name) => Object.hasOwn(event.fields, name)));
@@ -130,6 +132,8 @@ export class FieldAutomation {
   // In memory only: task events run once, for changes made while this scheduler is running.
   // Each subscription reads history from its own position: a full queue (a watcher cooling down) delays only itself.
   private taskCursors = new Map<string, number>();
+  // Subscriptions whose full queue stopped their reads: intake resumes once there is room.
+  private taskBacklog = new Set<string>();
   private taskQueue: { subscription: string; event: TaskEvent }[] = [];
   // Watchers whose last invocation was a task event: field work goes next, so neither backlog starves the other.
   private taskTurn = new Set<string>();
@@ -209,19 +213,23 @@ export class FieldAutomation {
   private reconcile(durable = false): void {
     const enabled = this.watchers().filter((watcher) => watcher.enabled && !watcher.problem);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
-    const signature = JSON.stringify(enabled.map((w) => [runKey(w), w.timeoutSeconds, w.cooldownSeconds]));
+    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.appEvents, w.taskEvents, settings(w), w.timeoutSeconds, w.cooldownSeconds]));
     if (signature !== this.signature) {
       this.generation++;
-      const keys = new Set(enabled.map(runKey));
-      for (const run of this.running.values()) if (!keys.has(run.key)) run.controller.abort();
+      for (const [id, run] of this.running) {
+        const watcher = enabled.find((w) => w.id === id);
+        if (!watcher || run.input(watcher) !== run.key) run.controller.abort();
+      }
       this.enabled = enabled; this.signature = signature; this.changed();
       // A subscription that ended takes its queued events with it: enabling it again starts afresh.
       const current = new Set(enabled.filter((watcher) => watcher.taskEvents.length).map(subscription));
-      for (const key of this.taskCursors.keys()) if (!current.has(key)) this.taskCursors.delete(key);
+      for (const key of this.taskCursors.keys()) if (!current.has(key)) { this.taskCursors.delete(key); this.taskBacklog.delete(key); }
       this.taskQueue = this.taskQueue.filter((queued) => current.has(queued.subscription));
     }
     if (!durable || signature === this.stored) return;
     this.db.exec('BEGIN IMMEDIATE');
+    // Only the lease owner cleans up: a former owner's settings must not erase the current scheduler's state.
+    if (!this.leased()) { this.db.exec('ROLLBACK'); return; }
     try {
       for (const row of this.db.prepare('SELECT id,path,config FROM fw_watchers').all()) {
         const watcher = enabled.find((w) => w.id === row.id && w.path === row.path);
@@ -356,7 +364,7 @@ export class FieldAutomation {
   }
   start(): void {
     // Eligibility is fixed when the desktop starts, whenever this process first holds the lease.
-    try { this.reconcile(); this.startup ??= this.startupWatchers(); } catch { /* Invalid settings: the first step decides. */ }
+    try { this.reconcile(); this.startup ??= this.startupWatchers(); } catch { this.startup ??= new Set(); }
     const schedule = () => {
       if (this.lifetime.signal.aborted) return;
       let delay = 1000;
@@ -408,27 +416,30 @@ export class FieldAutomation {
       let more = false;
       if (!this.enabled.length) { this.notes.close(); return; }
       const version = this.notes.read();
-      let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue;
+      const room = (key: string) => 64 - this.taskQueue.filter((item) => item.subscription === key).length;
+      let intake = version === undefined || version !== this.drained || Date.now() >= this.drainDue || [...this.taskBacklog].some((key) => room(key) > 0);
       // A settings reset removes a watcher's row: start it again from durable history.
       for (const watcher of this.enabled) if (this.db.prepare('INSERT OR IGNORE INTO fw_watchers(id,path,config) VALUES (?,?,?)').run(watcher.id, watcher.path, settings(watcher)).changes) { intake = true; this.drained = undefined; }
       if (intake && subscribed.size) {
         try {
           // Without a cursor the CLI returns the current tail: history from before this start never runs.
-          const read = async (after?: number) => TaskBatch.parse(await this.note(['task-events', ...(after === undefined ? [] : ['--after', String(after)]), '--limit', '25']));
+          const read = async (after?: number, limit = 25) => TaskBatch.parse(await this.note(['task-events', ...(after === undefined ? [] : ['--after', String(after)]), '--limit', String(limit)]));
           if ([...subscribed.keys()].some((key) => !this.taskCursors.has(key))) {
             const tail = (await read()).cursor;
             if (!valid()) return;
             for (const key of subscribed.keys()) if (!this.taskCursors.has(key)) this.taskCursors.set(key, tail);
           }
-          // A full queue is dispatched first; its cursor keeps the rest. Subscriptions at one position share a read.
+          // At most 64 queued events per subscription: a full queue is dispatched first; its cursor keeps the rest.
+          // Subscriptions at one position share a read, bounded by the least room among them.
           const positions = new Map<number, string[]>();
           for (const key of subscribed.keys()) {
-            if (this.taskQueue.filter((item) => item.subscription === key).length >= 64) { more = true; continue; }
+            if (room(key) <= 0) { this.taskBacklog.add(key); continue; }
+            this.taskBacklog.delete(key);
             const cursor = this.taskCursors.get(key)!;
             positions.set(cursor, [...positions.get(cursor) ?? [], key]);
           }
           for (const [cursor, keys] of positions) {
-            const batch = await read(cursor);
+            const batch = await read(cursor, Math.min(25, ...keys.map(room)));
             if (!valid()) return;
             if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
             for (const event of batch.events) {
@@ -442,7 +453,7 @@ export class FieldAutomation {
           if (this.lifetime.signal.aborted) throw error;
           // A passing failure keeps the cursor, so changes made meanwhile still run. History that no longer
           // reaches it (a replaced database) starts again from the tail rather than replaying.
-          if (/Invalid task event cursor|Cursor is ahead/.test(`${(error as Error).message} ${(error as { stderr?: unknown }).stderr ?? ''}`)) { this.taskCursors.clear(); this.taskQueue = []; }
+          if (/Invalid task event cursor|Cursor is ahead/.test(`${(error as Error).message} ${(error as { stderr?: unknown }).stderr ?? ''}`)) { this.taskCursors.clear(); this.taskBacklog.clear(); this.taskQueue = []; }
           if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
         }
       }
@@ -466,8 +477,8 @@ export class FieldAutomation {
           }
         }
       } catch (error) {
-        // Startup and task events do not depend on field history.
-        if (!this.lifetime.signal.aborted && this.leased()) this.dispatch(false);
+        // Startup and task events do not depend on field history; unchanged settings still allow them.
+        try { if (valid()) this.dispatch(false); } catch { /* Reported below. */ }
         throw error;
       }
       if (drained) this.changed();
@@ -493,17 +504,17 @@ export class FieldAutomation {
       if (this.running.size >= CONCURRENCY) return;
       const last = this.started.get(watcher.id);
       if (this.running.has(watcher.id) || last !== undefined && Date.now() < last + watcher.cooldownSeconds * 1000) continue;
-      let work: ((signal: AbortSignal) => Promise<void>) | undefined;
+      let work: ((signal: AbortSignal) => Promise<void>) | undefined, input = checkInput;
       if (this.startup?.has(watcher.id)) {
         this.startup.delete(watcher.id);
-        if (watcher.appEvents.includes('startup')) work = (signal) => this.runStartup(watcher, signal);
+        if (watcher.appEvents.includes('startup')) { work = (signal) => this.runStartup(watcher, signal); input = startupInput; }
       }
       if (!work) {
         const queued = this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
         const job = due.find((item) => item.job.watcherId === watcher.id);
         if (queued >= 0 && (!job || !fieldChecks || !this.taskTurn.has(watcher.id))) {
           const { event } = this.taskQueue.splice(queued, 1)[0];
-          this.taskTurn.add(watcher.id); work = (signal) => this.runTask(watcher, event, signal);
+          this.taskTurn.add(watcher.id); work = (signal) => this.runTask(watcher, event, signal); input = taskInput;
         } else if (job && fieldChecks) {
           this.taskTurn.delete(watcher.id); work = (signal) => this.runCheck(watcher, job.raw, job.job, signal);
         }
@@ -519,7 +530,7 @@ export class FieldAutomation {
         clearInterval(this.poll); this.poll = undefined;
         if (!this.ticking && this.db.isOpen) this.release();
       });
-      this.running.set(watcher.id, { key: runKey(watcher), controller, promise });
+      this.running.set(watcher.id, { input, key: input(watcher), controller, promise });
       // Settings changes cancel affected invocations; the lease is renewed while any run.
       this.poll ??= setInterval(() => {
         try {
@@ -555,7 +566,8 @@ export class FieldAutomation {
     const unchanged = () => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=? AND field=?')
       .get(job.watcherId, event.taskId, event.field) as Row | undefined)?.job === raw;
     const task = await this.note(['agent', 'get', String(event.taskId)]) as Task;
-    if (!this.current(signal)) return;
+    // Intake or a reset meanwhile replaced this job: the newer one runs instead.
+    if (!this.current(signal) || !unchanged()) return;
     const currentValue = task && ['active', 'in_progress'].includes(task.state) ? task.agent_notes[event.field] ?? null : null;
     if (event.value !== currentValue) {
       if (this.transaction(() => unchanged() && (this.clear(job.watcherId, event.taskId, event.field), this.prunePRNotices(job.watcherId, event.taskId), true))) this.changed();
