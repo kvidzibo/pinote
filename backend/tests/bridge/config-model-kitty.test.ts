@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, renameSync, chmodSync, realpathSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -10,16 +11,19 @@ import { GuiConfig, ConfigError } from '../../src/config.ts';
 import { ReminderModel, application_id } from '../../src/model.ts';
 import { Store } from '../../src/store.ts';
 import { discoverPaths, withDisplayLock, BusyError, type Paths } from '../../src/runtime.ts';
-import { start_in_kitty, address, remote } from '../../src/kitty.ts';
+import { start_in_kitty, address, remote, UncertainLaunch } from '../../src/kitty.ts';
 import { respond } from '../../src/bridge.ts';
 let root: string, paths: Paths, model: ReminderModel, env: NodeJS.ProcessEnv;
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+const setPlatform = (value: string) => Object.defineProperty(process, 'platform', { ...platform, value });
 beforeEach(() => {
+  setPlatform('linux'); // Same paths on every host; a Mac must not find its real Kitty.
   env = { ...process.env }; root = mkdtempSync(join(tmpdir(), 'pinote-model-'));
   process.env.HOME = join(root, 'home'); process.env.XDG_DATA_HOME = join(root, 'data'); process.env.XDG_STATE_HOME = join(root, 'state'); process.env.XDG_CONFIG_HOME = join(root, 'config');
   delete process.env.DISPLAY; delete process.env.KITTY_LISTEN_ON;
   paths = discoverPaths(); model = new ReminderModel(paths);
 });
-afterEach(() => { process.env = env; rmSync(root, { force: true, recursive: true }); });
+afterEach(() => { Object.defineProperty(process, 'platform', platform); process.env = env; rmSync(root, { force: true, recursive: true }); });
 const store = <T>(f: (s: Store) => T): T => { const s = new Store(paths.database); try { return f(s); } finally { s.close(); } };
 const configFile = () => { const dir = join(root, 'config/pinote'); mkdirSync(dir, { recursive: true }); return join(dir, 'config.toml'); };
 test('config defaults, ignored relative XDG, precise integer/boolean types and Unicode prompt limits', () => {
@@ -87,7 +91,7 @@ test('application id uses canonical database without exposing paths', () => {
 });
 function fakeTools() {
   const bin = join(root, 'bin'); mkdirSync(bin); const log = join(root, 'kitty.log');
-  writeFileSync(join(bin, 'kitty'), `#!${process.execPath}\nconst fs = require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_KITTY_LOG,JSON.stringify(args)+'\\n');if(process.env.TEST_KITTY_FAIL==='yes')process.exit(1);if(args.includes('launch'))process.stdout.write('42\\n');if(args[0]!=='@')setTimeout(()=>{},200);if(args.includes('ls')&&process.env.TEST_KITTY_DELAY_LS)setTimeout(()=>{},500);\n`, { mode: 0o700 });
+  writeFileSync(join(bin, 'kitty'), `#!${process.execPath}\nconst fs = require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_KITTY_LOG,JSON.stringify(args)+'\\n');const fail=process.env.TEST_KITTY_FAIL;if(fail==='yes'||fail&&args.includes(fail)||args[0]==='@'&&!args[2].startsWith(process.env.TEST_KITTY_PREFIX||'')){process.stderr.write('Error: simulated failure\\n');process.exit(1);}if(args.includes('launch'))process.stdout.write('42\\n');if(args[0]!=='@')setTimeout(()=>{},200);if(args.includes('ls')&&process.env.TEST_KITTY_DELAY_LS)setTimeout(()=>{},500);\n`, { mode: 0o700 });
   writeFileSync(join(bin, 'pi'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
   process.env.PATH = bin + ':' + env.PATH; process.env.TEST_KITTY_LOG = log;
   return { bin, log, calls: () => readFileSync(log, 'utf8').trim().split('\n').map(x => JSON.parse(x)) };
@@ -130,7 +134,31 @@ test('Kitty new-window argv and unavailable tool/directory validation', async ()
   const calls = tools.calls(), launch = calls.find((a: string[]) => a[0] === '--session=none');
   assert.ok(launch.includes('--listen-on=unix:@mykitty-{kitty_pid}')); assert.ok(launch.includes('--override=allow_remote_control=socket-only')); assert.ok(launch.includes('/usr/bin/env')); assert.equal(launch.at(-1), join(tools.bin, 'pi'));
   await assert.rejects(() => start_in_kitty(join(root, 'absent'), note, 'title', 'prompt'));
-  process.env.PATH = '/nonexistent'; await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /requires kitty and pi/);
+  process.env.TEST_KITTY_FAIL = 'set-tab-title'; // Pi may have run before Kitty exited.
+  await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), (error: Error) => error instanceof UncertainLaunch && /^Kitty exited \(0\)/.test(error.message));
+  process.env.PATH = '/nonexistent'; await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /cannot find kitty and pi on PATH\. PATH: \/nonexistent$/);
+  process.env.PATH = '/x'.repeat(10000); await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), (error: Error) => error.message.length < 1200 && error.message.endsWith('…'));
+});
+test('Kitty on macOS finds pi in ~/.pi/agent/bin, passes PATH and reuses only private $TMPDIR sockets', async () => {
+  const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id)), agent = join(process.env.HOME!, '.pi/agent/bin');
+  mkdirSync(agent, { recursive: true }); mkdirSync(join(root, 'tmp'), { mode: 0o700 }); renameSync(join(tools.bin, 'pi'), join(agent, 'pi'));
+  const temp = realpathSync(join(root, 'tmp')); // The host's temporary directory may be a symlink, as on macOS.
+  symlinkSync(temp, join(root, 'tmp-link')); // Sockets use the resolved, checked directory.
+  process.env.PATH = tools.bin; process.env.TMPDIR = join(root, 'tmp-link/'); process.env.DISPLAY = ':0'; process.env.TEST_KITTY_PREFIX = `unix:${temp}/`;
+  const server = createServer(); await new Promise<void>(done => server.listen(join(temp, 'mykitty-1'), done));
+  setPlatform('darwin');
+  try {
+    await start_in_kitty(root, note, 'title', 'prompt');
+    let calls = tools.calls(); assert.deepEqual(calls[0], ['@', '--to', `unix:${temp}/mykitty-1`, 'ls']);
+    assert.deepEqual(calls[1].slice(2, 5), [`unix:${temp}/mykitty-1`, 'launch', '--type=tab']); assert.deepEqual(calls[1].slice(-2), [`--env=PATH=${tools.bin}`, join(agent, 'pi')]);
+    chmodSync(temp, 0o777); rmSync(tools.log); // A shared directory is neither searched nor used.
+    await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /needs TMPDIR to be a private directory/); assert.equal(existsSync(tools.log), false);
+    chmodSync(temp, 0o700); await new Promise(done => server.close(done));
+    await start_in_kitty(root, note, 'title', 'prompt'); await sleep(300);
+    calls = tools.calls(); assert.equal(calls.some((a: string[]) => a[3] === 'ls'), false);
+    assert.ok(calls.find((a: string[]) => a[0] === '--session=none').includes(`--listen-on=unix:${temp}/mykitty-{kitty_pid}`));
+    assert.match(calls.find((a: string[]) => a[0] === '@')[2], new RegExp(`^unix:${temp}/mykitty-\\d+$`)); // Fake processes log in any order.
+  } finally { server.close(); }
 });
 test('bridge Kitty headings, stale revisions and unknown partial launch outcomes', async () => {
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit';
@@ -140,8 +168,11 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
     const result = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(result.ok, true);
     assert.equal(tools.calls().at(-2).at(-1), expected); assert.deepEqual(store(s => s.get(id)), note);
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { ...params, revision: 'old' } }, paths)).error.code, 'conflict');
-    process.env.TEST_KITTY_FAIL = 'yes'; const failed = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(failed.error.code, 'unknown'); assert.match(failed.error.message, /Check the tab/); delete process.env.TEST_KITTY_FAIL;
+    process.env.TEST_KITTY_FAIL = 'set-tab-title'; const failed = await respond({ protocol: 1, operation: 'kitty', params }, paths); assert.equal(failed.error.code, 'unknown'); assert.match(failed.error.message, /uncertain \(Kitty remote control failed at unix:@explicit: Error: simulated failure\)\. Check the tab/); delete process.env.TEST_KITTY_FAIL;
   }
+  const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_FAIL = 'yes';
+  // Nothing launches when the explicit address is unreachable.
+  assert.deepEqual((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).error, { code: 'invalid', message: 'Kitty remote control failed at unix:@explicit: Error: simulated failure' });
 });
 test('interruption preserves signal status and prevents later Kitty launch steps', async () => {
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit'; process.env.TEST_KITTY_DELAY_LS = 'yes';

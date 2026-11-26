@@ -5,7 +5,7 @@ import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
 import { GuiConfig, ConfigError, guiConfigPath } from './config.ts';
 import { ReminderModel, folder_available } from './model.ts';
-import { start_in_kitty, validate_directory, kittyAddressEnv } from './kitty.ts';
+import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch } from './kitty.ts';
 export const PROTOCOL = 1, MAX_REQUEST = 1024 * 1024, MAX_ID = 9007199254740991;
 export class BridgeError extends Error { readonly code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge request.'); };
@@ -133,7 +133,11 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
         const summary = Array.from(note.text.split(/[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u)[0].replace(/^ {0,3}#{1,6}[ \t]+/, '')).slice(0, 30).join('');
         const title = pythonStrip(note.tag ? `[${note.tag}] ${summary}` : summary);
         try { await start_in_kitty(p.directory, note, title, config.kitty_start_prompt); }
-        catch { throw new BridgeError('unknown', 'Kitty launch outcome is uncertain. Check the tab or new window before retrying.'); }
+        catch (error) {
+          // NoteError: nothing was launched. Otherwise a tab or window may exist.
+          if (error instanceof NoteError) throw error;
+          throw new BridgeError('unknown', `Kitty launch outcome is uncertain${error instanceof UncertainLaunch ? ` (${error.message})` : ''}. Check the tab or new window before retrying.`);
+        }
         changed = true;
       } else return invalid();
       return { changed, ...target };
