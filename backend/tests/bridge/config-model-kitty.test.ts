@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, renameSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, rmdirSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, renameSync, chmodSync, realpathSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -140,8 +140,9 @@ test('Kitty new-window argv and unavailable tool/directory validation', async ()
   process.env.PATH = '/x'.repeat(10000); await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), (error: Error) => error.message.length < 1200 && error.message.endsWith('…'));
 });
 test('Kitty on macOS finds pi in ~/.pi/agent/bin, passes PATH and reuses only private $TMPDIR sockets', async () => {
-  const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id)), temp = join(root, 'tmp'), agent = join(process.env.HOME!, '.pi/agent/bin');
-  mkdirSync(agent, { recursive: true }); mkdirSync(temp, { mode: 0o700 }); renameSync(join(tools.bin, 'pi'), join(agent, 'pi'));
+  const tools = fakeTools(), id = await model.add('task'), note = store(s => s.get(id)), agent = join(process.env.HOME!, '.pi/agent/bin');
+  mkdirSync(agent, { recursive: true }); mkdirSync(join(root, 'tmp'), { mode: 0o700 }); renameSync(join(tools.bin, 'pi'), join(agent, 'pi'));
+  const temp = realpathSync(join(root, 'tmp')); // The host's temporary directory may be a symlink, as on macOS.
   symlinkSync(temp, join(root, 'tmp-link')); // Sockets use the resolved, checked directory.
   process.env.PATH = tools.bin; process.env.TMPDIR = join(root, 'tmp-link/'); process.env.DISPLAY = ':0'; process.env.TEST_KITTY_PREFIX = `unix:${temp}/`;
   const server = createServer(); await new Promise<void>(done => server.listen(join(temp, 'mykitty-1'), done));
