@@ -3,7 +3,7 @@ import test from 'node:test';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -80,6 +80,9 @@ test('watcher settings save validated entries and the shared keys their scripts 
   const full = [...Array.from({ length: 29 }, (_, i) => ({ path: join(dir, `full-${i}.mjs`), enabled: false })),
     ...discoverFieldWatchers({}).filter((watcher) => watcher.name !== 'Run command').map(({ path }) => ({ path, enabled: false }))];
   assert.deepEqual(discoverFieldWatchers({ fieldWatchers: full }).map((watcher) => watcher.path), full.map((entry) => entry.path));
+  // Saved copies from another package directory: the desktop hides their bundled twins, not the new watcher.
+  const copies = [...full.slice(0, 26), ...['cleanup-worktree.mjs', 'forgejo-pr.mjs', 'github-pr.mjs'].map((name) => ({ path: join(dir, 'package', name), enabled: false }))];
+  assert.ok(discoverFieldWatchers({ fieldWatchers: copies }).some((watcher) => watcher.name === 'Run command'));
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },
@@ -208,10 +211,13 @@ console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id 
 setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:'${name}',scope:input.scope,event:input.event,eventId:input.eventId,start,end:Date.now()})+'\\n');console.log('{}');},${sleep});`, { mode: 0o700 });
     return path;
   };
+  // Stops on SIGTERM, recording it: a timed-out watcher can stop what it started.
+  const slow = join(dir, 'slow.mjs'), terminated = join(dir, 'terminated');
+  writeFileSync(slow, `#!${process.execPath}\nimport fs from 'node:fs';process.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(terminated)},'');process.exit(1);});setTimeout(()=>{},10000);`, { mode: 0o700 });
   // Without field events: this fake history serves task events only.
   let entries: Record<string, unknown>[] = [
     { path: script('a', 600), enabled: true, appEvents: ['startup'] }, { path: script('b', 600), enabled: true, appEvents: ['startup'] },
-    { path: script('slow', 10_000), enabled: true, appEvents: ['startup'], timeoutSeconds: 1 },
+    { path: slow, enabled: true, appEvents: ['startup'], timeoutSeconds: 1 },
     { path: script('cool'), enabled: true, taskEvents: ['completed'], cooldownSeconds: 2 }, { path: script('other'), enabled: true, taskEvents: ['started'] },
   ].map((entry) => ({ ...entry, fieldEvents: [] }));
   const failures: WatcherFailureLog[] = [];
@@ -228,6 +234,7 @@ setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:
   assert.deepEqual([a.scope, a.event, b.event], ['app', 'startup', 'startup']);
   assert.ok(a.start < b.end && b.start < a.end, 'Different watchers run at the same time');
   assert.deepEqual(failures.map(({ watcher, taskId, field, reason }) => [watcher, taskId, field, reason]), [['slow', null, 'app:startup', 'Watcher timed out']]);
+  assert.ok(existsSync(terminated), 'A timeout sends SIGTERM first');
   // Enabling a startup watcher later does not run it: only the next start does.
   entries = [...entries, { path: script('late'), enabled: true, appEvents: ['startup'], fieldEvents: [] }];
   writeFileSync(state, JSON.stringify({ tail: 2, events: [1, 2].map((id) => ({ id, taskId: id, event: 'completed', fields: {} })) }));
@@ -296,10 +303,29 @@ console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id 
   await new Promise((resolve) => setTimeout(resolve, 2100));
   for (let i = 0; i < 3; i++) await automation.tick();
   assert.equal(runs(), 2, 'One run covers every completion queued before it');
-  // Outside the cooldown, a burst spanning two history pages still runs once.
+  // Outside the cooldown, a burst spanning several history pages runs at once and once more after the cooldown.
   history(Array.from({ length: 80 }, (_, i) => i + 1));
   await until(3);
+  for (let i = 0; i < 4; i++) await automation.tick();
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await until(4);
   await new Promise((resolve) => setTimeout(resolve, 2100));
   for (let i = 0; i < 3; i++) await automation.tick();
-  assert.equal(runs(), 3, 'The run waits until history is read');
+  assert.equal(runs(), 4, 'Events read during the cooldown merge into one run');
+  // Coalescing declared while events wait: they run as one.
+  const copy = join(dir, 'later.mjs'), manifest = join(dir, 'later.params.json');
+  cpSync(script, copy);
+  writeFileSync(manifest, JSON.stringify({ taskEvents: ['completed'], params: [{ key: 'command', label: 'Command', type: 'string' }, { key: 'args', label: 'Arguments', type: 'list', columns: [{ key: 'value', label: 'Argument' }] }] }));
+  entries.splice(0, 1, { path: copy, enabled: true, cooldownSeconds: 2, params: { command, args: args('later') } });
+  await automation.tick();
+  history(Array.from({ length: 83 }, (_, i) => i + 1));
+  await until(5);
+  history(Array.from({ length: 86 }, (_, i) => i + 1));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), coalesceTaskEvents: true }));
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await until(6);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 6, 'Turning coalescing on merges the events already queued');
 });

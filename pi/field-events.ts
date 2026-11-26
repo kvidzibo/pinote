@@ -77,9 +77,15 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
   return new Promise((resolve, reject) => {
     const child = spawn(handler, [], { cwd: dirname(handler), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let output = '', bytes = 0, failure: string | undefined;
+    const send = (name: NodeJS.Signals) => {
+      try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, name); else child.kill(name); } catch { /* Already exited. */ }
+    };
+    // SIGTERM lets the script stop the processes it started; the group is killed after a grace period.
     const kill = (reason = 'Watcher cancelled') => {
-      failure ??= reason;
-      try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
+      if (failure) return;
+      failure = reason;
+      send('SIGTERM');
+      setTimeout(() => send('SIGKILL'), 5000).unref();
     };
     const timer = setTimeout(() => kill('Watcher timed out'), timeoutMs);
     const abort = () => kill();
@@ -138,8 +144,6 @@ export class FieldAutomation {
   // Watchers whose last invocation was a task event: field work goes next, so neither backlog starves the other.
   private taskTurn = new Set<string>();
   private taskEventsFailed = false;
-  // The last task-history read found new events: a coalescing watcher waits until a read finds none.
-  private taskReading = false;
   private noteCommand: string;
   private changed: () => void;
   private log: (failure?: WatcherFailureLog) => void;
@@ -466,7 +470,6 @@ export class FieldAutomation {
           if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
         }
       }
-      this.taskReading = more;
       try {
         // A watcher without field events has no field history to read.
         for (const watcher of intake ? this.enabled.filter((w) => w.fieldEvents.length) : []) {
@@ -520,11 +523,15 @@ export class FieldAutomation {
         if (watcher.appEvents.includes('startup')) { work = (signal) => this.runStartup(watcher, signal); input = startupInput; }
       }
       if (!work) {
-        // A burst spanning several history pages still reaches a coalescing watcher as one invocation.
-        const queued = watcher.coalesceTaskEvents && this.taskReading ? -1 : this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
+        const queued = this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
         const job = due.find((item) => item.job.watcherId === watcher.id);
         if (queued >= 0 && (!job || !fieldChecks || !this.taskTurn.has(watcher.id))) {
-          const { event } = this.taskQueue.splice(queued, 1)[0];
+          let { event } = this.taskQueue.splice(queued, 1)[0];
+          // One invocation of a coalescing watcher covers every event queued before it, with the newest.
+          if (watcher.coalesceTaskEvents) {
+            const key = subscription(watcher), newer = this.taskQueue.filter((item) => item.subscription === key).at(-1);
+            if (newer) { event = newer.event; this.taskQueue = this.taskQueue.filter((item) => item.subscription !== key); }
+          }
           this.taskTurn.add(watcher.id); work = (signal) => this.runTask(watcher, event, signal); input = taskInput;
         } else if (job && fieldChecks) {
           this.taskTurn.delete(watcher.id); work = (signal) => this.runCheck(watcher, job.raw, job.job, signal);

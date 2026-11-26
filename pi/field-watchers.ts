@@ -113,7 +113,11 @@ export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatch
     try { validateWatcherExecutable(path); bundled.add(path); } catch { /* Not a regular executable. */ }
   }
   // Unconfigured bundled watchers fill only the room left: a new bundled script cannot invalidate a full configuration.
-  const merged = [...stored, ...[...bundled].filter((path) => !stored.some((entry) => entry.path === path)).map((path) => ({ path, enabled: false }))].slice(0, 32);
+  // Copies of saved scripts (the same file name), which the desktop hides, go last.
+  const saved = new Set(stored.map((entry) => basename(entry.path)));
+  const unconfigured = [...bundled].filter((path) => !stored.some((entry) => entry.path === path))
+    .sort((a, b) => Number(saved.has(basename(a))) - Number(saved.has(basename(b))));
+  const merged = [...stored, ...unconfigured.map((path) => ({ path, enabled: false }))].slice(0, 32);
   return merged.map((config: FieldWatcherConfig) => {
     const read = readManifest(config.path), manifest = typeof read === 'string' ? undefined : read;
     const spec = manifest?.params ?? [], params: Record<string, WatcherValue> = { ...config.params };

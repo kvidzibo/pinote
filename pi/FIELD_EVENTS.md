@@ -150,10 +150,11 @@ most 32 parameters; the file is limited to 64 KiB. A custom script cannot take
 the name of a bundled PR watcher.
 
 `coalesceTaskEvents: true` (pi-note 0.55.0+; earlier versions reject the file) is
-declared by the script only, not saved per entry. A newer queued task event then
-replaces the older one: task events held by the cooldown or a running invocation
-reach the script as one invocation with the newest event, once history has been
-read past a burst. Use it when the script acts on current state, not on each event.
+declared by the script only, not saved per entry. Task events queued behind the
+cooldown or a running invocation then reach the script as one invocation with the
+newest event. Events not yet read from history are not queued: a burst of more than
+25 events within a second can cause one more invocation. Use it when the script acts
+on current state, not on each event.
 
 ### Task events
 
@@ -209,9 +210,12 @@ completed. Set **Command** to its absolute path and add **Arguments**, one per r
 passed exactly as written. It runs from the command's directory with the desktop's
 environment; its output is discarded and a nonzero exit is logged in `watchers.log`.
 Defaults: 300-second time limit and 60-second cooldown. Completions during the
-cooldown or a run are merged into one later run (`coalesceTaskEvents`). Completions made while the desktop is closed are not
-replayed; the startup run covers them. The command must finish within the time
-limit and must not detach processes. One configured command per watcher file: copy
+cooldown or a run are merged into one later run (`coalesceTaskEvents`). Completions
+made while the desktop is closed are not replayed; the startup run covers them. The
+command must finish within the time limit. When a run times out or is cancelled
+(closing the desktop, changing the watcher), the command receives SIGTERM and, after
+5 seconds, its process group SIGKILL; a command that starts processes in another
+process group must stop them on SIGTERM. One configured command per watcher file: copy
 the script and its parameter file to a custom path for another command.
 
 For example, Command `/home/me/AI/settings/scripts/pi-updates.sh` with Argument
@@ -374,8 +378,9 @@ are deduplicated; a resolved condition followed by another failure alerts again.
 - Up to four watchers run at once; each watcher runs one invocation at a time, in
   turn between its task events and field checks, after its startup event. Each
   invocation has the watcher's time limit (30 seconds by default) and a
-  combined 64 KiB stdout/stderr limit. On Unix, cancellation kills its process
-  group. Scripts must not detach child processes. Invalid JSON/schema, nonzero
+  combined 64 KiB stdout/stderr limit. On Unix, a timeout or cancellation sends
+  SIGTERM to its process group and SIGKILL 5 seconds later (pi-note 0.55.0+; earlier
+  versions send SIGKILL at once). Scripts must not detach child processes. Invalid JSON/schema, nonzero
   exit, timeout or `state: "error"` preserve the last good result as stale and
   retry with exponential backoff (30 seconds to one hour, or a longer requested
   retry). First-check failure appears as unavailable. Stale results don't alert.
