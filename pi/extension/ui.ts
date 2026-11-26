@@ -7,6 +7,8 @@ import { PinoteSession } from './session.ts';
 import { pinoteMenu, type MenuState } from './menu.ts';
 import { document, editValue, working, type Draft } from './dialogs.ts';
 import { disclosure, menuView, parentScreen, serverScreen, type Screen } from './navigation.ts';
+import { KittyPane } from './kitty.ts';
+import { parseKittyOneTaskPerTab, readConfigDocument } from '../footer-config.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
 const disconnected = 'Pinote unavailable · retrying… (/pinote)';
@@ -29,10 +31,19 @@ export class PinoteUI {
   private pi: ExtensionAPI;
   private session: PinoteSession;
   private exitOnComplete: (taskId: number) => boolean;
+  private kitty: KittyPane;
   constructor(pi: ExtensionAPI, session: PinoteSession, exitOnComplete = (_taskId: number) => false) {
     this.pi = pi; this.session = session; this.exitOnComplete = exitOnComplete;
-    session.onChange = () => { this.render(); this.menuChanged?.(); };
+    this.kitty = new KittyPane((command, args, options) => this.pi.exec(command, args, options));
+    session.onChange = () => {
+      this.render(); this.menuChanged?.();
+      // Only the interactive Pi owns its pane: child processes inherit the Kitty environment.
+      const id = session.view?.state.selectedId;
+      if (this.ctx?.mode === 'tui' && session.view) void this.kitty.mark(typeof id === 'number' ? id : null);
+    };
   }
+  /** After detach on shutdown: this pane no longer holds a task. */
+  release(): Promise<void> { return this.kitty.release(); }
   attach(ctx: ExtensionContext): void {
     this.ctx = ctx;
     if (ctx.mode !== 'tui') return;
@@ -119,8 +130,12 @@ export class PinoteUI {
       if (!current() || !result) return false;
       const selected = this.session.view;
       if (selected && typeof selected.state.selectedId === 'number' && selected.state.selectedId !== view.state.selectedId) {
-        await this.renameKittyTab(ctx, selected, signal);
+        const title = line(selected.footer?.find((item) => item.action === 'preview')?.text ?? '').trim();
+        let oneTaskPerTab = false;
+        try { oneTaskPerTab = parseKittyOneTaskPerTab(readConfigDocument().value); } catch { /* Invalid settings: rename only. */ }
+        const warning = await this.kitty.select(selected.state.selectedId, title, oneTaskPerTab, signal);
         if (!current()) return false;
+        if (warning) ctx.ui.notify(warning, 'warning');
       }
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
           this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
@@ -141,17 +156,6 @@ export class PinoteUI {
       }
       return false;
     } finally { this.acting = false; }
-  }
-  private async renameKittyTab(ctx: ExtensionContext, view: NativeView, signal: AbortSignal): Promise<void> {
-    const window = process.env.KITTY_WINDOW_ID, socket = process.env.KITTY_LISTEN_ON;
-    const title = line(view.footer?.find((item) => item.action === 'preview')?.text ?? '').trim();
-    if (!window || !/^[1-9]\d*$/.test(window) || !socket || !title || process.env.SSH_CONNECTION || process.env.SSH_TTY) return;
-    try {
-      const result = await this.pi.exec('kitty', ['@', '--to', socket, 'set-tab-title', `--match=window_id:${window}`, '--', title], { signal, timeout: 1500 });
-      if (result.code !== 0) throw new Error('Kitty title update failed');
-    } catch {
-      if (!signal.aborted) ctx.ui.notify('Pinote task selected, but the Kitty tab could not be renamed.', 'warning');
-    }
   }
   private async refresh(ctx: ExtensionContext): Promise<boolean> {
     try {

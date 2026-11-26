@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { parsePullRequests, pullRequestValues } from './pull-requests.js';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
-import { defaultAgentGuidance, defaultFooterField, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, footerBarNames, footerCatalog, footerDisplayFields, parseAgentGuidance, parseHandoffPrompt, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from './footer-config.ts';
+import { defaultAgentGuidance, defaultFooterField, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, footerBarNames, footerCatalog, footerDisplayFields, parseAgentGuidance, parseHandoffPrompt, parseKittyOneTaskPerTab, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from './footer-config.ts';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from './proposal.ts';
 import type { FieldAutomation, FieldResult, FieldStatus } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, type FieldWatcherConfig } from './field-watchers.ts';
@@ -120,7 +120,7 @@ function settings() {
   if (!['always', 'github-remote', 'never'].includes(policy)) throw new Error('Invalid taskOfferPolicy in pi-note.json');
   const guidanceOverridden = Object.hasOwn(root, 'agentGuidance');
   const guidance = guidanceOverridden ? parseAgentGuidance(root.agentGuidance) : defaultAgentGuidance;
-  return { ...document, handoffPrompt, newSessionPrompt, policy, guidance, guidanceOverridden, watchers: discoverFieldWatchers(root) };
+  return { ...document, handoffPrompt, newSessionPrompt, policy, guidance, guidanceOverridden, oneTaskPerTab: parseKittyOneTaskPerTab(root), watchers: discoverFieldWatchers(root) };
 }
 function agentGuidance(): string {
   const { value: root } = readConfigDocument();
@@ -219,7 +219,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     action('later:dismiss', 'Dismiss future task', { icon: icons.cross });
   }
   action('screen:tasks', 'Tasks', { icon: icons.note });
-  action('screen:settings', 'Settings', { description: 'Prompts, task offers, and footer fields; affects every Pi session using this configuration' });
+  action('screen:settings', 'Settings', { description: 'Prompts, task offers, Kitty tabs and footer fields; affects every Pi session using this configuration' });
   if (state.screen === 'settings') {
     title = 'Pinote · Settings'; body = 'Shared pi-note.json · changes affect every Pi session using this configuration and save after confirmation.';
     for (const [id, label, value] of [['handoffPrompt', 'Task prompt', config.handoffPrompt], ['newSessionPrompt', 'New session prompt', config.newSessionPrompt]] as const) {
@@ -228,6 +228,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     controls.push({ id: 'agentGuidance', label: 'Agent guidance', value: config.guidance, kind: 'text', multiline: true, description: `${config.guidanceOverridden ? 'Custom' : 'Default'} instructions injected before task data; task data is not edited here.`, confirm: 'Save these injected agent instructions?' });
     if (config.guidanceOverridden) action('reset-agent-guidance', 'Reset to default', { icon: icons.cross, description: 'Remove the agent guidance override; retain task data and other settings.', confirm: 'Reset agent guidance to the built-in default?' });
     controls.push({ id: 'taskOfferPolicy', label: 'Task offers', kind: 'select', value: config.policy, options: ['always', 'github-remote', 'never'].map((value) => ({ label: value, value })), confirm: 'Save this global task-offer policy?' });
+    controls.push({ id: 'kittyOneTaskPerTab', label: 'One task per Kitty tab', kind: 'toggle', value: config.oneTaskPerTab, description: 'When another pane in the Kitty tab has a different task, selecting a task moves this pane to a new tab beside it. Off renames the shared tab.', confirm: 'Save this global Kitty tab setting?' });
     for (const [key, label, description] of [['titleWidth', 'Task title width', '3–1000 terminal cells.'], ['fieldWidth', 'Default field width', '3–1000 terminal cells; inherited by fields without a width override.'], ['maxFields', 'Maximum visible fields', '0–64 fields; 0 hides all task fields.']] as const) controls.push({ id: key, label, description, kind: 'number', value: config.config[key], confirm: 'Save this global footer setting?' });
     const catalog = fields(config.config, task?.agent_notes);
     const selected = footerBarNames(config.config, catalog);
@@ -535,7 +536,7 @@ return {
   } else {
     const cfg = structuredClone(before.config.config);
     let handoff = before.config.handoffPrompt, newSession = before.config.newSessionPrompt, policy = before.config.policy;
-    let guidance: string | null | undefined;
+    let guidance: string | null | undefined, oneTaskPerTab: boolean | undefined;
     let watchers: FieldWatcherConfig[] | undefined, reset: string | undefined;
     if (action === 'add-watcher' || action.startsWith('watcher:') || action.startsWith('remove-watcher:')) {
       watchers = before.config.watchers.map(({ config }) => ({ ...config }));
@@ -560,6 +561,7 @@ return {
     else if (action === 'handoffPrompt') handoff = z.string().parse(value);
     else if (action === 'newSessionPrompt') newSession = z.string().parse(value);
     else if (action === 'taskOfferPolicy') policy = z.enum(['always', 'github-remote', 'never']).parse(value);
+    else if (action === 'kittyOneTaskPerTab') oneTaskPerTab = z.boolean().parse(value);
     else if (['titleWidth', 'fieldWidth', 'maxFields'].includes(action)) cfg[action as 'titleWidth'] = z.number().int().parse(value);
     else if (action.startsWith('bar:')) {
       const name = action.slice(4);
@@ -590,7 +592,7 @@ return {
       }
     }
     signal.throwIfAborted();
-    saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers);
+    saveFooterConfig(cfg, before.config.raw, handoff, newSession, policy, guidance, watchers, oneTaskPerTab);
     // The desktop may be closed: forget a disabled watcher's results now, so re-enabling checks afresh.
     if (reset) options.fieldAutomation?.reset(reset);
   }

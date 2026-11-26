@@ -22,7 +22,7 @@ export function menuView(view: NativeView, screen: Screen): NativeView {
       title = 'Pinote / Settings'; body = 'Shared settings · affects every Pi session. Task values are unchanged.';
       controls = [group('prompts', 'Agent guidance', 'Edit shared task prompts and injected instructions.'),
         group('fields', 'Fields', 'Enable fields and edit display settings and automatic agent instructions.'),
-        ...take('taskOfferPolicy'), group('footer', 'Footer layout', 'Set widths, the field cap, and which fields appear in the bottom bar.')];
+        ...take('taskOfferPolicy', 'kittyOneTaskPerTab'), group('footer', 'Footer layout', 'Set widths, the field cap, and which fields appear in the bottom bar.')];
       break;
     case 'prompts':
       title = 'Pinote / Settings / Agent guidance'; body = 'Shared prompts and instructions · each change requires review and confirmation.';

@@ -52,7 +52,7 @@ completion requires idle Pi. Failed or uncertain
 writes offer refresh/verification, never automatic replay.
 
 Press **Tab** for **Settings**: **Agent guidance**, **Fields**, **Task offers**,
-then **Footer layout**. **Tab** or **Escape** returns to tasks with the search
+**One task per Kitty tab**, then **Footer layout**. **Tab** or **Escape** returns to tasks with the search
 retained. Editors accept plain text or numbers, not JSON; validation retains the
 draft. Cancelling a change's confirmation returns to its text draft. Values
 are saved only after review and confirmation.
@@ -84,6 +84,15 @@ Requires local Kitty with remote control enabled, `kitty` on PATH, and
 `KITTY_LISTEN_ON` / `KITTY_WINDOW_ID`; SSH and other terminals are unchanged.
 Rename failures warn without undoing selection. Completion and deselection leave
 the tab name unchanged; reload/resume and external task edits do not rename it.
+
+**One task per Kitty tab** (off by default; also in Electron's **Kitty tabs…**)
+keeps split panes from sharing a tab name. Each interactive Pi records its
+selected task in its Kitty window's `pinote_task` user variable, cleared on
+deselection, completion or exit. When another pane in the tab holds a different
+task, selecting one first moves this pane to a new tab beside the current one,
+then names it. A pane that is not Kitty's active window stays put and the shared
+tab keeps its name, with a warning. Moving uses Kitty's `detach_window new-tab-right`
+action (verified with Kitty 0.48).
 
 Completion keeps the conversation and editor, except for dedicated **Start in Kitty…**
 sessions (see below). With an empty editor, **Ctrl+D**

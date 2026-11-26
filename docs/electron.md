@@ -10,7 +10,7 @@ performance guarantee.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
 for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
-The private `electron/` package (0.19.3) bundles the matching Node backend;
+The private `electron/` package (0.20.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -278,6 +278,11 @@ If discovery finds no reachable instance, Pinote opens a new window without
 restoring saved tabs. It names the tab from the first line of the task, stripping a
 leading Markdown heading marker and taking up to 30 characters, plus a `[tag]`
 prefix if tagged. Saved text and tags are unchanged.
+
+**Kitty tabs…** in the menu sets **One task per tab**, shared with Pi's settings
+in `pi-note.json`. When on, selecting a task in Pi moves a split pane whose tab
+already shows another task to a new tab beside it; see the
+[pi-note README](../pi/README.md).
 
 Pi needs the [pi-note extension](../pi/README.md) and a `note` CLI using the same
 database. The launch passes the task ID, revision, and an optional editor draft.
