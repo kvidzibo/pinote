@@ -35,6 +35,12 @@ export function parseHandoffPrompt(value: unknown): string {
   }
   return value;
 }
+/** Whether a Pi pane sharing its Kitty tab with another task's pane moves to a new tab when it selects a task. */
+export function parseKittyOneTaskPerTab(root: Record<string, unknown>): boolean {
+  const value = Object.hasOwn(root, "kittyOneTaskPerTab") ? root.kittyOneTaskPerTab : false;
+  if (typeof value !== "boolean") throw new Error("kittyOneTaskPerTab in pi-note.json must be true or false.");
+  return value;
+}
 export type PinoteSettings = { footer: FooterConfig; handoffPrompt: string; newSessionPrompt?: string };
 
 export type FooterField = { name: string; label: string; link: boolean; format: string; width?: number; enabled?: boolean; instructions?: string };
@@ -166,8 +172,9 @@ function replaceConfigDocument(expectedRaw: string | null, change: (root: Record
   } finally { rmSync(temp, { force: true }); closeSync(descriptor); rmSync(lock, { force: true }); }
   return raw;
 }
-export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null, fieldWatchers?: FieldWatcherConfig[]) {
+export function saveFooterConfig(config: FooterConfig, expectedRaw: string | null, handoffPrompt?: string, newSessionPrompt?: string, taskOfferPolicy?: string, agentGuidance?: string | null, fieldWatchers?: FieldWatcherConfig[], kittyOneTaskPerTab?: boolean) {
   if (taskOfferPolicy !== undefined && !["always", "github-remote", "never"].includes(taskOfferPolicy)) throw new Error("Invalid taskOfferPolicy");
+  if (kittyOneTaskPerTab !== undefined) parseKittyOneTaskPerTab({ kittyOneTaskPerTab });
   const checked = parseFooterConfig({ footer: config });
   if (checked.bar == null) delete checked.bar;
   const prompts = {
@@ -181,9 +188,15 @@ export function saveFooterConfig(config: FooterConfig, expectedRaw: string | nul
       root.fieldWatchers = parseFieldWatchers({ fieldWatchers });
       delete root.fieldHandler;
     }
-    return { ...root, ...prompts, ...(taskOfferPolicy === undefined ? {} : { taskOfferPolicy }), footer: checked };
+    return { ...root, ...prompts, ...(taskOfferPolicy === undefined ? {} : { taskOfferPolicy }),
+      ...(kittyOneTaskPerTab === undefined ? {} : { kittyOneTaskPerTab }), footer: checked };
   });
   return { config: checked, raw };
+}
+/** The desktop's Kitty tabs setting: replaces only this key. */
+export function saveKittyOneTaskPerTab(enabled: unknown, expectedRaw: string | null): string {
+  const kittyOneTaskPerTab = parseKittyOneTaskPerTab({ kittyOneTaskPerTab: enabled });
+  return replaceConfigDocument(expectedRaw, (root) => ({ ...root, kittyOneTaskPerTab }));
 }
 /** The desktop's Watchers settings: replaces the watcher list and the shared keys its scripts declare. */
 export function saveFieldWatchers(input: unknown, expectedRaw: string | null): string {

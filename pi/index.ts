@@ -122,7 +122,8 @@ export default function pinote(pi: ExtensionAPI): void {
       if (transfers.size >= 32) transfers.delete(transfers.keys().next().value!);
       transfers.set(file, saved);
     }
-    ui?.detach(); await session?.stop(event.reason);
+    ui?.detach(); await ui?.release();
+    await session?.stop(event.reason);
   });
   pi.on('agent_start', () => { watcherDispatchPending = false; });
   pi.on('agent_settled', async (event) => {

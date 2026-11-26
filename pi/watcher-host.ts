@@ -2,7 +2,7 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { FieldAutomation } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, watcherEntries, type FieldWatcher } from './field-watchers.ts';
-import { footerCatalog, parseFooterConfig, readConfigDocument } from './footer-config.ts';
+import { footerCatalog, parseFooterConfig, parseKittyOneTaskPerTab, readConfigDocument } from './footer-config.ts';
 
 /** Run the field-watcher scheduler for as long as the hosting process (the desktop) lives.
  * Pi sessions only read the results it saves. Failure details go to watchers.log beside the
@@ -38,6 +38,12 @@ export function watcherSettings() {
   return { raw, watchers, fieldNames };
 }
 export { saveFieldWatchers as saveWatcherSettings } from './footer-config.ts';
+/** The desktop's Kitty tabs setting, shared with Pi's settings. */
+export function kittyTabSettings() {
+  const { raw, value } = readConfigDocument();
+  return { raw, oneTaskPerTab: parseKittyOneTaskPerTab(value) };
+}
+export { saveKittyOneTaskPerTab as saveKittyTabSettings } from './footer-config.ts';
 /** What saving these entries will trust, for the desktop's confirmation: enabled scripts and the shared values they are given. */
 export function watcherSaveSummary(input: unknown): string[] {
   const { entries, shared } = watcherEntries(input);

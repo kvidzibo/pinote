@@ -12,6 +12,7 @@ const view = (): NativeView => ({ version: 1, title: 'Pinote', revision: 'server
   { id: 'handoffPrompt', kind: 'text', multiline: true, label: 'Handoff prompt', value: '  First line  \n\nLast line  \n', revision: 'prompt-revision', confirm: 'Shared change' },
   { id: 'titleWidth', kind: 'number', label: 'Title width', value: 60, revision: 'width-revision', confirm: 'Shared change' },
   { id: 'taskOfferPolicy', kind: 'select', label: 'Suggestions', value: 'off', revision: 'policy-revision', options: [{ label: 'Off', value: 'off' }] },
+  { id: 'kittyOneTaskPerTab', kind: 'toggle', label: 'One task per Kitty tab', value: false, revision: 'kitty-revision' },
   { id: 'field:Owner', kind: 'action', label: 'Owner', revision: 'field-revision' },
 ] });
 
@@ -32,7 +33,7 @@ test('grouped navigation, plain editors, cancellation, preview and pending searc
   initTheme('dark', false);
   await t.test('local groups retain server control identity and revisions', () => {
     const current = view();
-    assert.deepEqual(menuView(current, 'settings').controls.map((c) => c.id), ['__prompts', '__fields', 'taskOfferPolicy', '__footer']);
+    assert.deepEqual(menuView(current, 'settings').controls.map((c) => c.id), ['__prompts', '__fields', 'taskOfferPolicy', 'kittyOneTaskPerTab', '__footer']);
     for (const [screen, id] of [['prompts', 'handoffPrompt'], ['footer', 'titleWidth'], ['fields', 'field:Owner']] as const) {
       const grouped = menuView(current, screen);
       assert.equal(grouped.revision, current.revision);

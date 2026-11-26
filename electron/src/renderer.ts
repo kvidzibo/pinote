@@ -4,7 +4,7 @@ import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result,
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
-import type { BackendSettings, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
+import type { BackendSettings, KittyTabSettings, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
 import { FIELD_EVENTS, TASK_EVENTS } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -86,6 +86,8 @@ function report(message: string): void {
   fitWindow();
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+/** A main-process error without Electron's IPC prefix. */
+function ipcMessage(error: unknown): string { return message(error).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''); }
 function recoveryWarning(text: string, preserveDrafts = false): void {
   readonly = true; state.warning = text; composerEditor.readOnly = true; updateEditors(); report(text); renderTasks(); renderToolbar();
   if (preserveDrafts) void track(persist(true)).catch(() => undefined);
@@ -283,6 +285,7 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'task-actions': configureTaskActions(); break;
     case 'composer-settings': configureComposer(); break;
     case 'watchers': configureWatchers(); break;
+    case 'kitty-tabs': configureKittyTabs(); break;
     case 'backend-settings': configureBackend(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
@@ -307,6 +310,26 @@ function configureComposer(): void {
     finally { saving = false; save.disabled = toggle.disabled = readonly; }
   }, readonly);
   controls(modal.panel).append(save);
+}
+function configureKittyTabs(): void {
+  const existing = layers.find(l => l.kind === 'kitty-tabs'); if (existing) { existing.panel.focus(); return; }
+  const modal = layer('Kitty tabs', 'kitty-tabs');
+  const toggle = el('input'); toggle.type = 'checkbox'; toggle.disabled = true;
+  const label = el('label', undefined, 'setting-toggle'); label.append(toggle, el('span', 'One task per tab'));
+  const status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
+  modal.panel.append(label, el('p', 'When you select a task in Pi and another pane in its Kitty tab has a different task, the pane moves to a new tab beside it, named after the task. Off renames the shared tab. Shared with Pi settings.'), status);
+  let settings: KittyTabSettings | undefined, saving = false;
+  const update = () => { toggle.disabled = save.disabled = !settings || saving || readonly; };
+  const save = button('save', 'Save Kitty tab settings', async () => {
+    if (!settings || saving || readonly || closing) return;
+    saving = true; status.textContent = ''; update();
+    try { await api.saveKittyTabSettings(toggle.checked, settings.raw); modal.close(); }
+    catch (error) { status.textContent = ipcMessage(error); }
+    finally { saving = false; update(); }
+  }, true);
+  controls(modal.panel).append(save);
+  void api.kittyTabSettings().then(loaded => { settings = loaded; toggle.checked = loaded.oneTaskPerTab; status.textContent = ''; update(); },
+    error => { status.textContent = `Could not load Kitty tab settings: ${ipcMessage(error)}`; });
 }
 function configureBackend(): void {
   const existing = layers.find(l => l.kind === 'backend-settings');
@@ -1244,12 +1267,11 @@ function configureWatchers(): void {
     const missing = w.spec.find(param => param.required && empty(entry(w).params[param.key]));
     return missing ? `Needs parameter: ${missing.label}` : w.problem && !/^(Needs|Invalid) parameter/.test(w.problem) ? w.problem : undefined;
   };
-  const failure = (error: unknown) => message(error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   const load = async () => {
     try {
       settings = await api.watcherSettings(); draft = structuredClone(settings.watchers);
       if (!draft.some(w => w.id === selected)) selected = draft[0]?.id;
-    } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${failure(error)}`; }
+    } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${ipcMessage(error)}`; }
     draw();
   };
   const add = button('add', 'Add watcher script…', async () => {
@@ -1260,14 +1282,14 @@ function configureWatchers(): void {
       if (!known && draft.length >= 32) { error = 'At most 32 watchers can be configured.'; update(); return; }
       if (!known) draft.push(chosen);
       selected = (known ?? chosen).id; note = ''; search.value = ''; draw();
-    } catch (reason) { error = failure(reason); update(); }
+    } catch (reason) { error = ipcMessage(reason); update(); }
   });
   const revert = button('reset', 'Discard unsaved watcher changes', () => { if (!settings || busy) return; draft = structuredClone(settings.watchers); note = ''; draw(); });
   const save = button('save', 'Save watcher settings…', async () => {
     if (!settings || busy || !dirty()) return;
     busy = true; error = ''; update();
     try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); } }
-    catch (reason) { error = failure(reason); }
+    catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
   searchBar.append(search, add); sidebar.append(searchBar, count, list, el('p', 'Trusted code, not sandboxed. Runs while Pinote is open.', 'tag-hint'));

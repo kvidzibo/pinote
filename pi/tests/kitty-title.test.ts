@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { getKeybindings } from '@earendil-works/pi-tui';
@@ -8,8 +11,8 @@ import type { NativeView } from '../extension/protocol.ts';
 test('only acknowledged task acceptance renames the originating Kitty tab, best effort', async () => {
   initTheme('dark', false);
   const original = { ...process.env };
-  process.env.KITTY_WINDOW_ID = '42';
-  process.env.KITTY_LISTEN_ON = 'unix:/tmp/isolated-kitty-test';
+  const agent = mkdtempSync(join(tmpdir(), 'pinote-kitty-title-')); // Default settings: rename only.
+  Object.assign(process.env, { KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', PI_CODING_AGENT_DIR: agent });
   delete process.env.SSH_CONNECTION;
   delete process.env.SSH_TTY;
   const signal = new AbortController().signal;
@@ -70,6 +73,105 @@ test('only acknowledged task acceptance renames the originating Kitty tab, best 
     }
     assert.equal(calls.length, 2, 'Non-Kitty, invalid targets and SSH must not control tabs');
   } finally {
+    rmSync(agent, { recursive: true, force: true });
+    for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
+    Object.assign(process.env, original);
+  }
+});
+
+test('one task per Kitty tab moves a pane beside a tab showing another task, then names it', async () => {
+  initTheme('dark', false);
+  const original = { ...process.env };
+  const agent = mkdtempSync(join(tmpdir(), 'pinote-kitty-tabs-'));
+  Object.assign(process.env, { KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', PI_CODING_AGENT_DIR: agent });
+  delete process.env.SSH_CONNECTION;
+  delete process.env.SSH_TTY;
+  const settings = (value: boolean) => writeFileSync(join(agent, 'pi-note.json'), JSON.stringify({ kittyOneTaskPerTab: value }));
+  const signal = new AbortController().signal;
+  const calls: string[][] = [], notices: string[] = [];
+  // Another pane in this tab holds `other`; `active` is whether this pane is Kitty's active window. A later tab follows.
+  let other: string | undefined = '3', active = true, failList = false, lostLaunch = false, timeouts = 0, marker: string | undefined, gate: Promise<void> | undefined;
+  const unselected: NativeView = { version: 1, title: 'Pinote', revision: '1', state: { selectedId: null }, controls: [] };
+  const selected = (id: number, text = `Task ${id}`): NativeView => ({ ...unselected, state: { selectedId: id }, footer: [{ action: 'preview', text }] });
+  let next = unselected;
+  const session: any = { view: unselected, signal, current: () => () => true,
+    action: async () => { session.view = next; session.onChange(); return {}; }, refresh: async () => {} };
+  const ui = new PinoteUI({ exec: async (_command: string, args: string[]) => {
+    const command = args.slice(3).map((arg) => arg.replace(/pinote_placeholder=[0-9a-f-]{36}$/, 'pinote_placeholder=ID'));
+    calls.push(command);
+    if (command[0] === 'set-user-vars') {
+      await gate;
+      // Pi reports a timed-out command as killed, possibly with exit code 0.
+      if (timeouts && timeouts--) return { code: 0, killed: true, stdout: '', stderr: '' };
+      marker = command[2].split('=')[1];
+    }
+    if (command[0] === 'launch' && lostLaunch) return { code: 143, killed: true, stdout: '', stderr: '' };
+    if (command[0] !== 'ls') return { code: 0, stdout: '', stderr: '' };
+    if (failList) return { code: 1, stdout: '', stderr: 'denied' };
+    return { code: 0, stderr: '', stdout: JSON.stringify([{ is_active: true, tabs: [
+      { is_active: true, windows: [{ id: 42, is_active: active, user_vars: {} }, { id: 43, is_active: !active, user_vars: other === undefined ? {} : { pinote_task: other } }] },
+      { is_active: false, windows: [{ id: 44, is_active: true, user_vars: { pinote_task: '5' } }] }] }]) };
+  } } as any, session);
+  const ctx: any = { mode: 'tui', isIdle: () => true, ui: { notify: (text: string) => notices.push(text), setWidget() {}, setStatus() {},
+    theme: { fg: (_color: string, text: string) => text, italic: (text: string) => text, strikethrough: (text: string) => text },
+    custom: async (factory: any) => {
+      let component: any;
+      try { return await new Promise((resolve) => {
+        component = factory({ terminal: { rows: 36, columns: 100 }, requestRender() {} },
+          { fg: (_color: string, text: string) => text }, getKeybindings(), resolve);
+        component.render(100);
+      }); } finally { component?.dispose(); }
+    } } };
+  ui.attach(ctx);
+  const select = async (id: number, from = unselected, to = selected(id)) => {
+    session.view = from; next = to; calls.length = 0; notices.length = 0;
+    assert.equal(await ui.dispatch(ctx, session.view, { id: `select:${id}`, kind: 'action', label: 'Select' }), true);
+    await ui.release(); // Settle queued marks before asserting.
+    return calls.filter((call) => call[0] !== 'set-user-vars');
+  };
+  const marks = () => calls.filter((call) => call[0] === 'set-user-vars').map((call) => call[2]);
+  const title = (id: number, name = `Task ${id}`) => ['set-tab-title', '--match=window_id:42', '--', name];
+  // A tagged placeholder tab opens beside this one; this pane moves into it by ID, then the placeholder closes.
+  const launch = (name: string) => ['launch', '--type=tab', '--location=after', '--match=window_id:42', '--var=pinote_placeholder=ID', `--tab-title=${name}`, 'sleep', '60'];
+  const close = ['close-window', '--match=var:pinote_placeholder=ID'];
+  const move = (name: string) => [launch(name), ['detach-window', '--match=id:42', '--target-tab=var:pinote_placeholder=ID'], close];
+  try {
+    settings(true);
+    assert.deepEqual(await select(7), [['ls'], ...move('Task 7'), title(7)]);
+    assert.deepEqual(marks(), ['pinote_task=7', 'pinote_task'], 'The pane records its task, and release clears it');
+    assert.deepEqual(await select(7, selected(7)), [['ls'], ...move('Task 7'), title(7)], 'Reselecting the current task checks again');
+    assert.deepEqual(await select(13, unselected, selected(13, '')), [['ls'], ...move('Task #13'), title(13, 'Task #13')], 'An empty title still moves');
+    other = '8';
+    assert.deepEqual(await select(8), [['ls'], title(8)], 'Panes on the same task share a tab');
+    other = undefined;
+    assert.deepEqual(await select(9), [['ls'], title(9)], 'Panes without a task do not count');
+    other = '3'; active = false;
+    assert.deepEqual(await select(10), [['ls']], 'An unfocused pane is neither moved nor allowed to rename the shared tab');
+    assert.deepEqual(notices, ['Pinote task selected, but this pane was not focused, so it stays in its shared Kitty tab.']);
+    active = true; lostLaunch = true;
+    assert.deepEqual(await select(15), [['ls'], launch('Task 15'), close], 'A lost launch reply still closes any placeholder');
+    assert.deepEqual(notices, ['Pinote task selected, but this pane could not be moved to its own Kitty tab.']);
+    lostLaunch = false; failList = true;
+    assert.deepEqual(await select(11), [['ls']]);
+    assert.deepEqual(notices, ['Pinote task selected, but this pane could not be moved to its own Kitty tab.']);
+    settings(false);
+    assert.deepEqual(await select(12), [title(12)], 'Off keeps renaming the shared tab');
+    // A timed-out marker update is retried on later changes, at most three times per value; release still clears.
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    timeouts = 3; calls.length = 0;
+    for (let i = 0; i < 5; i++) { session.onChange(); await tick(); }
+    await ui.release();
+    assert.deepEqual(marks(), ['pinote_task=12', 'pinote_task=12', 'pinote_task=12', 'pinote_task']);
+    assert.equal(marker, undefined);
+    // Release during an in-flight update still clears it afterwards.
+    let open = () => {};
+    gate = new Promise<void>((resolve) => { open = resolve; });
+    session.view = selected(14); session.onChange(); await tick();
+    const released = ui.release(); open(); await released;
+    assert.equal(marker, undefined, 'No stale marker after exit');
+  } finally {
+    ui.detach();
+    rmSync(agent, { recursive: true, force: true });
     for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
     Object.assign(process.env, original);
   }
