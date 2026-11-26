@@ -1580,6 +1580,20 @@ try {
       for(const name of ['Starting position','Starting size']) await group(name).getByRole('radio',{name:'Remember last',exact:true}).check();
       await save(); await restart();
       assert.deepEqual(await bounds(),last,'Remember last restores the last geometry');
+      // A fixed position keeps its requested top after the content fit shrinks a tall remembered size,
+      // unless the fitted height needs the room.
+      const area=await app.evaluate(({BrowserWindow,screen})=>screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea);
+      const top=area.y+area.height-150;
+      await close();
+      await writeFile(join(env.XDG_DATA_HOME,'pinote/electron/window.json'),JSON.stringify({x:20,y:20,width:420,height:800,manualSize:false,startup:{position:{x:40,y:top}}}));
+      reopened=await reopen(); await reopened.waitForTimeout(700);
+      const fitted=await bounds();
+      assert.equal(fitted.x,40);
+      assert.equal(fitted.y,Math.min(top,area.y+area.height-fitted.height),'Fitted windows keep the fixed top while they fit on screen');
+      assert.ok(fitted.height<Math.min(800,area.height),'The content fit still applies');
+      await open();
+      await group('Starting position').getByRole('radio',{name:'Remember last',exact:true}).check();
+      await save();
       await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),original);
       await reopened.waitForTimeout(350);
     }

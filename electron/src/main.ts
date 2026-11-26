@@ -36,8 +36,8 @@ let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 // Window settings: fixed start-up position/size, kept in window.json beside the last geometry.
 let startup: WindowStartup = {};
-// A fixed start-up position keeps its top edge through the first content fit.
-let holdTop = false;
+// A fixed start-up position keeps its requested top edge through the first content fit.
+let fixedTop: number | undefined;
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
 const log = (message: string) => {
   console.log(message);
@@ -69,13 +69,13 @@ function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
 function bounds() {
   return screen.getDisplayNearestPoint(window ? { x: window.getBounds().x, y: window.getBounds().y } : { x: 25, y: 1300 }).workArea;
 }
-function resize(width: number, height: number, anchored = true) {
+function resize(width: number, height: number, anchored = true, top?: number) {
   if (!window) return;
   const area = bounds(); const old = window.getBounds();
   const w = Math.max(280, Math.min(Math.round(width), area.width));
   const h = Math.max(120, Math.min(Math.round(height), area.height));
   const x = Math.max(area.x, Math.min(old.x, area.x + area.width - w));
-  const y = Math.max(area.y, Math.min(anchored ? old.y + old.height - h : old.y, area.y + area.height - h));
+  const y = Math.max(area.y, Math.min(top ?? (anchored ? old.y + old.height - h : old.y), area.y + area.height - h));
   changingSize = true; window.setBounds({ x, y, width: w, height: h });
   setTimeout(() => { changingSize = false; }, 150);
 }
@@ -201,7 +201,7 @@ async function boot() {
     // Fixed start-up values replace the last position and/or size; the last ones are still saved.
     if (validWindowStartup(saved.startup)) startup = saved.startup;
     const at = startup.position ?? (Number.isSafeInteger(saved.x) && Number.isSafeInteger(saved.y) ? { x: saved.x, y: saved.y } : undefined);
-    if (at) { position = { ...at }; area = screen.getDisplayNearestPoint(position).workArea; holdTop = !!startup.position; }
+    if (at) { position = { ...at }; area = screen.getDisplayNearestPoint(position).workArea; fixedTop = startup.position?.y; }
     const size = startup.size ?? (Number.isFinite(saved.width) && Number.isFinite(saved.height) ? saved : undefined);
     if (size) { fullSize = { width: Math.max(280, Math.min(size.width,area.width)), height: Math.max(120,Math.min(size.height,area.height)) }; manualSize = !!startup.size || saved.manualSize !== false; }
   } catch { /* Missing/invalid geometry never damages drafts or task data. */ }
@@ -209,7 +209,7 @@ async function boot() {
   collapsed = state.collapsed ?? false;
   const height = collapsed ? 132 : fullSize.height;
   const y = Math.max(area.y, Math.min(position?.y ?? area.y + area.height - height - 25, area.y + area.height - height));
-  const bottom = y + height, keepY = holdTop;
+  const bottom = y + height, keepTop = fixedTop;
   window = new BrowserWindow({ width: fullSize.width, height, x, y,
     minWidth: 280, minHeight: 120, type: 'utility', frame: false, show: false, title: 'Pinote Electron', backgroundColor: '#232832', alwaysOnTop: true,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
@@ -244,7 +244,8 @@ async function boot() {
   window.once('show', () => setTimeout(() => {
     if (!window) return;
     const current = window.getBounds(); changingSize = true;
-    window.setBounds({ x, y: keepY ? y : Math.max(area.y, bottom - current.height), width: current.width, height: current.height });
+    // Clamp against the height actually shown, which a first content fit may have changed.
+    window.setBounds({ x, y: Math.max(area.y, keepTop === undefined ? bottom - current.height : Math.min(keepTop, area.y + area.height - current.height)), width: current.width, height: current.height });
     setTimeout(() => { changingSize = false; geometryReady = true; }, 150);
   }, 100));
   window.on('resize', () => {
@@ -363,8 +364,8 @@ async function boot() {
     'choose-folder': async () => { const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0] ?? null; },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
-    fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); const keepTop = holdTop; holdTop = false; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,!keepTop); },
-    collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; holdTop = false; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
+    fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top); },
+    collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; fixedTop = undefined; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
     'cancel-close': () => { if (!exiting) { closing = false; switchRequested = false; } },
     'finish-close': async () => {
       if (!closing) throw new Error('Close was not requested.');
