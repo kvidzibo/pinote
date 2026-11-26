@@ -16,14 +16,17 @@ function pane(): { window: string; socket: string } | undefined {
 /** Best-effort Kitty tab control for one Pi pane. Failures never affect task state. */
 export class KittyPane {
   private exec: Exec;
-  /** The task this pane holds, and the value Kitty last acknowledged. */
+  /** The task this pane holds, and the value Kitty last acknowledged (undefined: unknown). */
   private wanted?: number | null;
   private marked?: number | null;
   private failures = 0;
   private marks = Promise.resolve();
   constructor(exec: Exec) { this.exec = exec; }
-  private kitty(socket: string, args: string[], signal?: AbortSignal) {
-    return this.exec('kitty', ['@', '--to', socket, ...args], { signal, timeout: 1500 });
+  /** A timed-out command counts as failed, whatever its exit code. */
+  private async kitty(socket: string, args: string[], signal?: AbortSignal) {
+    const result = await this.exec('kitty', ['@', '--to', socket, ...args], { signal, timeout: 1500 });
+    if (result.code !== 0 || result.killed) throw new Error('Kitty remote control failed');
+    return result;
   }
   /** Record this pane's selected task (or none), in order. A failed update is retried on later calls,
    * at most three times per value, so a stale marker cannot split another pane indefinitely. */
@@ -31,16 +34,15 @@ export class KittyPane {
     const target = pane();
     if (!target) return this.marks;
     if (taskId !== this.wanted) { this.wanted = taskId; this.failures = 0; }
-    if (this.wanted === this.marked || this.failures >= 3) return this.marks;
+    // Compare inside the queue, after earlier writes settle.
     this.marks = this.marks.then(async () => {
       const value = this.wanted;
       if (value === undefined || value === this.marked || this.failures >= 3) return;
       try {
-        const result = await this.kitty(target.socket, ['set-user-vars', `--match=id:${target.window}`, value === null ? TASK_VAR : `${TASK_VAR}=${value}`]);
-        if (result.code !== 0) throw new Error('Kitty user variable update failed');
+        await this.kitty(target.socket, ['set-user-vars', `--match=id:${target.window}`, value === null ? TASK_VAR : `${TASK_VAR}=${value}`]);
         this.marked = value;
       } catch {
-        this.marked = undefined; // Unknown: a timed-out update may still apply.
+        this.marked = undefined; // A timed-out update may still apply.
         if (value === this.wanted) this.failures++;
       }
     });
@@ -56,38 +58,36 @@ export class KittyPane {
    * another task's pane first moves to a new tab beside it. Returns a warning, if any. */
   async select(taskId: number, title: string, oneTaskPerTab: boolean, signal: AbortSignal): Promise<string | undefined> {
     const target = pane();
-    if (!target || !title) return;
+    if (!target) return;
+    const name = title || `Task #${taskId}`;
     try {
       if (oneTaskPerTab) {
-        const listed = await this.kitty(target.socket, ['ls'], signal);
-        if (listed.code !== 0) throw new Error('Kitty listing failed');
         const id = Number(target.window);
-        let shared = false, active = false, later = 0;
-        for (const os of JSON.parse(listed.stdout) as OsWindow[]) (os.tabs ?? []).forEach((tab, index, tabs) => {
+        let shared = false, active = false;
+        for (const os of JSON.parse((await this.kitty(target.socket, ['ls'], signal)).stdout) as OsWindow[]) for (const tab of os.tabs ?? []) {
           const self = tab.windows?.find((window) => window.id === id);
-          if (!self) return;
+          if (!self) continue;
           active = os.is_active === true && tab.is_active === true && self.is_active === true;
           shared = tab.windows!.some((window) => {
             const task = window.user_vars?.[TASK_VAR];
             return window.id !== id && typeof task === 'string' && task !== '' && task !== String(taskId);
           });
-          later = tabs.length - index - 1;
-        });
+        }
         if (shared) {
-          // Kitty opens the new tab in its focused OS window and reorders its active tab.
+          // Kitty places a new tab after the active one.
           if (!active) return 'Pinote task selected, but this pane was not focused, so it stays in its shared Kitty tab.';
-          // Move this pane by ID, never whichever pane is active. The new tab is appended, then moved beside the old one.
-          const moved = await this.kitty(target.socket, ['detach-window', `--match=id:${target.window}`, '--target-tab=new'], signal);
-          if (moved.code !== 0) throw new Error('Kitty move failed');
-          if (later) await this.kitty(target.socket, ['action', 'combine', ...Array.from({ length: later }, () => [':', 'move_tab_backward']).flat()], signal).catch(() => {});
+          // Every step names its window or tab: a focus change can shift the placement, never move another pane or tab.
+          const holder = (await this.kitty(target.socket, ['launch', '--type=tab', '--location=after', `--next-to=id:${target.window}`, `--tab-title=${name}`, 'sleep', '60'], signal)).stdout.trim();
+          if (!/^[1-9]\d*$/.test(holder)) throw new Error('Kitty did not report the new tab');
+          try { await this.kitty(target.socket, ['detach-window', `--match=id:${target.window}`, `--target-tab=window_id:${holder}`], signal); }
+          finally { await this.kitty(target.socket, ['close-window', `--match=id:${holder}`]).catch(() => {}); }
         }
       }
     } catch {
       return signal.aborted ? undefined : 'Pinote task selected, but this pane could not be moved to its own Kitty tab.';
     }
     try {
-      const renamed = await this.kitty(target.socket, ['set-tab-title', `--match=window_id:${target.window}`, '--', title], signal);
-      if (renamed.code !== 0) throw new Error('Kitty title update failed');
+      await this.kitty(target.socket, ['set-tab-title', `--match=window_id:${target.window}`, '--', name], signal);
     } catch {
       return signal.aborted ? undefined : 'Pinote task selected, but the Kitty tab could not be renamed.';
     }

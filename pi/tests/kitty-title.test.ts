@@ -90,16 +90,22 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
   const signal = new AbortController().signal;
   const calls: string[][] = [], notices: string[] = [];
   // Another pane in this tab holds `other`; `active` is whether this pane is Kitty's active window. A later tab follows.
-  let other: string | undefined = '3', active = true, failList = false, failMarks = 0;
+  let other: string | undefined = '3', active = true, failList = false, timeouts = 0, marker: string | undefined, gate: Promise<void> | undefined;
   const unselected: NativeView = { version: 1, title: 'Pinote', revision: '1', state: { selectedId: null }, controls: [] };
-  const selected = (id: number): NativeView => ({ ...unselected, state: { selectedId: id }, footer: [{ action: 'preview', text: `Task ${id}` }] });
+  const selected = (id: number, text = `Task ${id}`): NativeView => ({ ...unselected, state: { selectedId: id }, footer: [{ action: 'preview', text }] });
   let next = unselected;
   const session: any = { view: unselected, signal, current: () => () => true,
     action: async () => { session.view = next; session.onChange(); return {}; }, refresh: async () => {} };
   const ui = new PinoteUI({ exec: async (_command: string, args: string[]) => {
     const command = args.slice(3);
     calls.push(command);
-    if (command[0] === 'set-user-vars' && failMarks && failMarks--) return { code: 1, stdout: '', stderr: 'busy' };
+    if (command[0] === 'set-user-vars') {
+      await gate;
+      // Pi reports a timed-out command as killed, possibly with exit code 0.
+      if (timeouts && timeouts--) return { code: 0, killed: true, stdout: '', stderr: '' };
+      marker = command[2].split('=')[1];
+    }
+    if (command[0] === 'launch') return { code: 0, stdout: '99\n', stderr: '' };
     if (command[0] !== 'ls') return { code: 0, stdout: '', stderr: '' };
     if (failList) return { code: 1, stdout: '', stderr: 'denied' };
     return { code: 0, stderr: '', stdout: JSON.stringify([{ is_active: true, tabs: [
@@ -117,20 +123,23 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
       }); } finally { component?.dispose(); }
     } } };
   ui.attach(ctx);
-  const select = async (id: number, from = unselected) => {
-    session.view = from; next = selected(id); calls.length = 0; notices.length = 0;
+  const select = async (id: number, from = unselected, to = selected(id)) => {
+    session.view = from; next = to; calls.length = 0; notices.length = 0;
     assert.equal(await ui.dispatch(ctx, session.view, { id: `select:${id}`, kind: 'action', label: 'Select' }), true);
     await ui.release(); // Settle queued marks before asserting.
     return calls.filter((call) => call[0] !== 'set-user-vars');
   };
   const marks = () => calls.filter((call) => call[0] === 'set-user-vars').map((call) => call[2]);
-  const title = (id: number) => ['set-tab-title', '--match=window_id:42', '--', `Task ${id}`];
-  const move = [['detach-window', '--match=id:42', '--target-tab=new'], ['action', 'combine', ':', 'move_tab_backward']];
+  const title = (id: number, name = `Task ${id}`) => ['set-tab-title', '--match=window_id:42', '--', name];
+  // A placeholder tab opens beside this one; this pane moves into it by ID, then the placeholder closes.
+  const move = (name: string) => [['launch', '--type=tab', '--location=after', '--next-to=id:42', `--tab-title=${name}`, 'sleep', '60'],
+    ['detach-window', '--match=id:42', '--target-tab=window_id:99'], ['close-window', '--match=id:99']];
   try {
     settings(true);
-    assert.deepEqual(await select(7), [['ls'], ...move, title(7)], 'Moved by ID, then placed before the later tab');
+    assert.deepEqual(await select(7), [['ls'], ...move('Task 7'), title(7)]);
     assert.deepEqual(marks(), ['pinote_task=7', 'pinote_task'], 'The pane records its task, and release clears it');
-    assert.deepEqual(await select(7, selected(7)), [['ls'], ...move, title(7)], 'Reselecting the current task checks again');
+    assert.deepEqual(await select(7, selected(7)), [['ls'], ...move('Task 7'), title(7)], 'Reselecting the current task checks again');
+    assert.deepEqual(await select(13, unselected, selected(13, '')), [['ls'], ...move('Task #13'), title(13, 'Task #13')], 'An empty title still moves');
     other = '8';
     assert.deepEqual(await select(8), [['ls'], title(8)], 'Panes on the same task share a tab');
     other = undefined;
@@ -143,11 +152,19 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
     assert.deepEqual(notices, ['Pinote task selected, but this pane could not be moved to its own Kitty tab.']);
     settings(false);
     assert.deepEqual(await select(12), [title(12)], 'Off keeps renaming the shared tab');
-    // An unacknowledged marker update is retried on later changes, at most three times per value; release still clears.
-    failMarks = 3; calls.length = 0;
-    for (let i = 0; i < 5; i++) { session.onChange(); await new Promise((resolve) => setTimeout(resolve, 0)); }
+    // A timed-out marker update is retried on later changes, at most three times per value; release still clears.
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    timeouts = 3; calls.length = 0;
+    for (let i = 0; i < 5; i++) { session.onChange(); await tick(); }
     await ui.release();
     assert.deepEqual(marks(), ['pinote_task=12', 'pinote_task=12', 'pinote_task=12', 'pinote_task']);
+    assert.equal(marker, undefined);
+    // Release during an in-flight update still clears it afterwards.
+    let open = () => {};
+    gate = new Promise<void>((resolve) => { open = resolve; });
+    session.view = selected(14); session.onChange(); await tick();
+    const released = ui.release(); open(); await released;
+    assert.equal(marker, undefined, 'No stale marker after exit');
   } finally {
     ui.detach();
     rmSync(agent, { recursive: true, force: true });
