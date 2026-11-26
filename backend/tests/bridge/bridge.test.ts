@@ -97,7 +97,10 @@ test('all routes, canonical tags, revision acknowledgements, schedules and metad
   await call('tag_folder', { name: 'Work', folder: null }); await call('create_tag', { name: 'WORK', folder: null, folderIfNew: unused });
   await call('create_tag', { ...target(id), name: 'Fresh', folder: null, folderIfNew: fresh });
   assert.match((await respond(request('create_tag', { name: 'Blocked', folder: null, folderIfNew: join(root, 'Blocked') }), paths)).error.message, /exists but is not a folder/);
-  assert.deepEqual((await call('snapshot', { view: 'active' })).tags.filter((t: { name: string }) => ['Work', 'Fresh', 'Blocked'].includes(t.name)).map((t: { name: string; folder: string | null }) => [t.name, t.folder]).sort(), [['Fresh', fresh], ['Work', null]]);
+  symlinkSync(join(root, 'outside'), join(root, 'Dangling'));
+  assert.match((await respond(request('create_tag', { name: 'Dangling', folder: null, folderIfNew: join(root, 'Dangling') }), paths)).error.message, /exists but is not a folder/);
+  assert.equal(existsSync(join(root, 'outside')), false);
+  assert.deepEqual((await call('snapshot', { view: 'active' })).tags.filter((t: { name: string }) => ['Work', 'Fresh', 'Blocked', 'Dangling'].includes(t.name)).map((t: { name: string; folder: string | null }) => [t.name, t.folder]).sort(), [['Fresh', fresh], ['Work', null]]);
   assert.equal(statSync(fresh).isDirectory(), true); assert.equal(existsSync(unused), false);
   await call('tag', { ...target(id), tag: 'Work' }); await call('tag_folder', { name: 'Work', folder: root }); await call('delete_tag', { name: 'Fresh' });
   for (const [op, params] of [['rename_tag', { name: 'Work', newName: 'Project' }], ['tag_folder', { name: 'Project', folder: null }], ['delete_tag', { name: 'Project' }]] as const) assert.equal((await call(op, params)).changed, true);

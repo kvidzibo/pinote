@@ -1,5 +1,5 @@
 import { mkdirSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, normalize } from 'node:path';
 import { expandHome, resolvePath } from './runtime.ts';
 import { Temporal } from '@js-temporal/polyfill';
 import { caseFold } from 'unicode-case-folding';
@@ -49,16 +49,19 @@ export function validate_folder(value: string|null): string|null {
   } catch { /* Invalid, inaccessible or missing directory. */ }
   throw new NoteError('Choose an existing directory.');
 }
-// A tag folder created with a new tag: an absolute path whose parent exists by then.
+// A tag folder created with a new tag. Checked lexically: the filesystem is only
+// touched if the tag is inserted, and the path is used as given, not resolved.
 export function validate_new_folder(value: string|null): string|null {
   if(value === null) return null;
-  if(!isAbsolute(value) || value.includes('\0')) throw new NoteError('A new tag folder must be an absolute path.');
-  return resolvePath(value);
+  if(!isAbsolute(value) || value.includes('\0') || normalize(value) !== value) throw new NoteError('A new tag folder must be a normalized absolute path.');
+  return value;
 }
+// Creates the folder itself (its parent must exist); an existing entry must already be a
+// folder, so a dangling symlink is a collision rather than a way to create its target.
 export function create_folder(path: string): void {
   try { mkdirSync(path); } catch(error) {
     if((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new NoteError(`Cannot create ${path}: ${(error as Error).message}`);
-    if(!statSync(path).isDirectory()) throw new NoteError(`${path} exists but is not a folder.`);
+    if(!statSync(path, { throwIfNoEntry: false })?.isDirectory()) throw new NoteError(`${path} exists but is not a folder.`);
   }
 }
 export function canonicalInstant(value: Temporal.Instant): string {

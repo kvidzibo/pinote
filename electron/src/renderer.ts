@@ -959,8 +959,9 @@ async function edit(task: Task): Promise<void> {
   const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
   const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
   const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async (name, folder, folderIfNew) => {
-    if (readonly || closing || conflict || paused) return false;
-    queuedTag = name; queuedFolder = folder; queuedFolderIfNew = folderIfNew;
+    // Choosing a tag is an explicit retry, so a failed tag change can be corrected.
+    if (readonly || closing || conflict) return false;
+    queuedTag = name; queuedFolder = folder; queuedFolderIfNew = folderIfNew; paused = false;
     // The picker may outlive the debounce and accept this while text is already
     // in flight. Journal it now, even if that earlier write fails.
     retain(); check();
@@ -998,7 +999,7 @@ async function edit(task: Task): Promise<void> {
     tagName.textContent = (queuedTag === undefined ? tag : queuedTag) ?? 'Untagged';
     tagControl.title = `Change tag: ${tagName.textContent}${queuedTag === undefined ? '' : ' (not saved)'}`; tagControl.setAttribute('aria-label', tagControl.title);
     // Stays enabled while saving: a tag picked during an autosave is queued behind it.
-    tagControl.disabled = readonly || closing || conflict || paused;
+    tagControl.disabled = readonly || closing || conflict;
     undoButton.disabled = readonly || closing || conflict || !undoDepth(editor.view.state);
     retryButton.hidden = !paused || conflict || readonly;
     retryButton.disabled = saving || closing;

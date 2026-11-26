@@ -1201,6 +1201,22 @@ try {
     await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
     await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
     call('delete_tag',{name:'Auto tag'});
+    // A folder that cannot be created fails the tag change; clearing the folder corrects it.
+    await writeFile(join(tagBase,'Blocked tag'),'');
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Blocked tag');
+    await page.getByRole('button',{name:'Create tag “Blocked tag”…',exact:true}).click();
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Clear default folder',exact:true}).click();
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Blocked tag',exact:true}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Blocked tag').folder,null);
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Blocked tag',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
+    call('delete_tag',{name:'Blocked tag'});
     await text.fill('# Redesign the task editor\n\nKeep writing focused.\n\n- Save after a typing pause\n- Change tags in the header\n- Keep local text on failure');
     await saved();
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
