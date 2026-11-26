@@ -55,8 +55,8 @@ parallel jobs trade additional runner setup for shorter elapsed CI time.
 ### macOS
 
 The `macos` job checks basic macOS behavior on a disposable runner session; the
-remaining suites rely on Linux tools. It runs the Pi unit tests (without the long
-engine scenario), `electron/tests/macos-smoke.mjs` (task list, composer and Start in
+remaining suites, including the platform-neutral Pi unit tests, run only on Linux.
+It runs `electron/tests/macos-smoke.mjs` (task list, composer and Start in
 Kitty from a built app) and `backend/tests/desktop/kitty-macos.e2e.ts` (new Kitty
 window, reuse, and a Kitty opened by Launch Services). Hosted runners lack the
 OpenGL 3.3 Kitty needs, so CI installs `backend/tests/desktop/kitty-stub.mjs` as
