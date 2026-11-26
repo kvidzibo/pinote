@@ -57,7 +57,7 @@ export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession |
         if (session.view && session.view.state.selectedId == null) {
           // An exit after completion may also close the Kitty pane; recheck after that check.
           const arm = reason === 'exit' ? await prepareCompletedExit() : undefined;
-          if (!current()) return false;
+          if (!current() || !ctx.isIdle()) return false;
           arm?.();
           return true;
         }

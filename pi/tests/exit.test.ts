@@ -103,10 +103,14 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
   await press(); await choose('Complete task and exit');
   await emit('agent_start'); release(); await tick();
   assert.equal(actions, 3); assert.equal(shutdowns, 1); assert.equal(completedExits, 2); assert.equal(armed, 1);
+  // So does a run that is busy before agent_start fires.
+  await press(); await choose('Complete task and exit');
+  idle = false; release(); await tick(); idle = true;
+  assert.equal(actions, 4); assert.equal(shutdowns, 1); assert.equal(aborts, 0); assert.equal(completedExits, 3); assert.equal(armed, 1);
   prepare = prepared;
   idle = false;
   await press(); await choose('Exit without completing');
-  assert.equal(actions, 3); assert.equal(shutdowns, 2); assert.equal(aborts, 1); assert.equal(completedExits, 2);
+  assert.equal(actions, 4); assert.equal(shutdowns, 2); assert.equal(aborts, 1); assert.equal(completedExits, 3);
   session.refresh = async () => { session.view = { ...selected(), state: { selectedId: null } }; };
   await press(); assert.equal(shutdowns, 3);
   await emit('session_shutdown'); assert.equal(factory, previous);
@@ -119,7 +123,7 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
   await emit('session_shutdown');
   assert.equal(dialogSignal?.aborted, true);
   await choose('Complete task and exit');
-  assert.equal(actions, 3);
+  assert.equal(actions, 4);
   assert.equal(factory, later, 'must not overwrite later editor wrappers');
 });
 

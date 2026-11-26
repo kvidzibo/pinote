@@ -116,8 +116,10 @@ export default function pinote(pi: ExtensionAPI): void {
       if (transfers.size >= 32) transfers.delete(transfers.keys().next().value!);
       transfers.set(file, saved);
     }
-    ui?.detach(); await ui?.release();
-    await session?.stop(event.reason);
+    ui?.detach();
+    // Invalidate synchronously: pending actions, such as a Kitty pane check, must not act during cleanup.
+    const stopped = session?.stop(event.reason);
+    await ui?.release(); await stopped;
   });
   pi.on('agent_start', () => { watcherDispatchPending = false; });
   pi.on('agent_settled', async (event) => {
