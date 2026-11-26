@@ -68,7 +68,8 @@ the app, task and field events it listens for, name its fields and fill in the
 0.26.0, the **startup** app event runs a watcher once each time the desktop starts,
 **Limits** sets its time limit and cooldown, and up to four watchers run at once. Saving asks for
 confirmation, naming each enabled script and Forgejo instance, and applies to the
-next check. Settings that differ from a script's defaults need pi-note 0.48.0+ in Pi. The bundled **Worktree cleanup**
+next check. Settings that differ from a script's defaults need pi-note 0.48.0+ in Pi;
+app events, time limits and cooldowns need pi-note 0.53.0+. The bundled **Worktree cleanup**
 watcher removes a completed task's clean Git worktree. Task events need the Node
 `note` 0.27.0+ CLI; with an older one they are skipped and field watchers keep running.
 

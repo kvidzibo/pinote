@@ -189,8 +189,9 @@ test('startup runs once per scheduler start; watchers run at once within their t
   writeFileSync(note, `#!${process.execPath}
 import fs from 'node:fs';
 const args = process.argv.slice(2), state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
-const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined;
-console.log(JSON.stringify({ cursor: state.tail, events: after === undefined ? [] : state.events.filter((event) => event.id > after) }));`, { mode: 0o700 });
+const after = args.includes('--after') ? Number(args[args.indexOf('--after') + 1]) : undefined, limit = Number(args[args.indexOf('--limit') + 1]);
+const events = after === undefined ? [] : state.events.filter((event) => event.id > after).slice(0, limit);
+console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id : state.tail, events }));`, { mode: 0o700 });
   writeFileSync(state, JSON.stringify({ tail: 0, events: [] }));
   const script = (name: string, sleep = 0) => {
     const path = join(dir, `${name}.mjs`);
@@ -202,7 +203,7 @@ setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:
   let entries: Record<string, unknown>[] = [
     { path: script('a', 600), enabled: true, appEvents: ['startup'] }, { path: script('b', 600), enabled: true, appEvents: ['startup'] },
     { path: script('slow', 10_000), enabled: true, appEvents: ['startup'], timeoutSeconds: 1 },
-    { path: script('cool'), enabled: true, taskEvents: ['completed'], cooldownSeconds: 2 },
+    { path: script('cool'), enabled: true, taskEvents: ['completed'], cooldownSeconds: 2 }, { path: script('other'), enabled: true, taskEvents: ['started'] },
   ].map((entry) => ({ ...entry, fieldEvents: [] }));
   const failures: WatcherFailureLog[] = [];
   const open = () => FieldAutomation.open({ path: join(dir, 'state.db'), noteCommand: note, log: (failure) => { if (failure) failures.push(failure); },
@@ -226,6 +227,12 @@ setTimeout(()=>{fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({name:
   await new Promise((resolve) => setTimeout(resolve, 2100));
   await automation.tick();
   assert.deepEqual(delivered().filter((call) => call.name === 'cool').map((call) => call.eventId), ['1', '2'], 'A held event runs once the cooldown ends');
+  // A backlog held by one watcher's cooldown does not delay another watcher's events.
+  const completions = Array.from({ length: 100 }, (_, i) => ({ id: i + 3, taskId: 1, event: 'completed', fields: {} }));
+  writeFileSync(state, JSON.stringify({ tail: 103, events: [...completions, { id: 103, taskId: 1, event: 'started', fields: {} }] }));
+  for (let i = 0; i < 8 && !delivered().some((call) => call.name === 'other'); i++) await automation.tick();
+  assert.deepEqual(delivered().filter((call) => call.name === 'other').map((call) => call.eventId), ['103']);
+  assert.ok(delivered().filter((call) => call.name === 'cool').length < 5, 'The cooling watcher still waits');
   await automation.close(); automation = await open();
   await automation.tick();
   assert.deepEqual(delivered().filter((call) => call.event === 'startup').map((call) => call.name).sort(), ['a', 'a', 'b', 'b', 'late']);
