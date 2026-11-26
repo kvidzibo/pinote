@@ -149,10 +149,13 @@ test('Kitty on macOS finds pi in ~/.pi/agent/bin, passes PATH and reuses only pr
     await start_in_kitty(root, note, 'title', 'prompt');
     let calls = tools.calls(); assert.deepEqual(calls[0], ['@', '--to', `unix:${temp}/mykitty-1`, 'ls']);
     assert.deepEqual(calls[1].slice(2, 5), [`unix:${temp}/mykitty-1`, 'launch', '--type=tab']); assert.deepEqual(calls[1].slice(-2), [`--env=PATH=${tools.bin}`, join(agent, 'pi')]);
-    chmodSync(temp, 0o777); rmSync(tools.log); // A shared directory is not searched.
+    chmodSync(temp, 0o777); rmSync(tools.log); // A shared directory is neither searched nor used.
+    await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /needs TMPDIR to be a private directory/); assert.equal(existsSync(tools.log), false);
+    chmodSync(temp, 0o700); await new Promise(done => server.close(done));
     await start_in_kitty(root, note, 'title', 'prompt'); await sleep(300);
-    calls = tools.calls(); assert.equal(calls[0][0], '--session=none'); assert.ok(calls[0].includes(`--listen-on=unix:${temp}/mykitty-{kitty_pid}`));
-    assert.match(calls.at(-1)[2], new RegExp(`^unix:${temp}/mykitty-\\d+$`));
+    calls = tools.calls(); assert.equal(calls.some((a: string[]) => a[3] === 'ls'), false);
+    assert.ok(calls.find((a: string[]) => a[0] === '--session=none').includes(`--listen-on=unix:${temp}/mykitty-{kitty_pid}`));
+    assert.match(calls.find((a: string[]) => a[0] === '@')[2], new RegExp(`^unix:${temp}/mykitty-\\d+$`)); // Fake processes log in any order.
   } finally { server.close(); }
 });
 test('bridge Kitty headings, stale revisions and unknown partial launch outcomes', async () => {

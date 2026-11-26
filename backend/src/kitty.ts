@@ -18,9 +18,9 @@ const shown = (text: string, limit = 300) => {
   return characters.length > limit ? `${characters.slice(0, limit).join('')}…` : characters.join('');
 };
 function reason(error: any): string {
-  if (error?.killed || error?.signal) return 'no response within 5 s';
+  if (error?.killed) return 'no response within 5 s';
   const line = String(error?.stderr ?? '').split('\n').map(text => shown(text).trim()).find(Boolean);
-  return line || (typeof error?.code === 'number' ? `exit status ${error.code}` : shown(String(error?.code ?? error?.message ?? 'unknown error')));
+  return line || (error?.signal ? `terminated by ${error.signal}` : typeof error?.code === 'number' ? `exit status ${error.code}` : shown(String(error?.code ?? error?.message ?? 'unknown error')));
 }
 export async function remote(kitty: string, address: string, ...args: string[]): Promise<string> {
   checkCancelled();
@@ -32,20 +32,27 @@ export function kittyAddressEnv(): { explicit?: string; display?: string } {
   // macOS Kitty does not use X11; XQuartz's DISPLAY does not identify it.
   return explicit ? { explicit } : macos() ? {} : { display: checkedEnv('DISPLAY')?.replace(/\.0$/, '') };
 }
-// macOS has no /proc or abstract sockets. Find `listen_on unix:mykitty` sockets, which
-// Kitty suffixes with -<pid> in $TMPDIR. Only a private directory guarantees that the
-// socket still belongs to this user when the task is sent; shared /tmp is skipped.
-function macosSockets(): string[] {
-  const directory = temporary(), uid = process.getuid!(), sockets: [number, string][] = [];
+// macOS has no /proc or abstract sockets, so Kitty sockets live in $TMPDIR. Only a
+// private directory guarantees that a socket path still belongs to this user when the
+// task is sent; macOS gives each user one. Shared directories such as /tmp are refused.
+function privateTemporary(): string | undefined {
   try {
-    const stat = statSync(directory);
-    if (!stat.isDirectory() || stat.uid !== uid || stat.mode & 0o022) return [];
-    for (const name of readdirSync(directory)) {
-      const pid = /^mykitty-(\d+)$/.exec(name)?.[1], path = join(directory, name);
-      try { const socket = lstatSync(path); if (pid && socket.isSocket() && socket.uid === uid) sockets.push([Number(pid), `unix:${path}`]); }
-      catch { /* Removed while listing. */ }
-    }
-  } catch { /* Missing or unreadable directory. */ }
+    const directory = temporary(), stat = statSync(directory);
+    if (stat.isDirectory() && stat.uid === process.getuid!() && !(stat.mode & 0o022)) return directory;
+  } catch { /* Missing directory or unverifiable TMPDIR. */ }
+  return undefined;
+}
+// Find `listen_on unix:mykitty` sockets, which Kitty suffixes with -<pid>.
+function macosSockets(): string[] {
+  const directory = privateTemporary(), sockets: [number, string][] = [];
+  if (!directory) return [];
+  let names: string[] = [];
+  try { names = readdirSync(directory); } catch { /* Unreadable directory. */ }
+  for (const name of names) {
+    const pid = /^mykitty-(\d+)$/.exec(name)?.[1], path = join(directory, name);
+    try { const socket = lstatSync(path); if (pid && socket.isSocket() && socket.uid === process.getuid!()) sockets.push([Number(pid), `unix:${path}`]); }
+    catch { /* Removed while listing. */ }
+  }
   return sockets.sort(([a], [b]) => a - b).map(([, target]) => target);
 }
 export async function address(kitty: string): Promise<string | null> {
@@ -104,7 +111,12 @@ export async function start_in_kitty(directory: string, note: Note, title: strin
     } catch (error) { throw error instanceof NoteError ? new UncertainLaunch(error.message) : error; }
   }
   checkCancelled();
-  const socket = macos() ? join(temporary(), 'mykitty-') : '@mykitty-';
+  let socket = '@mykitty-';
+  if (macos()) {
+    const directory = privateTemporary();
+    if (!directory) throw new NoteError('Start in Kitty on macOS needs TMPDIR to be a private directory owned by you.');
+    socket = join(directory, 'mykitty-');
+  }
   const child = spawn(kitty, ['--session=none', `--listen-on=unix:${socket}{kitty_pid}`, '--override=allow_remote_control=socket-only', `--directory=${folder}`, `--title=${title}`, '/usr/bin/env', `PINOTE_LAUNCH_TASK=${launch}`, pi], { stdio: 'ignore', detached: true });
   let failed: NodeJS.ErrnoException | undefined; child.on('error', error => { failed = error; }); child.unref();
   target = `unix:${socket}${child.pid}`;
