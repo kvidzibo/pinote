@@ -520,7 +520,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty-tabs','backend-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty-tabs','window-settings','backend-settings','drafts','close']);
     assert.ok(state.items.every(i=>i.type==='separator' || i.hasIcon),'Every native menu item needs a bundled icon');
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
@@ -1546,6 +1546,42 @@ try {
     assert.equal(await reopened.getByRole('button',{name:'New-task tag: Untagged',exact:true}).count(),1);
     assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).filters,null);
     assert.equal(await reopened.locator('#ordinary').evaluate(node=>node.scrollTop),210);
+    // Window settings: fixed start-up position and size replace the last ones; Remember last restores them.
+    {
+      const settings=()=>reopened.getByRole('dialog',{name:'Window',exact:true});
+      const group=name=>settings().getByRole('radiogroup',{name,exact:true});
+      const open=async()=>{await selectNativeMenu(()=>reopened.getByRole('button',{name:'Menu',exact:true}).click(),'window-settings');await settings().locator('input[name="window-size"]:checked').waitFor();};
+      const save=async()=>{await settings().getByRole('button',{name:'Save window settings',exact:true}).click();await settings().waitFor({state:'detached'});};
+      const bounds=()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+      const last={x:150,y:120,width:430,height:330}, original=await bounds();
+      const restart=async()=>{await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),last);await reopened.waitForTimeout(350);await close();reopened=await reopen();await reopened.waitForTimeout(350);};
+      await open();
+      for(const name of ['Starting position','Starting size']) assert.equal(await group(name).getByRole('radio',{name:'Remember last',exact:true}).isChecked(),true);
+      assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).isDisabled(),true);
+      await group('Starting position').getByRole('radio',{name:'Fixed',exact:true}).check();
+      assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).inputValue(),String(original.x),'Fixed values start from the current window');
+      await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).fill('40');
+      await group('Starting position').getByRole('spinbutton',{name:'Y',exact:true}).fill('60');
+      await group('Starting size').getByRole('radio',{name:'Fixed',exact:true}).check();
+      await group('Starting size').getByRole('spinbutton',{name:'Width',exact:true}).fill('100');
+      assert.equal(await settings().getByRole('button',{name:'Save window settings',exact:true}).isDisabled(),true,'Sizes below the window minimum are rejected');
+      await group('Starting size').getByRole('spinbutton',{name:'Width',exact:true}).fill('360');
+      await group('Starting size').getByRole('spinbutton',{name:'Height',exact:true}).fill('300');
+      await reopened.screenshot({path:join(root,'window-settings.png')});
+      await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:20,y:20,width:280,height:300}));
+      await reopened.waitForTimeout(200);
+      assert.ok(await settings().evaluate(n=>n.scrollWidth<=n.clientWidth),'Window settings must fit narrow windows');
+      await reopened.screenshot({path:join(root,'window-settings-narrow.png')});
+      await save(); await restart();
+      assert.deepEqual(await bounds(),{x:40,y:60,width:360,height:300},'Fixed start-up geometry replaces the last one');
+      await open();
+      assert.equal(await group('Starting size').getByRole('spinbutton',{name:'Height',exact:true}).inputValue(),'300');
+      for(const name of ['Starting position','Starting size']) await group(name).getByRole('radio',{name:'Remember last',exact:true}).check();
+      await save(); await restart();
+      assert.deepEqual(await bounds(),last,'Remember last restores the last geometry');
+      await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),original);
+      await reopened.waitForTimeout(350);
+    }
     // A tag removed while closed must not leave a restored draft using a stale tag.
     call('create_tag',{name:'Restart-only tag',folder:null});
     await reopened.getByRole('button',{name:'New-task tag: Untagged',exact:true}).click();

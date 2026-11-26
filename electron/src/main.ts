@@ -11,8 +11,8 @@ import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
 import { initialState } from './protocol.ts';
-import type { MenuAction, MenuRequest } from './protocol.ts';
-import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState } from './security.ts';
+import type { MenuAction, MenuRequest, WindowStartup } from './protocol.ts';
+import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.enableSandbox();
@@ -34,6 +34,8 @@ const stopWatchers = () => watchersStop ??= Promise.race([
 ]).then(() => { watchersStopped = true; });
 let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
+// Window settings: fixed start-up position/size, kept in window.json beside the last geometry.
+let startup: WindowStartup = {};
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
 const log = (message: string) => {
   console.log(message);
@@ -76,13 +78,16 @@ function resize(width: number, height: number, anchored = true) {
   setTimeout(() => { changingSize = false; }, 150);
 }
 
+function geometry() {
+  const current = window!.getBounds();
+  fullSize = { width: current.width, height: collapsed ? fullSize.height : current.height };
+  return { ...fullSize, x: current.x, y: current.y, manualSize, ...startup.position || startup.size ? { startup } : {} };
+}
 function saveGeometry() {
   if (!window || !geometryReady) return;
-  const current = window.getBounds();
-  fullSize = { width: current.width, height: collapsed ? fullSize.height : current.height };
-  const geometry = { ...fullSize, x: current.x, y: current.y, manualSize };
+  const content = geometry();
   // Geometry is best-effort; it must not poison draft writes or trap a read-only window.
-  geometryWrites = geometryWrites.then(() => atomic(join(dataDir, 'window.json'), geometry))
+  geometryWrites = geometryWrites.then(() => atomic(join(dataDir, 'window.json'), content))
     .catch(() => log('Cannot save Electron window geometry.'));
   return geometryWrites;
 }
@@ -99,7 +104,7 @@ function popupMenu(request: MenuRequest, showBackend: boolean): Promise<MenuActi
     const menu = Menu.buildFromTemplate([
       item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
       item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('watchers', 'Watchers…', 'view-reveal'),
-      item('kitty-tabs', 'Kitty tabs…', 'utilities-terminal'),
+      item('kitty-tabs', 'Kitty tabs…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'),
       ...showBackend ? [item('backend-settings', 'Switch to Node backend…', 'utilities-terminal')] : [], separator,
       item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
@@ -192,6 +197,12 @@ async function boot() {
       position = { x: size.x, y: size.y }; area = screen.getDisplayNearestPoint(position).workArea;
     }
     if (Number.isFinite(size.width) && Number.isFinite(size.height)) { fullSize = { width: Math.max(280, Math.min(size.width,area.width)), height: Math.max(120,Math.min(size.height,area.height)) }; manualSize = size.manualSize !== false; }
+    // Fixed start-up values replace the last position and/or size; both are still saved as usual.
+    if (validWindowStartup(size.startup)) {
+      startup = size.startup;
+      if (startup.position) { position = { ...startup.position }; area = screen.getDisplayNearestPoint(position).workArea; }
+      if (startup.size) { fullSize = { width: Math.min(startup.size.width, area.width), height: Math.min(startup.size.height, area.height) }; manualSize = true; }
+    }
   } catch { /* Missing/invalid geometry never damages drafts or task data. */ }
   const x = Math.max(area.x, Math.min(position?.x ?? area.x + 25, area.x + area.width - fullSize.width));
   collapsed = state.collapsed ?? false;
@@ -332,6 +343,20 @@ async function boot() {
       if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing Kitty tab settings.');
       if (closing || typeof oneTaskPerTab !== 'boolean' || !(raw === null || typeof raw === 'string' && Buffer.byteLength(raw) <= 2 * 1024 * 1024)) throw new Error('Invalid Kitty tab settings');
       (await watcherHost()).saveKittyTabSettings(oneTaskPerTab, raw);
+    },
+    'window-settings': () => {
+      const current = window!.getBounds();
+      return { startup: structuredClone(startup), current: { x: current.x, y: current.y, width: current.width, height: collapsed ? fullSize.height : current.height } };
+    },
+    // Unlike best-effort geometry, a settings save reports failure and keeps the previous settings.
+    'save-window-settings': async (_event, value: unknown) => {
+      if (closing || !validWindowStartup(value)) throw new Error('Invalid window settings');
+      if (!geometryReady) throw new Error('Pinote is still placing its window; try again.');
+      const previous = startup; startup = structuredClone(value);
+      const content = geometry();
+      const write = geometryWrites.then(() => atomic(join(dataDir, 'window.json'), content));
+      geometryWrites = write.catch(() => {});
+      try { await write; } catch { startup = previous; throw new Error('Cannot save window settings.'); }
     },
     'choose-folder': async () => { const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0] ?? null; },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },

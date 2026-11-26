@@ -83,6 +83,12 @@ textarea { resize: none; line-height: 1.5; }
 .panel .setting-toggle { flex-direction: row; align-items: center; }
 .setting-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #89b4fa; }
 .controls { display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
+.window-setting { display: flex; flex-direction: column; gap: 6px; }
+.window-choice { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.window-fields { display: flex; gap: 8px; }
+.panel .window-fields label { flex: 1; min-width: 0; flex-direction: row; align-items: center; gap: 5px; }
+.window-fields span { color: #b6bfce; }
+.window-fields input { min-width: 0; }
 .scroll { min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .tag-list { max-height: 45vh; }
 .tag-choice { display: flex; width: 100%; justify-content: flex-start; text-align: left; }

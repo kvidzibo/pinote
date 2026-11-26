@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from '../src/protocol.ts';
 import type { LegacyPerStateTaskActionSettings, LegacyTaskActionSettings } from '../src/protocol.ts';
-import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, agentFieldNames, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState } from '../src/security.ts';
+import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, agentFieldNames, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState, validWindowStartup } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
   assert.ok(validParams('edit', { id: 1, revision: 'rev', text: 'literal <script>☘</script>' }));
@@ -13,6 +13,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   for (const fields of [undefined, null, [], { PRs: 1 }, { ['x'.repeat(257)]: 'v' }]) assert.ok(!validParams('agent', { id: 1, revision: 'rev', fields }));
   assert.ok(!validParams('transition', { id: 1, revision: 'rev', state: 'active', action: 'erase' }));
   assert.ok(validMenuRequest({ kind: 'app', x: 0, y: 100 }));
+  for (const startup of [{}, { position: { x: -2560, y: 1030 } }, { size: { width: 280, height: 120 } }, { position: { x: 30, y: 1030 }, size: { width: 650, height: 400 } }]) assert.ok(validWindowStartup(startup));
+  for (const startup of [null, [], { position: { x: 1 } }, { position: { x: 0.5, y: 0 } }, { size: { width: 279, height: 400 } }, { size: { width: 650, height: 400, depth: 1 } }, { position: { x: 0, y: 100001 } }, { anchor: 'top' }]) assert.ok(!validWindowStartup(startup));
   for (const inProgress of [false, true]) for (const readOnly of [false, true]) {
     assert.ok(!validMenuRequest({ kind: 'task', x: 10, y: 20, inProgress, readOnly }));
   }

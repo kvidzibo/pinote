@@ -4,7 +4,7 @@ import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result,
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
-import type { BackendSettings, KittyTabSettings, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
+import type { BackendSettings, KittyTabSettings, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
 import { FIELD_EVENTS, TASK_EVENTS } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -286,6 +286,7 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'composer-settings': configureComposer(); break;
     case 'watchers': configureWatchers(); break;
     case 'kitty-tabs': configureKittyTabs(); break;
+    case 'window-settings': configureWindow(); break;
     case 'backend-settings': configureBackend(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
@@ -330,6 +331,55 @@ function configureKittyTabs(): void {
   controls(modal.panel).append(save);
   void api.kittyTabSettings().then(loaded => { settings = loaded; toggle.checked = loaded.oneTaskPerTab; status.textContent = ''; update(); },
     error => { status.textContent = `Could not load Kitty tab settings: ${ipcMessage(error)}`; });
+}
+function configureWindow(): void {
+  const existing = layers.find(l => l.kind === 'window-settings'); if (existing) { existing.panel.focus(); return; }
+  const modal = layer('Window', 'window-settings');
+  const status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
+  let settings: WindowSettings | undefined, saving = false;
+  // One setting: Remember last, or fixed values that fill from the current window when first chosen.
+  const group = (heading: string, name: string, fields: [label: string, key: string, min: number][]) => {
+    const radio = (text: string) => { const input = el('input'); input.type = 'radio'; input.name = name; const label = el('label', undefined, 'setting-toggle'); label.append(input, el('span', text)); return { input, label }; };
+    const remember = radio('Remember last'), fixed = radio('Fixed');
+    const row = el('div', undefined, 'window-fields');
+    const inputs = fields.map(([text, key, min]) => {
+      const input = el('input'); input.type = 'number'; input.step = '1'; input.min = String(min); input.max = '100000'; input.dataset.key = key;
+      const label = el('label'); label.append(el('span', text), input); row.append(label); return input;
+    });
+    const section = el('div', undefined, 'window-setting'); section.setAttribute('role', 'radiogroup'); section.setAttribute('aria-label', heading);
+    const choice = el('div', undefined, 'window-choice'); choice.append(remember.label, fixed.label);
+    section.append(el('p', heading, 'settings-heading'), choice, row); modal.panel.append(section);
+    for (const input of [remember.input, fixed.input]) input.addEventListener('change', () => {
+      if (fixed.input.checked && settings) for (const input of inputs) if (!input.value) input.value = String(settings.current[input.dataset.key as keyof WindowSettings['current']]);
+      update();
+    });
+    const value = () => fixed.input.checked ? Object.fromEntries(inputs.map(input => [input.dataset.key!, Number(input.value)])) : undefined;
+    const load = (saved?: Record<string, number>) => { remember.input.checked = !saved; fixed.input.checked = !!saved; inputs.forEach(input => { input.value = saved ? String(saved[input.dataset.key!]) : ''; }); };
+    return { remember: remember.input, fixed: fixed.input, inputs, value, load, valid: () => !fixed.input.checked || inputs.every(input => input.value !== '' && input.checkValidity()) };
+  };
+  const position = group('Starting position', 'window-position', [['X', 'x', -100000], ['Y', 'y', -100000]]);
+  const size = group('Starting size', 'window-size', [['Width', 'width', 280], ['Height', 'height', 120]]);
+  modal.panel.append(el('p', 'Applies when Pinote starts, kept on screen. Positions are desktop coordinates. Your window manager may still tile or move it.'), status);
+  const update = () => {
+    const off = !settings || saving;
+    for (const group of [position, size]) { group.remember.disabled = group.fixed.disabled = off; group.inputs.forEach(input => { input.disabled = off || !group.fixed.checked; }); }
+    save.disabled = off || !position.valid() || !size.valid();
+  };
+  const save = button('save', 'Save window settings', async () => {
+    if (!settings || saving || closing || !position.valid() || !size.valid()) return;
+    saving = true; status.textContent = ''; update();
+    const startup: WindowStartup = {};
+    const fixedPosition = position.value(), fixedSize = size.value();
+    if (fixedPosition) startup.position = fixedPosition as WindowStartup['position'];
+    if (fixedSize) startup.size = fixedSize as WindowStartup['size'];
+    try { await api.saveWindowSettings(startup); modal.close(); }
+    catch (error) { status.textContent = ipcMessage(error); }
+    finally { saving = false; update(); }
+  }, true);
+  for (const input of [...position.inputs, ...size.inputs]) input.addEventListener('input', update);
+  controls(modal.panel).append(save);
+  void api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); status.textContent = ''; update(); },
+    error => { status.textContent = `Could not load window settings: ${ipcMessage(error)}`; });
 }
 function configureBackend(): void {
   const existing = layers.find(l => l.kind === 'backend-settings');
