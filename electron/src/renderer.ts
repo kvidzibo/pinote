@@ -1191,12 +1191,16 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, f
 }
 function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task, create?: (name: string, folder: string | null) => Promise<boolean>): void {
   const modal = layer('New tag'); const name = field('Name', prefill); modal.panel.append(name.wrapper);
-  // With a base folder, the folder follows the name until one is chosen or cleared.
-  const base = state.tagBaseFolder; let folder: string | null = null, follow = base !== undefined;
+  // With a base folder, a new tag's folder follows its name until one is chosen or cleared.
+  // An existing tag keeps its folder: create_tag would otherwise replace it.
+  let folder: string | null = null, follow = state.tagBaseFolder !== undefined;
+  const fold = (tag: string) => tag.trim().normalize('NFC').toUpperCase().toLowerCase();
+  const existing = (tag: string) => active?.tags.find(t => fold(t.name) === fold(tag));
+  const autoFolder = (tag: string) => state.tagBaseFolder === undefined || existing(tag) ? null : tagFolderPath(state.tagBaseFolder, tag);
   const folderLabel = el('p', undefined, 'folder-path'), folderHint = el('p', 'Created if missing when you create the tag.', 'tag-hint');
   const showFolder = () => {
-    const shown = follow ? tagFolderPath(base!, name.input.value) : folder;
-    folderLabel.textContent = shown ?? 'No default folder'; folderLabel.title = shown ?? ''; folderHint.hidden = !follow || !shown;
+    const match = follow ? existing(name.input.value) : undefined, shown = match ? match.folder : follow ? autoFolder(name.input.value) : folder;
+    folderLabel.textContent = shown ?? 'No default folder'; folderLabel.title = shown ?? ''; folderHint.hidden = !follow || !!match || !shown;
   };
   name.input.addEventListener('input', showFolder);
   modal.panel.append(folderLabel, folderHint); showFolder();
@@ -1206,18 +1210,20 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
     button('save', 'Create tag', async () => {
       if (saving) return; saving = true;
       try {
-        if (follow && tagFolderPath(base!, name.input.value)) {
-          try { folder = await api.createTagFolder(base!, name.input.value); }
+        // The name is read once so the folder always matches the tag submitted.
+        const typed = name.input.value; let chosen = follow ? null : folder;
+        if (follow && autoFolder(typed)) {
+          try { chosen = await api.createTagFolder(typed); }
           catch (error) { report(ipcMessage(error)); return; }
         }
         if (create) {
           // The editor journals and serializes creation plus assignment as one
           // revision-bound operation, including when the app starts closing.
-          if (await create(name.input.value, folder)) { await refresh(); modal.close(); await after?.(name.input.value.trim()); }
+          if (await create(typed, chosen)) { await refresh(); modal.close(); await after?.(typed.trim()); }
           return;
         }
-        const result = await call('create_tag', { name: name.input.value, folder, ...(attachTask ? target(attachTask) : {}) });
-        if (result) { await refresh(); const savedName = result.tag ?? name.input.value.trim(); modal.close(); await after?.(savedName); }
+        const result = await call('create_tag', { name: typed, folder: chosen, ...(attachTask ? target(attachTask) : {}) });
+        if (result) { await refresh(); const savedName = result.tag ?? typed.trim(); modal.close(); await after?.(savedName); }
       } finally { saving = false; }
     }, readonly));
   name.input.focus();

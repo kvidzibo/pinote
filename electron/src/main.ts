@@ -10,7 +10,7 @@ import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
-import { initialState, tagFolderPath, validTagBaseFolder } from './protocol.ts';
+import { initialState, tagFolderPath } from './protocol.ts';
 import type { MenuAction, MenuRequest, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
@@ -27,6 +27,8 @@ let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
 let watchers: Promise<{ close(): Promise<void> } | undefined> | undefined;
 let watchersStop: Promise<void> | undefined; let watchersStopped = false;
+// Folders the user picked in this session; only these can become the tag base folder.
+const pickedFolders = new Set<string>();
 // Bounded and never rejects: quitting must not hang on a watcher.
 const stopWatchers = () => watchersStop ??= Promise.race([
   Promise.resolve(watchers).then(started => started?.close()).catch(() => log('Pinote field watchers did not stop cleanly.')),
@@ -300,7 +302,8 @@ async function boot() {
     },
     // Field names configured in Pi's settings; the editor offers them even when a task has no value yet.
     'agent-fields': async () => { try { return agentFieldNames(JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8'))); } catch { return []; } },
-    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value)) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
+    // A new base folder must come from the folder picker (see create-tag-folder).
+    'save-state': async (_event, value: unknown) => { if (readonly || !validState(value) || ![undefined, state.tagBaseFolder].includes(value.tagBaseFolder) && !pickedFolders.has(value.tagBaseFolder!)) throw new Error('Cannot save invalid or unreadable state'); const next = structuredClone(value); next.warning = state.warning; state = next; await persist(); },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };
@@ -361,13 +364,18 @@ async function boot() {
       geometryWrites = write.catch(() => {});
       try { await write; } catch { throw new Error('Cannot save window settings.'); }
     },
-    'choose-folder': async () => { const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0] ?? null; },
-    // Creates only the tag's own folder: the base folder must already exist.
-    'create-tag-folder': async (_event, base: unknown, tag: unknown) => {
+    'choose-folder': async () => {
+      const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }), folder = result.canceled ? null : result.filePaths[0] ?? null;
+      if (folder !== null) pickedFolders.add(folder);
+      return folder;
+    },
+    // Creates only the tag's own folder inside the saved, user-picked base folder, which must exist.
+    'create-tag-folder': async (_event, tag: unknown) => {
       if (readonly || state.warning || closing) throw new Error('Writes are disabled; the tag folder was not created.');
-      const path = typeof base === 'string' && validTagBaseFolder(base) && typeof tag === 'string' && tag.length <= 256 ? tagFolderPath(base, tag) : null;
+      const base = state.tagBaseFolder; if (base === undefined) throw new Error('No base folder is set.');
+      const path = typeof tag === 'string' && tag.length <= 256 ? tagFolderPath(base, tag) : null;
       if (path === null) throw new Error('Invalid tag folder');
-      if (!(await stat(base as string).catch(() => null))?.isDirectory()) throw new Error(`Base folder ${base} is missing; choose it again in Manage tags.`);
+      if (!(await stat(base).catch(() => null))?.isDirectory()) throw new Error(`Base folder ${base} is missing; choose it again in Manage tags.`);
       try { await mkdir(path); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new Error(`Cannot create ${path}: ${(error as Error).message}`);
         if (!(await stat(path)).isDirectory()) throw new Error(`${path} exists but is not a folder.`);

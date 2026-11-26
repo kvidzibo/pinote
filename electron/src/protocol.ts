@@ -87,10 +87,11 @@ export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
 export const DEFAULT_KITTY_TAB_TITLE = '{tag}{title:30}';
 export const validKittyTabTitle = (value: string) => !!value.trim() && Array.from(value).length <= 256 && !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
 export const validTagBaseFolder = (value: string) => value.length <= 4096 && value.startsWith('/') && !/[\p{Cc}\p{Cs}]/u.test(value);
-/** A new tag's default folder inside the base folder, named after the tag ("/" becomes "-"); null when the name cannot be a folder. */
+/** A new tag's default folder inside the base folder, named after the tag ("/" becomes "-"); null for a name the backend rejects or that cannot be a folder. */
 export function tagFolderPath(base: string, tag: string): string | null {
+  if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(tag)) return null;
   const name = tag.trim().normalize('NFC').replaceAll('/', '-');
-  return name && name !== '.' && name !== '..' ? `${base.replace(/\/+$/, '')}/${name}` : null;
+  return name && name !== '.' && name !== '..' && Array.from(name).length <= 64 ? `${base.replace(/\/+$/, '')}/${name}` : null;
 }
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
@@ -117,7 +118,7 @@ export type PinoteApi = BackendApi & {
   saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<boolean>;
   kittyTabSettings(): Promise<KittyTabSettings>; saveKittyTabSettings(oneTaskPerTab: boolean, raw: string | null): Promise<void>;
   windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup): Promise<void>;
-  chooseFolder(): Promise<string | null>; createTagFolder(base: string, tag: string): Promise<string>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
+  chooseFolder(): Promise<string | null>; createTagFolder(tag: string): Promise<string>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
   onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
 };

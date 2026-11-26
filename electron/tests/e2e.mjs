@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -1374,6 +1374,22 @@ try {
     await create.getByRole('button',{name:'Create tag',exact:true}).click();
     await create.waitFor({state:'detached'});
     assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='web/app').folder,join(base,'web-app'));
+    // An existing tag keeps its folder; a name the backend rejects creates no folder.
+    call('tag_folder',{name:'web/app',folder:root});
+    await page.waitForFunction(folder=>document.querySelector('.tag-editor .folder-path')?.textContent===folder,root);
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    await tagName.fill('Web/App');
+    assert.equal(await tagFolder.textContent(),root);
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await create.waitFor({state:'detached'});
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='web/app').folder,root);
+    await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
+    await tagName.fill('x'.repeat(65));
+    assert.equal(await tagFolder.textContent(),'No default folder');
+    await create.getByRole('button',{name:'Create tag',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('cannot exceed 64'));
+    assert.deepEqual((await readdir(base)).sort(),['blocked','web-app']);
+    await page.keyboard.press('Escape'); await create.waitFor({state:'detached'});
     await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
     await tagName.fill('blocked');
     await create.getByRole('button',{name:'Create tag',exact:true}).click();
