@@ -8,10 +8,8 @@ export class ConfigError extends Error {}
 export class GuiConfig {
   readonly max_visible_notes: number | bigint;
   readonly markdown_preview: boolean;
-  readonly kitty_start_prompt: string;
-  constructor(max_visible_notes: number | bigint = 10, markdown_preview = true,
-    kitty_start_prompt = 'is task clear?') {
-    this.max_visible_notes = max_visible_notes; this.markdown_preview = markdown_preview; this.kitty_start_prompt = kitty_start_prompt;
+  constructor(max_visible_notes: number | bigint = 10, markdown_preview = true) {
+    this.max_visible_notes = max_visible_notes; this.markdown_preview = markdown_preview;
   }
   static load(path = guiConfigPath()): GuiConfig {
     let document: Record<string, any>;
@@ -30,9 +28,6 @@ export class GuiConfig {
       fail('gui.max_visible_notes must be a positive integer.');
     const markdown = get('markdown_preview', true);
     if (typeof markdown !== 'boolean') fail('gui.markdown_preview must be a boolean.');
-    const prompt = get('kitty_start_prompt', 'is task clear?');
-    if (typeof prompt !== 'string' || Array.from(prompt).length > 4000 || /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(prompt))
-      fail('gui.kitty_start_prompt must be a string of at most 4000 characters without control characters (except tabs/newlines).');
-    return new GuiConfig(limit, markdown, prompt);
+    return new GuiConfig(limit, markdown);
   }
 }

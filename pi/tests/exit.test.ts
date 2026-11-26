@@ -61,7 +61,10 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
     },
   } as unknown as ExtensionContext;
   const emit = async (name: string) => { for (const handler of handlers.get(name) ?? []) await handler({}, ctx); };
-  registerExit(pi, () => session as unknown as PinoteSession);
+  let completedExits = 0, armed = 0; // Only an acknowledged completion that exits may close the pane.
+  const prepared = async () => { completedExits++; return () => { armed++; }; };
+  let prepare: () => Promise<(() => void) | undefined> = prepared;
+  registerExit(pi, () => session as unknown as PinoteSession, () => prepare());
   await emit('session_start');
   let editor = factory!({} as any, {} as any, { matches: (data: string, action: string) => action === 'app.exit' && data === 'configured-exit' } as any);
   const press = async () => { editor.handleInput('configured-exit'); await tick(); };
@@ -93,10 +96,21 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
   assert.match(notices.at(-1)!, /refresh .*before retrying/);
   uncertain = false;
   await press(); await choose('Complete task and exit');
-  assert.equal(actions, 2); assert.equal(shutdowns, 1); assert.equal(aborts, 0);
+  assert.equal(actions, 2); assert.equal(shutdowns, 1); assert.equal(aborts, 0); assert.equal(completedExits, 1); assert.equal(armed, 1);
+  // A run starting during the pane check keeps Pi open and never arms the pane close.
+  let release: () => void = () => assert.fail('no pane check');
+  prepare = () => { completedExits++; return new Promise((resolve) => { release = () => resolve(() => { armed++; }); }); };
+  await press(); await choose('Complete task and exit');
+  await emit('agent_start'); release(); await tick();
+  assert.equal(actions, 3); assert.equal(shutdowns, 1); assert.equal(completedExits, 2); assert.equal(armed, 1);
+  // So does a run that is busy before agent_start fires.
+  await press(); await choose('Complete task and exit');
+  idle = false; release(); await tick(); idle = true;
+  assert.equal(actions, 4); assert.equal(shutdowns, 1); assert.equal(aborts, 0); assert.equal(completedExits, 3); assert.equal(armed, 1);
+  prepare = prepared;
   idle = false;
   await press(); await choose('Exit without completing');
-  assert.equal(actions, 2); assert.equal(shutdowns, 2); assert.equal(aborts, 1);
+  assert.equal(actions, 4); assert.equal(shutdowns, 2); assert.equal(aborts, 1); assert.equal(completedExits, 3);
   session.refresh = async () => { session.view = { ...selected(), state: { selectedId: null } }; };
   await press(); assert.equal(shutdowns, 3);
   await emit('session_shutdown'); assert.equal(factory, previous);
@@ -109,7 +123,7 @@ test('editor exit: cancellation, exact approval revision, direct completion and 
   await emit('session_shutdown');
   assert.equal(dialogSignal?.aborted, true);
   await choose('Complete task and exit');
-  assert.equal(actions, 2);
+  assert.equal(actions, 4);
   assert.equal(factory, later, 'must not overwrite later editor wrappers');
 });
 
@@ -163,7 +177,7 @@ test('/new gates replacement on exact task approval without exiting Pi', async (
   const decide = async (choice?: string, change = () => {}) => {
     const result = startNew(); await tick(); change(); choose(choice); return result;
   };
-  registerExit(pi, () => session as unknown as PinoteSession);
+  registerExit(pi, () => session as unknown as PinoteSession, async () => assert.fail('/new must not close the pane'));
   await emit('session_start');
   assert.equal(await emit('session_before_switch', { reason: 'resume' }), undefined);
   assert.equal(refreshes, 0, 'resume must not show the new-session prompt');

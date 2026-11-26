@@ -1,4 +1,4 @@
-import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds, validKittyTabTitle, validTagBaseFolder } from './protocol.ts';
+import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds, validKittyStartPrompt, validKittyTabTitle, validTagBaseFolder } from './protocol.ts';
 import type { MenuRequest, Operation, PreviewData, PreviewRequest, UIState, WindowStartup } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
@@ -18,7 +18,8 @@ const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   create_tag: { name: str, folder: nullable, folderIfNew: v => v === undefined || nullable(v), id: v => v === undefined || id(v), revision: v => v === undefined || str(v) },
   rename_tag: { name: str, newName: str }, delete_tag: { name: str }, tag_folder: { name: str, folder: nullable },
   completions: { ids: v => Array.isArray(v) && v.length <= 1000 && v.every(id) },
-  kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || typeof v === 'string' && validKittyTabTitle(v) },
+  kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || typeof v === 'string' && validKittyTabTitle(v),
+    prompt: v => v === undefined || typeof v === 'string' && validKittyStartPrompt(v) },
 };
 export function validParams(op: unknown, value: unknown): op is Operation {
   if (typeof op !== 'string' || !Object.hasOwn(specs, op) || !record(value)) return false;
@@ -77,11 +78,12 @@ function validTaskActions(value: unknown): boolean {
     Object.hasOwn(value, state) && validTaskActionPreferences(value[state], taskActionIds(state).filter(id => !legacy || id !== 'preview'), legacy));
 }
 export function validState(value: unknown): value is UIState {
-  if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions','creationTag','collapsed','scroll','composerStartAsMarkdown','kittyTabTitle','tagBaseFolder'].includes(k))) return false;
+  if (!record(value) || Object.keys(value).some(k => !['draft','filters','read','edits','warning','taskActions','creationTag','collapsed','scroll','composerStartAsMarkdown','kittyTabTitle','kittyStartPrompt','tagBaseFolder'].includes(k))) return false;
   if (Object.hasOwn(value, 'creationTag') && value.creationTag !== null && (typeof value.creationTag !== 'string' || !str(value.creationTag, 256) || !value.creationTag.length)) return false;
   if (Object.hasOwn(value, 'collapsed') && typeof value.collapsed !== 'boolean') return false;
   if (Object.hasOwn(value, 'composerStartAsMarkdown') && typeof value.composerStartAsMarkdown !== 'boolean') return false;
   if (Object.hasOwn(value, 'kittyTabTitle') && (typeof value.kittyTabTitle !== 'string' || !validKittyTabTitle(value.kittyTabTitle))) return false;
+  if (Object.hasOwn(value, 'kittyStartPrompt') && (typeof value.kittyStartPrompt !== 'string' || !validKittyStartPrompt(value.kittyStartPrompt))) return false;
   if (Object.hasOwn(value, 'tagBaseFolder') && (typeof value.tagBaseFolder !== 'string' || !validTagBaseFolder(value.tagBaseFolder))) return false;
   const scroll = value.scroll;
   if (Object.hasOwn(value, 'scroll') && (!record(scroll) || Object.keys(scroll).length !== 2 ||
@@ -112,7 +114,7 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
   if (!record(result)) return false;
   if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && typeof result.database === 'string' && result.database.startsWith('/') && !/[\p{Cs}\x00]/u.test(result.database) && str(result.database);
   if (operation === 'snapshot') {
-    return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean' && str(result.config.kittyStartPrompt);
+    return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean';
   }
   if (typeof result.changed !== 'boolean' || (result.id !== undefined && !id(result.id)) || (result.tag !== undefined && !str(result.tag,256))) return false;
   if (Object.hasOwn(result, 'revision') && (typeof result.revision !== 'string' || !str(result.revision,128) || !result.revision || /[\p{C}\p{Z}]/u.test(result.revision.replaceAll(' ', '')))) return false;

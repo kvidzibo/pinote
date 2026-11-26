@@ -10,8 +10,8 @@ import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
-import { initialState, tagFolderPath } from './protocol.ts';
-import type { MenuAction, MenuRequest, WindowStartup } from './protocol.ts';
+import { TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
+import type { MenuAction, MenuRequest, TaskCompletionAction, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -111,7 +111,7 @@ function popupMenu(request: MenuRequest, showBackend: boolean): Promise<MenuActi
     const menu = Menu.buildFromTemplate([
       item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
       item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('watchers', 'Watchers…', 'view-reveal'),
-      item('kitty-tabs', 'Kitty tabs…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'),
+      item('kitty', 'Kitty…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'),
       ...showBackend ? [item('backend-settings', 'Switch to Node backend…', 'utilities-terminal')] : [], separator,
       item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
@@ -357,11 +357,12 @@ async function boot() {
         return true;
       } finally { watcherSaving = false; }
     },
-    'kitty-tab-settings': async () => (await watcherHost()).kittyTabSettings(),
-    'save-kitty-tab-settings': async (_event, oneTaskPerTab: unknown, raw: unknown) => {
-      if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing Kitty tab settings.');
-      if (closing || typeof oneTaskPerTab !== 'boolean' || !(raw === null || typeof raw === 'string' && Buffer.byteLength(raw) <= 2 * 1024 * 1024)) throw new Error('Invalid Kitty tab settings');
-      (await watcherHost()).saveKittyTabSettings(oneTaskPerTab, raw);
+    'kitty-settings': async () => (await watcherHost()).kittySettings(),
+    'save-kitty-settings': async (_event, oneTaskPerTab: unknown, onTaskComplete: unknown, raw: unknown) => {
+      if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing Kitty settings.');
+      if (closing || typeof oneTaskPerTab !== 'boolean' || !TASK_COMPLETION_ACTIONS.includes(onTaskComplete as TaskCompletionAction) ||
+        !(raw === null || typeof raw === 'string' && Buffer.byteLength(raw) <= 2 * 1024 * 1024)) throw new Error('Invalid Kitty settings');
+      (await watcherHost()).saveKittySettings(oneTaskPerTab, onTaskComplete, raw);
     },
     'window-settings': () => {
       const current = window!.getBounds();

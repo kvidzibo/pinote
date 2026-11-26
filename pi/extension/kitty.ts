@@ -1,10 +1,11 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
 const TASK_VAR = 'pinote_task';
 type Exec = ExtensionAPI['exec'];
-type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown> };
+type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown>; foreground_processes?: { pid?: unknown }[] };
 type OsWindow = { tabs?: { is_active?: unknown; windows?: Window[] }[] };
 
 /** This pane in a local Kitty with remote control; SSH and other terminals are left alone. */
@@ -12,6 +13,32 @@ function pane(): { window: string; socket: string } | undefined {
   const window = process.env.KITTY_WINDOW_ID, socket = process.env.KITTY_LISTEN_ON;
   if (!window || !/^[1-9]\d*$/.test(window) || !socket || process.env.SSH_CONNECTION || process.env.SSH_TTY) return undefined;
   return { window, socket };
+}
+
+let closing = false;
+/** Prepares closing this Kitty pane after Pi exits, ending any shell Pi ran in. Returns the function that
+ * arms it, so callers can recheck their state after this check; call it only right before exiting.
+ * Only a pane running Pi in its foreground qualifies: inherited Kitty variables (tmux, screen, child
+ * processes) can name another pane. Best effort; a pane whose only program was Pi is already gone.
+ * The close command is detached so Pi can finish exiting first. */
+export async function paneCloser(exec: Exec): Promise<(() => void) | undefined> {
+  const target = pane();
+  if (!target) return;
+  try {
+    const result = await exec('kitty', ['@', '--to', target.socket, 'ls', `--match=id:${target.window}`], { timeout: 1500 });
+    if (result.code !== 0 || result.killed) return;
+    const owned = (JSON.parse(result.stdout) as OsWindow[]).some((os) => os.tabs?.some((tab) => tab.windows?.some((window) =>
+      window.id === Number(target.window) && window.foreground_processes?.some((process_) => process_.pid === process.pid))));
+    if (!owned) return;
+  } catch { return; }
+  return () => {
+    if (closing) return;
+    closing = true;
+    process.once('exit', () => {
+      try { spawn('kitty', ['@', '--to', target.socket, 'close-window', `--match=id:${target.window}`], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); }
+      catch { /* Pi still exits. */ }
+    });
+  };
 }
 
 /** Best-effort Kitty tab control for one Pi pane. Failures never affect task state. */

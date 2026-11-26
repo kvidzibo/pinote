@@ -164,7 +164,7 @@ test('subprocess unicode framing, private logging, redacted conflicts', () => {
   assert.equal(JSON.parse(stale.stdout).error.code, 'conflict'); assert.equal(stale.stderr.includes('SECRET'), false); assert.equal(readFileSync(paths.log, 'utf8').includes('SECRET'), false); assert.equal(statSync(paths.log).mode & 0o777, 0o600);
 });
 test('bad config and unsupported database IDs return bounded errors', async () => {
-  const dir = join(process.env.XDG_CONFIG_HOME!, 'pinote'); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'config.toml'), '[gui]\nkitty_start_prompt=42\n');
+  const dir = join(process.env.XDG_CONFIG_HOME!, 'pinote'); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'config.toml'), '[gui]\nmarkdown_preview=42\n');
   assert.equal((await respond(request('snapshot', { view: 'active' }), paths)).error.code, 'invalid');
   rmSync(dir, { recursive: true }); const s = new Store(paths.database);
   try { s.add('large'); s.connection.exec('DELETE FROM events; UPDATE notes SET id=9007199254740992'); } finally { s.close(); }
@@ -174,12 +174,14 @@ test('snapshots match the Python reference for schema8 metadata, config and orde
   // Captured from the removed Python bridge; see fixtures/python-reference/README.md.
   const reference = (name: string) => readFileSync(new URL('../fixtures/python-reference/' + name, import.meta.url), 'utf8');
   const config = join(process.env.XDG_CONFIG_HOME!, 'pinote'); mkdirSync(config, { recursive: true });
-  writeFileSync(join(config, 'config.toml'), '[gui]\nmax_visible_notes=4\nmarkdown_preview=false\nkitty_start_prompt="go"');
+  writeFileSync(join(config, 'config.toml'), '[gui]\nmax_visible_notes=4\nmarkdown_preview=false');
   mkdirSync(paths.data, { recursive: true, mode: 0o700 });
   // The dump inserts rows before the tables their foreign keys name exist.
   const database = new DatabaseSync(paths.database, { enableForeignKeyConstraints: false });
   try { database.exec(reference('bridge-snapshots.sql')); } finally { database.close(); }
   const expected = JSON.parse(reference('bridge-snapshots.json'));
+  // The start prompt has since moved to Electron's own settings; snapshots keep the default for older releases.
+  for (const view of Object.values(expected) as any[]) view.result.config.kittyStartPrompt = 'is task clear?';
   for (const view of ['active', 'archive', 'scheduled']) {
     assert.deepEqual(JSON.parse(jsonStringify(await respond(request('snapshot', { view }), paths))), expected[view]);
   }

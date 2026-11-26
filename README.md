@@ -83,9 +83,9 @@ involved. Tasks, tags and Markdown handoff fields are shared with the desktop an
 other sessions, while task selection remains conversation-specific.
 
 Install it with `pi install npm:pi-note` or `pi install ./pi`, then open **`/pinote`**.
-Completion preserves the conversation and draft, except that completing the
-launched task in a dedicated **Start in Kitty…** session exits Pi and closes its
-tab. Completion never runs Git commands.
+Completing a task from Pi closes Pi by default, so a **Start in Kitty…** tab
+closes too; Electron's **Menu → Kitty…** can keep Pi open or also close its pane.
+Completion never runs Git commands.
 
 Requires Pi 1.4.0+, Node.js 22.19+ and the Node `note` CLI on PATH. Pinote
 Electron runs optional [field watchers](pi/FIELD_EVENTS.md) while it is open.

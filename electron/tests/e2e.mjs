@@ -520,7 +520,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty-tabs','window-settings','backend-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty','window-settings','backend-settings','drafts','close']);
     assert.ok(state.items.every(i=>i.type==='separator' || i.hasIcon),'Every native menu item needs a bundled icon');
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
@@ -876,23 +876,27 @@ try {
     await page.screenshot({path:join(root,'kitty-started-before-launch.png')});
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:true,result:{changed:true}}));
     await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] [data-row-element="done"]`)?.disabled,id);
-    // A saved tab name reaches the launch; the default is not sent.
+    // A saved tab name and start prompt reach the launch; defaults are not sent.
     {
-      const kitty = page.getByRole('dialog',{name:'Kitty tabs',exact:true}), name = kitty.getByRole('textbox',{name:'Tab name for Start in Kitty',exact:true});
-      const save = kitty.getByRole('button',{name:'Save Kitty tab settings',exact:true});
-      await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'kitty-tabs');
+      const kitty = page.getByRole('dialog',{name:'Kitty',exact:true}), name = kitty.getByRole('textbox',{name:'Tab name',exact:true});
+      const prompt = kitty.getByRole('textbox',{name:'Start prompt',exact:true});
+      const save = kitty.getByRole('button',{name:'Save Kitty settings',exact:true});
+      await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'kitty');
       await name.waitFor(); for(let i=0;i<200 && await name.isDisabled();i++) await page.waitForTimeout(10);
       assert.equal(await name.inputValue(),'{tag}{title:30}');
+      assert.equal(await prompt.inputValue(),'is task clear?');
       await name.fill('  '); assert.equal(await save.isDisabled(),true,'A blank tab name cannot be saved');
+      await name.fill('{tag}{title}'); await prompt.fill('\u202e'); assert.equal(await save.isDisabled(),true,'A prompt with terminal controls cannot be saved');
       const shared = join(env.PI_CODING_AGENT_DIR,'pi-note.json'), before = await readFile(shared,'utf8').catch(()=>null);
-      await name.fill('{tag}{title}'); await save.click(); await kitty.waitFor({state:'detached'});
-      assert.equal((await page.evaluate(()=>window.pinote.loadState())).kittyTabTitle,'{tag}{title}');
-      assert.equal(await readFile(shared,'utf8').catch(()=>null),before,'A tab-name-only save leaves the file shared with Pi untouched');
+      await prompt.fill('Check scope\nthen wait'); await save.click(); await kitty.waitFor({state:'detached'});
+      const saved = await page.evaluate(()=>window.pinote.loadState());
+      assert.equal(saved.kittyTabTitle,'{tag}{title}'); assert.equal(saved.kittyStartPrompt,'Check scope\nthen wait');
+      assert.equal(await readFile(shared,'utf8').catch(()=>null),before,'Saving Electron-only values leaves the file shared with Pi untouched');
     }
     await selectTaskAction(page,id,'Start in Kitty…');
     for(let i=0;i<100;i++) { if(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length)===2) break; await page.waitForTimeout(20); }
     assert.equal(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.length),2);
-    assert.deepEqual(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.map(r=>r.tabTitle)),[undefined,'{tag}{title}']);
+    assert.deepEqual(await app.evaluate(()=>globalThis.__kittyStartProbe.requests.map(r=>[r.tabTitle,r.prompt])),[[undefined,undefined],['{tag}{title}','Check scope\nthen wait']]);
     assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===id).updated_at,started.updated_at,'An already-started task is not started again');
     await app.evaluate(()=>globalThis.__kittyStartProbe.resolve({protocol:1,ok:false,error:{code:'busy',message:'Injected launch failure'}}));
     await page.getByText('busy: Injected launch failure',{exact:true}).waitFor();
@@ -1755,6 +1759,8 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  // Enabling writes re-renders the rows, which would close an action bar opened before it applies.
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await selectTaskAction(reopened, added.id, 'Edit text…');
   await writeFile(faultFile,'edit');
   await reopened.evaluate(()=>{const input=document.querySelector('.cm-content[aria-label="Task text"]');input.focus();window.getSelection().selectAllChildren(input);const data=new DataTransfer();data.setData('text/plain','Rapid uncertain edit draft');input.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,ctrlKey:true,bubbles:true}));});
@@ -1775,6 +1781,8 @@ try {
   reopened=await reopen();
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
   await reopened.getByRole('button',{name:'I checked saved tasks; enable writes',exact:true}).click();
+  // Enabling writes re-renders the rows, which would close an action bar opened before it applies.
+  await reopened.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await selectTaskAction(reopened, added.id, 'Edit text…');
   const closingText='Private editor draft frozen at final close';
   const closingEditor=reopened.locator('.cm-content[aria-label="Task text"]');

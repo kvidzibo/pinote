@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -160,7 +160,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.deepEqual(retained.cards(), [card], 'A retained selection is displayed in the new transcript');
     await retained.choose('Clear');
     assert.deepEqual((await open(undefined, [], 'new')).cards(), []);
-    // Only acknowledged completion of the launch task closes its dedicated session.
+    // By default, acknowledged completion exits Pi, so Kitty closes a launched tab.
     const closingTask = cli('agent', 'add', '--text=Close dedicated Kitty tab');
     const dedicated = await open({ task_id: closingTask.id, updated_at: closingTask.updated_at });
     dedicated.setIdle(false);
@@ -169,29 +169,27 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     await dedicated.choose(undefined); // Cancel the task menu.
     assert.equal(dedicated.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'in_progress');
-    const reloaded = await open(undefined, [...dedicated.entries], 'reload', '', 'tui', dedicated.ctx.sessionManager.getSessionId());
-    await reloaded.choose('Complete');
-    assert.equal(reloaded.shutdowns, 1);
-    assert.deepEqual(reloaded.notices, [], 'completion exits without Git warnings');
+    dedicated.notices.length = 0;
+    await dedicated.choose('Complete');
+    assert.equal(dedicated.shutdowns, 1);
+    assert.deepEqual(dedicated.notices, [], 'completion exits without Git warnings');
     assert.equal(cli('agent', 'get', String(closingTask.id)).state, 'done');
-    assert.equal(reloaded.selection().selectedId, null);
+    assert.equal(dedicated.selection().selectedId, null);
 
-    const next = cli('agent', 'add', '--text=Normal Pi completion stays open');
+    // The setting applies to every Pi session, launched or not.
+    const next = cli('agent', 'add', '--text=Normal Pi completion exits too');
     const normal = await open(undefined);
-    await normal.choose('Normal Pi completion stays open');
+    await normal.choose('Normal Pi completion exits too');
     await normal.choose('Complete');
-    assert.equal(normal.shutdowns, 0);
+    assert.equal(normal.shutdowns, 1);
     assert.equal(cli('agent', 'get', String(next.id)).state, 'done');
 
-    const originalTask = cli('agent', 'add', '--text=Launch ownership does not follow other tasks');
-    const switched = await open({ task_id: originalTask.id, updated_at: originalTask.updated_at });
-    const replacement = cli('agent', 'add', '--text=Replacement task');
-    await switched.choose('Clear');
-    await switched.choose('Replacement task');
-    await switched.choose('Complete');
-    assert.equal(switched.shutdowns, 0);
-    assert.equal(cli('agent', 'get', String(originalTask.id)).state, 'in_progress');
-    assert.equal(cli('agent', 'get', String(replacement.id)).state, 'done');
+    writeFileSync(join(temp, 'agent', 'pi-note.json'), JSON.stringify({ onTaskComplete: 'keep-open' }));
+    const keptTask = cli('agent', 'add', '--text=Launched Pi stays open');
+    const kept = await open({ task_id: keptTask.id, updated_at: keptTask.updated_at });
+    await kept.choose('Complete');
+    assert.equal(kept.shutdowns, 0);
+    assert.equal(cli('agent', 'get', String(keptTask.id)).state, 'done');
 
     const saved = JSON.stringify(clients.map((client) => client.entries));
     assert.ok(!saved.includes('is task clear?') && !saved.includes('Clarify scope'));

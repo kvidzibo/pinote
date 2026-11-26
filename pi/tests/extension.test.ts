@@ -301,7 +301,7 @@ test('menu/footer completion refuses busy agents and rechecks immediately before
   const notices: string[] = [];
   const ctx = { mode: 'tui', isIdle: () => idle, ui: { notify: (message: string) => notices.push(message), custom: loader,
     select: async (_title: string, choices: string[]) => { assert.deepEqual(choices, ['Cancel', 'Complete task']); return 'Complete task'; } } } as any;
-  const ui = new PinoteUI({} as any, h.session);
+  const ui = new PinoteUI({} as any, h.session, () => 'keep-open');
   assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), false);
   assert.equal(actions, 0); assert.match(notices[0], /current agent run/);
   idle = true;
@@ -318,7 +318,7 @@ test('menu/footer completion refuses busy agents and rechecks immediately before
 
 test('footer double-click approves completion once without changing menu approval or completion guards', async () => {
   const { PinoteUI } = await import('../extension/ui.ts');
-  for (const scenario of ['ordinary', 'dedicated', 'busy', 'stale', 'failed']) {
+  for (const scenario of ['ordinary', 'exiting', 'busy', 'stale', 'failed']) {
     const current = view({ selectedId: 7 });
     current.controls = [
       { id: 'done', kind: 'action', label: 'Complete task', revision: 'task-1' },
@@ -345,7 +345,7 @@ test('footer double-click approves completion once without changing menu approva
       },
       setEditorText: () => assert.fail('Completion must preserve the editor'),
     } } as any;
-    const ui = new PinoteUI({} as any, h.session, () => scenario === 'dedicated');
+    const ui = new PinoteUI({} as any, h.session, () => scenario === 'exiting' ? 'close-pi' : 'keep-open');
     ui.attach(ctx);
     try {
       assert.equal(await ui.dispatch(ctx, h.session.view!, current.controls[0]), false);
@@ -364,8 +364,8 @@ test('footer double-click approves completion once without changing menu approva
       click(1); click(2); click(3); await sleep(30);
       assert.equal(prompts, 1, 'Double-click must not ask again');
       assert.deepEqual(actions, ['busy', 'stale'].includes(scenario) ? ['preview'] : ['preview', 'done'], scenario);
-      assert.equal(shutdowns, scenario === 'dedicated' ? 1 : 0, scenario);
-      if (scenario === 'ordinary' || scenario === 'dedicated') assert.equal(h.session.view?.state.selectedId, null);
+      assert.equal(shutdowns, scenario === 'exiting' ? 1 : 0, scenario);
+      if (scenario === 'ordinary' || scenario === 'exiting') assert.equal(h.session.view?.state.selectedId, null);
     } finally { footer.dispose(); await h.session.stop(); }
   }
 });

@@ -7,11 +7,15 @@ import { PinoteSession } from './session.ts';
 import { pinoteMenu, type MenuState } from './menu.ts';
 import { document, editValue, working, type Draft } from './dialogs.ts';
 import { disclosure, menuView, parentScreen, serverScreen, type Screen } from './navigation.ts';
-import { KittyPane } from './kitty.ts';
-import { parseKittyOneTaskPerTab, readConfigDocument } from '../footer-config.ts';
+import { KittyPane, paneCloser } from './kitty.ts';
+import { parseKittyOneTaskPerTab, parseTaskCompletion, readConfigDocument, type TaskCompletionAction } from '../footer-config.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
 const disconnected = 'Pinote unavailable · retrying… (/pinote)';
+/** The configured action after completing this session's task; invalid settings keep Pi open. */
+export function taskCompletion(): TaskCompletionAction {
+  try { return parseTaskCompletion(readConfigDocument().value); } catch { return 'keep-open'; }
+}
 
 /** Review and approval are separate; Enter can never approve by default. */
 export async function review(ctx: ExtensionContext, title: string, text: string, signal: AbortSignal, accept = 'Confirm'): Promise<boolean> {
@@ -30,10 +34,10 @@ export class PinoteUI {
   private failure?: PinoteFailure;
   private pi: ExtensionAPI;
   private session: PinoteSession;
-  private exitOnComplete: (taskId: number) => boolean;
+  private completion: () => TaskCompletionAction;
   private kitty: KittyPane;
-  constructor(pi: ExtensionAPI, session: PinoteSession, exitOnComplete = (_taskId: number) => false) {
-    this.pi = pi; this.session = session; this.exitOnComplete = exitOnComplete;
+  constructor(pi: ExtensionAPI, session: PinoteSession, completion = taskCompletion) {
+    this.pi = pi; this.session = session; this.completion = completion;
     this.kitty = new KittyPane((command, args, options) => this.pi.exec(command, args, options));
     session.onChange = () => {
       this.render(); this.menuChanged?.();
@@ -106,13 +110,15 @@ export class PinoteUI {
     }
     this.acting = true; this.failure = undefined;
     const current = this.session.current(), signal = this.session.signal;
+    // Read once, so the confirmation describes what completion does.
+    const completion = control.id === 'done' ? this.completion() : 'keep-open';
     try {
       if (typeof value === 'string') editorText(value);
       if (control.id === 'done' && !footerConfirmed) {
-        const exits = typeof view.state.selectedId === 'number' && this.exitOnComplete(view.state.selectedId);
+        const exits = completion !== 'keep-open';
         const accept = exits ? 'Complete task and exit' : 'Complete task';
         const summary = truncateToWidth(line(view.body ?? ''), 100);
-        if (await ctx.ui.select(`Pinote / ${accept} #${view.state.selectedId}\n${summary}\n${exits ? 'Closes this dedicated Pi session.' : 'Clears selection; keeps this conversation and editor.'}`,
+        if (await ctx.ui.select(`Pinote / ${accept} #${view.state.selectedId}\n${summary}\n${completion === 'close-pane' ? 'Closes Pi and its Kitty pane.' : exits ? 'Closes this Pi session.' : 'Clears selection; keeps this conversation and editor.'}`,
           ['Cancel', accept], { signal }) !== accept) return false;
       }
       if (control.confirm && !(footerConfirmed && (control.id === 'proposal:accept' || control.id === 'later:accept'))) {
@@ -139,7 +145,10 @@ export class PinoteUI {
         if (warning) ctx.ui.notify(warning, 'warning');
       }
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
-          this.session.view && this.session.view.state.selectedId == null && this.exitOnComplete(view.state.selectedId)) {
+          this.session.view && this.session.view.state.selectedId == null && completion !== 'keep-open') {
+        const arm = completion === 'close-pane' ? await paneCloser((command, args, options) => this.pi.exec(command, args, options)) : undefined;
+        if (!current() || !ctx.isIdle()) return true; // Completed, but a run or session change since then keeps Pi open.
+        arm?.();
         this.closing = true; ctx.shutdown(); return true;
       }
       if (result.notice) ctx.ui.notify(line(result.notice), 'info');

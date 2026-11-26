@@ -26,15 +26,13 @@ beforeEach(() => {
 afterEach(() => { Object.defineProperty(process, 'platform', platform); process.env = env; rmSync(root, { force: true, recursive: true }); });
 const store = <T>(f: (s: Store) => T): T => { const s = new Store(paths.database); try { return f(s); } finally { s.close(); } };
 const configFile = () => { const dir = join(root, 'config/pinote'); mkdirSync(dir, { recursive: true }); return join(dir, 'config.toml'); };
-test('config defaults, ignored relative XDG, precise integer/boolean types and Unicode prompt limits', () => {
+test('config defaults, ignored relative XDG and precise integer/boolean types', () => {
   assert.deepEqual(GuiConfig.load(), new GuiConfig()); assert.equal(existsSync(process.env.XDG_CONFIG_HOME!), false);
   const file = configFile();
   for (const contents of ['', '[gui]\n', '[other]\nx=42']) { writeFileSync(file, contents); assert.deepEqual(GuiConfig.load(), new GuiConfig()); }
-  for (const limit of [1, 3, 25]) { writeFileSync(file, `[gui]\nmax_visible_notes=${limit}\nmarkdown_preview=false\nkitty_start_prompt="go"\n`); const config = GuiConfig.load(); assert.equal(config.max_visible_notes, BigInt(limit)); assert.equal(config.markdown_preview, false); assert.equal(config.kitty_start_prompt, 'go'); }
+  for (const limit of [1, 3, 25]) { writeFileSync(file, `[gui]\nmax_visible_notes=${limit}\nmarkdown_preview=false\n`); const config = GuiConfig.load(); assert.equal(config.max_visible_notes, BigInt(limit)); assert.equal(config.markdown_preview, false); }
   for (const value of ['0', '-1', 'true', '1.0', '1.5', '"3"', '[]', '{}']) { writeFileSync(file, `[gui]\nmax_visible_notes=${value}`); assert.throws(() => GuiConfig.load(), /max_visible_notes must be a positive integer/); }
   for (const contents of ['[gui', 'gui=3', 'gui=[]', '[gui]\nmarkdown_preview=1']) { writeFileSync(file, contents); assert.throws(() => GuiConfig.load(), ConfigError); }
-  for (const prompt of ['Check scope', '', 'Line 1\nLine 2', '🌱'.repeat(4000)]) { writeFileSync(file, `[gui]\nkitty_start_prompt=${JSON.stringify(prompt)}`); assert.equal(GuiConfig.load().kitty_start_prompt, prompt); }
-  for (const value of ['true', '"\\u001b[31m"', '"\\u202e"', JSON.stringify('🌱'.repeat(4001))]) { writeFileSync(file, `[gui]\nkitty_start_prompt=${value}`); assert.throws(() => GuiConfig.load(), /kitty_start_prompt must be a string/); }
   writeFileSync(file, Buffer.from([255])); assert.throws(() => GuiConfig.load(), ConfigError);
   rmSync(file); mkdirSync(file); assert.throws(() => GuiConfig.load(), ConfigError);
   process.env.XDG_CONFIG_HOME = 'relative'; const fallback = join(process.env.HOME!, '.config/pinote'); mkdirSync(fallback, { recursive: true }); writeFileSync(join(fallback, 'config.toml'), '[gui]\nmax_visible_notes=2'); assert.equal(GuiConfig.load().max_visible_notes, 2n);
@@ -176,7 +174,15 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
     const params = { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle };
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params }, paths)).ok, true); assert.equal(tools.calls().at(-2).at(-1), expected);
   }
+  // Electron's start prompt reaches Pi's launch handoff; without one, the default is drafted.
+  const handoff = () => JSON.parse(tools.calls().filter((a: string[]) => a[3] === 'launch').at(-1).find((x: string) => x.startsWith('--env=PINOTE_LAUNCH_TASK=')).slice('--env=PINOTE_LAUNCH_TASK='.length)).prompt;
+  for (const prompt of ['Check scope\n🌱', '', '🌱'.repeat(4000)]) {
+    assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, prompt } }, paths)).ok, true); assert.equal(handoff(), prompt);
+  }
+  assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root } }, paths)).ok, true); assert.equal(handoff(), 'is task clear?');
   const launches = tools.calls().length;
+  for (const prompt of ['\x1b[31m', '\u202e', '\u200e', '\u061c', '🌱'.repeat(4001), 42])
+    assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, prompt } }, paths)).error.code, 'invalid');
   for (const tabTitle of ['', '   ', 'a\tb', '‮{title}', 'x'.repeat(257), 42])
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle } }, paths)).error.code, 'invalid');
   assert.equal(tools.calls().length, launches);

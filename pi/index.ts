@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { PinoteFailure } from './extension/client.ts';
 import { ENTRY_TYPE, SCOPE, PinoteSession, type SavedState } from './extension/session.ts';
 import { registerTools } from './extension/tools.ts';
-import { registerTaskEntries, PinoteUI, showStartupTask } from './extension/ui.ts';
+import { registerTaskEntries, PinoteUI, showStartupTask, taskCompletion } from './extension/ui.ts';
+import { paneCloser } from './extension/kitty.ts';
 import { registerExit } from './extension/exit.ts';
 import { clean, editorText } from './extension/protocol.ts';
 import { taskCompleted } from './extension/completion.ts';
@@ -13,13 +14,10 @@ import { database } from './engine.ts';
 // Reload/resume/fork restore branch entries, never this map or a folder-global store.
 const key = Symbol.for('pinote.remote.new-transfer.v1');
 const transfers: Map<string, SavedState> = ((globalThis as any)[key] ??= new Map());
-// Process-local launch ownership survives /reload, never resume in another process.
-const launches: Map<string, number> = ((globalThis as any)[Symbol.for('pinote.remote.kitty-launch.v1')] ??= new Map());
 
 export default function pinote(pi: ExtensionAPI): void {
   let session: PinoteSession | undefined, ui: PinoteUI | undefined;
-  let file: string | undefined, launchKey = '', watcherDispatchPending = false;
-  const ownsLaunch = (taskId: number) => launches.get(launchKey) === taskId;
+  let file: string | undefined, watcherDispatchPending = false;
   let launchRequest = process.env.PINOTE_LAUNCH_TASK;
   delete process.env.PINOTE_LAUNCH_TASK; // Never inherit consent into another Pi process or /reload.
   const getSession = () => { if (!session) throw new PinoteFailure(); return session; };
@@ -44,7 +42,6 @@ export default function pinote(pi: ExtensionAPI): void {
   pi.registerCommand('pinote', { description: 'Open Pinote tasks and settings', handler: open });
   const start = async (ctx: ExtensionContext, reason?: string, previous?: string) => {
     const request = launchRequest; launchRequest = undefined; // Never replay an uncertain start.
-    if (reason !== 'reload') launches.clear();
     ui?.detach(); await session?.stop();
     ui = undefined; session = undefined; watcherDispatchPending = false;
     try {
@@ -67,8 +64,7 @@ export default function pinote(pi: ExtensionAPI): void {
       session.onCompleted = (taskId, signal) => taskCompleted(pi.events, taskId, signal, () => {
         if (ctx.hasUI) ctx.ui.notify('Pinote: completion hook did not finish successfully. The task completion remains confirmed.', 'warning');
       });
-      launchKey = ctx.sessionManager.getSessionId();
-      ui = new PinoteUI(pi, session, ownsLaunch);
+      ui = new PinoteUI(pi, session);
       ui.attach(ctx);
       file = ctx.sessionManager.getSessionFile();
       const branch = ctx.sessionManager.getBranch();
@@ -100,7 +96,6 @@ export default function pinote(pi: ExtensionAPI): void {
         const control = view.controls.find((item) => item.id === `select:${launch.task_id}`);
         if (!control) throw new Error('Launch task changed');
         await session.action(view, control); // The directory chooser's Start click granted consent.
-        if (session.view?.state.selectedId === launch.task_id) launches.set(launchKey, launch.task_id);
         if (prompt?.trim() && ctx.mode === 'tui' && ctx.isIdle()) {
           if (ctx.ui.getEditorText().length) ctx.ui.notify('Launch draft not inserted: the editor already contains a draft.', 'warning');
           else ctx.ui.setEditorText(prompt);
@@ -116,14 +111,15 @@ export default function pinote(pi: ExtensionAPI): void {
   pi.on('session_start', (event, ctx) => start(ctx, event.reason, event.previousSessionFile));
   pi.on('session_tree', (_event, ctx) => start(ctx));
   pi.on('session_shutdown', async (event) => {
-    if (event.reason !== 'reload') launches.clear();
     const saved = session?.snapshot();
     if (file && saved?.retainOnNew) {
       if (transfers.size >= 32) transfers.delete(transfers.keys().next().value!);
       transfers.set(file, saved);
     }
-    ui?.detach(); await ui?.release();
-    await session?.stop(event.reason);
+    ui?.detach();
+    // Invalidate synchronously: pending actions, such as a Kitty pane check, must not act during cleanup.
+    const stopped = session?.stop(event.reason);
+    await ui?.release(); await stopped;
   });
   pi.on('agent_start', () => { watcherDispatchPending = false; });
   pi.on('agent_settled', async (event) => {
@@ -144,5 +140,5 @@ export default function pinote(pi: ExtensionAPI): void {
         (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`),
     } };
   });
-  registerExit(pi, () => session);
+  registerExit(pi, () => session, async () => taskCompletion() === 'close-pane' ? paneCloser((command, args, options) => pi.exec(command, args, options)) : undefined);
 }
