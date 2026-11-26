@@ -70,7 +70,7 @@ export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty' | 'window-settings' | 'backend-settings' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty' | 'window-settings' | 'drafts' | 'close';
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
 export const APP_EVENTS = ['startup'] as const;
@@ -112,7 +112,6 @@ export function tagFolderPath(base: string, tag: string): string | null {
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
 export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };
-export type BackendSettings = { switched: boolean; canSwitch: boolean; detail: string; version: string };
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
 export type PreviewApi = {
@@ -122,9 +121,6 @@ export type PreviewApi = {
 };
 export type PinoteApi = BackendApi & {
   agentFields(): Promise<string[]>;
-  backendSettings(): Promise<BackendSettings>;
-  switchBackend(): Promise<boolean>;
-  onBackendSwitchProgress(callback: (text: string) => void): void;
   openPreview(request: PreviewRequest): Promise<boolean>;
   updatePreview(token: number, data: PreviewData | null): Promise<void>;
   onPreviewClosed(callback: (token: number, edit: boolean) => void): void;

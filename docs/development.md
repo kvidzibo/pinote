@@ -42,7 +42,7 @@ node --test --experimental-strip-types $(ls tests/*.test.ts test-load.ts | grep 
 The `electron` job runs on Node 24 at 1280×900 and 800×600 in parallel. Each job
 runs the E2E scenario as three concurrent parts on separate Xvfb servers and
 D-Bus sessions: `--part=1` is the lifecycle/recovery sequence; `--part=2` holds
-the self-contained workflow checks, after the backend-switch check; `--part=3` is
+the self-contained workflow checks; `--part=3` is
 the editor autosave sequence, after the Watchers settings check. Without `--part`,
 `tests/e2e.mjs` runs everything in one application.
 Type/unit checks run once in the 800×600 job; packaged-app validation runs once in
@@ -72,8 +72,7 @@ Use Node.js 22.19+ (CI uses Node 24), Linux `flock`, and Electron runtime librar
 GTK 3 (`libgtk-3`), NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11 libraries.
 End-to-end tests additionally need `xvfb-run`, `dbus-run-session`, `xauth`, `i3-wm`,
 `xdotool`, and ImageMagick's `import` command (`imagemagick` on Debian/Ubuntu) for
-native-menu screenshots. Electron unit tests and `backend-switch-e2e` need system
-`/usr/bin/python3` to run the stub legacy launcher. The Electron scenario saves
+native-menu screenshots. The Electron scenario saves
 agent updates through the real CLI without making model requests.
 
 ```sh
@@ -92,11 +91,7 @@ xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron
 
 `setup` prepares the bundled backend and explicitly downloads Electron;
 `ci --ignore-scripts` installs locked npm packages (including esbuild's optional
-native binary) without lifecycle scripts. Unit tests exercise real CLI bundles,
-including failed verification and rollback recovery. The E2E
-command also runs the Node backend switch with temporary HOME/XDG data,
-checking confirmation cancellation, draft preservation,
-relaunch, and bypass of the old Python override.
+native binary) without lifecycle scripts.
 The end-to-end harness uses its own HOME/XDG directories, private i3 configuration
 and socket, and clears inherited real i3/Kitty sockets. Always use Xvfb and a
 private D-Bus session, never the actual desktop. Test screenshots stay in temporary

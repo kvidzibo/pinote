@@ -270,8 +270,7 @@ Edits and tag changes retain the task ID and record old/new values in history;
 
 `pinote-gui` and the Python `note` CLI are no longer provided. An installed Python
 `note` keeps working with the same schema-8 database but receives no updates.
-Replace it with Electron's [**Switch to Node backend…**](electron.md#switch-an-existing-installation)
-or build and run `npm install -g ./backend`, then check that `note` resolves to the
-Node CLI. Electron uses the same database but does not read GTK's unsaved input
+Replace it: build and run `npm install -g ./backend`, then check that `note`
+resolves to the Node CLI. Electron uses the same database but does not read GTK's unsaved input
 or edit drafts (`gui-draft.txt`, `gui-edit-drafts/` beside `notes.db`): save
 unfinished edits before upgrading, or copy their text from those files.

@@ -48,9 +48,8 @@ For existing installations, see the [CLI upgrade guide](docs/usage.md#upgrading-
 
 Electron uses the Node backend and the existing task database, with no Python
 requirement or data conversion. Installing or building Electron does not change
-desktop startup or configuration. Requires Node.js 22.19+. **Menu (cog) → Switch
-to Node backend…** can explicitly switch an existing CLI/desktop installation,
-with backups and rollback. See [Electron installation, switching, and limitations](docs/electron.md).
+desktop startup or configuration. Requires Node.js 22.19+. See
+[Electron installation and limitations](docs/electron.md).
 Its add-task input and task editor style Markdown source and assist title/bullet
 newlines. Only Linux/X11/i3 is a validation target.
 
