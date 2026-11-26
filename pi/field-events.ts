@@ -430,16 +430,17 @@ export class FieldAutomation {
             for (const key of subscribed.keys()) if (!this.taskCursors.has(key)) this.taskCursors.set(key, tail);
           }
           // At most 64 queued events per subscription: a full queue is dispatched first; its cursor keeps the rest.
-          // Subscriptions at one position share a read, bounded by the least room among them.
-          const positions = new Map<number, string[]>();
+          // Subscriptions at one position with the same room share a read: a busy one cannot slow the others.
+          const positions = new Map<string, string[]>();
           for (const key of subscribed.keys()) {
             if (room(key) <= 0) { this.taskBacklog.add(key); continue; }
             this.taskBacklog.delete(key);
-            const cursor = this.taskCursors.get(key)!;
-            positions.set(cursor, [...positions.get(cursor) ?? [], key]);
+            const position = JSON.stringify([this.taskCursors.get(key)!, Math.min(25, room(key))]);
+            positions.set(position, [...positions.get(position) ?? [], key]);
           }
-          for (const [cursor, keys] of positions) {
-            const batch = await read(cursor, Math.min(25, ...keys.map(room)));
+          for (const [position, keys] of positions) {
+            const [cursor, limit] = JSON.parse(position) as [number, number];
+            const batch = await read(cursor, limit);
             if (!valid()) return;
             if (batch.cursor < cursor || batch.events.some((e) => e.id <= cursor || e.id > batch.cursor)) throw new Error('Invalid task event cursor');
             for (const event of batch.events) {
