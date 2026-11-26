@@ -7,7 +7,7 @@ import { PinoteSession } from './session.ts';
 import { pinoteMenu, type MenuState } from './menu.ts';
 import { document, editValue, working, type Draft } from './dialogs.ts';
 import { disclosure, menuView, parentScreen, serverScreen, type Screen } from './navigation.ts';
-import { KittyPane, closePaneOnExit } from './kitty.ts';
+import { KittyPane, paneCloser } from './kitty.ts';
 import { parseKittyOneTaskPerTab, parseTaskCompletion, readConfigDocument, type TaskCompletionAction } from '../footer-config.ts';
 
 const line = (text: string) => clean(text).replace(/\n/g, ' ');
@@ -146,7 +146,9 @@ export class PinoteUI {
       }
       if (control.id === 'done' && ctx.isIdle() && typeof view.state.selectedId === 'number' &&
           this.session.view && this.session.view.state.selectedId == null && completion !== 'keep-open') {
-        if (completion === 'close-pane') await closePaneOnExit((command, args, options) => this.pi.exec(command, args, options));
+        const arm = completion === 'close-pane' ? await paneCloser((command, args, options) => this.pi.exec(command, args, options)) : undefined;
+        if (!current() || !ctx.isIdle()) return true; // Completed, but a run or session change since then keeps Pi open.
+        arm?.();
         this.closing = true; ctx.shutdown(); return true;
       }
       if (result.notice) ctx.ui.notify(line(result.notice), 'info');

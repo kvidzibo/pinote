@@ -16,25 +16,29 @@ function pane(): { window: string; socket: string } | undefined {
 }
 
 let closing = false;
-/** After Pi exits, close this Kitty pane too, ending any shell Pi ran in. Best effort; a pane whose
- * only program was Pi is already gone. Only a pane running Pi in its foreground is closed: inherited
- * Kitty variables (tmux, screen, child processes) can name another pane. The command is detached so
- * Pi can finish exiting first. */
-export async function closePaneOnExit(exec: Exec): Promise<void> {
+/** Prepares closing this Kitty pane after Pi exits, ending any shell Pi ran in. Returns the function that
+ * arms it, so callers can recheck their state after this check; call it only right before exiting.
+ * Only a pane running Pi in its foreground qualifies: inherited Kitty variables (tmux, screen, child
+ * processes) can name another pane. Best effort; a pane whose only program was Pi is already gone.
+ * The close command is detached so Pi can finish exiting first. */
+export async function paneCloser(exec: Exec): Promise<(() => void) | undefined> {
   const target = pane();
-  if (!target || closing) return;
+  if (!target) return;
   try {
     const result = await exec('kitty', ['@', '--to', target.socket, 'ls', `--match=id:${target.window}`], { timeout: 1500 });
     if (result.code !== 0 || result.killed) return;
     const owned = (JSON.parse(result.stdout) as OsWindow[]).some((os) => os.tabs?.some((tab) => tab.windows?.some((window) =>
       window.id === Number(target.window) && window.foreground_processes?.some((process_) => process_.pid === process.pid))));
-    if (!owned || closing) return;
+    if (!owned) return;
   } catch { return; }
-  closing = true;
-  process.once('exit', () => {
-    try { spawn('kitty', ['@', '--to', target.socket, 'close-window', `--match=id:${target.window}`], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); }
-    catch { /* Pi still exits. */ }
-  });
+  return () => {
+    if (closing) return;
+    closing = true;
+    process.once('exit', () => {
+      try { spawn('kitty', ['@', '--to', target.socket, 'close-window', `--match=id:${target.window}`], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); }
+      catch { /* Pi still exits. */ }
+    });
+  };
 }
 
 /** Best-effort Kitty tab control for one Pi pane. Failures never affect task state. */

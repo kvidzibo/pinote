@@ -169,8 +169,8 @@ test('snapshots match the Python reference for schema8 metadata, config and orde
   const database = new DatabaseSync(paths.database, { enableForeignKeyConstraints: false });
   try { database.exec(reference('bridge-snapshots.sql')); } finally { database.close(); }
   const expected = JSON.parse(reference('bridge-snapshots.json'));
-  // The start prompt has since moved to Electron's own settings.
-  for (const view of Object.values(expected) as any[]) delete view.result.config.kittyStartPrompt;
+  // The start prompt has since moved to Electron's own settings; snapshots keep the default for older releases.
+  for (const view of Object.values(expected) as any[]) view.result.config.kittyStartPrompt = 'is task clear?';
   for (const view of ['active', 'archive', 'scheduled']) {
     assert.deepEqual(JSON.parse(jsonStringify(await respond(request('snapshot', { view }), paths))), expected[view]);
   }

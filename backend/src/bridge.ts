@@ -103,7 +103,9 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
     const notes = p.view === 'active' ? await model.notes() : p.view === 'archive' ? model.archive() : model.reminders();
     if (notes.some(n => n.id < 1n || n.id > BigInt(MAX_ID) || n.agent_event_id < 0n || n.agent_event_id > BigInt(MAX_ID))) throw new BridgeError('internal', 'Database IDs exceed the supported range.');
     const folders = model.tag_folders();
-    return { notes, tags: model.tags().map(name => { const folder = Object.hasOwn(folders, name) ? folders[name] : null; return { name, folder, available: folder_available(folder) }; }), config: { maxVisibleNotes: config.max_visible_notes, markdownPreview: config.markdown_preview } };
+    return { notes, tags: model.tags().map(name => { const folder = Object.hasOwn(folders, name) ? folders[name] : null; return { name, folder, available: folder_available(folder) }; }), config: { maxVisibleNotes: config.max_visible_notes, markdownPreview: config.markdown_preview,
+      // Electron 0.23 requires this field; newer releases keep the start prompt in their own settings.
+      kittyStartPrompt: DEFAULT_START_PROMPT } };
   }
   if (op === 'completions') return [...model.completed_ids(new Set(p.ids.map((id: number) => BigInt(id))))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   return withDisplayLock(paths, false, async () => {

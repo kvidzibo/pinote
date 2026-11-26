@@ -4,7 +4,7 @@ import { PinoteFailure } from './extension/client.ts';
 import { ENTRY_TYPE, SCOPE, PinoteSession, type SavedState } from './extension/session.ts';
 import { registerTools } from './extension/tools.ts';
 import { registerTaskEntries, PinoteUI, showStartupTask, taskCompletion } from './extension/ui.ts';
-import { closePaneOnExit } from './extension/kitty.ts';
+import { paneCloser } from './extension/kitty.ts';
 import { registerExit } from './extension/exit.ts';
 import { clean, editorText } from './extension/protocol.ts';
 import { taskCompleted } from './extension/completion.ts';
@@ -138,5 +138,5 @@ export default function pinote(pi: ExtensionAPI): void {
         (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`),
     } };
   });
-  registerExit(pi, () => session, async () => { if (taskCompletion() === 'close-pane') await closePaneOnExit((command, args, options) => pi.exec(command, args, options)); });
+  registerExit(pi, () => session, async () => taskCompletion() === 'close-pane' ? paneCloser((command, args, options) => pi.exec(command, args, options)) : undefined);
 }

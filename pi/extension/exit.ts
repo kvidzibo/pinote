@@ -4,7 +4,7 @@ import { clean } from './protocol.ts';
 import type { PinoteSession } from './session.ts';
 
 /** Exit and /new companion. /quit and nonempty-editor exit input remain Pi-owned. */
-export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession | undefined, onCompletedExit: () => Promise<void> = async () => {}): void {
+export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession | undefined, prepareCompletedExit: () => Promise<(() => void) | undefined> = async () => undefined): void {
   let invalidate: (() => void) | undefined;
   let stop: (() => void) | undefined;
   let confirm: ((reason: 'exit' | 'new') => Promise<boolean>) | undefined;
@@ -55,7 +55,10 @@ export function registerExit(pi: ExtensionAPI, getSession: () => PinoteSession |
         await session.action(view, done, undefined, () => current() && ctx.isIdle() && ctx.sessionManager.getLeafId() === branch);
         if (!current()) return false;
         if (session.view && session.view.state.selectedId == null) {
-          if (reason === 'exit') await onCompletedExit();
+          // An exit after completion may also close the Kitty pane; recheck after that check.
+          const arm = reason === 'exit' ? await prepareCompletedExit() : undefined;
+          if (!current()) return false;
+          arm?.();
           return true;
         }
         ctx.ui.notify('Pinote: Pi stayed in this session because the selection was not cleared. Refresh /pinote before retrying.', 'warning');

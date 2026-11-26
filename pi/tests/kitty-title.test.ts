@@ -187,8 +187,8 @@ if [ "$4" = ls ]; then pid=$PPID; [ -n "$TEST_FOREIGN" ] && pid=1; printf '[{"ta
 printf '%s\\n' "$@" >> '${log}'\n`, { mode: 0o755 });
     const script = `const { execFile } = await import('node:child_process');
       const exec = (command, args, options) => new Promise((resolve) => execFile(command, args, options, (error, stdout) => resolve({ code: error ? 1 : 0, stdout, killed: false })));
-      const { closePaneOnExit } = await import(${JSON.stringify(new URL('../extension/kitty.ts', import.meta.url).href)});
-      await closePaneOnExit(exec); await closePaneOnExit(exec); await new Promise((resolve) => setTimeout(resolve, 100));
+      const { paneCloser } = await import(${JSON.stringify(new URL('../extension/kitty.ts', import.meta.url).href)});
+      (await paneCloser(exec))?.(); (await paneCloser(exec))?.(); await new Promise((resolve) => setTimeout(resolve, 100));
       if ((await import('node:fs')).existsSync(${JSON.stringify(log)})) process.exitCode = 3;`;
     const run = (env: Record<string, string>) => execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', SSH_CONNECTION: '', SSH_TTY: '', TEST_FOREIGN: '', ...env } });
