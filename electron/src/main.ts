@@ -306,7 +306,12 @@ async function boot() {
     'save-state': async (_event, value: unknown) => {
       if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);
       if (readonly || !validState(value) || value.tagBaseFolder !== undefined && !approvedFolders.has(value.tagBaseFolder)) throw new Error('Cannot save invalid or unreadable state');
-      const next = structuredClone(value); next.warning = state.warning; state = next; await persist();
+      const next = structuredClone(value), previousBase = state.tagBaseFolder; next.warning = state.warning; state = next;
+      // A base folder takes effect only once saved; the renderer keeps its previous one on failure.
+      try { await persist(); } catch (error) {
+        if (state === next && next.tagBaseFolder !== previousBase) { if (previousBase === undefined) delete next.tagBaseFolder; else next.tagBaseFolder = previousBase; }
+        throw error;
+      }
     },
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };

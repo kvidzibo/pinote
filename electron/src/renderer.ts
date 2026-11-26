@@ -931,7 +931,7 @@ async function edit(task: Task): Promise<void> {
   const draft = state.edits[id] ?? { text: task.text, revision: task.updated_at };
   let revision = draft.revision, savedText = task.text, tag = task.tag;
   let paused = !!state.edits[id], conflict = false, saving = false, detached = false, draining = false;
-  let queuedTag = state.edits[id]?.pendingTag, queuedFolder = state.edits[id]?.pendingTagFolder;
+  let queuedTag = state.edits[id]?.pendingTag, queuedFolder = state.edits[id]?.pendingTagFolder, queuedFolderIfNew = state.edits[id]?.pendingTagFolderIfNew;
   let work: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const editorHost = el('div', undefined, 'edit-text');
@@ -958,9 +958,9 @@ async function edit(task: Task): Promise<void> {
   const dirty = () => editor.value !== savedText || queuedTag !== undefined || Object.keys(pendingFields()).length > 0;
   const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
   const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
-  const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async (name, folder) => {
+  const tagControl = button('tag', 'Change tag', () => tagsMenu('task', task, async (name, folder, folderIfNew) => {
     if (readonly || closing || conflict || paused) return false;
-    queuedTag = name; queuedFolder = folder;
+    queuedTag = name; queuedFolder = folder; queuedFolderIfNew = folderIfNew;
     // The picker may outlive the debounce and accept this while text is already
     // in flight. Journal it now, even if that earlier write fails.
     retain(); check();
@@ -984,6 +984,7 @@ async function edit(task: Task): Promise<void> {
     state.edits[id] = { text: editor.value, revision,
       ...(queuedTag !== undefined ? { pendingTag: queuedTag } : {}),
       ...(queuedFolder !== undefined ? { pendingTagFolder: queuedFolder } : {}),
+      ...(queuedFolderIfNew !== undefined ? { pendingTagFolderIfNew: queuedFolderIfNew } : {}),
       ...(Object.keys(pendingFields()).length ? { fields: pendingFields() } : {}),
     };
     saveSoon();
@@ -1020,7 +1021,7 @@ async function edit(task: Task): Promise<void> {
     if (!dirty() && state.edits[id]) { delete state.edits[id]; saveSoon(); }
     work = (async () => {
       while (!readonly && (!closing || draining) && !conflict && !paused && dirty()) {
-        const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, folder = queuedFolder, base = revision;
+        const text = editor.value, textChanged = text !== savedText, nextTag = queuedTag, folder = queuedFolder, folderIfNew = queuedFolderIfNew, base = revision;
         // One revision-bound write per pass: text, then tag, then agent fields.
         const tagChanged = !textChanged && nextTag !== undefined, fields = pendingFields(), wasRead = !unread(task);
         retain(); saving = true; check();
@@ -1029,7 +1030,7 @@ async function edit(task: Task): Promise<void> {
           : !tagChanged
             ? await call('agent', { id: task.id, revision: base, fields: Object.fromEntries(Object.entries(fields).map(([name, value]) => [name, value || null])) }, draining)
           : folder !== undefined
-            ? await call('create_tag', { id: task.id, revision: base, name: nextTag!, folder }, draining)
+            ? await call('create_tag', { id: task.id, revision: base, name: nextTag!, folder, ...(folderIfNew !== undefined ? { folderIfNew } : {}) }, draining)
             : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
         if (!result) { paused = true; break; }
         // Never infer a committed revision from a later snapshot: another client
@@ -1044,7 +1045,7 @@ async function edit(task: Task): Promise<void> {
         else if (!tagChanged) for (const [name, value] of Object.entries(fields)) { if (value) savedFields.set(name, value); else savedFields.delete(name); }
         else {
           tag = result.tag ?? nextTag!;
-          if (queuedTag === nextTag && queuedFolder === folder) { queuedTag = undefined; queuedFolder = undefined; }
+          if (queuedTag === nextTag && queuedFolder === folder && queuedFolderIfNew === folderIfNew) { queuedTag = undefined; queuedFolder = undefined; queuedFolderIfNew = undefined; }
         }
         // Your own field edit is not an unread agent update, even if a newer snapshot already replaced this revision.
         if (!textChanged && !tagChanged && wasRead && result.agentEvent !== undefined) state.read[id] = Math.max(state.read[id] ?? 0, result.agentEvent);
@@ -1084,7 +1085,7 @@ function recoverDrafts(): void {
       const row = el('article', undefined, 'aux-row');
       row.append(el('h3', `Task ${id}`), el('p', `Revision: ${draft.revision}`, 'metadata'));
       if (draft.pendingTag !== undefined) row.append(el('p', `Pending tag: ${draft.pendingTag ?? 'Untagged'}`, 'metadata'));
-      if (draft.pendingTagFolder !== undefined) row.append(el('p', `New tag folder: ${draft.pendingTagFolder ?? 'None'}`, 'metadata'));
+      if (draft.pendingTagFolder !== undefined) row.append(el('p', `New tag folder: ${draft.pendingTagFolderIfNew ?? draft.pendingTagFolder ?? 'None'}`, 'metadata'));
       for (const [name, value] of Object.entries(draft.fields ?? {})) row.append(el('p', `Pending agent field ${name}: ${value || '(removed)'}`, 'metadata'));
       const text = el('textarea', undefined, 'recovery-text'); text.value = draft.text; text.readOnly = true; text.setAttribute('aria-label', `Private draft for task ${id}`); row.append(text);
       const bar = controls(row);
@@ -1123,7 +1124,7 @@ function counts(name: string): string {
   const tasks = active?.notes.filter(t => (t.tag ?? '') === name) ?? [];
   return `(${tasks.length})${tasks.some(isProgress) ? ` ▶ ${tasks.filter(isProgress).length}` : ''}`;
 }
-function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, folder?: string | null) => Promise<boolean>): void {
+function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, folder?: string | null, folderIfNew?: string) => Promise<boolean>): void {
   const menu = layer(mode === 'filter' ? 'Filter by tag' : mode === 'creation' ? 'New-task tag' : 'Task tag', 'tags', task?.id);
   const search = el('input'); search.type = 'search'; search.placeholder = 'Search or create tag…'; search.setAttribute('aria-label', 'Search tags');
   const list = el('div', undefined, 'tag-list scroll');
@@ -1167,7 +1168,7 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, f
         if (mode === 'creation') { creationTag = name; saveSoon(); renderToolbar(); menu.close(); }
         else if (mode === 'task') menu.close();
         else draw();
-      }, mode === 'task' && !selectTag ? task : undefined, selectTag ? (name, folder) => selectTag(name, folder) : undefined)));
+      }, mode === 'task' && !selectTag ? task : undefined, selectTag ? (name, folder, folderIfNew) => selectTag(name, folder, folderIfNew) : undefined)));
     }
     if (focusedTag !== undefined) Array.from(list.querySelectorAll<HTMLButtonElement>('button')).find(b => b.dataset.tag === focusedTag)?.focus({ preventScroll: true });
     list.scrollTop = top;
@@ -1189,13 +1190,12 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, f
   });
   draw(); search.focus();
 }
-function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task, create?: (name: string, folder: string | null) => Promise<boolean>): void {
+function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task, create?: (name: string, folder: string | null, folderIfNew?: string) => Promise<boolean>): void {
   const modal = layer('New tag'); const name = field('Name', prefill); modal.panel.append(name.wrapper);
   // With a base folder, a new tag's folder follows its name until one is chosen or cleared.
-  // An existing tag keeps its folder; the preview approximates the backend's case folding.
+  // The backend saves it only if the tag is new, so an existing tag keeps its folder.
   let folder: string | null = null, follow = state.tagBaseFolder !== undefined;
-  const fold = (tag: string) => (savedTagName(tag) ?? '').toLowerCase().toUpperCase().toLowerCase();
-  const existing = (tag: string) => active?.tags.find(t => fold(t.name) === fold(tag));
+  const existing = (tag: string) => { const lower = savedTagName(tag)?.toLowerCase(); return active?.tags.find(t => t.name.toLowerCase() === lower); };
   const autoFolder = (tag: string) => state.tagBaseFolder === undefined || existing(tag) ? null : tagFolderPath(state.tagBaseFolder, tag);
   const folderLabel = el('p', undefined, 'folder-path'), folderHint = el('p', 'Created if missing when you create the tag.', 'tag-hint');
   const showFolder = () => {
@@ -1211,27 +1211,19 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
       if (saving) return; saving = true;
       try {
         // The name is read once so the folder always matches the tag submitted.
-        const typed = name.input.value; let created: string | null = null;
+        const typed = name.input.value, chosen = follow ? null : folder; let created: string | undefined;
         if (follow && autoFolder(typed)) {
           try { created = await api.createTagFolder(typed); }
           catch (error) { report(ipcMessage(error)); return; }
         }
-        // A created folder is assigned only once the tag exists without one, so a tag
-        // that already existed (or was just created elsewhere) keeps its folder.
-        const assign = async (saved: string | null) => {
-          await refresh();
-          const tag = active?.tags.find(t => t.name === saved);
-          if (created && tag && tag.folder === null && await call('tag_folder', { name: tag.name, folder: created })) await refresh();
-        };
-        const chosen = follow ? null : folder;
         if (create) {
           // The editor journals and serializes creation plus assignment as one
           // revision-bound operation, including when the app starts closing.
-          if (await create(typed, chosen)) { await assign(savedTagName(typed)); modal.close(); await after?.(typed.trim()); }
+          if (await create(typed, chosen, created)) { await refresh(); modal.close(); await after?.(typed.trim()); }
           return;
         }
-        const result = await call('create_tag', { name: typed, folder: chosen, ...(attachTask ? target(attachTask) : {}) });
-        if (result) { const savedName = result.tag ?? typed.trim(); await assign(savedName); modal.close(); await after?.(savedName); }
+        const result = await call('create_tag', { name: typed, folder: chosen, ...(created ? { folderIfNew: created } : {}), ...(attachTask ? target(attachTask) : {}) });
+        if (result) { await refresh(); const savedName = result.tag ?? typed.trim(); modal.close(); await after?.(savedName); }
       } finally { saving = false; }
     }, readonly));
   name.input.focus();

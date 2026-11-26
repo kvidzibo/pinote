@@ -78,15 +78,16 @@ export class Store {
     folder=validate_folder(folder);
     return this.transaction(()=>{const r=this.row('SELECT default_folder FROM tags WHERE name=?',name); if(!r) throw new NoteError(missingTag); if(r.default_folder===folder) return false; this.run('UPDATE tags SET default_folder=? WHERE name=?',folder,name); return true;});
   }
-  private registerTag(tag:string|null):string|null {
+  private registerTag(tag:string|null,folderIfNew:string|null=null):string|null {
     if(tag===null) return null;
     const tags=this.tags(); if(tags.includes(tag)) return tag;
     const match=tags.find(n=>caseFold(n)===caseFold(tag)); if(match!==undefined) return match;
-    this.run('INSERT INTO tags(name) VALUES (?)',tag); return tag;
+    this.run('INSERT INTO tags(name,default_folder) VALUES (?,?)',tag,folderIfNew); return tag;
   }
-  create_tag(name:string,options:{folder?:string|null}={}):string {
-    const tag=validate_tag(name), folder=validate_folder(options.folder??null); if(tag===null) throw new NoteError('Tag name cannot be empty.');
-    return this.transaction(()=>{ const saved=this.registerTag(tag)!; if(folder!==null) this.run('UPDATE tags SET default_folder=? WHERE name=?',folder,saved); return saved; });
+  // folderIfNew is only saved when the tag is inserted; folder also replaces an existing tag's folder.
+  create_tag(name:string,options:{folder?:string|null;folderIfNew?:string|null}={}):string {
+    const tag=validate_tag(name), folder=validate_folder(options.folder??null), folderIfNew=validate_folder(options.folderIfNew??null); if(tag===null) throw new NoteError('Tag name cannot be empty.');
+    return this.transaction(()=>{ const saved=this.registerTag(tag,folderIfNew)!; if(folder!==null) this.run('UPDATE tags SET default_folder=? WHERE name=?',folder,saved); return saved; });
   }
   rename_tag(old:string,newName:string):boolean {
     const a=validate_tag(old),b=validate_tag(newName); if(a===null||b===null) throw new NoteError('Tag name cannot be empty.');
@@ -112,12 +113,12 @@ export class Store {
   edit(note_id:Id,text:string,options:Revision):boolean { return this.edit_with_revision(note_id,text,options)[0]; }
   edit_with_revision(note_id:Id,text:string,options:Revision):[boolean,string] { return this.update(note_id,'edit',validate_text(text),options.expected_updated_at); }
   set_tag(note_id:Id,tag:string|null,options:Revision&{folder?:string|null}):boolean { return this.set_tag_with_revision(note_id,tag,options)[0]; }
-  set_tag_with_revision(note_id:Id,tag:string|null,options:Revision&{folder?:string|null}):[boolean,string] { return this.update(note_id,'tag',validate_tag(tag),options.expected_updated_at,validate_folder(options.folder??null)); }
-  private update(id:Id,action:string,value:string|null,expected:string,folder:string|null=null):[boolean,string] {
+  set_tag_with_revision(note_id:Id,tag:string|null,options:Revision&{folder?:string|null;folderIfNew?:string|null}):[boolean,string] { return this.update(note_id,'tag',validate_tag(tag),options.expected_updated_at,validate_folder(options.folder??null),validate_folder(options.folderIfNew??null)); }
+  private update(id:Id,action:string,value:string|null,expected:string,folder:string|null=null,folderIfNew:string|null=null):[boolean,string] {
     return this.transaction(()=>{
       const r=this.row('SELECT * FROM notes WHERE id=?',id); if(!r||!live(r.state)||r.updated_at!==expected) throw new NoteError(stale);
       const text=action==='edit'?value:r.text; let tag=action==='tag'?value:r.tag;
-      if(action==='tag'&&tag!==null) { tag=this.registerTag(tag); if(folder!==null) this.run('UPDATE tags SET default_folder=? WHERE name=?',folder,tag); }
+      if(action==='tag'&&tag!==null) { tag=this.registerTag(tag,folderIfNew); if(folder!==null) this.run('UPDATE tags SET default_folder=? WHERE name=?',folder,tag); }
       if(text===r.text&&tag===r.tag) return [false,r.updated_at];
       const when=timestamp(r.updated_at);
       this.run('UPDATE notes SET text=?,tag=?,updated_at=? WHERE id=?',text,tag,when,id);

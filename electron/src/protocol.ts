@@ -18,7 +18,7 @@ export type Operations = {
   tag: { params: Target & { tag: string | null }; result: Mutation };
   agent: { params: Target & { fields: Record<string, string | null> }; result: Mutation };
   schedule: { params: Target & { when: string }; result: Mutation };
-  create_tag: { params: { name: string; folder: string | null; id?: number; revision?: string }; result: Mutation };
+  create_tag: { params: { name: string; folder: string | null; folderIfNew?: string | null; id?: number; revision?: string }; result: Mutation };
   rename_tag: { params: { name: string; newName: string }; result: Mutation };
   delete_tag: { params: { name: string }; result: Mutation };
   tag_folder: { params: { name: string; folder: string | null }; result: Mutation };
@@ -60,7 +60,7 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
   return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
 }
 // fields holds unsaved agent field values by name; an empty value removes the field.
-export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; fields?: Record<string, string> };
+export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, string> };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
   creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; tagBaseFolder?: string; scroll?: { ordinary: number; pinned: number };

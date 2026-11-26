@@ -1143,6 +1143,17 @@ try {
     await page.getByRole('button',{name:'Confirm',exact:true}).click();
     await page.keyboard.press('Escape');
     await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    // The base folder stays set through the editor's tag-creation checks below.
+    const tagBase=join(root,'editor-tag-base'); await mkdir(tagBase);
+    const baseFolder=async(action)=>{
+      await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'manage-tags');
+      const manage=page.getByRole('dialog',{name:'Manage tags',exact:true});
+      await manage.getByRole('button',{name:action,exact:true}).click();
+      await manage.locator('.tag-sidebar .folder-path').filter({hasText:action==='Clear base folder' ? 'No base folder' : tagBase}).waitFor();
+      await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
+    };
+    await app.evaluate(({dialog},folder)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},tagBase);
+    await baseFolder('Choose base folder for new tags');
     await selectTaskAction(page, added.id, 'Edit text…');
     await text.fill('Text and tag saved together');
     await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
@@ -1172,6 +1183,24 @@ try {
     await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
     assert.equal(snapshot().tag,null);
     call('delete_tag',{name:'Editor tag'});
+    // The editor journals the automatic folder, which a retry still applies.
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Auto tag');
+    await page.getByRole('button',{name:'Create tag “Auto tag”…',exact:true}).click();
+    await writeFile(faultFile,'busy-create-tag');
+    await page.getByRole('button',{name:'Create tag',exact:true}).click();
+    await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal((await page.evaluate(()=>window.pinote.loadState())).edits[String(added.id)].pendingTagFolderIfNew,join(tagBase,'Auto tag'));
+    await writeFile(faultFile,'');
+    await editDialog.getByRole('button',{name:'Retry saving changes (Ctrl+Enter)',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Auto tag',exact:true}).waitFor();
+    assert.equal(call('snapshot',{view:'active'}).tags.find(t=>t.name==='Auto tag').folder,join(tagBase,'Auto tag'));
+    await page.getByRole('button',{name:'Dismiss notice',exact:true}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Auto tag',exact:true}).click();
+    await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:/^Untagged \(/}).click();
+    await editDialog.getByRole('button',{name:'Change tag: Untagged',exact:true}).waitFor();
+    call('delete_tag',{name:'Auto tag'});
     await text.fill('# Redesign the task editor\n\nKeep writing focused.\n\n- Save after a typing pause\n- Change tags in the header\n- Keep local text on failure');
     await saved();
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
@@ -1190,6 +1219,7 @@ try {
     await text.fill('Close flushes the debounce');
     await page.keyboard.press('Escape');
     await editDialog.waitFor({state:'detached'});
+    await baseFolder('Clear base folder');
     await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Close flushes the debounce$/}).waitFor();
     // Fields configured in Pi are editable before any agent has set them.
     await mkdir(env.PI_CODING_AGENT_DIR,{recursive:true});

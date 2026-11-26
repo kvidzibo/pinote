@@ -62,11 +62,12 @@ export function validate(request: any): [string, Record<string, any>] {
   let allowed = fields[op];
   if (op === 'create_tag' && (Object.hasOwn(p, 'id') || Object.hasOwn(p, 'revision'))) allowed = [...allowed, 'id', 'revision'];
   if (op === 'kitty' && Object.hasOwn(p, 'tabTitle')) allowed = [...allowed, 'tabTitle'];
+  if (op === 'create_tag' && Object.hasOwn(p, 'folderIfNew')) allowed = [...allowed, 'folderIfNew'];
   if (!exact(p, allowed)) invalid();
   for (const [key, v] of Object.entries(p)) {
     if (key === 'id') { if (!safe_id(v)) invalid(); }
     else if (key === 'ids') { if (!Array.isArray(v) || v.length > 1000 || !v.every(safe_id)) invalid(); }
-    else if (v === null && ['tag', 'folder'].includes(key)) continue;
+    else if (v === null && ['tag', 'folder', 'folderIfNew'].includes(key)) continue;
     // A null field value removes that field; labels and values are validated below.
     else if (key === 'fields') { if (!isObject(v) || Object.keys(v).length > 64 || !Object.values(v).every(value => value === null || typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value))) invalid(); }
     else if (typeof v !== 'string' || /[\uD800-\uDFFF]/u.test(v)) invalid();
@@ -84,6 +85,7 @@ export function validate(request: any): [string, Record<string, any>] {
     if (op === 'rename_tag' && validate_tag(p.newName) === null) throw new NoteError('Tag name cannot be empty.');
   }
   if (Object.hasOwn(p, 'folder')) validate_folder(p.folder);
+  if (Object.hasOwn(p, 'folderIfNew')) validate_folder(p.folderIfNew);
   if (op === 'kitty') validate_directory(p.directory);
   if (Object.hasOwn(p, 'tabTitle')) validate_tab_title(p.tabTitle);
   if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
@@ -121,9 +123,9 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
       else if (op === 'schedule') changed = store.schedule(id!, parse_reminder_time(p.when), options);
       else if (op === 'create_tag') {
         const name = validate_tag(p.name); if (name === null) throw new NoteError('Tag name cannot be empty.');
-        if (id === undefined) return { changed: true, tag: store.create_tag(name, { folder: p.folder }) };
+        if (id === undefined) return { changed: true, tag: store.create_tag(name, { folder: p.folder, folderIfNew: p.folderIfNew }) };
         const tags = store.tags(), saved = tags.includes(name) ? name : tags.find(t => caseFold(t) === caseFold(name)) ?? name;
-        const [, revision] = store.set_tag_with_revision(id, name, { ...options, folder: p.folder });
+        const [, revision] = store.set_tag_with_revision(id, name, { ...options, folder: p.folder, folderIfNew: p.folderIfNew });
         return { changed: true, id, tag: saved, revision };
       }
       else if (op === 'rename_tag') changed = store.rename_tag(p.name, p.newName);
