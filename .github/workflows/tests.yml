@@ -130,3 +130,44 @@ jobs:
         run: >-
           xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session --
           npm --prefix electron run test:package
+
+  # Basic macOS checks on a disposable runner session: Pi unit tests, the Electron
+  # workflow and Start in Kitty. Hosted runners lack the OpenGL Kitty needs, so a
+  # stand-in implements the Kitty remote-control subset Pinote uses.
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            electron/package-lock.json
+            backend/package-lock.json
+            pi/package-lock.json
+      - name: Install flock and the Kitty stand-in
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install flock
+          node backend/tests/desktop/kitty-stub.mjs --install /Applications/kitty.app
+      - run: npm --prefix electron ci --ignore-scripts --no-audit --no-fund
+      # Also installs and builds backend/ and installs pi/.
+      - run: npm --prefix electron run setup
+      - name: Start in Kitty
+        run: npm --prefix backend run test:kitty-macos
+      - name: Electron workflow
+        if: ${{ !cancelled() }}
+        working-directory: electron
+        run: npm run build && npm run test:macos
+      # The long engine scenario stays on Linux.
+      - name: Pi unit tests
+        if: ${{ !cancelled() }}
+        working-directory: pi
+        run: node --test --experimental-strip-types $(ls tests/*.test.ts | grep -vx tests/engine.test.ts)
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-screenshots
+          path: ${{ runner.temp }}/*.png
+          if-no-files-found: ignore

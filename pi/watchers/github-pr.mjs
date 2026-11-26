@@ -2,8 +2,8 @@
 // Configure this executable as a field-event handler. Requires authenticated `gh`.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { realpathSync } from 'node:fs';
 import { parsePullRequests } from '../pull-requests.js';
 import { checkPRBatch, withInterval } from '../pr-batch.js';
 
@@ -93,7 +93,9 @@ async function checkPullRequest({ url, number }, signal) {
     display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.
+const main = import.meta.main ?? (() => { try { return import.meta.filename === realpathSync(process.argv[1]); } catch { return false; } })();
+if (main) {
   let event;
   try {
     let input = '';

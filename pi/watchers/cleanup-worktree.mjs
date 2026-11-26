@@ -5,8 +5,8 @@
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { realpathSync } from 'node:fs';
 
 const run = promisify(execFile);
 const git = async (...args) => (await run('git', args, { timeout: 20_000, maxBuffer: 1024 * 1024 })).stdout.trim();
@@ -31,7 +31,9 @@ export async function handleTaskEvent(event) {
   return { state: 'removed', summary: 'Worktree removed' };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.
+const main = import.meta.main ?? (() => { try { return import.meta.filename === realpathSync(process.argv[1]); } catch { return false; } })();
+if (main) {
   try {
     let input = '';
     for await (const chunk of process.stdin) {
