@@ -123,7 +123,7 @@ export type PinoteApi = BackendApi & {
   saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<boolean>;
   kittyTabSettings(): Promise<KittyTabSettings>; saveKittyTabSettings(oneTaskPerTab: boolean, raw: string | null): Promise<void>;
   windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup): Promise<void>;
-  chooseFolder(): Promise<string | null>; createTagFolder(tag: string): Promise<string>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
+  chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
   onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
 };

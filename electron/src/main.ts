@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, protocol, screen, session, shell } from 'electron';
 import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -302,7 +302,7 @@ async function boot() {
     },
     // Field names configured in Pi's settings; the editor offers them even when a task has no value yet.
     'agent-fields': async () => { try { return agentFieldNames(JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8'))); } catch { return []; } },
-    // A new base folder must come from the folder picker (see create-tag-folder).
+    // A new base folder must come from the folder picker: the backend creates tag folders inside it.
     'save-state': async (_event, value: unknown) => {
       if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);
       if (readonly || !validState(value) || value.tagBaseFolder !== undefined && !approvedFolders.has(value.tagBaseFolder)) throw new Error('Cannot save invalid or unreadable state');
@@ -316,6 +316,11 @@ async function boot() {
     backend: async (_event, op: unknown, params: unknown) => {
       if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };
+      // The backend may create only the new tag's own folder inside the saved base folder.
+      if (op === 'create_tag' && (params as { folderIfNew?: string | null }).folderIfNew != null) {
+        const { name, folderIfNew } = params as { name: string; folderIfNew: string };
+        if (state.tagBaseFolder === undefined || folderIfNew !== tagFolderPath(state.tagBaseFolder, name)) return { protocol:1,ok:false,error:{code:'invalid',message:'The new tag folder no longer matches the base folder. Choose the tag again.'} };
+      }
       const work = tasks.then(async () => {
         if (mutating(op) && (readonly || state.warning)) return { protocol:1 as const,ok:false as const,error:{code:'invalid' as const,message:'Resolve the previous warning before making further changes.'} };
         if (mutating(op)) { uncertain = true; await persist(); }
@@ -377,19 +382,6 @@ async function boot() {
       const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }), folder = result.canceled ? null : result.filePaths[0] ?? null;
       if (folder !== null) approvedFolders.add(folder);
       return folder;
-    },
-    // Creates only the tag's own folder inside the saved, user-picked base folder, which must exist.
-    'create-tag-folder': async (_event, tag: unknown) => {
-      if (readonly || state.warning || closing) throw new Error('Writes are disabled; the tag folder was not created.');
-      const base = state.tagBaseFolder; if (base === undefined) throw new Error('No base folder is set.');
-      const path = typeof tag === 'string' && tag.length <= 256 ? tagFolderPath(base, tag) : null;
-      if (path === null) throw new Error('Invalid tag folder');
-      if (!(await stat(base).catch(() => null))?.isDirectory()) throw new Error(`Base folder ${base} is missing; choose it again in Manage tags.`);
-      try { await mkdir(path); } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new Error(`Cannot create ${path}: ${(error as Error).message}`);
-        if (!(await stat(path)).isDirectory()) throw new Error(`${path} exists but is not a folder.`);
-      }
-      return path;
     },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },

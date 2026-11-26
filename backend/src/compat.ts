@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { expandHome, resolvePath } from './runtime.ts';
 import { Temporal } from '@js-temporal/polyfill';
 import { caseFold } from 'unicode-case-folding';
@@ -47,6 +48,18 @@ export function validate_folder(value: string|null): string|null {
     if(statSync(path).isDirectory()) return path;
   } catch { /* Invalid, inaccessible or missing directory. */ }
   throw new NoteError('Choose an existing directory.');
+}
+// A tag folder created with a new tag: an absolute path whose parent exists by then.
+export function validate_new_folder(value: string|null): string|null {
+  if(value === null) return null;
+  if(!isAbsolute(value) || value.includes('\0')) throw new NoteError('A new tag folder must be an absolute path.');
+  return resolvePath(value);
+}
+export function create_folder(path: string): void {
+  try { mkdirSync(path); } catch(error) {
+    if((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new NoteError(`Cannot create ${path}: ${(error as Error).message}`);
+    if(!statSync(path).isDirectory()) throw new NoteError(`${path} exists but is not a folder.`);
+  }
 }
 export function canonicalInstant(value: Temporal.Instant): string {
   const result=value.toString({fractionalSecondDigits:6}).replace(/Z$/, '+00:00');

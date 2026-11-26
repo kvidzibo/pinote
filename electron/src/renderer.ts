@@ -1193,7 +1193,8 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, f
 function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task, create?: (name: string, folder: string | null, folderIfNew?: string) => Promise<boolean>): void {
   const modal = layer('New tag'); const name = field('Name', prefill); modal.panel.append(name.wrapper);
   // With a base folder, a new tag's folder follows its name until one is chosen or cleared.
-  // The backend saves it only if the tag is new, so an existing tag keeps its folder.
+  // The backend creates and saves it only if the tag is new, so an existing tag keeps its folder;
+  // the preview's existing-tag match is approximate (the backend uses full case folding).
   let folder: string | null = null, follow = state.tagBaseFolder !== undefined;
   const existing = (tag: string) => { const lower = savedTagName(tag)?.toLowerCase(); return active?.tags.find(t => t.name.toLowerCase() === lower); };
   const autoFolder = (tag: string) => state.tagBaseFolder === undefined || existing(tag) ? null : tagFolderPath(state.tagBaseFolder, tag);
@@ -1211,18 +1212,15 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
       if (saving) return; saving = true;
       try {
         // The name is read once so the folder always matches the tag submitted.
-        const typed = name.input.value, chosen = follow ? null : folder; let created: string | undefined;
-        if (follow && autoFolder(typed)) {
-          try { created = await api.createTagFolder(typed); }
-          catch (error) { report(ipcMessage(error)); return; }
-        }
+        const typed = name.input.value, chosen = follow ? null : folder;
+        const folderIfNew = follow && state.tagBaseFolder !== undefined ? tagFolderPath(state.tagBaseFolder, typed) ?? undefined : undefined;
         if (create) {
           // The editor journals and serializes creation plus assignment as one
           // revision-bound operation, including when the app starts closing.
-          if (await create(typed, chosen, created)) { await refresh(); modal.close(); await after?.(typed.trim()); }
+          if (await create(typed, chosen, folderIfNew)) { await refresh(); modal.close(); await after?.(typed.trim()); }
           return;
         }
-        const result = await call('create_tag', { name: typed, folder: chosen, ...(created ? { folderIfNew: created } : {}), ...(attachTask ? target(attachTask) : {}) });
+        const result = await call('create_tag', { name: typed, folder: chosen, ...(folderIfNew ? { folderIfNew } : {}), ...(attachTask ? target(attachTask) : {}) });
         if (result) { await refresh(); const savedName = result.tag ?? typed.trim(); modal.close(); await after?.(savedName); }
       } finally { saving = false; }
     }, readonly));

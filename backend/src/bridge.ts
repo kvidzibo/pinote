@@ -1,5 +1,5 @@
 import { Store, NoteError } from './store.ts';
-import { validate_tag, validate_text, validate_folder, validateAgentPatch, timestamp } from './compat.ts';
+import { validate_tag, validate_text, validate_folder, validate_new_folder, validateAgentPatch, timestamp } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
@@ -85,7 +85,7 @@ export function validate(request: any): [string, Record<string, any>] {
     if (op === 'rename_tag' && validate_tag(p.newName) === null) throw new NoteError('Tag name cannot be empty.');
   }
   if (Object.hasOwn(p, 'folder')) validate_folder(p.folder);
-  if (Object.hasOwn(p, 'folderIfNew')) validate_folder(p.folderIfNew);
+  if (Object.hasOwn(p, 'folderIfNew')) validate_new_folder(p.folderIfNew);
   if (op === 'kitty') validate_directory(p.directory);
   if (Object.hasOwn(p, 'tabTitle')) validate_tab_title(p.tabTitle);
   if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
