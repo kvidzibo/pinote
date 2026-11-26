@@ -37,7 +37,8 @@ export function kittyAddressEnv(): { explicit?: string; display?: string } {
 // task is sent; macOS gives each user one. Shared directories such as /tmp are refused.
 function privateTemporary(): string | undefined {
   try {
-    const directory = temporary(), stat = statSync(directory);
+    // Resolve symlinks and `..` once so Kitty listens in the directory checked here.
+    const directory = realpathUtf8(temporary()), stat = statSync(directory);
     if (stat.isDirectory() && stat.uid === process.getuid!() && !(stat.mode & 0o022)) return directory;
   } catch { /* Missing directory or unverifiable TMPDIR. */ }
   return undefined;
