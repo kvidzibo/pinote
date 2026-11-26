@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -75,6 +76,10 @@ test('watcher settings save validated entries and the shared keys their scripts 
   assert.deepEqual([forgejo.fields, forgejo.params.instances], [['PRs', 'PR'], [{ url: 'https://forgejo.example', tokenEnv: 'TOKEN' }]]);
   const cleanup = discoverFieldWatchers(value).find((watcher) => watcher.name === 'Worktree cleanup')!;
   assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.timeoutSeconds, cleanup.params], [['completed'], [], ['Worktrees'], 120, { dir: '/tmp' }]);
+  // A full configuration stays valid when a later version bundles another watcher.
+  const full = [...Array.from({ length: 29 }, (_, i) => ({ path: join(dir, `full-${i}.mjs`), enabled: false })),
+    ...discoverFieldWatchers({}).filter((watcher) => watcher.name !== 'Run command').map(({ path }) => ({ path, enabled: false }))];
+  assert.deepEqual(discoverFieldWatchers({ fieldWatchers: full }).map((watcher) => watcher.path), full.map((entry) => entry.path));
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },
@@ -253,6 +258,15 @@ test('run command passes arguments without a shell; a coalescing watcher runs on
     await assert.rejects(runCommand({ params }));
   }
   rmSync(calls);
+  // The executable decodes stdin as one stream: a character split between two reads survives.
+  const child = spawn(fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url)), [], { stdio: ['pipe', 'ignore', 'ignore'] });
+  const input = Buffer.from(JSON.stringify({ params: { command, args: args('žvėris') } })), split = input.indexOf(Buffer.from('ž')) + 1;
+  child.stdin.write(input.subarray(0, split));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  child.stdin.end(input.subarray(split));
+  assert.equal((await once(child, 'exit'))[0], 0);
+  assert.equal(readFileSync(calls, 'utf8'), `${dir}|žvėris|\n`);
+  rmSync(calls);
 
   writeFileSync(note, `#!${process.execPath}
 import fs from 'node:fs';
@@ -282,4 +296,10 @@ console.log(JSON.stringify({ cursor: events.length === limit ? events.at(-1).id 
   await new Promise((resolve) => setTimeout(resolve, 2100));
   for (let i = 0; i < 3; i++) await automation.tick();
   assert.equal(runs(), 2, 'One run covers every completion queued before it');
+  // Outside the cooldown, a burst spanning two history pages still runs once.
+  history(Array.from({ length: 80 }, (_, i) => i + 1));
+  await until(3);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  for (let i = 0; i < 3; i++) await automation.tick();
+  assert.equal(runs(), 3, 'The run waits until history is read');
 });

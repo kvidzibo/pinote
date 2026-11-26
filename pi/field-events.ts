@@ -138,6 +138,8 @@ export class FieldAutomation {
   // Watchers whose last invocation was a task event: field work goes next, so neither backlog starves the other.
   private taskTurn = new Set<string>();
   private taskEventsFailed = false;
+  // The last task-history read found new events: a coalescing watcher waits until a read finds none.
+  private taskReading = false;
   private noteCommand: string;
   private changed: () => void;
   private log: (failure?: WatcherFailureLog) => void;
@@ -213,7 +215,7 @@ export class FieldAutomation {
   private reconcile(durable = false): void {
     const enabled = this.watchers().filter((watcher) => watcher.enabled && !watcher.problem);
     if (enabled.length > 32 || new Set(enabled.map((w) => w.id)).size !== enabled.length) throw new Error('Invalid enabled watchers');
-    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.appEvents, w.taskEvents, settings(w), w.timeoutSeconds, w.cooldownSeconds]));
+    const signature = JSON.stringify(enabled.map((w) => [w.id, w.path, w.appEvents, w.taskEvents, settings(w), w.timeoutSeconds, w.cooldownSeconds, w.coalesceTaskEvents]));
     if (signature !== this.signature) {
       this.generation++;
       for (const [id, run] of this.running) {
@@ -464,6 +466,7 @@ export class FieldAutomation {
           if (!this.taskEventsFailed) { this.taskEventsFailed = true; this.log(); }
         }
       }
+      this.taskReading = more;
       try {
         // A watcher without field events has no field history to read.
         for (const watcher of intake ? this.enabled.filter((w) => w.fieldEvents.length) : []) {
@@ -517,7 +520,8 @@ export class FieldAutomation {
         if (watcher.appEvents.includes('startup')) { work = (signal) => this.runStartup(watcher, signal); input = startupInput; }
       }
       if (!work) {
-        const queued = this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
+        // A burst spanning several history pages still reaches a coalescing watcher as one invocation.
+        const queued = watcher.coalesceTaskEvents && this.taskReading ? -1 : this.taskQueue.findIndex((item) => item.subscription === subscription(watcher));
         const job = due.find((item) => item.job.watcherId === watcher.id);
         if (queued >= 0 && (!job || !fieldChecks || !this.taskTurn.has(watcher.id))) {
           const { event } = this.taskQueue.splice(queued, 1)[0];

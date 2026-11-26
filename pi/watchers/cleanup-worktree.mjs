@@ -48,6 +48,8 @@ const main = import.meta.main ?? (() => { try { return import.meta.filename === 
 if (main) {
   try {
     let input = '';
+    // Decoded as one stream: a multibyte character can span two reads.
+    process.stdin.setEncoding('utf8');
     for await (const chunk of process.stdin) {
       input += chunk;
       if (Buffer.byteLength(input) > 1024 * 1024) throw new Error('Input too large');

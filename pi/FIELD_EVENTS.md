@@ -152,8 +152,8 @@ the name of a bundled PR watcher.
 `coalesceTaskEvents: true` (pi-note 0.55.0+; earlier versions reject the file) is
 declared by the script only, not saved per entry. A newer queued task event then
 replaces the older one: task events held by the cooldown or a running invocation
-reach the script as one invocation with the newest event. Use it when the
-script acts on current state, not on each event.
+reach the script as one invocation with the newest event, once history has been
+read past a burst. Use it when the script acts on current state, not on each event.
 
 ### Task events
 
@@ -209,8 +209,7 @@ completed. Set **Command** to its absolute path and add **Arguments**, one per r
 passed exactly as written. It runs from the command's directory with the desktop's
 environment; its output is discarded and a nonzero exit is logged in `watchers.log`.
 Defaults: 300-second time limit and 60-second cooldown. Completions during the
-cooldown or a run are merged into one later run (`coalesceTaskEvents`), so a burst
-causes at most one extra run. Completions made while the desktop is closed are not
+cooldown or a run are merged into one later run (`coalesceTaskEvents`). Completions made while the desktop is closed are not
 replayed; the startup run covers them. The command must finish within the time
 limit and must not detach processes. One configured command per watcher file: copy
 the script and its parameter file to a custom path for another command.

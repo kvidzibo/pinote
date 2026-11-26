@@ -112,8 +112,8 @@ export function discoverFieldWatchers(root: Record<string, unknown>): FieldWatch
     const path = join(bundledDirectory, name);
     try { validateWatcherExecutable(path); bundled.add(path); } catch { /* Not a regular executable. */ }
   }
-  const merged = [...stored, ...[...bundled].filter((path) => !stored.some((entry) => entry.path === path)).map((path) => ({ path, enabled: false }))];
-  if (merged.length > 32) throw new Error('At most 32 discovered field watchers are supported');
+  // Unconfigured bundled watchers fill only the room left: a new bundled script cannot invalidate a full configuration.
+  const merged = [...stored, ...[...bundled].filter((path) => !stored.some((entry) => entry.path === path)).map((path) => ({ path, enabled: false }))].slice(0, 32);
   return merged.map((config: FieldWatcherConfig) => {
     const read = readManifest(config.path), manifest = typeof read === 'string' ? undefined : read;
     const spec = manifest?.params ?? [], params: Record<string, WatcherValue> = { ...config.params };
