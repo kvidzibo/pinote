@@ -4,10 +4,10 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { FieldAutomation, type WatcherFailureLog } from '../field-events.ts';
+import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { readConfigDocument, saveFieldWatchers } from '../footer-config.ts';
 import { handleTaskEvent } from '../watchers/cleanup-worktree.mjs';
@@ -80,9 +80,13 @@ test('watcher settings save validated entries and the shared keys their scripts 
   const full = [...Array.from({ length: 29 }, (_, i) => ({ path: join(dir, `full-${i}.mjs`), enabled: false })),
     ...discoverFieldWatchers({}).filter((watcher) => watcher.name !== 'Run command').map(({ path }) => ({ path, enabled: false }))];
   assert.deepEqual(discoverFieldWatchers({ fieldWatchers: full }).map((watcher) => watcher.path), full.map((entry) => entry.path));
-  // Saved copies from another package directory: the desktop hides their bundled twins, not the new watcher.
-  const copies = [...full.slice(0, 26), ...['cleanup-worktree.mjs', 'forgejo-pr.mjs', 'github-pr.mjs'].map((name) => ({ path: join(dir, 'package', name), enabled: false }))];
-  assert.ok(discoverFieldWatchers({ fieldWatchers: copies }).some((watcher) => watcher.name === 'Run command'));
+  // Saved copies from another package directory: the desktop hides their bundled twins, not a distinct watcher
+  // that shares a file name with a customized script.
+  const bundledDir = dirname(discoverFieldWatchers({}).find((watcher) => watcher.name === 'Run command')!.path), packageDir = join(dir, 'package');
+  mkdirSync(packageDir);
+  for (const name of ['cleanup-worktree', 'forgejo-pr', 'github-pr']) cpSync(join(bundledDir, `${name}.params.json`), join(packageDir, `${name}.params.json`));
+  const copies = [...full.slice(0, 27), ...['cleanup-worktree.mjs', 'forgejo-pr.mjs', 'github-pr.mjs', 'run-command.mjs'].map((name) => ({ path: join(packageDir, name), enabled: false }))];
+  assert.equal(discoverFieldWatchers({ fieldWatchers: copies }).at(-1)!.path, join(bundledDir, 'run-command.mjs'));
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },
@@ -274,6 +278,13 @@ test('run command passes arguments without a shell; a coalescing watcher runs on
   assert.equal((await once(child, 'exit'))[0], 0);
   assert.equal(readFileSync(calls, 'utf8'), `${dir}|žvėris|\n`);
   rmSync(calls);
+  // A stopped run ends only with its whole process group: a command ignoring SIGTERM is killed after the grace period.
+  const stubborn = join(dir, 'stubborn.sh');
+  writeFileSync(stubborn, `#!/bin/sh\ntrap '' TERM\nsleep 30\n`, { mode: 0o700 });
+  const started = Date.now(), watcherPath = fileURLToPath(new URL('../watchers/run-command.mjs', import.meta.url));
+  await assert.rejects(runFieldHandler(watcherPath, { params: { command: stubborn } }, new AbortController().signal, 300), /Watcher timed out/);
+  assert.ok(Date.now() - started >= 3000, 'The invocation waits for its process group');
+  assert.throws(() => execFileSync('pgrep', ['-f', stubborn]), 'Nothing from the stopped run survives');
 
   writeFileSync(note, `#!${process.execPath}
 import fs from 'node:fs';

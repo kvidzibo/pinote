@@ -64,6 +64,8 @@ const subscription = (watcher: FieldWatcher) => JSON.stringify([watcher.id, watc
 const startupInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, watcher.params]);
 const taskInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, subscription(watcher)]);
 const checkInput = (watcher: FieldWatcher) => JSON.stringify([watcher.path, settings(watcher)]);
+/** Time between SIGTERM and SIGKILL for a stopped watcher's process group. */
+const KILL_GRACE_MS = 3000;
 /** Watchers invoked at once; each watcher runs one invocation at a time. */
 const CONCURRENCY = 4;
 type Run = { input: (watcher: FieldWatcher) => string; key: string; controller: AbortController; promise: Promise<void> };
@@ -77,15 +79,19 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
   return new Promise((resolve, reject) => {
     const child = spawn(handler, [], { cwd: dirname(handler), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let output = '', bytes = 0, failure: string | undefined;
+    const group = process.platform !== 'win32';
     const send = (name: NodeJS.Signals) => {
-      try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, name); else child.kill(name); } catch { /* Already exited. */ }
+      try { if (group && child.pid) process.kill(-child.pid, name); else child.kill(name); } catch { /* Already exited. */ }
     };
-    // SIGTERM lets the script stop the processes it started; the group is killed after a grace period.
+    const alive = () => { try { return group && !!child.pid && process.kill(-child.pid, 0); } catch { return false; } };
+    // SIGTERM lets the script stop the processes it started; the group is killed after a grace period,
+    // within the desktop's 5-second shutdown allowance.
+    let escalation: ReturnType<typeof setTimeout> | undefined;
     const kill = (reason = 'Watcher cancelled') => {
       if (failure) return;
       failure = reason;
       send('SIGTERM');
-      setTimeout(() => send('SIGKILL'), 5000).unref();
+      escalation = setTimeout(() => send('SIGKILL'), KILL_GRACE_MS);
     };
     const timer = setTimeout(() => kill('Watcher timed out'), timeoutMs);
     const abort = () => kill();
@@ -100,8 +106,12 @@ export function runFieldHandler(handler: string, input: unknown, signal: AbortSi
       reject(new FieldHandlerFailure(error.code === 'ENOENT' ? 'Watcher executable or interpreter not found; check PATH' :
         error.code === 'EACCES' ? 'Watcher execution denied; check permissions' : 'Watcher could not be started'));
     });
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       cleanup();
+      // A stopped invocation ends with its whole process group, so the next one cannot overlap it. The
+      // escalation is cleared only then: a SIGKILL never reaches a reused group ID.
+      while (failure && alive()) await new Promise((resolve) => setTimeout(resolve, 50));
+      clearTimeout(escalation);
       if (failure || code !== 0 || signal.aborted) return reject(new FieldHandlerFailure(failure ??
         (code === 127 ? 'Watcher exited with code 127; check interpreter and PATH' : 'Watcher exited unsuccessfully')));
       try { resolve(FieldResult.parse(JSON.parse(output))); } catch { reject(new FieldHandlerFailure('Invalid watcher JSON or result schema')); }
