@@ -102,8 +102,9 @@ export function validate_tab_title(template: string): void {
 }
 export function tab_title(note: Note, template = DEFAULT_TAB_TITLE): string {
   const summary = Array.from(note.text.split(/[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u)[0].replace(/^ {0,3}#{1,6}[ \t]+/, ''));
-  return pythonStrip(template.replace(/\{tag\}|\{id\}|\{title(?::([1-9]\d{0,3}))?\}/g, (match, limit?: string) =>
-    match === '{tag}' ? (note.tag ? `[${note.tag}] ` : '') : match === '{id}' ? String(note.id) : summary.slice(0, limit ? Number(limit) : undefined).join('')));
+  // Repeated placeholders can expand far beyond a useful name; stay well within one process argument.
+  return pythonStrip(Array.from(template.replace(/\{tag\}|\{id\}|\{title(?::([1-9]\d{0,3}))?\}/g, (match, limit?: string) =>
+    match === '{tag}' ? (note.tag ? `[${note.tag}] ` : '') : match === '{id}' ? String(note.id) : summary.slice(0, limit ? Number(limit) : undefined).join(''))).slice(0, 1024).join(''));
 }
 export async function start_in_kitty(directory: string, note: Note, title: string, prompt: string): Promise<void> {
   const folder = validate_directory(directory);

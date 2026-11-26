@@ -172,7 +172,7 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
   }
   // A configured tab name: {title} is uncut, {title:N} keeps N characters, other braces stay literal.
   const long = await model.add('# ' + 'y'.repeat(40) + '\nbody', { tag: 'os' }), longNote = store(s => s.get(long));
-  for (const [tabTitle, expected] of [['{tag}{title}', '[os] ' + 'y'.repeat(40)], ['#{id} {title:5} {other}', `#${long} yyyyy {other}`], ['  {tag}  ', '[os]']]) {
+  for (const [tabTitle, expected] of [['{tag}{title}', '[os] ' + 'y'.repeat(40)], ['#{id} {title:5} {other}', `#${long} yyyyy {other}`], ['  {tag}  ', '[os]'], ['{title}'.repeat(32), 'y'.repeat(1024)]]) {
     const params = { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle };
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params }, paths)).ok, true); assert.equal(tools.calls().at(-2).at(-1), expected);
   }
