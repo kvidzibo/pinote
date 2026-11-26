@@ -13,7 +13,7 @@ const packaged = resolve(process.argv[2] || `out/pinote-electron-linux-${process
 const binary = join(packaged, 'pinote-electron');
 const backend = join(packaged, 'resources/pinote-backend/bridge.mjs');
 const env = { ...process.env, PINOTE_NODE:process.execPath, HOME:join(root,'home'), XDG_DATA_HOME:join(root,'data'), XDG_STATE_HOME:join(root,'state'), XDG_CONFIG_HOME:join(root,'config'), XDG_CACHE_HOME:join(root,'cache'), XDG_RUNTIME_DIR:join(root,'runtime'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
-for(const key of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE','NODE_OPTIONS','PYTHONPATH','PINOTE_ELECTRON_BACKEND']) delete env[key];
+for(const key of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE','NODE_OPTIONS','PYTHONPATH','PINOTE_BRIDGE_COMMAND']) delete env[key];
 for(const key of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[key],{recursive:true,mode:0o700});
 await mkdir(join(root,'bin'));
 for(const command of ['node','flock','i3','i3-msg','xdotool','import','which']) {

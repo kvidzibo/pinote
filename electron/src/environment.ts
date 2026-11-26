@@ -7,7 +7,7 @@ function runtimeInjection(name: string): boolean { return /^(LD_|NODE_|ELECTRON_
 // Verifies, as UTF-8, the inherited profile paths and runtime flags that backend children receive.
 export async function processEnvironment(pid: number): Promise<NodeJS.ProcessEnv> {
   if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Cannot verify the process environment.');
-  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_NODE', 'PINOTE_ELECTRON_BACKEND', 'XDG_RUNTIME_DIR', 'XDG_CACHE_HOME', 'KITTY_LISTEN_ON']);
+  const allowed = new Set(['HOME', 'PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'PINOTE_NOTE_COMMAND', 'PINOTE_NODE', 'PINOTE_BRIDGE_COMMAND', 'XDG_RUNTIME_DIR', 'XDG_CACHE_HOME', 'KITTY_LISTEN_ON']);
   const kept = (name: string) => name && (allowed.has(name) || runtimeInjection(name));
   if (process.platform === 'darwin') {
     // macOS has no /proc. Node decodes invalid UTF-8 as U+FFFD, so reject every U+FFFD.

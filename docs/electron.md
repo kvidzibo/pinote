@@ -10,7 +10,7 @@ performance guarantee. [macOS](#macos-experimental) support is experimental.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
 for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
-The private `electron/` package (0.23.0) bundles the matching Node backend;
+The private `electron/` package bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -30,12 +30,9 @@ The build includes the backend bundle. At runtime it uses external `node` from
 absolute PATH directories, or a **trusted absolute Node executable** in `PINOTE_NODE`.
 Relative PATH entries are ignored; unsupported Node versions fail at startup.
 Node/Electron injection environment flags are cleared in backend children.
-`PINOTE_ELECTRON_BACKEND` is an explicit trusted absolute bridge executable
-override for diagnostics and tests; there is no Python fallback. Unset it if an
-old Python desktop launcher still sets it. Electron 0.28.0 removed the backend
-switch: install the CLI with `npm install -g ./backend` ([CLI install](usage.md#install)).
-Leftover switch files (`~/.config/pinote/backend.json`,
-`~/.local/state/pinote/backend-switch`) are no longer read.
+`PINOTE_BRIDGE_COMMAND` is an explicit trusted absolute bridge executable
+override for diagnostics and tests; there is no Python fallback. HOME must be
+absolute, and HOME, XDG_STATE_HOME and XDG_CONFIG_HOME must not contain `..`.
 Installation does not change desktop login startup, i3 rules, or user configuration.
 
 ### macOS (experimental)

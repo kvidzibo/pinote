@@ -130,6 +130,8 @@ async function boot() {
   // already lossily decoded by Node. Do not log to an unverified profile.
   try { await processEnvironment(process.pid); }
   catch { console.error('Cannot verify Pinote startup paths as UTF-8.'); app.exit(1); return; }
+  // Profile paths are joined lexically here but resolved through symlinks by the backend.
+  verifyProfilePaths(process.env, ['HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME']);
   const bundles = join(app.isPackaged ? process.resourcesPath : __dirname, 'pinote-backend');
   const bundle = join(bundles, 'bridge.mjs');
   const command = backendCommand(bundle);
