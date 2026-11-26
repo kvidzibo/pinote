@@ -1,5 +1,5 @@
 import { TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from './protocol.ts';
-import type { MenuRequest, Operation, PreviewData, PreviewRequest, UIState } from './protocol.ts';
+import type { MenuRequest, Operation, PreviewData, PreviewRequest, UIState, WindowStartup } from './protocol.ts';
 
 export const MAX_STATE_PAYLOAD_BYTES = 1024 * 1024;
 // JSON escaping can use six bytes per warning code unit; reserve it separately from drafts.
@@ -28,6 +28,15 @@ export function validParams(op: unknown, value: unknown): op is Operation {
 export function validMenuRequest(value: unknown): value is MenuRequest {
   if (!record(value) || !['x', 'y'].every(k => typeof value[k] === 'number' && Number.isSafeInteger(value[k]) && value[k] >= 0 && value[k] <= 100000)) return false;
   return value.kind === 'app' && Object.keys(value).every(k => ['kind', 'x', 'y'].includes(k));
+}
+// Fixed start-up geometry: desktop coordinates and a size no smaller than the window minimum.
+export const MIN_WINDOW = { width: 280, height: 120 };
+export function validWindowStartup(value: unknown): value is WindowStartup {
+  const ints = (v: unknown, keys: string[], min: (k: string) => number) => record(v) && Object.keys(v).length === keys.length &&
+    keys.every(k => typeof v[k] === 'number' && Number.isSafeInteger(v[k]) && v[k] >= min(k) && v[k] <= 100000);
+  return record(value) && Object.keys(value).every(k => ['position', 'size'].includes(k)) &&
+    (value.position === undefined || ints(value.position, ['x', 'y'], () => -100000)) &&
+    (value.size === undefined || ints(value.size, ['width', 'height'], k => MIN_WINDOW[k as 'width' | 'height']));
 }
 export function validPreviewData(value: unknown): value is PreviewData {
   return record(value) && Object.keys(value).every(k => ['task','markdown','unread'].includes(k)) &&

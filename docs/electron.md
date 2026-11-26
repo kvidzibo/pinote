@@ -10,7 +10,7 @@ performance guarantee. [macOS](#macos-experimental) support is experimental.
 
 Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
 for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
-The private `electron/` package (0.21.0) bundles the matching Node backend;
+The private `electron/` package (0.22.0) bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
 
@@ -244,8 +244,8 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   asks for confirmation and keeps tasks and history. Polling preserves an
   unfinished name edit while updating the selected tag's folder.
 - The bottom cog menu opens beside its button and groups scheduled reminders
-  and Archive (including restore); tag management, task-action, new-task editor
-  and backend-switch settings; draft recovery; and **Quit Pinote**. Filtering
+  and Archive (including restore); tag management, task-action, new-task editor,
+  watcher, Kitty tab, window and backend-switch settings; draft recovery; and **Quit Pinote**. Filtering
   stays on the toolbar's filter button. It remains a native popup menu, which can adjust its placement at screen edges and extend
   beyond the small window.
 - The task row's eye opens a floating Markdown preview about 10 px from the
@@ -344,6 +344,10 @@ externally renamed new-task tag falls back to Untagged; renaming it inside Elect
 Dialogs, search text within menus, unsaved settings, and pending deletion marks
 are temporary. Private edit drafts remain available through draft recovery.
 Window position and size are restored within the available display area.
+**Menu → Window…** can instead start Pinote at a fixed position (desktop
+coordinates) and/or size (at least 280×120). **Remember last** restores the last
+one. These apply on every start and are kept on screen; a tiling window manager
+may still place the window itself. They are saved in `window.json`, not the database.
 
 With the default database location, Electron stores that working state in
 `<data>/pinote/electron/state.json`, and window geometry in

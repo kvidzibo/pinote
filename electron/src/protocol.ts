@@ -70,7 +70,7 @@ export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}
 export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty-tabs' | 'backend-settings' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty-tabs' | 'window-settings' | 'backend-settings' | 'drafts' | 'close';
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
 export type WatcherValue = string | number | boolean | Record<string, string>[];
@@ -83,6 +83,9 @@ export type WatcherEntry = { path: string; enabled: boolean; taskEvents: string[
 export type Watcher = WatcherEntry & { id: string; name: string; bundled: boolean; spec: WatcherParam[]; description?: string; problem?: string };
 export type WatcherSettings = { raw: string | null; watchers: Watcher[]; fieldNames: string[] };
 export type KittyTabSettings = { raw: string | null; oneTaskPerTab: boolean };
+/** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
+export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
+export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };
 export type BackendSettings = { switched: boolean; canSwitch: boolean; detail: string; version: string };
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
@@ -104,6 +107,7 @@ export type PinoteApi = BackendApi & {
   watcherSettings(): Promise<WatcherSettings>; chooseWatcher(): Promise<Watcher | null>;
   saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<boolean>;
   kittyTabSettings(): Promise<KittyTabSettings>; saveKittyTabSettings(oneTaskPerTab: boolean, raw: string | null): Promise<void>;
+  windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup): Promise<void>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
   onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
