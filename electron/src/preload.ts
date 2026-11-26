@@ -23,6 +23,7 @@ const api: PinoteApi = {
   windowSettings: () => ipcRenderer.invoke('window-settings'),
   saveWindowSettings: startup => ipcRenderer.invoke('save-window-settings', startup),
   chooseFolder: () => ipcRenderer.invoke('choose-folder'),
+  createTagFolder: (base, tag) => ipcRenderer.invoke('create-tag-folder', base, tag),
   copy: text => ipcRenderer.invoke('copy', text),
   openLink: url => ipcRenderer.invoke('open-link', url),
   collapse: collapsed => ipcRenderer.invoke('collapse', collapsed),

@@ -244,6 +244,11 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   Kitty folder immediately. The **+** creates a tag; the separated delete icon
   asks for confirmation and keeps tasks and history. Polling preserves an
   unfinished name edit while updating the selected tag's folder.
+- **Base folder** (below the tag list) prefills each new tag's folder with
+  `<base folder>/<tag>` (`/` in the name becomes `-`). Creating the tag creates
+  that folder if missing; if that fails, the tag is not created. Choosing or
+  clearing a folder in the New tag dialog replaces the prefill. Existing tags and
+  renames keep their folders.
 - The bottom cog menu opens beside its button and groups scheduled reminders
   and Archive (including restore); tag management, task-action, new-task editor,
   watcher, Kitty tab, window and backend-switch settings; draft recovery; and **Quit Pinote**. Filtering
@@ -343,7 +348,7 @@ or data conversion.
 
 Restarting restores the new-task tag (including Untagged), tag filters, composer
 and private edit drafts, collapsed state, list scroll positions, saved task-action
-preferences, the add-task input preference, the Kitty tab name, and agent read cursors. A deleted or
+preferences, the add-task input preference, the Kitty tab name, the tag base folder, and agent read cursors. A deleted or
 externally renamed new-task tag falls back to Untagged; renaming it inside Electron updates the selection.
 Dialogs, search text within menus, unsaved settings, and pending deletion marks
 are temporary. Private edit drafts remain available through draft recovery.

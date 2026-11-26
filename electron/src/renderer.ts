@@ -5,7 +5,7 @@ import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STA
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
 import type { BackendSettings, KittyTabSettings, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
-import { DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, validKittyTabTitle } from './protocol';
+import { DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, tagFolderPath, validKittyTabTitle } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -1191,14 +1191,25 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, f
 }
 function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Task, create?: (name: string, folder: string | null) => Promise<boolean>): void {
   const modal = layer('New tag'); const name = field('Name', prefill); modal.panel.append(name.wrapper);
-  let folder: string | null = null;
-  const folderLabel = el('p', 'No default folder', 'folder-path'); modal.panel.append(folderLabel);
+  // With a base folder, the folder follows the name until one is chosen or cleared.
+  const base = state.tagBaseFolder; let folder: string | null = null, follow = base !== undefined;
+  const folderLabel = el('p', undefined, 'folder-path'), folderHint = el('p', 'Created if missing when you create the tag.', 'tag-hint');
+  const showFolder = () => {
+    const shown = follow ? tagFolderPath(base!, name.input.value) : folder;
+    folderLabel.textContent = shown ?? 'No default folder'; folderLabel.title = shown ?? ''; folderHint.hidden = !follow || !shown;
+  };
+  name.input.addEventListener('input', showFolder);
+  modal.panel.append(folderLabel, folderHint); showFolder();
   const bar = controls(modal.panel); let saving = false;
-  bar.append(button('folder', 'Choose default Kitty folder', async () => { const chosen = await api.chooseFolder(); if (chosen) { folder = chosen; folderLabel.textContent = chosen; } }),
-    button('clear', 'Clear default folder', () => { folder = null; folderLabel.textContent = 'No default folder'; }),
+  bar.append(button('folder', 'Choose default Kitty folder', async () => { const chosen = await api.chooseFolder(); if (chosen) { folder = chosen; follow = false; showFolder(); } }),
+    button('clear', 'Clear default folder', () => { folder = null; follow = false; showFolder(); }),
     button('save', 'Create tag', async () => {
       if (saving) return; saving = true;
       try {
+        if (follow && tagFolderPath(base!, name.input.value)) {
+          try { folder = await api.createTagFolder(base!, name.input.value); }
+          catch (error) { report(ipcMessage(error)); return; }
+        }
         if (create) {
           // The editor journals and serializes creation plus assignment as one
           // revision-bound operation, including when the app starts closing.
@@ -1220,7 +1231,15 @@ function manageTags(selected?: string): void {
   searchBar.append(search, create);
   const count = el('p', undefined, 'tag-hint'), list = el('div', undefined, 'tag-list scroll');
   list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Saved tags');
-  sidebar.append(searchBar, count, list, el('p', 'Tags stay saved without tasks.', 'tag-hint'));
+  const baseSection = el('section', undefined, 'tag-base'), baseRow = el('div', undefined, 'tag-base-header'), basePath = el('p', undefined, 'folder-path');
+  const setBase = (next: string | undefined) => save(async () => {
+    const previous = state.tagBaseFolder; state.tagBaseFolder = next;
+    try { await persist(); } catch (error) { state.tagBaseFolder = previous; throw error; }
+  });
+  baseRow.append(el('p', 'Base folder', 'tag-editor-label'), button('folder', 'Choose base folder for new tags', async () => { const chosen = await api.chooseFolder(); if (chosen !== null) await setBase(chosen); }),
+    button('clear', 'Clear base folder', () => setBase(undefined)));
+  baseSection.append(baseRow, basePath, el('p', 'New tags default to a folder named after the tag inside it.', 'tag-hint'));
+  sidebar.append(searchBar, count, list, el('p', 'Tags stay saved without tasks.', 'tag-hint'), baseSection);
   const editor = el('div', undefined, 'tag-editor'); layout.append(sidebar, editor); modal.panel.append(layout);
   selected ??= active?.tags[0]?.name;
   let lastDraw = '', listSelection: string | undefined, editorTag: string | undefined, folderPath: HTMLElement | undefined, saving = false;
@@ -1298,6 +1317,8 @@ function manageTags(selected?: string): void {
     // Polling updates folder metadata, but never replaces a name being edited.
     if (editorTag !== tag?.name || !editor.childElementCount) { editorTag = tag?.name; drawEditor(tag); }
     if (folderPath) { folderPath.textContent = tag?.folder ?? 'No default folder'; folderPath.title = tag?.folder ?? ''; }
+    basePath.textContent = state.tagBaseFolder ?? 'No base folder'; basePath.title = state.tagBaseFolder ?? '';
+    for (const b of baseRow.querySelectorAll('button')) b.disabled = readonly || saving || !stateLoaded;
     create.disabled = readonly || saving; search.disabled = saving;
     for (const b of list.querySelectorAll('button')) b.disabled = saving;
     for (const b of editor.querySelectorAll('button')) b.disabled = readonly || saving;

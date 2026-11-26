@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, protocol, screen, session, shell } from 'electron';
 import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -10,7 +10,7 @@ import { backendCommand } from './backend-command.ts';
 import { hasInstalledLauncher, hasBackendPreference, preferredBackendEnvironment, processEnvironment, recoverBackendSwitch, runCommand, switchToNode, verifySwitchPaths } from './backend-switch.ts';
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
-import { initialState } from './protocol.ts';
+import { initialState, tagFolderPath, validTagBaseFolder } from './protocol.ts';
 import type { MenuAction, MenuRequest, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
@@ -362,6 +362,18 @@ async function boot() {
       try { await write; } catch { throw new Error('Cannot save window settings.'); }
     },
     'choose-folder': async () => { const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0] ?? null; },
+    // Creates only the tag's own folder: the base folder must already exist.
+    'create-tag-folder': async (_event, base: unknown, tag: unknown) => {
+      if (readonly || state.warning || closing) throw new Error('Writes are disabled; the tag folder was not created.');
+      const path = typeof base === 'string' && validTagBaseFolder(base) && typeof tag === 'string' && tag.length <= 256 ? tagFolderPath(base, tag) : null;
+      if (path === null) throw new Error('Invalid tag folder');
+      if (!(await stat(base as string).catch(() => null))?.isDirectory()) throw new Error(`Base folder ${base} is missing; choose it again in Manage tags.`);
+      try { await mkdir(path); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new Error(`Cannot create ${path}: ${(error as Error).message}`);
+        if (!(await stat(path)).isDirectory()) throw new Error(`${path} exists but is not a folder.`);
+      }
+      return path;
+    },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
     fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top); },
