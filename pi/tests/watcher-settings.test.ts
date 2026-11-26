@@ -73,7 +73,7 @@ test('watcher settings save validated entries and the shared keys their scripts 
   const forgejo = discoverFieldWatchers(value).find((watcher) => watcher.name === 'Forgejo PR')!;
   assert.deepEqual([forgejo.fields, forgejo.params.instances], [['PRs', 'PR'], [{ url: 'https://forgejo.example', tokenEnv: 'TOKEN' }]]);
   const cleanup = discoverFieldWatchers(value).find((watcher) => watcher.name === 'Worktree cleanup')!;
-  assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.params], [['completed'], [], ['Worktrees'], { dir: '/tmp' }]);
+  assert.deepEqual([cleanup.taskEvents, cleanup.fieldEvents, cleanup.fields, cleanup.timeoutSeconds, cleanup.params], [['completed'], [], ['Worktrees'], 120, { dir: '/tmp' }]);
   const entries = [
     { path: forgejo.path, enabled: true, fieldEvents: ['added'], fields: ['PRs'], params: { instances: [{ url: 'http://127.0.0.1:3000' }] } },
     { path: script, enabled: true, taskEvents: ['completed'], params: { dir: 'relative' }, appEvents: ['startup'], timeoutSeconds: 30, cooldownSeconds: 5 },

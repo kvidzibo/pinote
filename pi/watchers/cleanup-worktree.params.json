@@ -3,6 +3,7 @@
   "description": "When a task is completed, removes each recorded Git worktree that is clean and unlocked. Ignored files in them, such as a local .env, are deleted too.",
   "taskEvents": ["completed"],
   "fields": ["Worktrees"],
+  "timeoutSeconds": 120,
   "params": [
     {
       "key": "dir",
