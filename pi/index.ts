@@ -102,10 +102,10 @@ export default function pinote(pi: ExtensionAPI): void {
         const saved = session.snapshot();
         if (saved && typeof task?.updated_at === 'string' && (task.state === 'active' || task.state === 'in_progress')) {
           launch = { task_id: id!, updated_at: task.updated_at }; unselected = saved;
-          await session.start(branch, conversation, { ...saved, state: { ...saved.state, screen: undefined, field: undefined, search: undefined, proposal: undefined, launch } }, piSessionId || undefined);
         }
       }
       if (launch) try {
+        if (unselected) await session.start(branch, conversation, { ...unselected, state: { ...unselected.state, screen: undefined, field: undefined, search: undefined, proposal: undefined, launch } }, piSessionId || undefined);
         const view = session.view!;
         // This control exists only for the exact GUI-displayed revision.
         if (JSON.stringify(view.state.launch) !== JSON.stringify(launch)) throw new Error('Launch handoff was not applied');
@@ -123,7 +123,8 @@ export default function pinote(pi: ExtensionAPI): void {
       } catch (error) {
         if (!unselected) throw error;
         // Not a GUI launch: return to the ordinary unselected view rather than keep the one-task filter.
-        ctx.ui.notify(`Pinote: this Kitty tab's task #${launch.task_id} was not selected. Use /pinote to select manually.`, 'warning');
+        // An uncertain write keeps its own warning: the task may have started.
+        ctx.ui.notify(error instanceof PinoteFailure && error.uncertain ? error.message : `Pinote: this Kitty tab's task #${launch.task_id} was not selected. Use /pinote to select manually.`, 'warning');
         launch = undefined;
         await session.start(branch, conversation, unselected, piSessionId || undefined);
       }

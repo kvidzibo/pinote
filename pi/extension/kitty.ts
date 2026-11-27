@@ -31,7 +31,7 @@ function tabRecords(): { dir: string; prefix: string } | undefined {
   if (!root || !isAbsolute(root) || !kitty || !/^[1-9]\d*$/.test(kitty)) return undefined;
   try {
     // Resolve symlinks and `..` once, so the directory used is the one checked.
-    const base = realpathSync(root), stat = statSync(base);
+    const base = realpathSync.native(root), stat = statSync(base);
     if (!stat.isDirectory() || stat.uid !== process.getuid?.() || stat.mode & 0o022) return undefined;
     return { dir: join(base, 'pinote', 'kitty-tabs'), prefix: `${kitty}-` };
   } catch { return undefined; }
