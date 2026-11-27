@@ -111,9 +111,11 @@ export class MarkdownEditor {
       if (view.state.readOnly) return true;
       const target = { from: view.state.selection.main.from, to: view.state.selection.main.to };
       this.targets.add(target);
+      // Every file of the paste is accepted now; insertion keeps their order.
+      const stored = files.map(file => storeImage(file));
       const work: Promise<void> = (async () => {
-        for (const file of files) {
-          const ref = await storeImage(file);
+        for (const pending of stored) {
+          const ref = await pending;
           if (ref && !this.destroyed && !view.state.readOnly) target.from = target.to = insertImage(view, ref, target);
         }
       })().finally(() => { this.targets.delete(target); this.pasting.delete(work); });

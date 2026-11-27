@@ -153,7 +153,8 @@ async function pruneImages(): Promise<void> {
   try {
     // Save the drafts that dropped a reference first; until then the saved draft keeps its images.
     if (statePending || draftSaveFailed) { try { await persist(); } catch { return; } }
-    await persistChain;
+    // Wait for every queued save, including ones queued meanwhile.
+    for (let tail = persistChain; ; tail = persistChain) { await tail; if (tail === persistChain) break; }
     if (draftSaveFailed || readonly || closing) return;
     if (imageAdds || statePending) { pruneQueued = true; return; }
     const keep = new Set(imageHashes(state.draft));
