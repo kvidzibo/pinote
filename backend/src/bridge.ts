@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { Store, NoteError } from './store.ts';
 import { validate_tag, validate_text, validate_folder, validate_new_folder, validateAgentPatch, timestamp, type AgentNotes, type AgentValue } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
@@ -14,7 +15,7 @@ const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge 
 const conflict = (): never => { throw new BridgeError('conflict', 'This task changed elsewhere. Refresh before trying again.'); };
 export const safe_id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 const sources: Record<string, string[]> = { start: ['active'], reset: ['in_progress'], done: ['active', 'in_progress'], rm: ['active', 'in_progress'], restore: ['done', 'removed', 'scheduled'] };
-const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'], image_add: ['data'], image: ['hash'], image_prune: ['keep'] };
+const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'], image_add: ['data'], image: ['hash'], image_prune: ['keep'], stats: [] };
 // A bounded recursive-descent decoder retains numeric token types and rejects duplicate
 // keys before JSON.parse could silently erase either distinction.
 export function decode(data: Uint8Array): unknown {
@@ -120,6 +121,15 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
     const store = new Store(paths.database, { timeout: 0.1 });
     try { const image = store.image(p.hash); return image ? { found: true, mime: image.mime, data: Buffer.from(image.bytes).toString('base64') } : { found: false }; }
     finally { store.close(); }
+  }
+  if (op === 'stats') {
+    const store = new Store(paths.database, { timeout: 0.1 });
+    try {
+      const size = (path: string) => { try { return statSync(path).size; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
+      const database = statSync(paths.database);
+      return { database: { path: resolvePath(paths.database), bytes: database.size + (size(`${paths.database}-wal`) ?? 0) + (size(`${paths.database}-shm`) ?? 0), modified: database.mtime.toISOString() },
+        log: { path: resolvePath(paths.log), bytes: size(paths.log) }, ...store.stats() };
+    } finally { store.close(); }
   }
   return withDisplayLock(paths, false, async () => {
     const store = new Store(paths.database, { timeout: 0.1 });

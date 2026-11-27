@@ -88,13 +88,17 @@ complete it. The bottom **Menu** button holds scheduled reminders, Archive (with
 restore), draft recovery and **Quit Pinote**.
 
 The cog beside it opens **Settings** in the window, with one tab per section:
-**Tags**, **Actions**, **Editor**, **Fields**, **Watchers**, **Kitty** and
-**Window**. It reopens on the tab used last.
+**Tags**, **Actions**, **Editor**, **Fields**, **Watchers**, **Kitty**,
+**Window** and **Data**. It reopens on the tab used last.
 
 - Each tab saves on its own and the page stays open. Unsaved changes survive
   switching tabs; a dot marks their tab.
 - The back arrow or **Escape** returns to the tasks, asking first when changes
   are unsaved.
+- **Data** is read-only: where `notes.db`, `pi-note.json` and the backend's
+  `app.log` are and their sizes, task counts by state, stored images and history
+  events. Icons copy the database path or show a file in its folder; reopen
+  Settings to refresh.
 
 ### Composer and editor
 

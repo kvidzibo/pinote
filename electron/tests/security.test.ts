@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from '../src/protocol.ts';
 import type { LegacyPerStateTaskActionSettings, LegacyTaskActionSettings } from '../src/protocol.ts';
-import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState, validWindowStartup } from '../src/security.ts';
+import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, mutating, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState, validWindowStartup } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
   assert.ok(validParams('edit', { id: 1, revision: 'rev', text: 'literal <script>☘</script>' }));
@@ -266,4 +266,13 @@ test('image operations accept only bounded base64 and SHA-256 hashes', () => {
   assert.ok(!validEnvelope('image_add', { protocol: 1, ok: true, result: { changed: true, hash: 'x', mime: 'image/png', width: 2, height: 2 } }));
   assert.ok(validEnvelope('image_prune', { protocol: 1, ok: true, result: { changed: true, removed: [hash] } }));
   assert.ok(!validEnvelope('image_prune', { protocol: 1, ok: true, result: { changed: true, removed: ['../x'] } }));
+});
+test('stats is a read-only operation with a validated result', () => {
+  const result = { database: { path: '/home/u/.local/share/pinote/notes.db', bytes: 4096, modified: '2026-11-27T22:40:00.000Z' }, log: { path: '/home/u/.local/state/pinote/app.log', bytes: null },
+    tasks: { active: 3, in_progress: 1, scheduled: 0, done: 2, removed: 0 }, images: { count: 1, bytes: 120 }, events: 9 };
+  assert.ok(validParams('stats', {}) && !validParams('stats', { path: '/etc/passwd' }) && !mutating('stats'));
+  assert.ok(validEnvelope('stats', { protocol: 1, ok: true, result }));
+  for (const bad of [{ ...result, database: { ...result.database, path: 'notes.db' } }, { ...result, database: { ...result.database, modified: 'yesterday' } }, { ...result, log: { ...result.log, bytes: -1 } },
+    { ...result, tasks: { ...result.tasks, done: 1.5 } }, { ...result, images: { count: 1 } }, { ...result, events: undefined }, { ...result, extra: 1 }])
+    assert.ok(!validEnvelope('stats', { protocol: 1, ok: true, result: bad }));
 });

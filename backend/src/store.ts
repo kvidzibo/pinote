@@ -249,6 +249,13 @@ export class Store {
   }
   // Images live in their own table, created on first use, so earlier backends still open this schema-8 database.
   private hasImages():boolean { return !!this.row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='images'"); }
+  /** Read-only counts: tasks by state, stored images and their bytes, and history events. */
+  stats():{tasks:Record<NoteState,number>;images:{count:number;bytes:number};events:number} {
+    const tasks:Record<NoteState,number>={active:0,in_progress:0,scheduled:0,done:0,removed:0};
+    for(const r of this.query('SELECT state,COUNT(*) AS count FROM notes GROUP BY state')) if(Object.hasOwn(tasks,r.state)) tasks[r.state as NoteState]=Number(r.count);
+    const images=this.hasImages()?this.row('SELECT COUNT(*) AS count,COALESCE(SUM(LENGTH(bytes)),0) AS bytes FROM images')!:{count:0n,bytes:0n};
+    return {tasks,images:{count:Number(images.count),bytes:Number(images.bytes)},events:Number(this.row('SELECT COUNT(*) AS count FROM events')!.count)};
+  }
   /** Stores image bytes once by their SHA-256 hash. */
   add_image(bytes:Uint8Array):ImageInfo&{hash:string;changed:boolean} {
     const info=imageInfo(bytes), hash=createHash('sha256').update(bytes).digest('hex');

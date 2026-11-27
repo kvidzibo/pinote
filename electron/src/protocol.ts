@@ -30,7 +30,15 @@ export type Operations = {
   // Read by the main process for pinote-app://ui/images/<hash>; not exposed to renderers.
   image: { params: { hash: string }; result: { found: true; mime: string; data: string } | { found: false } };
   image_prune: { params: { keep: string[] }; result: { changed: boolean; removed: string[] } };
+  // Read by the main process for Settings → Data; not exposed to renderers.
+  stats: { params: Record<string, never>; result: BackendStats };
 };
+export type BackendStats = { database: { path: string; bytes: number; modified: string }; log: { path: string; bytes: number | null };
+  tasks: { active: number; in_progress: number; scheduled: number; done: number; removed: number }; images: { count: number; bytes: number }; events: number };
+/** Settings → Data: the backend's counts, plus the shared settings file and the home directory to abbreviate paths with. */
+export type DataStats = BackendStats & { settings: { path: string; bytes: number | null }; home: string };
+export const DATA_FILES = ['database', 'settings', 'log'] as const;
+export type DataFile = typeof DATA_FILES[number];
 export type Operation = keyof Operations;
 export type Result<T> = { protocol: 1; ok: true; result: T; warning?: string } | { protocol: 1; ok: false; error: { code: 'invalid' | 'conflict' | 'busy' | 'internal' | 'unknown'; message: string } };
 export const TASK_ACTION_IDS = ['kitty','copy','start','done','archive','edit','schedule','tag','preview'] as const;
@@ -67,7 +75,7 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 }
 // fields holds unsaved agent field values by name; an empty value or list removes the field.
 export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, FieldValue> };
-export const SETTINGS_TABS = ['tags', 'actions', 'editor', 'fields', 'watchers', 'kitty', 'window'] as const;
+export const SETTINGS_TABS = ['tags', 'actions', 'editor', 'fields', 'watchers', 'kitty', 'window', 'data'] as const;
 export type SettingsTab = typeof SETTINGS_TABS[number];
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
@@ -75,7 +83,7 @@ export type UIState = {
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
-export type RendererOperation = Exclude<Operation, 'handshake' | 'image'>;
+export type RendererOperation = Exclude<Operation, 'handshake' | 'image' | 'stats'>;
 export type BackendApi = { [K in RendererOperation]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
@@ -156,6 +164,7 @@ export type PinoteApi = BackendApi & {
   saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<string | false>;
   kittySettings(): Promise<KittySettings>; saveKittySettings(oneTaskPerTab: boolean, onTaskComplete: TaskCompletionAction, raw: string | null): Promise<string>;
   windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup, imageView: ImageView): Promise<void>;
+  dataStats(): Promise<DataStats>; showDataFile(which: DataFile): Promise<void>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   /** Opens a stored image; true means this window should show it itself. */
   viewImage(hash: string): Promise<boolean>;
