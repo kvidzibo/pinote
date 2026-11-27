@@ -1,6 +1,6 @@
 {
   "name": "pi-note",
-  "version": "0.59.0",
+  "version": "0.60.0",
   "description": "Persistent pinote tasks, Markdown handoffs, and task status for Pi",
   "license": "MIT",
   "type": "module",
@@ -30,6 +30,7 @@
     "extension",
     "engine.ts",
     "field-events.ts",
+    "field-values.ts",
     "notes-version.ts",
     "watcher-host.ts",
     "FIELD_EVENTS.md",

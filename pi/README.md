@@ -156,11 +156,11 @@ Tools: `pinote_search`, `pinote_get_task`, `pinote_get_current`,
 - Suggestions create, start or select nothing until accepted in the UI. Reads by
   ID do not change selection.
 - **`pinote_update_current`** requires the task's `expected_updated_at` revision;
-  concurrent edits are rejected. `set` replaces a value, `append` adds unique
-  nonblank lines, `remove` deletes; do not combine them for one field:
+  concurrent edits are rejected. Use one operation per field; which ones a
+  field accepts depends on its [type](#field-types):
 
 ```json
-{"expected_updated_at":"<current revision>","append":{"PRs":"https://github.com/owner/repo/pull/42"}}
+{"expected_updated_at":"<current revision>","append":{"PRs":["https://github.com/owner/repo/pull/42"]}}
 ```
 
 Agent guidance and field instructions go in the system prompt. Fresh task
@@ -184,13 +184,32 @@ Worktrees appends each verified worktree root, PRs appends each created PR URL.
 This is model guidance, not a guaranteed hook. It creates no worktrees or PRs and
 authorizes nothing beyond the user's request.
 
+### Field types
+
+Each definition has a `type`, edited in the desktop's **Fields** settings (or
+`footer.fields[].type` in `pi-note.json`):
+
+| Type | Stored as | `set` | `append` | `remove_items` |
+|---|---|---|---|---|
+| `text` (default) | Markdown string | string | rejected | rejected |
+| `list` | JSON array | replaces the entries | adds entries | deletes matching entries |
+| `unique-list` (default for `PRs`, `Worktrees`) | JSON array | replaces, without duplicates | adds entries not already present | deletes matching entries |
+
+- `remove` deletes a whole field of any type.
+- List operations take an array of single-line strings, or a string with one
+  entry per line. An emptied list removes its field.
+- Text saved before a field became a list is split into lines on the next write.
+- A field without a definition stays text; `append` adds unique lines to it.
+- Lists need `note` 0.31.0+. The footer and watchers still see a list as text,
+  one entry per line.
+
 Disabling stops the guidance; saved values stay visible in Electron's preview.
 Removing a preset restores its disabled default; removing another definition
 keeps saved values. At most 64 definitions; unedited presets do not count.
 
 ### Multiple PRs
 
-Set `PRs` to GitHub or Forgejo PR URLs or Markdown links, **one per line**. Each PR
+Set `PRs` to GitHub or Forgejo PR URLs or Markdown links, **one per entry**. Each PR
 number is its own footer link: green for passing CI, red for failures/conflicts,
 amber for pending checks, the theme accent for merged, neutral when closed or
 unavailable.

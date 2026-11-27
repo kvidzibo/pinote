@@ -10,6 +10,7 @@ import { readConfigDocument } from './footer-config.ts';
 import { discoverFieldWatchers, TASK_EVENTS, type FieldWatcher } from './field-watchers.ts';
 import { parsePullRequests } from './pull-requests.js';
 import { notesVersion, RECHECK_MS } from './notes-version.ts';
+import { fieldText, type FieldValue } from './field-values.ts';
 
 const exec = promisify(execFile);
 const integer = z.number().int().nonnegative().safe();
@@ -37,7 +38,9 @@ export type WatcherFailureLog = { watcher: string; watcherId: string; taskId: nu
 class FieldHandlerFailure extends Error {}
 export type FieldStatus = { watcherId: string; field: string; value: string; result: FieldResult; checkedAt?: string; stale: boolean };
 export type FieldNotice = { id: string; taskId: number; field: string; message: string; receiptIds?: string[] };
-type Task = { id: number; state: string; updated_at: string; agent_notes: Record<string, string> };
+// Watchers see a list in its text form, as the CLI's field events report it.
+type Task = { id: number; state: string; updated_at: string; agent_notes: Record<string, FieldValue> };
+const noteText = (task: Task, field: string): string | undefined => Object.hasOwn(task.agent_notes, field) ? fieldText(task.agent_notes[field]) : undefined;
 type Row = { job: string };
 type PRNoticeRow = { url: string; notification_key: string; id: string; message: string };
 // By name, not install location: the desktop's bundled copy and a package checkout are the same watcher.
@@ -317,7 +320,7 @@ export class FieldAutomation {
     this.reconcile();
     return this.enabled.flatMap((watcher) => (this.db.prepare('SELECT job FROM fw_jobs WHERE watcher_id=? AND task_id=?').all(watcher.id, task.id) as Row[]).flatMap(({ job: raw }) => {
       const job = JSON.parse(raw) as Job;
-      if (job.event.value === null || job.event.value !== task.agent_notes[job.event.field] || !job.result || Object.keys(job.result).length === 0) return [];
+      if (job.event.value === null || job.event.value !== noteText(task, job.event.field) || !job.result || Object.keys(job.result).length === 0) return [];
       return [{ watcherId: watcher.id, field: job.event.field, value: job.event.value, result: job.result, checkedAt: job.checkedAt, stale: job.stale ?? false }];
     }));
   }
@@ -597,7 +600,7 @@ export class FieldAutomation {
     const task = await this.note(['agent', 'get', String(event.taskId)]) as Task;
     // Intake or a reset meanwhile replaced this job: the newer one runs instead.
     if (!this.current(signal) || !unchanged()) return;
-    const currentValue = task && ['active', 'in_progress'].includes(task.state) ? task.agent_notes[event.field] ?? null : null;
+    const currentValue = task && ['active', 'in_progress'].includes(task.state) ? noteText(task, event.field) ?? null : null;
     if (event.value !== currentValue) {
       if (this.transaction(() => unchanged() && (this.clear(job.watcherId, event.taskId, event.field), this.prunePRNotices(job.watcherId, event.taskId), true))) this.changed();
       return;
