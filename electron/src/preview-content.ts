@@ -1,9 +1,10 @@
-import type { Task } from './protocol';
+import type { FieldDisplay, Task } from './protocol';
+import { parsePR } from '../../pi/pr-url.js';
 import MarkdownIt from 'markdown-it';
 import { imageElement, imageSource } from './image-refs';
 type Token = { type: string; tag: string; nesting: number; content: string; children?: Token[]; attrs?: [string, string][] };
 const markdown = new MarkdownIt({ html: false, linkify: false, typographer: false });
-type PreviewOptions = { markdown: boolean; openLink: (url: string) => void };
+type PreviewOptions = { markdown: boolean; openLink: (url: string) => void; fields?: FieldDisplay[] };
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -56,12 +57,35 @@ function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions,
     if (split >= 0) tokens(markdown.parse(text.slice(split + 1), {}) as Token[]);
   } else tokens(parsed);
 }
+/** A list field's entries as chips, shown through its definition's format; a URL entry is a link unless the definition turns links off. */
+function fieldChips(items: string[], display: FieldDisplay | undefined, options: PreviewOptions): HTMLElement {
+  const list = el('ul', undefined, 'field-chips'), format = display?.format ?? '<value>';
+  for (const item of items) {
+    const link = /^\[([^\]\n]*)\]\((https?:\/\/[^\s()]+)\)$/.exec(item);
+    const url = link?.[2] ?? (/^https?:\/\/\S+$/.test(item) ? item : undefined), value = link?.[1] || item;
+    const number = parsePR(item)?.number ?? (/^\d+$/.test(value) ? value : undefined);
+    const parts: Record<string, string | undefined> = { value, url, number };
+    // An entry the format cannot show (no URL or number) stays as written.
+    const text = /<(value|url|number)>/.test(format) && [...format.matchAll(/<(value|url|number)>/g)].every(match => parts[match[1]] !== undefined)
+      ? format.replace(/<(value|url|number)>/g, (_match, key: string) => parts[key]!) : item;
+    const chip = el('li'); chip.title = item;
+    if (url && display?.link !== false && safeLink(url)) {
+      const a = el('a', text); a.href = url; a.addEventListener('click', e => { e.preventDefault(); options.openLink(url); }); chip.append(a);
+    } else chip.textContent = text;
+    list.append(chip);
+  }
+  return list;
+}
 export function fillPreview(parent: HTMLElement, task: Task, options: PreviewOptions): void {
   parent.replaceChildren(); markdownDOM(task.text, parent, options);
   if (Object.keys(task.agent_notes).length || task.agent_event_id > 0) {
     const agent = el('section', undefined, 'agent'); agent.append(el('h3', 'Agent'));
     if (!Object.keys(task.agent_notes).length) agent.append(el('p', 'Agent fields were removed.'));
-    for (const [key, value] of Object.entries(task.agent_notes)) { agent.append(el('h4', key)); const body = el('div'); markdownDOM(value, body, options, false, false); agent.append(body); }
+    for (const [key, value] of Object.entries(task.agent_notes)) {
+      agent.append(el('h4', key));
+      if (Array.isArray(value)) { agent.append(fieldChips(value, options.fields?.find(field => field.name === key), options)); continue; }
+      const body = el('div'); markdownDOM(value, body, options, false, false); agent.append(body);
+    }
     parent.append(agent);
   }
   if (task.pi_sessions.length) {

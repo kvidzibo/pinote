@@ -34,8 +34,8 @@ test('the desktop reads every definition with effective values and saves only th
   const dir = await profile(t), path = join(dir, 'pi-note.json');
   await writeFile(path, JSON.stringify({ handoffPrompt: 'Keep', footer: { maxFields: 2, fields: [{ name: 'Notes', enabled: false }] } }));
   const settings = fieldSettings();
-  assert.deepEqual(settings.footer.fields.map(({ name, type, enabled }) => [name, type, enabled]),
-    [['Notes', 'text', false], ['Worktrees', 'unique-list', false], ['PRs', 'unique-list', false]]);
+  assert.deepEqual(settings.footer.fields.map(({ name, type, enabled, saved }) => [name, type, enabled, saved]),
+    [['Notes', 'text', false, true], ['Worktrees', 'unique-list', false, false], ['PRs', 'unique-list', false, false]]);
   assert.match(settings.footer.fields[1].instructions, /worktree root/);
   assert.deepEqual([settings.footer.maxFields, settings.footer.bar], [2, null]);
   const footer = { ...settings.footer, bar: ['Links'], fields: [{ name: 'Links', label: 'Links', type: 'list', enabled: true, link: true, format: '<value>', instructions: '' }] };

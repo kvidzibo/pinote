@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_IDS, TASK_ACTION_STATES, taskActionIds } from '../src/protocol.ts';
 import type { LegacyPerStateTaskActionSettings, LegacyTaskActionSettings } from '../src/protocol.ts';
-import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, agentFieldNames, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState, validWindowStartup } from '../src/security.ts';
+import { MAX_STATE_FILE_BYTES, MAX_STATE_PAYLOAD_BYTES, safeLink, validEnvelope, validMenuRequest, validParams, validPreviewData, validPreviewRequest, validState, validWindowStartup } from '../src/security.ts';
 
 test('privileged boundary rejects malformed commands, unsafe links and corrupt draft state', () => {
   assert.ok(validParams('edit', { id: 1, revision: 'rev', text: 'literal <script>☘</script>' }));
@@ -10,7 +10,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validParams('edit', { id: 1, revision: 'rev', text: 'x', executable: '/bin/sh' }));
   assert.ok(!validParams('edit', { id: true, revision: 'rev', text: 'x' }));
   assert.ok(validParams('agent', { id: 1, revision: 'rev', fields: { PRs: 'https://example.test/1', Worktree: null } }));
-  for (const fields of [undefined, null, [], { PRs: 1 }, { ['x'.repeat(257)]: 'v' }]) assert.ok(!validParams('agent', { id: 1, revision: 'rev', fields }));
+  assert.ok(validParams('agent', { id: 1, revision: 'rev', fields: { PRs: ['https://example.test/1', 'https://example.test/2'] } }));
+  for (const fields of [undefined, null, [], { PRs: 1 }, { PRs: [1] }, { PRs: [null] }, { PRs: Array(257).fill('x') }, { ['x'.repeat(257)]: 'v' }]) assert.ok(!validParams('agent', { id: 1, revision: 'rev', fields }));
   assert.ok(!validParams('transition', { id: 1, revision: 'rev', state: 'active', action: 'erase' }));
   assert.ok(validMenuRequest({ kind: 'app', x: 0, y: 100 }));
   for (const startup of [{}, { position: { x: -2560, y: 1030 } }, { size: { width: 280, height: 120 } }, { position: { x: 30, y: 1030 }, size: { width: 650, height: 400 } }]) assert.ok(validWindowStartup(startup));
@@ -23,6 +24,10 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   const data = { task, markdown: true, unread: false };
   const request = { token: 1, data, point: { x: 0, y: 100 } };
   assert.ok(validPreviewData(data));
+  // A list field arrives as an array, with the definitions that format its entries.
+  assert.ok(validPreviewData({ ...data, task: { ...task, agent_notes: { PRs: ['https://example.test/1'], Notes: 'text' } }, fields: [{ name: 'PRs', link: true, format: '#<number>' }] }));
+  for (const fields of [null, {}, [{ name: 'PRs' }], [{ name: 'PRs', link: 'yes', format: '' }], [{ name: 'PRs', link: true, format: '', extra: 1 }]]) assert.ok(!validPreviewData({ ...data, fields }));
+  assert.ok(!validPreviewData({ ...data, task: { ...task, agent_notes: { PRs: [1] } } }));
   assert.ok(validPreviewRequest(request));
   const snapshot = (pi_sessions: unknown) => ({ protocol: 1, ok: true, result: {
     notes: [{ ...task, pi_sessions }], tags: [],
@@ -65,7 +70,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validState({ ...initialState(), edits: { '__proto__': { text:'x', revision:'rev' } } }));
   assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x' } } }));
   assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', fields: { PRs: '', Worktree: '/tmp/work' } } } }));
-  for (const fields of [null, [], { PRs: null }, { PRs: 1 }]) assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', fields } } }));
+  assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', fields: { PRs: [], Worktrees: ['/tmp/work'] } } } }));
+  for (const fields of [null, [], { PRs: null }, { PRs: 1 }, { PRs: [1] }]) assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', fields } } }));
   for (const pendingTag of [null, 'Work']) assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));
   for (const pendingTag of [undefined, true, 1, {}, 'x'.repeat(257)]) assert.ok(!validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag } } }));
   for (const pendingTagFolder of [null, '/tmp']) assert.ok(validState({ ...initialState(), edits: { '1': { text:'x', revision:'rev', pendingTag:'Work', pendingTagFolder } } }));
@@ -81,10 +87,6 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   for (const result of [{changed:true,id:1,revision:'rev'}, {changed:true,id:1,agentEvent:3}, {changed:true,id:1,revision:'rev',agentEvent:-1}]) assert.ok(!validEnvelope('agent', {protocol:1,ok:true,result}));
 });
 
-test('configured agent field names are read defensively from Pi settings', () => {
-  assert.deepEqual(agentFieldNames({ footer: { fields: ['PRs', { name: ' Worktree ', label: 'Tree' }, { label: 'Notes' }, { name: 'PRs' }, { name: 'bad\n' }, 7, { name: 'x'.repeat(65) }] } }), ['PRs', 'Worktree', 'Notes']);
-  for (const config of [null, {}, { footer: null }, { footer: { fields: null } }, { footer: { fields: 'PRs' } }]) assert.deepEqual(agentFieldNames(config), []);
-});
 test('mutation acknowledgements accept optional bounded printable revisions', () => {
   for (const operation of ['edit', 'tag', 'create_tag', 'transition'] as const) {
     const result = { changed: true, id: 1, tag: 'Work' };

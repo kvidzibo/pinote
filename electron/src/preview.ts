@@ -17,7 +17,7 @@ function draw(data: PreviewData): void {
   document.getElementById('title')!.textContent = `Task ${data.task.id}`;
   panel.setAttribute('aria-label', `Task ${data.task.id}`);
   document.getElementById('close')!.setAttribute('aria-label', `Close Task ${data.task.id}`);
-  fillPreview(body, data.task, { markdown: data.markdown, openLink: url => { void api.openLink(url).catch(report); } });
+  fillPreview(body, data.task, { markdown: data.markdown, fields: data.fields, openLink: url => { void api.openLink(url).catch(report); } });
   body.scrollTop = scroll;
 }
 for (const action of ['copy', 'edit', 'close'] as const) document.getElementById(action)!.addEventListener('click', () => { void api.action(action).catch(report); });

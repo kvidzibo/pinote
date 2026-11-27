@@ -517,7 +517,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','watchers','kitty','window-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','fields','watchers','kitty','window-settings','drafts','close']);
     assert.ok(state.items.every(i=>i.type==='separator' || i.hasIcon),'Every native menu item needs a bundled icon');
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
@@ -1240,7 +1240,7 @@ try {
     await page.locator(`[data-id="${added.id}"] .task-title`).filter({hasText:/^Close flushes the debounce$/}).waitFor();
     // Fields configured in Pi are editable before any agent has set them.
     await mkdir(env.PI_CODING_AGENT_DIR,{recursive:true});
-    await writeFile(join(env.PI_CODING_AGENT_DIR,'pi-note.json'),JSON.stringify({footer:{fields:['PRs',{name:'Worktree'},'constructor']}}));
+    await writeFile(join(env.PI_CODING_AGENT_DIR,'pi-note.json'),JSON.stringify({footer:{fields:[{name:'PRs',type:'text'},{name:'Worktree'},'constructor']}}));
     await selectTaskAction(page, added.id, 'Edit text…');
     await saved(); assert.equal(await sourceValue(text),'Close flushes the debounce');
     assert.equal(snapshot().text,'Close flushes the debounce');

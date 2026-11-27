@@ -5,6 +5,8 @@ const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','
 const api: PinoteApi = {
   ...backend,
   agentFields: () => ipcRenderer.invoke('agent-fields'),
+  fieldSettings: () => ipcRenderer.invoke('field-settings'),
+  saveFieldSettings: (footer, raw) => ipcRenderer.invoke('save-field-settings', footer, raw),
   openPreview: request => ipcRenderer.invoke('open-preview', request),
   updatePreview: (token, data) => ipcRenderer.invoke('update-preview', token, data),
   onPreviewClosed: callback => { ipcRenderer.removeAllListeners('preview-closed'); ipcRenderer.on('preview-closed', (_event, token, edit) => callback(token, edit)); },

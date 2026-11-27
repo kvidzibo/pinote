@@ -232,3 +232,24 @@ body.image-window { border: 0; border-radius: 0; background: #232832; cursor: zo
 .source-strong { font-weight: bold; }
 .source-emphasis { font-style: italic; }
 .source-code { font-family: monospace; color: #a6e3a1; background: #252d38; }
+.edit-fields .field-row { display: flex; align-items: baseline; gap: 8px; }
+.edit-fields .field-row > span { flex: 0 0 90px; color: #b6bfce; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.field-list { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.field-item { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.field-item input { flex: 1; padding: 5px 7px; }
+.field-item input[aria-invalid="true"] { border-color: #e0707a; }
+.field-item button { min-width: 26px; min-height: 26px; padding: 3px; }
+.field-add input { border-style: dashed; }
+.field-hint { margin: 0; color: #e5b567; }
+.field-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; padding: 0; list-style: none; }
+.preview .field-chips { padding-left: 0; }
+.field-chips li { max-width: 100%; background: #2b3a52; border-radius: 10px; padding: 1px 8px; overflow-wrap: anywhere; }
+.preview .field-chips a { text-decoration: none; }
+.fields .tag-choice .field-kind { margin-left: auto; color: #b6bfce; font-size: 11px; white-space: nowrap; }
+.fields .field-layout-choice { border-top: 1px solid #414b5b; border-radius: 0; margin-top: 4px; }
+.fields textarea { width: 100%; resize: vertical; }
+.fields .watcher-editor { display: flex; flex-direction: column; gap: 8px; }
+.fields .field-order { align-items: center; }
+.field-bar { display: flex; flex-direction: column; gap: 4px; }
+.field-bar .watcher-row { align-items: center; }
+.field-bar-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }

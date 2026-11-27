@@ -7,8 +7,9 @@ import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STA
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
 import { openImagesOnClick } from './image-open';
-import type { ImageView, KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
+import type { FieldDefinition, FieldDisplay, FieldSettings, FieldType, FieldValue, FooterInput, FooterSettings, ImageView, KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
 import { APP_EVENTS, DEFAULT_KITTY_START_PROMPT, DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, WATCHER_LIMITS, savedTagName, tagFolderPath, validKittyStartPrompt, validKittyTabTitle } from './protocol';
+import { fieldItems, fieldText } from '../../pi/field-values.ts';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist');
@@ -25,6 +26,15 @@ new ResizeObserver(() => document.documentElement.style.setProperty('--notice-he
 let state: UIState = initialState();
 let active: Snapshot | null = null;
 let creationTag: string | null = null;
+// Field definitions shared with Pi, as last read: the editor and previews use their types and formats.
+let fieldDefinitions: FieldDefinition[] = [];
+const fieldDisplays = (): FieldDisplay[] => fieldDefinitions.map(({ name, link, format }) => ({ name, link, format }));
+async function loadFieldDefinitions(): Promise<FieldDefinition[]> {
+  fieldDefinitions = await api.agentFields().catch(() => []);
+  if (active) { renderTasks(); updatePreview(); }
+  return fieldDefinitions;
+}
+void loadFieldDefinitions();
 let readonly = false, closing = false, collapsed = false, polling = false, baseline = false, stateLoaded = false;
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 let persistChain: Promise<void> = Promise.resolve();
@@ -59,7 +69,7 @@ const icons = {
   filter: 'view-filter', clear: 'view-filter-clear', all: 'edit-select-all',
   preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu', settings: 'settings',
   close: 'window-close', kitty: 'utilities-terminal', schedule: 'preferences-system-notifications',
-  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo',
+  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo', up: 'go-up', down: 'go-down',
 } as const;
 type Icon = keyof typeof icons;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
@@ -77,7 +87,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'watchers' || l.kind === 'kitty' || l.kind === 'edit') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
+  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'watchers' || l.kind === 'fields' || l.kind === 'kitty' || l.kind === 'edit') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -255,7 +265,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
-    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'watchers' || kind === 'kitty' || kind === 'edit') fitWindow();
+    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'watchers' || kind === 'fields' || kind === 'kitty' || kind === 'edit') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
@@ -330,6 +340,7 @@ async function openMenu(event: MouseEvent): Promise<void> {
     case 'manage-tags': manageTags(); break;
     case 'task-actions': configureTaskActions(); break;
     case 'composer-settings': configureComposer(); break;
+    case 'fields': configureFields(); break;
     case 'watchers': configureWatchers(); break;
     case 'kitty': configureKitty(); break;
     case 'window-settings': configureWindow(); break;
@@ -921,7 +932,9 @@ async function startKitty(task: Task): Promise<void> {
 let previewToken = 0;
 let openedPreview: { token: number; data: PreviewData; source: HTMLElement } | undefined;
 async function preview(task: Task, point: MenuPoint, source: HTMLElement): Promise<void> {
-  const entry = { token: ++previewToken, data: { task, markdown: active?.config.markdownPreview !== false, unread: unread(task) }, source };
+  const entry = { token: ++previewToken, data: { task, markdown: active?.config.markdownPreview !== false, unread: unread(task), fields: fieldDisplays() }, source };
+  // Formats changed in Pi since the last read reach the open preview.
+  void loadFieldDefinitions();
   openedPreview = entry; renderSelected();
   try {
     const shown = await api.openPreview({ token: entry.token, data: entry.data, point });
@@ -938,7 +951,7 @@ function updatePreview(): void {
   if (!entry) return;
   const task = active?.notes.find(t => t.id === entry.data.task.id);
   if (!task || !visible(task)) { openedPreview = undefined; void api.updatePreview(entry.token, null).catch(e => report(message(e))); return; }
-  const data = { ...entry.data, task, markdown: active?.config.markdownPreview !== false };
+  const data = { ...entry.data, task, markdown: active?.config.markdownPreview !== false, fields: fieldDisplays() };
   if (JSON.stringify(data) === JSON.stringify(entry.data)) return;
   entry.data = data;
   void api.updatePreview(entry.token, data).catch(e => report(message(e)));
@@ -961,7 +974,7 @@ async function edit(task: Task): Promise<void> {
     await closedEdits.get(task.id);
     task = active?.notes.find(t => t.id === task.id) ?? task;
   }
-  const configuredFields = await api.agentFields().catch(() => [] as string[]);
+  const definitions = new Map((await loadFieldDefinitions()).map(field => [field.name, field]));
   task = active?.notes.find(t => t.id === task.id) ?? task;
   if (closing) return;
   const existing = layers.find(l => l.kind === 'edit' && l.taskId === task.id); if (existing) { existing.panel.focus(); return; }
@@ -981,20 +994,84 @@ async function edit(task: Task): Promise<void> {
   };
   const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, changed, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && !dirty()) modal.close(); })); }, file => storeImage(file));
   liveEditors.add(editor);
-  // Configured fields are offered even without a value; clearing a value removes the field.
+  // Saved definitions are offered even without a value; clearing a value removes the field.
   const savedFields = new Map(Object.entries(task.agent_notes)), draftFields = new Map(Object.entries(draft.fields ?? {}));
-  const fieldInputs = new Map<string, HTMLTextAreaElement>();
+  // A field without a definition is text, unless its value is already a list.
+  const typeOf = (name: string): FieldType => definitions.get(name)?.type ?? (Array.isArray(savedFields.get(name)) ? 'list' : 'text');
+  // Each field's current value and the value it had when saved, in the shape its type stores.
+  const fieldValues = new Map<string, { read: () => FieldValue; saved: () => FieldValue }>();
+  let fieldsLocked = false;
+  const lockFields = () => {
+    for (const input of fieldList.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')) input.readOnly = fieldsLocked;
+    for (const control of fieldList.querySelectorAll<HTMLButtonElement>('button')) control.disabled = fieldsLocked;
+  };
   const fieldList = el('div', undefined, 'edit-fields'); fieldList.setAttribute('role', 'group'); fieldList.setAttribute('aria-label', 'Agent fields');
   fieldList.append(el('h3', 'Agent fields'));
-  for (const name of new Set([...configuredFields, ...savedFields.keys(), ...draftFields.keys()])) {
+  // A list is edited one entry per row. A unique list refuses an entry it already has.
+  const listField = (name: string, unique: boolean) => {
+    const items = fieldItems(draftFields.get(name) ?? savedFields.get(name), unique && !draftFields.has(name));
+    const row = el('div', undefined, 'field-row'), label = el('span', name), box = el('div', undefined, 'field-list'), hint = el('p', undefined, 'field-hint');
+    label.title = `${name} (${unique ? 'unique list' : 'list'})`; hint.setAttribute('role', 'status'); hint.hidden = true;
+    row.setAttribute('role', 'group'); row.setAttribute('aria-label', `Agent field ${name}`);
+    const say = (text: string) => { hint.textContent = text; hint.hidden = !text; };
+    const mark = () => {
+      const seen = new Set<string>(); let repeated = false;
+      for (const input of box.querySelectorAll<HTMLInputElement>('.field-item:not(.field-add) input')) {
+        const value = input.value.trim(), duplicate = unique && !!value && seen.has(value);
+        seen.add(value); repeated ||= duplicate;
+        if (duplicate) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
+      }
+      if (repeated) say('Repeated entries are saved once.'); else if (hint.textContent === 'Repeated entries are saved once.') say('');
+    };
+    const draw = (focusAdd = false) => {
+      box.replaceChildren();
+      items.forEach((item, index) => {
+        const line = el('div', undefined, 'field-item'), input = el('input');
+        input.value = item; input.spellcheck = false; input.maxLength = 4096; input.setAttribute('aria-label', `${name} entry ${index + 1}`);
+        input.addEventListener('input', () => { items[index] = input.value; mark(); changed(); });
+        line.append(input, button('close', `Remove ${name} entry ${index + 1}`, () => { items.splice(index, 1); say(''); draw(); changed(); }));
+        box.append(line);
+      });
+      const line = el('div', undefined, 'field-item field-add'), adder = el('input');
+      adder.placeholder = unique ? 'Add entry (no duplicates)' : 'Add entry'; adder.spellcheck = false; adder.setAttribute('aria-label', `Add ${name} entry`);
+      const commit = () => {
+        const entries = fieldItems(adder.value), skipped = entries.filter(entry => unique && items.some(item => item.trim() === entry));
+        if (!entries.length || fieldsLocked) return;
+        for (const entry of unique ? new Set(entries) : entries) if (!skipped.includes(entry) && items.length < 256) items.push(entry.slice(0, 4096));
+        say(skipped.length ? `Already in this list: ${[...new Set(skipped)].join(', ')}` : '');
+        if (skipped.length === entries.length) { adder.select(); return; }
+        // Emptied first: removing the focused input reports its value as a change again.
+        adder.value = ''; draw(true); changed();
+      };
+      adder.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); commit(); } });
+      // Leaving the row keeps what was typed; several pasted lines become several entries.
+      adder.addEventListener('change', commit);
+      adder.addEventListener('paste', event => {
+        const text = event.clipboardData?.getData('text/plain') ?? '';
+        if (!/[\r\n]/.test(text) || fieldsLocked) return;
+        event.preventDefault(); adder.value += text; commit();
+      });
+      line.append(adder, button('add', `Add ${name} entry`, commit)); box.append(line, hint);
+      mark(); lockFields();
+      if (focusAdd) adder.focus();
+    };
+    draw(); row.append(label, box); fieldList.append(row);
+    fieldValues.set(name, { read: () => fieldItems(items, unique), saved: () => fieldItems(savedFields.get(name), unique) });
+  };
+  for (const name of new Set([...[...definitions.values()].filter(field => field.saved).map(field => field.name), ...savedFields.keys(), ...draftFields.keys()])) {
+    const type = typeOf(name);
+    if (type !== 'text') { listField(name, type === 'unique-list'); continue; }
     const input = el('textarea'); input.rows = 1; input.spellcheck = false; input.placeholder = 'Not set';
-    input.value = draftFields.get(name) ?? savedFields.get(name) ?? ''; input.setAttribute('aria-label', `Agent field ${name}`);
+    input.value = fieldText(draftFields.get(name) ?? savedFields.get(name) ?? ''); input.setAttribute('aria-label', `Agent field ${name}`);
     input.addEventListener('input', changed);
-    const row = el('label'), label = el('span', name); label.title = name; row.append(label, input); fieldList.append(row); fieldInputs.set(name, input);
+    const row = el('label'), label = el('span', name); label.title = name; row.append(label, input); fieldList.append(row);
+    // Text is kept verbatim (Markdown indentation matters); only a blank value means removal.
+    fieldValues.set(name, { read: () => input.value.trim() ? input.value : '', saved: () => fieldText(savedFields.get(name) ?? '') });
   }
-  fieldList.hidden = !fieldInputs.size;
-  // Values are kept verbatim (Markdown indentation matters); only a blank value means removal.
-  const pendingFields = (): Record<string, string> => Object.fromEntries([...fieldInputs].map(([name, input]) => [name, input.value.trim() ? input.value : '']).filter(([name, value]) => value !== (savedFields.get(name) ?? '')));
+  fieldList.hidden = !fieldValues.size;
+  // An untouched value is not rewritten, so its stored shape changes only with an edit.
+  const pendingFields = (): Record<string, FieldValue> => Object.fromEntries([...fieldValues].map(([name, value]) => [name, value.read(), value.saved()] as const)
+    .filter(([, value, saved]) => JSON.stringify(value) !== JSON.stringify(saved)).map(([name, value]) => [name, value]));
   const dirty = () => editor.value !== savedText || queuedTag !== undefined || Object.keys(pendingFields()).length > 0;
   const warning = el('p', undefined, 'warning'); warning.setAttribute('role', 'status');
   const status = el('span', undefined, 'edit-status'); status.setAttribute('role', 'status');
@@ -1035,7 +1112,7 @@ async function edit(task: Task): Promise<void> {
     if (!saving && (!current || current.updated_at !== revision)) conflict = true;
     const locked = readonly || closing || conflict;
     editor.readOnly = locked;
-    for (const input of fieldInputs.values()) input.readOnly = locked;
+    fieldsLocked = locked; lockFields();
     tagName.textContent = (queuedTag === undefined ? tag : queuedTag) ?? 'Untagged';
     tagControl.title = `Change tag: ${tagName.textContent}${queuedTag === undefined ? '' : ' (not saved)'}`; tagControl.setAttribute('aria-label', tagControl.title);
     // Stays enabled while saving: a tag picked during an autosave is queued behind it.
@@ -1069,7 +1146,7 @@ async function edit(task: Task): Promise<void> {
         const result = textChanged
           ? await call('edit', { id: task.id, revision: base, text }, draining)
           : !tagChanged
-            ? await call('agent', { id: task.id, revision: base, fields: Object.fromEntries(Object.entries(fields).map(([name, value]) => [name, value || null])) }, draining)
+            ? await call('agent', { id: task.id, revision: base, fields: Object.fromEntries(Object.entries(fields).map(([name, value]) => [name, value.length ? value : null])) }, draining)
           : folder !== undefined
             ? await call('create_tag', { id: task.id, revision: base, name: nextTag!, folder, ...(folderIfNew !== undefined ? { folderIfNew } : {}) }, draining)
             : await call('tag', { id: task.id, revision: base, tag: nextTag! }, draining);
@@ -1083,7 +1160,7 @@ async function edit(task: Task): Promise<void> {
         }
         revision = result.revision; editEpoch++;
         if (textChanged) savedText = text;
-        else if (!tagChanged) for (const [name, value] of Object.entries(fields)) { if (value) savedFields.set(name, value); else savedFields.delete(name); }
+        else if (!tagChanged) for (const [name, value] of Object.entries(fields)) { if (value.length) savedFields.set(name, value); else savedFields.delete(name); }
         else {
           tag = result.tag ?? nextTag!;
           if (queuedTag === nextTag && queuedFolder === folder && queuedFolderIfNew === folderIfNew) { queuedTag = undefined; queuedFolder = undefined; queuedFolderIfNew = undefined; }
@@ -1127,7 +1204,7 @@ function recoverDrafts(): void {
       row.append(el('h3', `Task ${id}`), el('p', `Revision: ${draft.revision}`, 'metadata'));
       if (draft.pendingTag !== undefined) row.append(el('p', `Pending tag: ${draft.pendingTag ?? 'Untagged'}`, 'metadata'));
       if (draft.pendingTagFolder !== undefined) row.append(el('p', `New tag folder: ${draft.pendingTagFolderIfNew ?? draft.pendingTagFolder ?? 'None'}`, 'metadata'));
-      for (const [name, value] of Object.entries(draft.fields ?? {})) row.append(el('p', `Pending agent field ${name}: ${value || '(removed)'}`, 'metadata'));
+      for (const [name, value] of Object.entries(draft.fields ?? {})) row.append(el('p', `Pending agent field ${name}: ${(Array.isArray(value) ? value.join(' · ') : value) || '(removed)'}`, 'metadata'));
       const text = el('textarea', undefined, 'recovery-text'); text.value = draft.text; text.readOnly = true; text.setAttribute('aria-label', `Private draft for task ${id}`); row.append(text);
       const bar = controls(row);
       bar.append(button('copy', 'Copy private draft', () => api.copy(draft.text)), button('edit', 'Open revision-bound editor', () => {
@@ -1382,6 +1459,184 @@ function manageTags(selected?: string): void {
   });
   modal.update = draw; draw(); search.focus(); fitWindow();
 }
+const FIELD_TYPES: [FieldType, string][] = [['text', 'Text'], ['list', 'List'], ['unique-list', 'Unique list']];
+/** Why Pi would reject this footer, or nothing. Pi validates again when saving. */
+function footerProblem(footer: FooterSettings): string | undefined {
+  const control = /[\x00-\x1f\x7f-\x9f]/u, whole = (value: number, min: number, max: number) => Number.isInteger(value) && value >= min && value <= max;
+  if (!whole(footer.titleWidth, 3, 1000)) return 'Title width must be a whole number from 3 to 1000.';
+  if (!whole(footer.fieldWidth, 3, 1000)) return 'Field width must be a whole number from 3 to 1000.';
+  if (!whole(footer.maxFields, 0, 64)) return 'Max fields must be a whole number from 0 to 64.';
+  for (const field of footer.fields.filter(field => field.saved)) {
+    if (control.test(field.label) || Array.from(field.label).length > 64) return `${field.name}: the label takes at most 64 characters on one line.`;
+    if (control.test(field.format) || field.format.length > 4096 || /<(?!value>|number>|url>)[^>]*>/u.test(field.format)) return `${field.name}: the format supports only <value>, <number> and <url>.`;
+    if (field.instructions.length > 4096 || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(field.instructions)) return `${field.name}: instructions take at most 4096 characters.`;
+    if (field.width !== undefined && !whole(field.width, 3, 1000)) return `${field.name}: the footer width must be a whole number from 3 to 1000.`;
+  }
+  return footer.fields.filter(field => field.saved).length > 64 ? 'At most 64 fields can be saved.' : undefined;
+}
+function configureFields(): void {
+  const existing = layers.find(l => l.kind === 'fields'); if (existing) { existing.panel.focus(); return; }
+  const modal = layer('Fields', 'fields'); modal.panel.classList.add('manage-tags', 'watchers', 'fields');
+  const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar'), editor = el('div', undefined, 'tag-editor watcher-editor');
+  const addBar = el('div', undefined, 'tag-search'), newName = el('input');
+  newName.placeholder = 'New field…'; newName.spellcheck = false; newName.setAttribute('aria-label', 'New field name');
+  const count = el('p', undefined, 'tag-hint'), list = el('div', undefined, 'tag-list scroll');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Fields');
+  const footer = el('div', undefined, 'watcher-footer'), status = el('p', 'Loading fields…', 'tag-hint'); status.setAttribute('role', 'status');
+  // `selected` is a field name; the footer layout has its own entry below the fields.
+  let settings: FieldSettings | undefined, draft: FooterSettings | undefined, selected: string | undefined, layoutSelected = false, busy = false, note = '', error = '';
+  // Presets that were never changed stay out of the file.
+  const input = (source: FooterSettings): FooterInput => ({ titleWidth: source.titleWidth, fieldWidth: source.fieldWidth, maxFields: source.maxFields,
+    ...(source.bar ? { bar: source.bar } : {}), fields: source.fields.filter(field => field.saved).map(({ saved: _saved, ...field }) => field) });
+  const dirty = () => !!settings && !!draft && JSON.stringify(input(draft)) !== JSON.stringify(input(settings.footer));
+  const load = async () => {
+    try {
+      settings = await api.fieldSettings(); draft = structuredClone(settings.footer);
+      if (!layoutSelected && !draft.fields.some(field => field.name === selected)) selected = draft.fields[0]?.name;
+    } catch (reason) { settings = undefined; draft = undefined; note = `Could not load fields: ${ipcMessage(reason)}`; }
+    draw();
+  };
+  const addField = () => {
+    if (!draft || busy) return;
+    const name = newName.value.normalize('NFC').trim();
+    if (!name) return;
+    error = /[\x00-\x1f\x7f-\x9f]/u.test(name) || Array.from(name).length > 64 ? 'A field name takes at most 64 characters on one line.'
+      : name === 'Bar' || name === 'PR' ? `${name} is reserved${name === 'PR' ? '; use PRs' : ''}.`
+      : draft.fields.some(field => field.name === name) ? `${name} already exists.`
+      : draft.fields.filter(field => field.saved).length >= 64 ? 'At most 64 fields can be saved.' : '';
+    if (error) { update(); return; }
+    // After the saved fields: presets not saved yet stay last, as Pi lists them.
+    draft.fields.splice(draft.fields.filter(field => field.saved).length, 0, { name, label: name, type: 'text', enabled: true, link: true, format: '<value>', instructions: '', saved: true });
+    selected = name; layoutSelected = false; newName.value = ''; note = ''; draw();
+    editor.querySelector<HTMLSelectElement>('select')?.focus();
+  };
+  const add = button('add', 'Add field', addField);
+  newName.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addField(); } });
+  const revert = button('reset', 'Discard unsaved field changes', () => { if (!settings || busy) return; draft = structuredClone(settings.footer); note = ''; draw(); });
+  const save = button('save', 'Save field settings', async () => {
+    if (!settings || !draft || busy || readonly || !dirty() || footerProblem(draft)) return;
+    busy = true; error = ''; update();
+    try { await api.saveFieldSettings(input(draft), settings.raw); note = 'Saved.'; await load(); void loadFieldDefinitions(); }
+    catch (reason) { error = ipcMessage(reason); }
+    finally { busy = false; update(); }
+  });
+  addBar.append(newName, add); sidebar.append(addBar, count, list, el('p', 'Shared with Pi. Task values are kept when a definition changes.', 'tag-hint'));
+  footer.append(status, revert, save); layout.append(sidebar, editor); modal.panel.append(layout, footer);
+  const toggle = (text: string, checked: boolean, change: (checked: boolean) => void) => {
+    const label = el('label', undefined, 'setting-toggle'), box = el('input'); box.type = 'checkbox'; box.checked = checked;
+    box.addEventListener('change', () => change(box.checked)); label.append(box, el('span', text)); return label;
+  };
+  const number = (label: string, value: number | undefined, change: (value: number | undefined) => void, placeholder = '') => {
+    const named = field(label, value === undefined ? '' : String(value)); named.input.type = 'number'; named.input.step = '1'; named.input.placeholder = placeholder;
+    named.input.addEventListener('input', () => change(named.input.value === '' ? undefined : Number(named.input.value)));
+    return named.wrapper;
+  };
+  const move = (items: unknown[], index: number, by: number) => { items.splice(index + by, 0, ...items.splice(index, 1)); draw(); };
+  const drawField = (item: FieldDefinition, fields: FieldDefinition[]) => {
+    // Any change to a preset saves it as a definition.
+    const touch = () => { item.saved = true; update(); };
+    const index = fields.indexOf(item), type = el('select'), typeLabel = el('label', 'Type');
+    for (const [value, text] of FIELD_TYPES) { const option = el('option', text); option.value = value; type.append(option); }
+    type.value = item.type; type.addEventListener('change', () => { item.type = type.value as FieldType; touch(); }); typeLabel.append(type);
+    const label = field('Label', item.label), format = field('Format', item.format);
+    label.input.addEventListener('input', () => { item.label = label.input.value; touch(); });
+    format.input.spellcheck = false; format.input.addEventListener('input', () => { item.format = format.input.value; touch(); });
+    const display = el('div', undefined, 'watcher-row'); display.append(label.wrapper, format.wrapper,
+      number('Footer width', item.width, value => { if (value === undefined) delete item.width; else item.width = value; touch(); }, 'Default'));
+    const instructions = el('textarea'), instructionsLabel = el('label', 'Agent instructions');
+    instructions.rows = 3; instructions.value = item.instructions; instructions.addEventListener('input', () => { item.instructions = instructions.value; touch(); });
+    instructionsLabel.append(instructions);
+    const order = el('div', undefined, 'watcher-row field-order');
+    order.append(button('up', `Move ${item.name} up`, () => move(fields, index, -1), index === 0), button('down', `Move ${item.name} down`, () => move(fields, index, 1), index === fields.length - 1),
+      el('span', 'Order in the task editor and, without a custom bar, in Pi\'s footer.', 'tag-hint'));
+    editor.append(el('h3', item.name), ...item.saved ? [] : [el('p', 'Preset, not saved yet: changing it saves it.', 'tag-hint')], typeLabel,
+      el('p', 'Text: one Markdown value. List: one entry per row, repeats allowed. Unique list: no repeats. A saved value changes shape the next time it is edited.', 'tag-hint'),
+      toggle('Agents maintain this field', item.enabled, checked => { item.enabled = checked; touch(); draw(); }),
+      instructionsLabel, el('p', 'What to save and when. Given to agents as trusted instructions while the field is enabled.', 'tag-hint'),
+      el('p', 'Display', 'tag-editor-label'), display,
+      el('p', 'Format placeholders: <value>, <url>, <number>. Used for Pi\'s footer and for list entries in previews.', 'tag-hint'),
+      toggle('Link URLs', item.link, checked => { item.link = checked; touch(); }), order);
+    if (item.saved) {
+      const danger = el('div', undefined, 'tag-danger'), explanation = el('div');
+      explanation.append(el('p', 'Remove field', 'tag-editor-label'), el('p', 'Task values are kept. A preset returns disabled with its defaults.', 'tag-hint'));
+      danger.append(explanation, button('trash', `Remove field ${item.name}`, () => {
+        fields.splice(index, 1); if (draft?.bar) draft.bar = draft.bar.filter(name => name !== item.name);
+        selected = fields[Math.min(index, fields.length - 1)]?.name; draw();
+      }));
+      editor.append(danger);
+    }
+  };
+  const drawLayout = (target: FooterSettings) => {
+    const widths = el('div', undefined, 'watcher-row');
+    widths.append(number('Title width', target.titleWidth, value => { target.titleWidth = value ?? NaN; update(); }),
+      number('Field width', target.fieldWidth, value => { target.fieldWidth = value ?? NaN; update(); }),
+      number('Max fields', target.maxFields, value => { target.maxFields = value ?? NaN; update(); }));
+    editor.append(el('h3', 'Pi footer'), widths, el('p', 'Widths in terminal cells (3–1000). Max fields caps the bottom bar (0–64); empty values stay hidden.', 'tag-hint'),
+      toggle('Custom bar order', target.bar !== null, checked => {
+        target.bar = checked ? target.fields.filter(item => item.enabled).map(item => item.name) : null; draw();
+      }), el('p', 'Off: enabled fields in definition order.', 'tag-hint'));
+    const bar = target.bar; if (!bar) return;
+    const rows = el('div', undefined, 'field-bar'); rows.setAttribute('role', 'group'); rows.setAttribute('aria-label', 'Bar order');
+    bar.forEach((name, index) => {
+      const row = el('div', undefined, 'watcher-row'), label = el('span', `${index + 1}. ${name}`, 'field-bar-name');
+      row.append(label, button('up', `Move ${name} up`, () => move(bar, index, -1), index === 0), button('down', `Move ${name} down`, () => move(bar, index, 1), index === bar.length - 1),
+        button('close', `Hide ${name} from the bar`, () => { bar.splice(index, 1); draw(); }));
+      rows.append(row);
+    });
+    const hidden = target.fields.map(item => item.name).filter(name => !bar.includes(name));
+    if (hidden.length) {
+      const select = el('select'); select.setAttribute('aria-label', 'Show a field in the bar');
+      for (const name of ['', ...hidden]) { const option = el('option', name || 'Show a field…'); option.value = name; select.append(option); }
+      select.addEventListener('change', () => { if (select.value) { bar.push(select.value); draw(); } });
+      rows.append(select);
+    }
+    editor.append(rows);
+  };
+  // Without rebuilding controls: typing must keep its focus.
+  const update = () => {
+    const problem = draft ? footerProblem(draft) : undefined;
+    for (const row of list.querySelectorAll<HTMLElement>('[data-field]')) {
+      const item = draft?.fields.find(field => field.name === row.dataset.field); if (!item) continue;
+      const type = FIELD_TYPES.find(([value]) => value === item.type)![1].toLowerCase();
+      row.querySelector('.watcher-dot')!.className = `watcher-dot ${item.enabled ? 'on' : 'off'}`;
+      row.querySelector('.field-kind')!.textContent = type;
+      row.title = `${item.name}: ${type}, ${item.enabled ? 'enabled' : 'disabled'}${item.saved ? '' : ', preset'}`; row.setAttribute('aria-label', row.title);
+    }
+    status.textContent = error || problem || (dirty() ? 'Unsaved changes.' : note);
+    status.classList.toggle('watcher-problem', !!(error || problem));
+    save.disabled = busy || readonly || !dirty() || !!problem; revert.disabled = busy || !dirty(); add.disabled = newName.disabled = busy || !draft;
+  };
+  const draw = () => {
+    error = '';
+    count.textContent = draft ? `Fields · ${draft.fields.filter(field => field.saved).length} / 64` : '';
+    const focused = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.choice : undefined;
+    list.replaceChildren(); editor.replaceChildren();
+    for (const item of draft?.fields ?? []) {
+      const chosen = !layoutSelected && selected === item.name;
+      const b = button('preview', item.name, () => { selected = item.name; layoutSelected = false; draw(); });
+      b.replaceChildren(el('span', undefined, 'watcher-dot'), el('span', item.name), el('span', undefined, 'field-kind'));
+      b.className = `tag-choice${chosen ? ' chosen' : ''}`; b.dataset.field = b.dataset.choice = item.name; b.setAttribute('aria-pressed', String(chosen));
+      list.append(b); if (focused === item.name) b.focus();
+    }
+    if (draft) {
+      const b = button('settings', 'Pi footer layout', () => { layoutSelected = true; draw(); });
+      b.replaceChildren(el('span', 'Pi footer layout'));
+      b.className = `tag-choice field-layout-choice${layoutSelected ? ' chosen' : ''}`; b.dataset.choice = '\n'; b.setAttribute('aria-pressed', String(layoutSelected));
+      list.append(b); if (focused === '\n') b.focus();
+      const item = draft.fields.find(field => field.name === selected);
+      if (layoutSelected) drawLayout(draft); else if (item) drawField(item, draft.fields); else editor.append(el('p', 'Select a field, or add one with +.', 'empty'));
+    }
+    update();
+  };
+  list.addEventListener('keydown', e => {
+    const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); buttons[(index + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+    }
+  });
+  draw(); newName.focus(); fitWindow(); void load();
+}
 function configureWatchers(): void {
   const existing = layers.find(l => l.kind === 'watchers'); if (existing) { existing.panel.focus(); return; }
   const modal = layer('Watchers', 'watchers'); modal.panel.classList.add('manage-tags', 'watchers');
@@ -1613,7 +1868,7 @@ function auxiliary(view: 'archive' | 'scheduled'): void {
       if (view === 'archive') metadata.append(button('reset', 'Restore task', () => transition(task, 'restore'), readonly || busyTasks.has(task.id)));
       else metadata.append(button('schedule', 'Change reminder time', () => schedule(task), readonly), button('reset', 'Release reminder now', () => transition(task, 'restore'), readonly));
       row.append(metadata);
-      if (expanded.has(task.id)) { const body = el('div', undefined, 'preview'); fillPreview(body, task, { markdown: active?.config.markdownPreview !== false, openLink: url => { void api.openLink(url).catch(e => report(message(e))); } }); row.append(body); }
+      if (expanded.has(task.id)) { const body = el('div', undefined, 'preview'); fillPreview(body, task, { markdown: active?.config.markdownPreview !== false, fields: fieldDisplays(), openLink: url => { void api.openLink(url).catch(e => report(message(e))); } }); row.append(body); }
       list.append(row);
     }
     if (!notes.length) list.append(el('p', 'No tasks here.', 'empty')); list.scrollTop = top;
