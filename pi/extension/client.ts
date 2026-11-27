@@ -14,7 +14,7 @@ export class PinoteFailure extends Error {
 /** Local task storage as one session sees it. Every call carries the conversation's saved state. */
 export interface Peer {
   view(meta: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
-  context(meta: Record<string, unknown>, signal: AbortSignal): Promise<string>;
+  context(meta: Record<string, unknown>, signal: AbortSignal): Promise<{ instructions: string; text: string }>;
   tool(name: string, args: Record<string, unknown>, meta: Record<string, unknown>, signal: AbortSignal): Promise<{ result: unknown; state?: unknown }>;
   action(params: Record<string, unknown>, signal: AbortSignal): Promise<{ view: unknown; draft?: string; preview?: string; notice?: string }>;
   close(): Promise<void>;

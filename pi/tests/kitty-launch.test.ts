@@ -49,7 +49,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal(process.env.PINOTE_LAUNCH_TASK, undefined);
     const editor = { text: draft, writes: [] as string[] };
     const ctx: any = { cwd: temp, mode, hasUI: mode === 'tui', isIdle: () => idle, shutdown: () => { shutdowns++; },
-      sessionManager: { getBranch: () => entries, getSessionId: () => sessionId, getLeafId: () => 'leaf', getSessionFile: () => join(temp, `${sessionId}.jsonl`) },
+      sessionManager: { getBranch: () => entries, buildSessionProjection: () => ({ messages: [] }), getSessionId: () => sessionId, getLeafId: () => 'leaf', getSessionFile: () => join(temp, `${sessionId}.jsonl`) },
       ui: { setWidget() {}, setStatus() {}, getEditorComponent() {}, setEditorComponent() {},
         notify: (message: string) => notices.push(message),
         custom: async (factory: any) => {

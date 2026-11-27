@@ -14,7 +14,7 @@ export function connectEngine(options: EngineOptions = {}) {
       } catch (error) { return { isError: true, content: [{ type: 'text', text: String(error) }] }; }
     },
     readView: async (_meta?: Meta) => JSON.stringify(await engine.view(_meta, signal)),
-    readContext: (_meta?: Meta) => engine.context(_meta, signal),
+    readContext: async (_meta?: Meta) => { const { instructions, text } = await engine.context(_meta, signal); return instructions + text; },
     act: async (params: Record<string, unknown>) => JSON.parse(JSON.stringify(await engine.action(params, signal))),
     onChanged(listener: () => unknown) { notify = listener; },
     close: async () => engine.close(),

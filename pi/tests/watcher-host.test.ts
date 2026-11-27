@@ -37,7 +37,7 @@ test('a Pi session reads results and alerts saved by a scheduler in another proc
       notices = (await peer.view(meta, signal) as { fieldNotifications?: { message: string }[] }).fieldNotifications ?? [];
     }
     assert.equal(notices[0].message, 'Build failed');
-    assert.match(await peer.context(meta, signal), /Build failed|"state":"failed"/);
+    assert.match((await peer.context(meta, signal)).text, /Build failed|"state":"failed"/);
     for (const deadline = Date.now() + 5000; !changes;) {
       assert.ok(Date.now() < deadline, 'Saved watcher results must refresh open sessions');
       await new Promise((resolve) => setTimeout(resolve, 100));
