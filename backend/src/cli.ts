@@ -296,7 +296,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     checkCancelled();
     const paths = discoverPaths(); checkProfileIdentity(paths);
-    if (needsDisplayLock(args)) checkedEnv('PATH');
+    // Only the notifier searches PATH; check it before any save.
+    if (MUTATIONS.has(args.command) && !args.no_notify || args.command === 'show') checkedEnv('PATH');
     configureLogging(paths);
     return await execute(args, paths, imported);
   }

@@ -83,7 +83,12 @@ test('active inherited path values are checked without exposing or rejecting unr
   reject({ XDG_STATE_HOME: raw });
   reject({ XDG_DATA_HOME: '', HOME: raw });
   reject({ XDG_CONFIG_HOME: raw }, request('snapshot', { view: 'archive' }));
-  reject({ PATH: raw });
+  // Only the notifier and Kitty search PATH, so a CLI refresh checks it before saving.
+  const path = f.run(cli, { args: ['add', 'must not save'], bindings: { PATH: raw } });
+  assert.equal(path.status, 1);
+  assert.match(path.stdout, /PATH.*UTF-8/);
+  assert.doesNotMatch(path.stdout + path.stderr, /PRIVATE-env-/);
+  f.fresh(sibling);
   const note = f.run(cli, { args: ['--no-notify', 'add', 'must not save'], bindings: { XDG_DATA_HOME: raw } });
   assert.equal(note.status, 1);
   assert.match(note.stdout, /XDG_DATA_HOME.*UTF-8/);

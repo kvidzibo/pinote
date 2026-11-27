@@ -180,8 +180,8 @@ export async function main(argv = process.argv.slice(2), input?: Uint8Array): Pr
     if (op !== 'handshake') {
       checkProfileIdentity(paths);
       if (op === 'snapshot' || op === 'kitty') guiConfigPath();
-      if (op !== 'snapshot' && op !== 'completions') checkedEnv('PATH');
-      if (op === 'kitty') kittyAddressEnv();
+      // Only Kitty launches search PATH; check it before any save.
+      if (op === 'kitty') { checkedEnv('PATH'); kittyAddressEnv(); }
       configureLogging(paths, { stderr: true });
     }
     response = await respond(request, paths);
