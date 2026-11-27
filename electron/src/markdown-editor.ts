@@ -75,17 +75,21 @@ const images = StateField.define<DecorationSet>({
 });
 // An empty list item: only a bullet or task marker.
 const EMPTY_ITEM = /^[ \t]*[-*+](?:[ \t]+\[[ xX]\])?[ \t]*$/;
-type Range = { from: number; to: number };
+// A range an image replaces; `item` when the paste was made in an empty list item ending at `to`.
+type Range = { from: number; to: number; item?: boolean };
 /** Inserts an image reference on its own line in place of a range; returns the range the next image replaces. */
-function insertImage(view: EditorView, ref: string, { from, to }: Range): Range {
-  const { state } = view, main = state.selection.main, marker = state.sliceDoc(from, to);
+function insertImage(view: EditorView, ref: string, { from, to, item }: Range): Range {
+  const { state } = view, main = state.selection.main, start = state.doc.lineAt(to).from, marker = state.sliceDoc(start, to);
   // An empty list item gives its line to the image and continues below it, before anything typed since.
-  if (from === state.doc.lineAt(from).from && EMPTY_ITEM.test(marker)) {
+  if (item && EMPTY_ITEM.test(marker)) {
+    from = start;
     const insert = `${ref}\n${marker.trimEnd().replace(/\[[xX]\]$/, '[ ]')} `, end = from + insert.length;
     const follow = main.empty && main.from >= from && main.from <= to;
     view.dispatch({ changes: { from, to, insert }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });
-    return { from: from + ref.length + 1, to: end };
+    return { from: from + ref.length + 1, to: end, item };
   }
+  // An item edited meanwhile keeps its text.
+  if (item) from = to;
   const before = state.sliceDoc(state.doc.lineAt(from).from, from).trim() ? '\n' : '';
   const after = state.sliceDoc(to, state.doc.lineAt(to).to).trim() ? '\n' : '';
   const end = from + before.length + ref.length;
@@ -122,7 +126,7 @@ export class MarkdownEditor {
       if (view.state.readOnly) return true;
       const main = view.state.selection.main, line = view.state.doc.lineAt(main.from);
       // A cursor in an empty list item stands for the whole item.
-      const target = main.empty && EMPTY_ITEM.test(line.text) ? { from: line.from, to: line.to } : { from: main.from, to: main.to };
+      const target: Range = main.empty && EMPTY_ITEM.test(line.text) ? { from: line.from, to: line.to, item: true } : { from: main.from, to: main.to };
       this.targets.add(target);
       // Every file of the paste is accepted now; insertion keeps their order.
       const stored = files.map(file => storeImage(file));
