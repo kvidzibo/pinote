@@ -122,14 +122,22 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
       checks.push({ context: check.context, status: check.status });
     }
   }
+  let actions, runs;
+  if (!checks.length && pr.mergeable && !pr.draft) {
+    const repository = await request('');
+    if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
+    actions = repository.has_actions;
+    // Actions publishes each queued job as a commit status; also look for runs that have yet to queue one.
+    // An unavailable runs API is no evidence, never a reason to fail the check.
+    if (actions) runs = await request(`actions/runs?head_sha=${pr.head.sha}&status=unknown&status=waiting&status=running&status=blocked&limit=1`).catch(() => undefined);
+  }
+  // Evidence describes the head it was collected for; decisions use this later snapshot.
+  const current = validatePR(await request(`pulls/${number}`));
+  const finished = terminal(current);
+  if (finished) return finished;
   const pending = (text) => ({ state: 'pending', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'warning' }, recheckAfterSeconds: 60 });
   const passing = (text) => ({ state: 'passing', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'success' }, recheckAfterSeconds: 60 });
-  // Evidence describes the head it was collected for: a merge, close or push meanwhile supersedes it.
-  const superseded = (latest) => terminal(latest)
-    ?? (latest.head.sha.toLowerCase() !== pr.head.sha.toLowerCase() ? pending('head changed; checks pending') : undefined);
-  const current = validatePR(await request(`pulls/${number}`));
-  const changed = superseded(current);
-  if (changed) return changed;
+  if (current.head.sha.toLowerCase() !== pr.head.sha.toLowerCase()) return pending('head changed; checks pending');
   const failed = checks.filter((check) => ['error', 'failure', 'warning'].includes(check.status));
   if (failed.length) {
     const fingerprint = createHash('sha256').update(JSON.stringify([
@@ -151,15 +159,11 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
     return { state: 'conflict', summary: `${summary} not mergeable`, display: { strikethrough: false, color: 'error' }, notification, recheckAfterSeconds: 60 };
   }
   if (checks.length) return passing('checks passing');
-  const repository = await request('');
-  if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
-  if (!repository.has_actions) return passing('has no checks');
-  // Actions publishes each queued job as a commit status; also look for runs that have yet to queue one.
-  // An unavailable or unrecognized runs API never lets a PR pass without checks.
-  const active = await request(`actions/runs?head_sha=${pr.head.sha}&status=unknown&status=waiting&status=running&status=blocked&limit=1`).catch(() => undefined);
-  if (!object(active) || !Array.isArray(active.workflow_runs) || active.workflow_runs.length || active.total_count !== 0) return pending('checks pending');
-  const latest = superseded(validatePR(await request(`pulls/${number}`)));
-  if (latest) return latest;
+  // Mergeability changed during the check: no Actions evidence was collected.
+  if (actions === undefined) return pending('checks pending');
+  if (!actions) return passing('has no checks');
+  // Any active, uncounted or unrecognized run evidence never lets a PR pass without checks.
+  if (!object(runs) || !Array.isArray(runs.workflow_runs) || runs.workflow_runs.length || runs.total_count !== 0) return pending('checks pending');
   const confirmed = [`${summary} awaiting checks ${head}`, `${summary} has no checks ${head}`].includes(previous?.summary);
   return confirmed ? passing(`has no checks ${head}`) : pending(`awaiting checks ${head}`);
 }

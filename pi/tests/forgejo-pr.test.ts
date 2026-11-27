@@ -102,7 +102,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(unchecked.output.state, 'passing', 'A mergeable PR awaits nothing where Actions is disabled');
   assert.equal(unchecked.output.display?.color, 'success');
   assert.equal(unchecked.output.summary, 'PR #42 has no checks');
-  assert.equal(unchecked.requests.at(-1)?.url, `${base}/api/v1/repos/owner/repo`);
+  assert.deepEqual(unchecked.requests.slice(-2).map((r) => r.url), [`${base}/api/v1/repos/owner/repo`, `${base}/api/v1/repos/owner/repo/pulls/42`]);
   const actions = { pages: [], repository: { has_actions: true } };
   const unreported = run(actions);
   assert.equal(unreported.output.state, 'pending', 'Actions may have yet to queue its runs');
@@ -116,8 +116,14 @@ globalThis.fetch = async (url, options) => {
   }
   assert.equal(run({ ...actions, pulls: [moved] }, { previousResult: unreported.output }).output.summary,
     'PR #42 awaiting checks (head bbbbbbbbbbbb)', 'A new head may have yet to queue its runs');
-  assert.equal(run({ ...actions, pulls: [pr, pr, moved] }, { previousResult: unreported.output }).output.summary,
+  assert.equal(run({ ...actions, pulls: [pr, moved] }, { previousResult: unreported.output }).output.summary,
     'PR #42 head changed; checks pending', 'A push during the runs lookup supersedes its evidence');
+  assert.equal(run({ ...actions, pulls: [pr, { ...pr, draft: true, mergeable: false }] }, { previousResult: unreported.output }).output.summary,
+    'PR #42 is a draft', 'Decisions use the snapshot read after the runs lookup');
+  assert.equal(run({ ...actions, runs: { workflow_runs: [{ status: 'running' }], total_count: 1 }, pulls: [pr, { state: 'closed', merged: false }] }).output.state,
+    'closed', 'A PR closed during the runs lookup is closed');
+  assert.equal(run({ pages: [], pulls: [{ ...pr, mergeable: false }, pr] }).output.summary, 'PR #42 checks pending',
+    'A PR that became mergeable during the check awaits evidence for its checks');
   for (const scenario of [{ runs: { workflow_runs: [{ status: 'running' }], total_count: 1 } }, { runs: { workflow_runs: [], total_count: 1 } },
     { runsStatus: 404 }, { runs: {} }]) {
     const running = run({ ...actions, ...scenario }, { previousResult: unreported.output }).output;
