@@ -208,9 +208,12 @@ try {
   await writeFile(settingsFile,`${await readFile(settingsFile,'utf8')}\n`);
   await page.locator('#settings-tab-fields').click();
   const fields = page.locator('#settings-pane-fields'), fieldSave = fields.getByRole('button',{name:'Save field settings',exact:true});
-  await fields.getByRole('checkbox',{name:'Agents maintain this field',exact:true}).click();
+  await fields.getByRole('textbox',{name:'New field name',exact:true}).fill('Owner'); await page.keyboard.press('Enter');
   await fieldSave.click(); await page.getByRole('dialog',{name:'Settings',exact:true}).getByText('Fields saved.',{exact:true}).waitFor();
-  await page.locator('#settings-tab-watchers').click(); await save.click();
+  await page.locator('#settings-tab-watchers').click();
+  await until(async()=>(await dialog.locator('#watcher-field-names option').evaluateAll(nodes=>nodes.map(node=>node.value))).includes('Owner'),'A field saved in Fields is suggested');
+  assert.equal(await removed.isChecked(),true,'The draft survives the refreshed suggestions');
+  await save.click();
   await status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true}).waitFor();
   await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);

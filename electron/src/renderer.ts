@@ -384,12 +384,19 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
     const index = Math.max(0, settingsTabs.findIndex(([value]) => value === id)), [chosen, text, build] = settingsTabs[index];
     let pane = panes.get(chosen); const fresh = !pane;
     if (!pane) {
+      // The revision is handed over at once; the save is announced when its pane has settled.
+      let announce = false;
       const own: Pane = pane = { panel: panels[index], close: () => undefined,
-        saved: (from, to) => { status.textContent = `${text} saved.`; if (from !== undefined && to !== undefined) for (const other of panes.values()) if (other !== own) other.rebase?.(from, to); },
+        saved: (from, to) => {
+          if (from !== undefined && to !== undefined) for (const other of panes.values()) if (other !== own) other.rebase?.(from, to);
+          if (saving.has(chosen)) announce = true; else status.textContent = `${text} saved.`;
+        },
         // A save disables its focused button: focus returns to the page once it settles.
         busy: value => {
           if (value) { if (!saving.has(chosen)) focused = document.activeElement as HTMLElement | null; saving.add(chosen); return; }
-          if (!saving.delete(chosen) || layers[layers.length - 1] !== page || page.panel.contains(document.activeElement)) return;
+          if (!saving.delete(chosen)) return;
+          if (announce) { announce = false; status.textContent = `${text} saved.`; }
+          if (layers[layers.length - 1] !== page || page.panel.contains(document.activeElement)) return;
           (focused?.isConnected && !(focused as HTMLButtonElement).disabled && focused.getClientRects().length ? focused : tabs[index]).focus();
         },
         dirty: value => { if (value === unsaved.has(chosen)) return; if (value) { unsaved.add(chosen); status.textContent = ''; } else unsaved.delete(chosen); label(index); } };
@@ -1740,8 +1747,8 @@ function configureWatchers(modal: Pane): void {
   const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, appEvents: w.appEvents, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
     timeoutSeconds: w.timeoutSeconds, cooldownSeconds: w.cooldownSeconds,
     params: Object.fromEntries(Object.entries(w.params).map(([key, value]) => [key, Array.isArray(value) ? value.filter(row => Object.keys(row).length) : value] as const).filter(([, value]) => !empty(value))) });
-  // Parameters compare by key: clearing and refilling one moves it to the end.
-  const saved = (list: Watcher[]) => JSON.stringify(list.map(entry).map(item => ({ ...item, params: Object.entries(item.params).sort(([a], [b]) => a < b ? -1 : 1) })));
+  // Compared by key at every depth: clearing and refilling a parameter or a row's cell moves it to the end.
+  const saved = (list: Watcher[]) => JSON.stringify(list.map(entry), (_key, value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : 1)) : value);
   const dirty = () => !!settings && saved(draft) !== saved(settings.watchers);
   const limitLabels = { timeoutSeconds: 'Time limit', cooldownSeconds: 'Cooldown' } as const;
   const problem = (w: Watcher) => {
@@ -1756,7 +1763,11 @@ function configureWatchers(modal: Pane): void {
     } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${ipcMessage(error)}`; }
     draw();
   };
-  modal.rebase = (from, to) => { if (settings?.raw === from) settings.raw = to; };
+  // Fields may have changed the names suggested here; the draft is untouched.
+  modal.rebase = (from, to) => {
+    if (settings?.raw === from) settings.raw = to;
+    void api.watcherSettings().then(fresh => { if (!settings) return; settings.fieldNames = fresh.fieldNames; if (!busy) draw(); }, () => undefined);
+  };
   const add = button('add', 'Add watcher script…', async () => {
     if (!settings || busy) return;
     try {
