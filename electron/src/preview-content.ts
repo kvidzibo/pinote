@@ -67,7 +67,7 @@ function fieldChips(items: string[], display: FieldDisplay | undefined, options:
     const number = parsePR(item)?.number ?? (/^\d+$/.test(value) ? value : undefined);
     const parts: Record<string, string | undefined> = { value, url, number };
     // An entry the format cannot show (no URL or number) stays as written.
-    const text = /<(value|url|number)>/.test(format) && [...format.matchAll(/<(value|url|number)>/g)].every(match => parts[match[1]] !== undefined)
+    const text = [...format.matchAll(/<(value|url|number)>/g)].every(match => parts[match[1]] !== undefined)
       ? format.replace(/<(value|url|number)>/g, (_match, key: string) => parts[key]!) : item;
     const chip = el('li'); chip.title = item;
     if (url && display?.link !== false && safeLink(url)) {

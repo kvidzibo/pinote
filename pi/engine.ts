@@ -683,7 +683,8 @@ return {
         : types.has(key) ? 'set or remove' : 'set, append or remove';
       const reject = (key: string, operation: string): never => { throw new Error(`Field ${JSON.stringify(key)} is ${describe(key)}: use ${allowed(key)}, not ${operation}.`); };
       const current = (key: string): FieldValue | undefined => Object.hasOwn(task.agent_notes, key) ? task.agent_notes[key] : undefined;
-      const set: Record<string, FieldValue> = {}, remove = [...args.remove];
+      // Without a prototype: a field may be named __proto__.
+      const set: Record<string, FieldValue> = Object.create(null), remove = [...args.remove];
       const touched = new Set(args.remove.map(normalized));
       const claim = (rawKey: string) => {
         if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(rawKey)) throw new Error('Field names must be a single line without control characters');

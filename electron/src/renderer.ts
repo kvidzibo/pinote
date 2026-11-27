@@ -1018,14 +1018,21 @@ async function edit(task: Task): Promise<void> {
       box.replaceChildren();
       items.forEach((item, index) => {
         const line = el('div', undefined, 'field-item'), input = el('input');
-        input.value = item; input.spellcheck = false; input.maxLength = 4096; input.setAttribute('aria-label', `${name} entry ${index + 1}`);
-        // A repeat in a unique list is not taken: the entry keeps its last value, and returns to it on leaving the row.
+        input.value = item; input.spellcheck = false; input.setAttribute('aria-label', `${name} entry ${index + 1}`);
+        // What cannot be saved is not taken: the entry returns to the value it had when editing began. The button removes an entry.
+        let kept = item; input.addEventListener('focus', () => { kept = items[index]; });
         input.addEventListener('input', () => {
-          const value = input.value.trim(), repeat = unique && !!value && items.some((item, other) => other !== index && item.trim() === value);
-          if (repeat) { input.setAttribute('aria-invalid', 'true'); say(`Already in this list: ${value}`); return; }
+          const value = input.value.trim();
+          const refused = !value ? ' ' : unique && items.some((item, other) => other !== index && item.trim() === value) ? `Already in this list: ${value}`
+            : Array.from(value).length > 4096 ? 'An entry takes at most 4096 characters.' : '';
+          if (refused) { input.setAttribute('aria-invalid', 'true'); say(refused.trim()); items[index] = kept; changed(); return; }
           input.removeAttribute('aria-invalid'); say(''); items[index] = input.value; changed();
         });
         input.addEventListener('change', () => { if (input.getAttribute('aria-invalid')) { input.value = items[index]; input.removeAttribute('aria-invalid'); say(''); } });
+        input.addEventListener('paste', event => {
+          if (!/[\r\n]/.test(event.clipboardData?.getData('text/plain') ?? '')) return;
+          event.preventDefault(); say('Paste several lines into the last row: each becomes an entry.');
+        });
         line.append(input, button('close', `Remove ${name} entry ${index + 1}`, () => { items.splice(index, 1); say(''); draw(); changed(); }));
         box.append(line);
       });
@@ -1038,7 +1045,7 @@ async function edit(task: Task): Promise<void> {
         // What the store would refuse stays in the input, with the reason.
         const refused = entries.some(entry => Array.from(entry).length > 4096) ? 'An entry takes at most 4096 characters.'
           : items.length + added.length > 256 ? 'A list holds at most 256 entries.' : '';
-        if (refused) { say(refused); return; }
+        if (refused) { say(`Nothing was added. ${refused}`); return; }
         items.push(...added);
         say(skipped.length ? `Already in this list: ${[...new Set(skipped)].join(', ')}` : '');
         if (!added.length) { adder.select(); return; }
@@ -1052,7 +1059,7 @@ async function edit(task: Task): Promise<void> {
         const text = event.clipboardData?.getData('text/plain') ?? '';
         if (!/[\r\n]/.test(text) || fieldsLocked) return;
         // Split here: a single-line input would join the lines.
-        event.preventDefault(); commit(adder.value + text);
+        event.preventDefault(); commit(adder.value.slice(0, adder.selectionStart ?? adder.value.length) + text + adder.value.slice(adder.selectionEnd ?? adder.value.length));
       });
       line.append(adder, button('add', `Add ${name} entry`, () => commit())); box.append(line, hint);
       lockFields();

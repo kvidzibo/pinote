@@ -147,7 +147,7 @@ try {
   assert.deepEqual(notes(),{ Notes:'Free **text**', PRs:pulls });
   // Editing an entry into a repeat keeps the entry: nothing is saved over it.
   const second = group('PRs').getByRole('textbox',{name:'PRs entry 2',exact:true});
-  await second.fill(pulls[0]);
+  await second.fill(''); await second.pressSequentially(pulls[0]);
   await group('PRs').getByRole('status').getByText(`Already in this list: ${pulls[0]}`,{exact:true}).waitFor();
   await second.blur();
   assert.deepEqual(await entries('PRs'),pulls,'The entry returns to its value');
@@ -155,6 +155,8 @@ try {
   assert.deepEqual(notes().PRs,pulls,'A repeat deletes nothing');
   // Several pasted lines are several entries.
   await group('Owner').getByRole('textbox',{name:'Add Owner entry',exact:true}).evaluate(input => {
+    // The selection is replaced, as a paste does.
+    input.value = 'old'; input.select();
     const clipboardData = new DataTransfer(); clipboardData.setData('text/plain','ana\nana');
     input.dispatchEvent(new ClipboardEvent('paste',{clipboardData,bubbles:true,cancelable:true}));
   });
