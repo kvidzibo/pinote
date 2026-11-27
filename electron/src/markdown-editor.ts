@@ -42,23 +42,25 @@ export function sourceNewline(view: EditorView): boolean {
     const line = state.doc.lineAt(range.from);
     const prefix = state.sliceDoc(line.from, range.from);
     const bullet = /^([ \t]*)-([ \t]+|$)/.exec(prefix);
-    if (bullet && !prefix.slice(bullet[0].length).trim() && range.to === line.to) {
+    const end = state.doc.lineAt(range.to);
+    const tailBlank = !state.sliceDoc(range.to, end.to).trim();
+    if (bullet && !prefix.slice(bullet[0].length).trim() && tailBlank && end.number === line.number) {
       // An empty nested bullet steps out one level; only a top-level one ends the list.
       const indent = bullet[1].replace(/\t/g, '  ');
       const insert = indent ? indent.slice(0, -2) + '- ' : '';
-      return { changes: { from: line.from, to: range.to, insert }, range: EditorSelection.cursor(line.from + insert.length) };
+      return { changes: { from: line.from, to: line.to, insert }, range: EditorSelection.cursor(line.from + insert.length) };
     }
     const plain = !/^\s*(?:#{1,6}(?:\s|$)|[>*+-](?:\s|$)|\d+[.)]\s|`{3,}|~{3,})/.test(prefix);
     const promote = state.selection.ranges.length === 1 && state.doc.lines === 1 && !!prefix.trim() && plain;
     const heading = /^ {0,3}#{1,6}[ \t]+/.test(prefix);
     // A line ending with ":" opens a list: nested under a bullet, at the same indent under plain text.
     const text = prefix.trimEnd();
-    const colon = text.endsWith(':') && !state.sliceDoc(range.to, line.to).trim() && !inFencedCode(state, range.from);
+    const colon = text.endsWith(':') && tailBlank && !inFencedCode(state, range.from);
     const insert = '\n' + (promote || heading ? '- ' : bullet ? bullet[1] + (colon ? '  - ' : '- ')
       : colon && plain ? /^[ \t]*/.exec(prefix)![0] + '- ' : '');
     const from = colon ? line.from + text.length : range.from;
     return {
-      changes: [...(promote ? [{ from: 0, insert: '# ' }] : []), { from, to: colon ? line.to : range.to, insert }],
+      changes: [...(promote ? [{ from: 0, insert: '# ' }] : []), { from, to: colon ? end.to : range.to, insert }],
       range: EditorSelection.cursor(from + insert.length + (promote ? 2 : 0)),
     };
   });
