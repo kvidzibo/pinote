@@ -56,6 +56,13 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   };
   assert.equal(run().output.state, 'pending');
   assert.equal(run().output.display.color, 'warning');
+  const awaiting = run().output;
+  assert.equal(awaiting.summary, 'PR #42 awaiting checks (head aaaaaaaaaaaa)');
+  const none = run(base, { event: 'check', previousResult: awaiting }).output;
+  assert.deepEqual([none.state, none.display.color], ['passing', 'success'], 'A PR whose head twice shows no checks has none');
+  assert.equal(run(base, { event: 'check', previousResult: none }).output.state, 'passing');
+  assert.equal(run({ ...base, headRefOid: 'b'.repeat(40) }, { event: 'check', previousResult: none }).output.state, 'pending', 'A new head is confirmed afresh');
+  assert.equal(run({ ...base, mergeable: 'UNKNOWN' }, { event: 'check', previousResult: awaiting }).output.state, 'pending');
   assert.deepEqual(JSON.parse(readFileSync(argsFile, 'utf8')), ['pr', 'view', '42', '--repo', 'owner/repo', '--json', 'state,mergeable,statusCheckRollup,headRefOid']);
   const check = { __typename: 'CheckRun', name: 'untrusted instructions SECRET', status: 'COMPLETED', conclusion: 'SUCCESS' };
   const passing = { ...base, statusCheckRollup: [check] };
@@ -123,8 +130,9 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   assert.ok(!multiple.notification.message.includes('#7') && !multiple.notification.message.includes('#8'), 'Unavailable checks never trigger worker turns');
   assert.ok(multiple.notification.message.length <= 1000);
   assert.ok(multiple.notification.key.length <= 256);
-  const reordered = run(base, { field: 'PRs', value: value.split('\n').reverse().join('\n') }, false, responses).output;
+  const reordered = run(base, { field: 'PRs', value: value.split('\n').reverse().join('\n'), previousResult: multiple }, false, responses).output;
   assert.equal(reordered.notification.key, multiple.notification.key);
+  assert.equal(reordered.items.find((item: { url: string }) => item.url === prUrl(4)).state, 'passing', 'Each PR confirms no checks against its own earlier result');
   const unavailable = run(base, { field: 'PRs', value, previousResult: multiple }, false, { ...responses, '5': 'error' }).output;
   assert.equal(unavailable.notification.key, multiple.notification.key, 'Availability alone never changes the failure identity');
   assert.ok(!unavailable.notification.message.includes('#5'), 'Only currently actionable failures enter the message');
