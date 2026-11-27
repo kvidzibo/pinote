@@ -43,8 +43,7 @@ existing reminders.
 - **Pi:** `pi install npm:pi-note`, then open **`/pinote`**. The
   [pi-note extension](pi/README.md) adds task menus, footer status, suggestions
   and handoff fields through the `note` CLI; it needs Pi 1.4.0+ and `note` on
-  `PATH`. Completing a task from Pi closes Pi by default and never runs Git
-  commands. Former HTTP-service users: follow the [migration steps](pi/README.md#migration).
+  `PATH`. Completing a task from Pi closes Pi by default. Former HTTP-service users: follow the [migration steps](pi/README.md#migration).
 
 ## Use
 

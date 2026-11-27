@@ -11,8 +11,9 @@ Requires **note 0.25.0+** (task events: **0.27.0+**) and pi-note **0.47.0+**.
 > permissions, environment and credentials. Enabling one authorizes its alerts to
 > trigger the owning Pi worker to investigate and fix the task within existing
 > permissions. It never authorizes task selection or completion, PR merging, or
-> bypassing approvals. Only the human-confirmed Watchers UI can configure
-> executable paths; agent tools cannot.
+> bypassing approvals. Watchers UI changes require human confirmation and agent
+> tools cannot configure executable paths, but an enabled path written directly
+> to `pi-note.json` also runs: keep that file trusted.
 
 ## Enable
 
@@ -147,8 +148,8 @@ untrusted data: never interpolate them into shell commands.
 
 - `added`, `changed`, `removed`: effective field-value changes from committed
   task history, whoever wrote them. Completing, removing or scheduling a task
-  removes its fields; restoring adds them again. Editing a footer definition
-  emits nothing.
+  emits `removed` for its fields (the saved values stay on the task); restoring
+  emits `added`. Editing a footer definition emits nothing.
 - `check`: a requested scheduled check. `eventId` and `previousValue` identify
   the originating change; `previousResult` holds the last stored result, if any.
 - A removed field has `value: null`; its result cannot style, notify or reschedule.
@@ -229,7 +230,7 @@ must be executable (`chmod u+x`).
   default 60, limited to 10–86,400) until every entry is closed or merged.
   Merging never completes the task.
 - A batch runs at most four `gh` calls at once, within 25 seconds. Unavailable
-  entries keep earlier results, retry, and never retrigger workers.
+  entries retry without repeating alerts; other PRs keep their results.
 - Each PR has its own durable acknowledgement. New failures, and recovery
   followed by failure, alert again; adding or removing other URLs does not.
 - **Passing** means reported checks passed, not that review or protection rules did.
@@ -337,8 +338,8 @@ a minute.
 - A timeout or cancellation sends SIGTERM to the process group, then SIGKILL 3
   seconds later. Scripts must not detach child processes.
 - Invalid output, nonzero exit, timeout or `state: "error"` keep the last good
-  result as stale and retry with exponential backoff (30 seconds to one hour).
-  Stale results do not alert.
+  result as stale and retry field checks with exponential backoff (30 seconds
+  to one hour, or a longer requested retry). Stale results do not alert.
 - Results are discarded if the task changed during execution.
 - Invocations are **at least once** after crashes: use `eventId` and idempotent
   logic for external side effects.

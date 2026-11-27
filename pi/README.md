@@ -44,8 +44,9 @@ at the top. All search terms must match the title, description, tag or numeric I
 | **Preview** | Scrollable read-only document |
 | **Insert task prompt…** | Reviews, then inserts into an empty editor only; never submits |
 
-Creation, suggestion acceptance, completion and shared setting changes need a
-review and a separate Cancel-first confirmation. Failed or uncertain writes offer
+In the menu, creation, suggestion acceptance and shared setting changes need a
+review and a separate Cancel-first confirmation, and completion asks explicitly.
+Footer double-clicks act **without confirmation**. Failed or uncertain writes offer
 refresh/verification, **never automatic replay**: a failed write may already have
 committed, so read fresh state before retrying.
 
@@ -69,7 +70,8 @@ Compact titles hide leading Markdown heading markers; saved text is unchanged.
 **Footer layout** are saved in `pi-note.json` under `PI_CODING_AGENT_DIR` (default
 `~/.pi/agent`) and apply to every Pi session using that directory. Values are
 saved only after review and confirmation. A malformed file fails closed: fix it
-rather than replacing it with defaults.
+rather than replacing it with defaults. **New session prompt** is stored for
+compatibility only; `/new` does not insert it.
 
 **Footer layout** sets widths and which fields appear in the bottom bar. Select a
 field to show it next; select it again to hide it. Empty values stay hidden and
@@ -130,10 +132,12 @@ in Pi**) applies after you complete the selected task from the menu or footer:
 
 - `close-pi` (default): exit Pi. A **Start in Kitty…** tab closes with it.
 - `close-pane`: exit Pi, then close its Kitty pane, ending the shell Pi ran in.
+  **Complete task and exit** closes the pane too.
 - `keep-open`: keep the conversation and editor.
 
 An externally completed task, or a failed or uncertain completion, never closes
-Pi. Pinote never runs Git commands.
+Pi. Completion itself runs no Git commands, but an enabled watcher such as
+[Worktree cleanup](FIELD_EVENTS.md#worktree-cleanup) can.
 
 ### Agent tools and context
 
@@ -243,7 +247,8 @@ pi.events.on('pinote:task-completed', (event) => {
 - On teardown, `signal.reason` is Pi's shutdown reason (`quit`, `reload`, `new`,
   `resume` or `fork`).
 - Rejection, timeout or cancellation never undo the completion or retry writes;
-  they produce only a generic warning.
+  they produce only a generic warning. An exception thrown before `waitUntil`
+  registers goes to Pi's own logger, which may print its raw text.
 
 This is a trusted local extension API, not task instructions or authorization to
 run models or external actions.

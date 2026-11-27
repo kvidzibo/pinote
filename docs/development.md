@@ -46,9 +46,10 @@ node --test --experimental-strip-types $(ls tests/*.test.ts test-load.ts | grep 
 ```
 
 Electron E2E parts each use their own Xvfb server and D-Bus session: `--part=1`
-is lifecycle/recovery; `--part=2` the pasted-image check (`tests/images-e2e.mjs`)
-and workflow checks; `--part=3` the Watchers settings check and editor autosave.
-Without `--part`, `tests/e2e.mjs` runs everything in one application. Type/unit
+is lifecycle/recovery, `--part=2` the workflow checks and `--part=3` editor
+autosave. CI runs `tests/images-e2e.mjs` before part 2 and
+`tests/watchers-e2e.mjs` before part 3; the flags do not include them. Without
+`--part`, `tests/e2e.mjs` runs all three parts in one application. Type/unit
 checks run in the 800×600 job and packaged-app validation in the 1280×900 job.
 Pass an unpacked app directory to `test:package` for relocation checks; CI tests
 in place because copying its root-owned SUID sandbox helper would lose ownership.

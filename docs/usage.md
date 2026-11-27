@@ -19,7 +19,7 @@ npm install -g ./backend   # optional global installation
   source changes, rebuild, and reinstall a global copy.
 - `(cd backend && npm pack)` produces a self-contained tarball for offline transfer.
 - Dunst (`dunstify`), a graphical session and session D-Bus are needed only for
-  desktop notifications. On macOS without Dunst, CLI changes skip the refresh silently.
+  desktop notifications.
 - Local reminder times use Node's bundled IANA time zone data; `TZ`, if set, must
   name an IANA zone.
 - Use UTF-8 for paths and filenames passed to the CLI; undecodable paths are rejected.
@@ -155,7 +155,8 @@ Dunst notification. Electron changes do not.
 - It previews the first 10 active notes, up to 180 characters each, as literal
   text. Dunst's pause, fullscreen, placement, and display policies still apply.
 - Data is committed **before** notification delivery. If Dunst is missing or
-  unavailable, mutations still succeed (exit 0) with a warning. Do not repeat an
+  unavailable, mutations still succeed (exit 0) with a warning (silently on
+  macOS when Dunst is missing). Do not repeat an
   add just because delivery failed.
 - Exit codes: `note show` returns 1 on notification failure; validation/storage
   errors return 1; CLI syntax errors return 2.

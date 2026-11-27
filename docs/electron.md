@@ -80,9 +80,6 @@ Upgrading from older versions:
 - Entries saved by Electron 0.14 point at copies inside the application. They keep
   running and are listed as **Custom**; after switching entries, still failing
   checks can alert once more.
-- With more than 30 stored watchers, first remove unused paths from `pi-note.json`
-  (keep a backup): the two package entries would exceed the 32-watcher limit and
-  stop watchers loading.
 
 ## Controls
 
@@ -138,7 +135,7 @@ once and shown on its own line; the text keeps a short
   double-click it in an editor. **Menu → Window… → Open images in** chooses
   **Image window** (default, full size scaled to the screen), **This window**, or
   **System viewer** (a temporary copy, removed when Pinote quits). A click or
-  **Escape** closes Pinote's own views.
+  **Escape** closes Pinote's own views. Pictures inside links open the link.
 
 ### Task actions
 
@@ -262,14 +259,13 @@ tiling window manager may still place the window itself.
 
 | State | Location |
 | --- | --- |
-| Working state and drafts | `<data>/pinote/electron/state.json` |
-| Window geometry | `<data>/pinote/electron/window.json` |
-| Runtime profile, single-instance lock | `<data>/pinote/electron/profile/` |
+| Working state and drafts | `electron/state.json` beside `notes.db` |
+| Window geometry | `electron/window.json` beside `notes.db` |
+| Runtime profile, single-instance lock | `electron/profile/` beside `notes.db` |
 | Session data and `app.log` | `<state>/pinote/electron/<databasehash>/` |
 | Early startup errors | `<state>/pinote/electron/app.log` |
 
-`<data>` and `<state>` are absolute XDG overrides or `~/.local/share` and
-`~/.local/state`. Draft content is capped at 1 MiB. Drafts and logs are local and
+`<state>` is an absolute `XDG_STATE_HOME` or `~/.local/state`. Draft content is capped at 1 MiB. Drafts and logs are local and
 **not encrypted**. Include Electron state in
 [database backups](usage.md#data-privacy-and-backup).
 
@@ -295,7 +291,8 @@ electron/out/pinote-electron-linux-x64/pinote-electron
 
 This creates an unpacked application for the host architecture, not an
 installer. The backend is bundled, so the target needs no source files or
-checkout dependencies, only external Node.js 22.19+. There is no auto-updater or
+checkout dependencies, but still the [runtime requirements](#install-and-launch-from-a-checkout)
+above, including external Node.js 22.19+. There is no auto-updater or
 public publishing flow.
 
 The renderer uses a custom secure protocol, restrictive CSP, sandboxing, context
