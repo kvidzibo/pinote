@@ -19,14 +19,16 @@ function noteFromRow(row:Row):Note { return {tag:null,remind_at:null,reminder_du
 
 export class Store {
   public connection:DatabaseSync;
-  constructor(path:string, options:{timeout?:number}={}) {
-    privateDirectory(dirname(path)); privateFile(path);
-    this.connection=new DatabaseSync(path);
+  /** readOnly neither creates nor migrates the database: it must already be at the current schema. */
+  constructor(path:string, options:{timeout?:number;readOnly?:boolean}={}) {
+    if(!options.readOnly) { privateDirectory(dirname(path)); privateFile(path); }
+    this.connection=new DatabaseSync(path,{readOnly:options.readOnly===true});
     try {
       const timeout=options.timeout??10;
       if(!Number.isFinite(timeout)||timeout<0) throw new RangeError('timeout must be nonnegative');
       this.connection.exec(`PRAGMA busy_timeout = ${Math.min(2147483647,Math.floor(timeout*1000))}`);
       this.connection.exec('PRAGMA foreign_keys = ON');
+      if(options.readOnly&&this.row('PRAGMA user_version')!.user_version!==8n) throw new NoteError('This database is not at the current version yet.');
       if(this.row('PRAGMA user_version')!.user_version!==8n) this.transaction(()=>{
         const version=Number(this.row('PRAGMA user_version')!.user_version);
         if(version===8) return;

@@ -123,13 +123,15 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
     finally { store.close(); }
   }
   if (op === 'stats') {
-    const store = new Store(paths.database, { timeout: 0.1 });
+    const file = (path: string) => { try { return statSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
+    // Files are measured before SQLite opens, which can create WAL sidecars beside the real file.
+    // Until a checkpoint the newest writes are only in the WAL.
+    const path = resolvePath(paths.database), database = file(path), wal = file(`${path}-wal`), shm = file(`${path}-shm`), logFile = file(paths.log);
+    if (!database) throw new NoteError('The database does not exist yet.');
+    const store = new Store(path, { timeout: 0.1, readOnly: true });
     try {
-      const file = (path: string) => { try { return statSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
-      // SQLite keeps WAL sidecars beside the real file; until a checkpoint the newest writes are only in the WAL.
-      const path = resolvePath(paths.database), database = statSync(path), wal = file(`${path}-wal`);
-      return { database: { path, bytes: database.size + (wal?.size ?? 0) + (file(`${path}-shm`)?.size ?? 0), modified: new Date(Math.max(database.mtimeMs, wal?.mtimeMs ?? 0)).toISOString() },
-        log: { path: resolvePath(paths.log), bytes: file(paths.log)?.size ?? null }, ...store.stats() };
+      return { database: { path, bytes: database.size + (wal?.size ?? 0) + (shm?.size ?? 0), modified: new Date(Math.max(database.mtimeMs, wal?.size ? wal.mtimeMs : 0)).toISOString() },
+        log: { path: resolvePath(paths.log), bytes: logFile?.size ?? null }, ...store.stats() };
     } finally { store.close(); }
   }
   return withDisplayLock(paths, false, async () => {
@@ -206,11 +208,12 @@ export async function main(argv = process.argv.slice(2), input?: Uint8Array): Pr
       if (op === 'snapshot' || op === 'kitty') guiConfigPath();
       // Only Kitty launches search PATH; check it before any save.
       if (op === 'kitty') { checkedEnv('PATH'); kittyAddressEnv(); }
-      configureLogging(paths, { stderr: true });
+      // stats only reports: it must not create the log it measures.
+      if (op !== 'stats') configureLogging(paths, { stderr: true });
     }
     response = await respond(request, paths);
     checkCancelled();
-    if (!response.ok && op !== 'handshake') log('warning', `Electron bridge request failed (${response.error.code}).`);
+    if (!response.ok && op !== 'handshake' && op !== 'stats') log('warning', `Electron bridge request failed (${response.error.code}).`);
   } catch (error) {
     response = failure((error as Error).name === 'AbortError'
       ? new BridgeError('unknown', 'Backend interrupted. Check saved state before retrying.') : error);

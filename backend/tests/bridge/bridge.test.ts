@@ -170,6 +170,8 @@ test('subprocess unicode framing, private logging, redacted conflicts', () => {
   assert.equal(JSON.parse(stale.stdout).error.code, 'conflict'); assert.equal(stale.stderr.includes('SECRET'), false); assert.equal(readFileSync(paths.log, 'utf8').includes('SECRET'), false); assert.equal(statSync(paths.log).mode & 0o777, 0o600);
 });
 test('stats reports task states, images, history and file sizes without writing', async () => {
+  const missing = processRequest(JSON.stringify(request('stats')));
+  assert.equal(JSON.parse(missing.stdout).ok, false); assert.deepEqual([existsSync(paths.database), existsSync(paths.log)], [false, false]);
   const s = new Store(paths.database);
   try {
     const [, progress, scheduled, done, removed] = ['a', 'b', 'c', 'd', 'e'].map(text => s.add(text));
@@ -179,7 +181,8 @@ test('stats reports task states, images, history and file sizes without writing'
   assert.deepEqual(before.tasks, { active: 1, in_progress: 1, scheduled: 1, done: 1, removed: 1 });
   assert.deepEqual([before.images, before.events, before.log], [{ count: 0, bytes: 0 }, 9, { path: paths.log, bytes: null }]);
   assert.equal(before.database.path, paths.database); assert.ok(before.database.bytes > 0);
-  assert.equal(before.database.modified, statSync(paths.database).mtime.toISOString());
+  assert.equal(before.database.modified, new Date(statSync(paths.database).mtimeMs).toISOString());
+  assert.deepEqual(JSON.parse(processRequest(JSON.stringify(request('stats'))).stdout).result.log, before.log); assert.equal(existsSync(paths.log), false);
   const image = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.from([0, 0, 0, 13]), Buffer.from('IHDR'), Buffer.from([0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0])]);
   await call('image_add', { data: image.toString('base64') });
   const after = await call('stats');
