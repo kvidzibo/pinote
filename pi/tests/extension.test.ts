@@ -17,7 +17,7 @@ function harness(overrides: Partial<Peer> = {}) {
   let connections = 0, changed = () => {};
   const peer: Peer = {
     view: async (meta) => { metas.push(structuredClone(meta)); return view((meta[UI_CONTEXT] as SavedState).state); },
-    context: async (meta) => { metas.push(structuredClone(meta)); return 'fresh task data'; },
+    context: async (meta) => { metas.push(structuredClone(meta)); return { instructions: '', text: 'fresh task data' }; },
     tool: async () => ({ result: 'ok' }),
     action: async () => ({ view: view({ selectedId: null }) }), close: async () => {}, ...overrides,
   };
@@ -215,7 +215,7 @@ test('nine explicit direct schemas; tool state is applied before next serialized
   await Promise.all([h.session.tool('propose', { title: 'task' }), h.session.tool('get_current', {})]);
   assert.deepEqual(seen, [{}, { selectedId: 19 }]);
   assert.equal(h.session.snapshot()?.state.selectedId, 19);
-  assert.equal(await h.session.context(), 'fresh task data');
+  assert.equal((await h.session.context()).text, 'fresh task data');
   await h.session.stop();
 });
 
@@ -426,10 +426,10 @@ test('tool errors throw, failed fresh context is unavailable rather than cached/
   const h = harness({
     tool: async () => { throw new Error(token); },
     view: async () => view(),
-    context: async () => { if (fail) throw new Error(token); return 'selected task'; },
+    context: async () => { if (fail) throw new Error(token); return { instructions: '', text: 'selected task' }; },
   });
   await h.session.start([], 'conversation');
-  assert.equal(await h.session.context(), 'selected task'); fail = true;
+  assert.equal((await h.session.context()).text, 'selected task'); fail = true;
   await assert.rejects(h.session.context(), PinoteFailure);
   await assert.rejects(h.session.tool('get_current', {}), PinoteFailure);
   await h.session.stop();
@@ -621,7 +621,7 @@ test('extension registers nine tools before startup and returns hidden unavailab
   assert.ok(tools.every((name) => name.startsWith('pinote_')));
   assert.deepEqual(commands, ['pinote']);
   const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
-  const { message } = await handlers.get('before_agent_start')!(event, {});
+  const { message } = await handlers.get('before_agent_start')!(event, { sessionManager: { buildSessionProjection: () => ({ messages: [] }) } });
   assert.match(event.systemPromptOptions.sections.pinote_remote, /UNTRUSTED TASK DATA/);
   assert.equal(message.customType, 'pinote-context');
   assert.equal(message.display, false);

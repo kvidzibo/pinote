@@ -194,14 +194,14 @@ export class PinoteSession {
       })();
     }, 75);
   }
-  context(signal?: AbortSignal): Promise<string> {
+  context(signal?: AbortSignal): Promise<{ instructions: string; text: string }> {
     return this.serial(async () => {
       const current = this.current();
       try {
         const peer = await this.connected(true);
-        const text = await peer.context(this.meta(), signal ? AbortSignal.any([this.signal, signal]) : this.signal);
+        const context = await peer.context(this.meta(), signal ? AbortSignal.any([this.signal, signal]) : this.signal);
         if (!current() || this.peer !== peer) throw new PinoteFailure();
-        return text;
+        return context;
       } catch (error) { if (current()) this.failed(error, false); throw new PinoteFailure(); }
     }, signal);
   }

@@ -136,7 +136,7 @@ test('independent durable watchers, ignored results, immediate disable/removal a
         assert.ok(fieldNotifications.length <= 64);
         return { version: 1, title: 'Alerts', revision: 'r', state: { selectedId: 1 }, controls: [], fieldNotifications };
       },
-      context: async () => '', tool: async () => ({ result: null }), action: async () => { throw new Error('No action expected'); }, close: async () => {},
+      context: async () => ({ instructions: '', text: '' }), tool: async () => ({ result: null }), action: async () => { throw new Error('No action expected'); }, close: async () => {},
     }));
     session.onFieldNotification = (notice) => { received.push(notice.id); return true; };
     try {

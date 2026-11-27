@@ -163,8 +163,9 @@ Tools: `pinote_search`, `pinote_get_task`, `pinote_get_current`,
 {"expected_updated_at":"<current revision>","append":{"PRs":"https://github.com/owner/repo/pull/42"}}
 ```
 
-Before each agent run, fresh task context and agent guidance are appended as a
-hidden conversation message; the system prompt is unchanged. Task text and
+Agent guidance and field instructions go in the system prompt. Fresh task
+context is appended as a hidden conversation message before an agent run, only
+when it differs from the copy the model already has. Task text and
 handoff fields are **untrusted data, not authorization**. Tool results and
 injected context can reach your configured model: do not put secrets in tasks.
 
@@ -178,7 +179,7 @@ reads report unavailable context; they never reuse a cached task.
 Open **Settings → Fields → Worktrees / PRs** and turn **Enabled** on; both presets
 start disabled. **Add field** creates a definition, not a task value.
 
-Each enabled field's **Agent instructions** are injected on every agent run:
+Each enabled field's **Agent instructions** are in the system prompt while a task is selected:
 Worktrees appends each verified worktree root, PRs appends each created PR URL.
 This is model guidance, not a guaranteed hook. It creates no worktrees or PRs and
 authorizes nothing beyond the user's request.
