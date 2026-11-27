@@ -5,6 +5,7 @@ import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { _electron } from 'playwright';
+import { bridgeCaller } from './bridge-call.mjs';
 
 const sourceValue = locator => locator.evaluate(node => node.querySelector('.cm-placeholder') ? '' : Array.from(node.querySelectorAll('.cm-line'), line => line.textContent).join('\n'));
 
@@ -29,11 +30,7 @@ const createTagMarker=join(root,'create-tag-committed');
 const frontendBackend=join(root,'backend.mjs');
 await writeFile(frontendBackend,`#!${process.execPath}\nimport {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const op=JSON.parse(input).operation;let fault='';try{fault=readFileSync(${JSON.stringify(faultFile)},'utf8');}catch{}if(fault==='slow-add'&&op==='add'){writeFileSync(${JSON.stringify(slowAddMarker)},'dispatched');setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'unknown',message:'Injected delayed add failure'}})),1000);return;}if(fault==='slow-busy-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(()=>process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected delayed edit failure'}})),1500);return;}if((fault==='busy-tag'&&op==='tag')||(fault==='busy-create-tag'&&op==='create_tag')){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:'busy',message:'Injected edit failure'}}));return;}if(op===fault){process.stdout.write(JSON.stringify({protocol:1,ok:false,error:{code:op==='snapshot'?'busy':'unknown',message:'Injected rapid failure'}}));return;}const r=spawnSync(${JSON.stringify(backend)},[],{input,encoding:'utf8',env:process.env});const reply=()=>{process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exitCode=r.status??1;};if(fault==='slow-create-tag'&&op==='create_tag'){writeFileSync(${JSON.stringify(createTagMarker)},'committed');setTimeout(reply,1200);return;}if(fault==='slow-edit'&&op==='edit'){writeFileSync(${JSON.stringify(editMarker)},JSON.parse(input).params.text);setTimeout(reply,1200);return;}if(fault==='slow-complete'&&op==='transition'&&JSON.parse(input).params.action==='done'){writeFileSync(${JSON.stringify(completeMarker)},'committed');setTimeout(reply,1000);return;}reply();});`,{mode:0o700});
 env.PINOTE_BRIDGE_COMMAND=frontendBackend;
-function call(operation, params) {
-  const run = spawnSync(backend, [], { env, input: JSON.stringify({ protocol:1,operation,params }), encoding:'utf8' });
-  assert.equal(run.status,0,run.stderr);
-  const response = JSON.parse(run.stdout); assert.ok(response.ok,JSON.stringify(response)); return response.result;
-}
+const call = bridgeCaller(backend, [], env);
 call('create_tag',{name:'Work',folder:null});
 call('create_tag',{name:'Empty filter',folder:null});
 const first = call('add',{ text:'Ship optional Electron frontend\n\nKeep **CLI** available. [Safe preview link](https://example.org/task393)\n\n<script>window.compromised=true</script>\n\n![no network](https://example.org/track.svg)',tag:null }).id;

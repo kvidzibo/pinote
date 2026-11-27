@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { _electron } from 'playwright';
+import { bridgeCaller } from './bridge-call.mjs';
 
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use xvfb-run with a private dbus-run-session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'), 'Use a private D-Bus session');
@@ -16,14 +17,7 @@ const env = { ...process.env, PINOTE_BRIDGE_COMMAND: resolve('../backend/bin/pin
   XDG_RUNTIME_DIR: join(root,'runtime'), PI_CODING_AGENT_DIR: join(root,'pi-agent'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR','PI_CODING_AGENT_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
-// The running app writes concurrently and the bridge waits only 100 ms for locks, so retry busy replies.
-const call = (operation, params) => {
-  for (let attempt = 1; ; attempt++) {
-    const run = spawnSync(env.PINOTE_BRIDGE_COMMAND, [], { env, input: JSON.stringify({ protocol:1, operation, params }), encoding:'utf8' });
-    const response = JSON.parse(run.stdout);
-    if (response.ok || response.error?.code !== 'busy' || attempt === 20) { assert.ok(response.ok, run.stdout); return response.result; }
-  }
-};
+const call = bridgeCaller(env.PINOTE_BRIDGE_COMMAND, [], env);
 const images = () => {
   const db = new DatabaseSync(join(env.XDG_DATA_HOME,'pinote','notes.db'), { readOnly:true, timeout:2000 });
   try { return db.prepare("SELECT name FROM sqlite_master WHERE name='images'").get() ? db.prepare('SELECT hash,mime,width,height,length(bytes) AS size FROM images ORDER BY created_at').all() : []; } finally { db.close(); }
