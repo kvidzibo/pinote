@@ -426,7 +426,7 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
   const guidance = agentGuidance();
   const config = task ? settings().config : null;
   const data = task
-    ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes) })}`
+    ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes).map(({ instructions: _instructions, ...field }) => field) })}`
     : `No task is selected (including unavailable or completed selected targets).\nSaved tags:\n${await note(['agent', 'tags'], signal)}\nPending suggestion (not selected):\n${JSON.stringify(proposal ? { ...proposal, ...('task_id' in proposal ? { text: proposedTask!.text, tag: proposedTask!.tag } : {}) } : null)}`;
   const statuses = (task ? automation?.statuses(task) ?? [] : [])
     .filter((status) => !status.stale && status.result.state !== 'error')

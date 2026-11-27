@@ -28,6 +28,7 @@ test('default package loads through Pi and two sessions share real local notes',
     for (const handler of extension.handlers.get(name) ?? []) results.push(await handler(data, ctx));
     return results;
   };
+  const queued: any[] = [];
   let modelMessages: unknown[] = []; // What Pi would send to the model on the next run.
   const context = (branch: any[], id: string) => ({ cwd: temp, mode: 'rpc', hasUI: false, isIdle: () => true,
     sessionManager: { getSessionFile: () => join(temp, `${id}.jsonl`), getSessionId: () => id, getBranch: () => branch, buildSessionProjection: () => ({ messages: modelMessages }) },
@@ -45,6 +46,7 @@ test('default package loads through Pi and two sessions share real local notes',
       const loaded = await loadExtensions(manifest.pi.extensions.map((path: string) => join(root, path)), temp, bus);
       assert.deepEqual(loaded.errors, []);
       loaded.runtime.appendEntry = (customType: string, data: unknown) => branch.push({ type: 'custom', customType, data });
+      loaded.runtime.sendMessage = (message: unknown) => queued.push(message);
       const extension = loaded.extensions[0]; extensions.push(extension); buses.set(extension, bus); return extension;
     };
     const first = await load(entries), other = await load(otherEntries);
@@ -96,6 +98,9 @@ test('default package loads through Pi and two sessions share real local notes',
     modelMessages = [{ role: 'custom', ...(await event(first, 'before_agent_start', ctx, repeat))[0].message }];
     assert.deepEqual(await event(first, 'before_agent_start', ctx, repeat), [undefined], 'Unchanged task state already in the model context is not sent again');
     assert.equal(repeat.systemPromptOptions.sections.pinote_remote, before.instructions);
+    await event(first, 'session_compact', ctx); assert.deepEqual(queued, [], 'A snapshot kept by compaction is not sent again');
+    const kept = modelMessages; modelMessages = [];
+    await event(first, 'session_compact', ctx); assert.deepEqual(queued, [kept[0]].map(({ role: _role, ...message }: any) => message), 'A summarized snapshot is sent again during the run');
     assert.ok(!before.instructions.includes(task.text));
     assert.doesNotMatch(before.instructions, /Continue elsewhere/);
     assert.ok(before.text.includes(task.text));
@@ -115,6 +120,9 @@ test('default package loads through Pi and two sessions share real local notes',
     assert.match(unavailable.text, /UNAVAILABLE/);
     assert.ok(!unavailable.text.includes(task.text));
     assert.doesNotMatch(unavailable.text, /Continue elsewhere/);
+    const failed = async () => (await event(first, 'before_agent_start', ctx, { systemPromptOptions: { sections: {} } }))[0].message;
+    modelMessages = [{ role: 'custom', ...await failed() }];
+    assert.deepEqual({ role: 'custom', ...await failed() }, modelMessages[0], 'Every failed read is reported');
   } finally {
     for (let i = 0; i < extensions.length; i++) await event(extensions[i], 'session_shutdown', i === 0 ? ctx : otherCtx);
     for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
