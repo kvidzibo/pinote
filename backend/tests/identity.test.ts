@@ -107,6 +107,10 @@ test('active inherited path values are checked without exposing or rejecting unr
   assert.equal(fallback.result.database, join(f.root, '.local/share/pinote/notes.db'));
   assert.equal(f.run(cli, { args: ['--version'], bindings: { XDG_DATA_HOME: raw } }).status, 0);
   f.fresh(sibling);
+  // Lock-only saves do not search PATH.
+  assert.equal(f.reply(f.run(bridge, { input: request('add', { text: 'bridge save', tag: null }), bindings: { PATH: raw } })).ok, true);
+  assert.equal(f.run(cli, { args: ['--no-notify', 'add', 'CLI save'], bindings: { PATH: raw } }).status, 0);
+  assert.equal(f.reply(f.run(bridge, { input: request('snapshot', { view: 'active' }) })).result.notes.length, 2);
 });
 
 test('handshake and folder/selection keys never substitute a U+FFFD sibling for a symlink target', { skip }, t => {
