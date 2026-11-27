@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Backend } from './backend.ts';
+import { imageHashes } from './image-refs.ts';
 import { backendCommand } from './backend-command.ts';
 import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
@@ -23,6 +24,8 @@ const xdg = (name: string, fallback: string) => process.env[name] && isAbsolute(
 let window: BrowserWindow | undefined;
 let activeMenu: Menu | undefined;
 let state = initialState();
+// The last state.json content known to be on disk: its drafts keep their images until a newer save succeeds.
+let durableState = state;
 let dataDir = ''; let logFile = ''; let readonly = false;
 let uncertain = false; let closing = false; let exiting = false;
 let watchers: Promise<{ close(): Promise<void> } | undefined> | undefined;
@@ -62,7 +65,7 @@ function persist() {
   stateWrites = stateWrites.catch(() => {}).then(() => {
     if (!validState(snapshot) || Buffer.byteLength(JSON.stringify(snapshot)) > MAX_STATE_FILE_BYTES) throw new Error('Draft state exceeds its storage limit');
     return atomic(join(dataDir, 'state.json'), snapshot);
-  });
+  }).then(() => { durableState = snapshot; });
   return stateWrites;
 }
 function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
@@ -156,7 +159,7 @@ async function boot() {
     if (Buffer.byteLength(raw) > MAX_STATE_FILE_BYTES) throw new Error('Oversized state');
     const value: unknown = JSON.parse(raw);
     if (!validState(value)) throw new Error('Invalid state');
-    state = value;
+    state = durableState = value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { readonly = true; state.warning = 'Electron state/drafts cannot be read safely. This window is read-only; close it and repair or back up electron/state.json before retrying.'; }
   }
@@ -182,6 +185,8 @@ async function boot() {
     const response = await backend.call('image', { hash });
     if (!response.ok || !(response.result as Operations['image']['result']).found) return null;
     const { mime, data } = response.result as { mime: string; data: string };
+    // An overlapping request for the same image may have cached it meanwhile.
+    if (images.has(hash)) return images.get(hash)!;
     const image = { mime, bytes: Buffer.from(data, 'base64') };
     images.set(hash, image); imageBytes += image.bytes.length;
     for (const [key, value] of images) { if (imageBytes <= 64 * 1024 * 1024) break; images.delete(key); imageBytes -= value.bytes.length; }
@@ -309,6 +314,10 @@ async function boot() {
       }
       // Pruning only deletes unused images: an uncertain outcome needs no reconciliation.
       const journaled = mutating(op) && op !== 'image_prune';
+      if (op === 'image_prune') {
+        const saved = [durableState.draft, ...Object.values(durableState.edits).map(edit => edit.text)].flatMap(imageHashes);
+        params = { keep: [...new Set([...(params as Operations['image_prune']['params']).keep, ...saved])] };
+      }
       const work = tasks.then(async () => {
         if (mutating(op) && (readonly || state.warning)) return { protocol:1 as const,ok:false as const,error:{code:'invalid' as const,message:'Resolve the previous warning before making further changes.'} };
         if (journaled) { uncertain = true; await persist(); }

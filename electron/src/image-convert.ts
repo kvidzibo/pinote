@@ -14,8 +14,8 @@ export async function convertImage(source: Blob): Promise<Blob> {
     }
     const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
     canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    // Chromium encodes quality 1 as lossless WebP. A large lossless result falls back to near-lossless quality.
-    for (const quality of source.type === 'image/jpeg' ? [0.85, 0.7] : [1, 0.9, 0.7]) {
+    // Chromium encodes quality 1 as lossless WebP. Only a lossless result over 4 MiB falls back to quality 0.9.
+    for (const quality of source.type === 'image/jpeg' ? [0.85] : [1, 0.9]) {
       const result = await canvas.convertToBlob({ type: 'image/webp', quality });
       if (result.type !== 'image/webp') throw new Error('This image cannot be converted.');
       if (result.size <= MAX_IMAGE_BYTES) return result;

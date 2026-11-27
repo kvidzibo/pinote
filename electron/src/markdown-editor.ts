@@ -73,12 +73,15 @@ const images = StateField.define<DecorationSet>({
   update: (value, tr) => tr.docChanged ? imageDecorations(tr.state.doc) : value,
   provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field))],
 });
-/** Inserts an image reference on its own line at the selection. */
-export function insertImage(view: EditorView, ref: string): void {
-  const { from, to } = view.state.selection.main;
+/** Inserts an image reference on its own line in place of a range; returns the position after it. */
+export function insertImage(view: EditorView, ref: string, { from, to }: { from: number; to: number } = view.state.selection.main): number {
   const before = view.state.sliceDoc(view.state.doc.lineAt(from).from, from).trim() ? '\n' : '';
   const after = view.state.sliceDoc(to, view.state.doc.lineAt(to).to).trim() ? '\n' : '';
-  view.dispatch({ changes: { from, to, insert: before + ref + after }, selection: { anchor: from + before.length + ref.length }, scrollIntoView: true, userEvent: 'input.paste' });
+  const end = from + before.length + ref.length, main = view.state.selection.main;
+  // The cursor follows the image unless it moved elsewhere while the image was stored.
+  const follow = main.from === from && main.to === to;
+  view.dispatch({ changes: { from, to, insert: before + ref + after }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });
+  return end;
 }
 
 const style = HighlightStyle.define([
@@ -94,6 +97,9 @@ export class MarkdownEditor {
   private settingText = false;
   // Images this editor has shown since the last release; undo can still bring them back.
   private images = new Set<string>();
+  // Pastes still being stored, and the ranges they will replace (mapped through later edits).
+  private pasting = new Set<Promise<void>>();
+  private targets = new Set<{ from: number; to: number }>();
   constructor(parent: HTMLElement, text: string, label: string, composer: boolean, changed: () => void, submit: () => void,
     storeImage?: (file: File) => Promise<string | null>) {
     for (const hash of imageHashes(text)) this.images.add(hash);
@@ -103,7 +109,15 @@ export class MarkdownEditor {
       if (!storeImage || !files.length || data!.getData('text/plain').trim()) return false;
       event.preventDefault();
       if (view.state.readOnly) return true;
-      void (async () => { for (const file of files) { const ref = await storeImage(file); if (ref && !this.destroyed && !view.state.readOnly) insertImage(view, ref); } })();
+      const target = { from: view.state.selection.main.from, to: view.state.selection.main.to };
+      this.targets.add(target);
+      const work: Promise<void> = (async () => {
+        for (const file of files) {
+          const ref = await storeImage(file);
+          if (ref && !this.destroyed && !view.state.readOnly) target.from = target.to = insertImage(view, ref, target);
+        }
+      })().finally(() => { this.targets.delete(target); this.pasting.delete(work); });
+      this.pasting.add(work);
       return true;
     };
     this.view = new EditorView({ parent, state: EditorState.create({ doc: text, extensions: [
@@ -129,6 +143,7 @@ export class MarkdownEditor {
       ]),
       EditorView.updateListener.of(update => {
         if (!update.docChanged) return;
+        for (const target of this.targets) { target.from = update.changes.mapPos(target.from, 1); target.to = Math.max(target.from, update.changes.mapPos(target.to, -1)); }
         for (const hash of imageHashes(update.state.doc.toString())) this.images.add(hash);
         if (!this.settingText) changed();
       }),
@@ -136,6 +151,8 @@ export class MarkdownEditor {
   }
   get dom(): HTMLElement { return this.view.contentDOM; }
   get value(): string { return this.view.state.doc.toString(); }
+  /** Resolves once pasted images have been stored and inserted (or failed). */
+  async imagesSettled(): Promise<void> { while (this.pasting.size) await Promise.allSettled([...this.pasting]); }
   /** Images shown since the last release, including ones deleted from the text. */
   get imageHashes(): string[] { return [...this.images]; }
   /** Forgets deleted images so they can be pruned; true if any were deleted. */

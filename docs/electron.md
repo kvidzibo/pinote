@@ -112,9 +112,11 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
 - **Images:** paste (**Ctrl+V**) or drop an image into the composer or task editor.
   It is saved at once and shows as a picture on its own line; the text keeps a
   short `![image](pinote:sha256-…)` reference. PNG, BMP and WebP become lossless
-  WebP, JPEG becomes WebP at quality 85 (dropping camera and GPS metadata), and
-  sides over 2560 px are scaled down. GIFs are kept as they are (up to 2560 px).
-  Stored images are limited to 4 MiB. Pasted text always pastes as text.
+  WebP (quality 90 only if lossless exceeds 4 MiB), JPEG becomes WebP at quality
+  85 (dropping camera and GPS metadata), and sides over 2560 px are scaled down.
+  GIFs are kept as they are (up to 2560 px). Stored images are limited to 4 MiB.
+  Pasted text always pastes as text. **Enter** or closing the editor waits for a
+  paste still being stored.
   The picture behaves as one character: **Backspace** or **Delete** removes it.
   **Undo** restores it while the editor stays open. The image is deleted from the
   database when no task or draft uses it any more: after its editor closes, after

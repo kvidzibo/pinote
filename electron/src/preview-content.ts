@@ -25,7 +25,7 @@ function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions,
       if (token.type === 'softbreak' || token.type === 'hardbreak') { top().append(el('br')); continue; }
       if (token.type === 'image') {
         // Only images stored by Pinote load; other sources (such as the web) stay text.
-        const source = imageSource(token.attrs?.find(a => a[0] === 'src')?.[1] ?? '');
+        const src = token.attrs?.find(a => a[0] === 'src')?.[1] ?? '', source = text.includes(src) ? imageSource(src) : null;
         top().append(source ? imageElement(source, token.content || 'image', 'note-image') : document.createTextNode(token.content || '(image)')); continue;
       }
       if (token.type === 'code_inline') { top().append(el('code', token.content)); continue; }

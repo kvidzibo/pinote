@@ -206,6 +206,8 @@ function setComposerDraft(text: string): void {
   draftVersion++; resizeComposer(); saveSoon();
 }
 async function addTask(): Promise<void> {
+  // A paste still being stored belongs to this task.
+  await composerEditor.imagesSettled();
   if (!composerEditor.value.trim() || (state.composerStartAsMarkdown && /^#\s*$/.test(composerEditor.value)) || adding || readonly || closing) return;
   const text = composerEditor.value, tag = creationTag, version = draftVersion;
   adding = true; renderToolbar();
@@ -1081,7 +1083,7 @@ async function edit(task: Task): Promise<void> {
     });
     return work;
   }
-  const flush = async () => { draining = true; await save(); };
+  const flush = async () => { await editor.imagesSettled(); draining = true; await save(); };
   editFlushers.add(flush);
   const close = modal.close;
   modal.close = () => {

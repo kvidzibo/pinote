@@ -26,7 +26,8 @@ test('image headers decide type and size; other bytes are refused', () => {
   assert.deepEqual(imageInfo(jpeg(1024, 768)), { mime: 'image/jpeg', width: 1024, height: 768 });
   for (const bad of [Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), Buffer.alloc(0), png(4097, 1), png(0, 5), Buffer.alloc(MAX_IMAGE_BYTES + 1)]) assert.throws(() => imageInfo(bad), NoteError);
   assert.throws(() => decodeImage('not base64!'), NoteError); assert.throws(() => decodeImage('QQ'), NoteError);
-  assert.deepEqual(imageHashes(`a ${ref('a'.repeat(64))}\n${ref('b'.repeat(64))} ![x](pinote:sha256-short)`), ['a'.repeat(64), 'b'.repeat(64)]);
+  // A titled reference still renders in Markdown, so it must also keep its image.
+  assert.deepEqual(imageHashes(`a ${ref('a'.repeat(64))}\n![t](pinote:sha256-${'b'.repeat(64)} "Title") ![x](pinote:sha256-short)`), ['a'.repeat(64), 'b'.repeat(64)]);
 });
 
 test('images are stored once and pruned only when no task text or kept draft references them', t => {

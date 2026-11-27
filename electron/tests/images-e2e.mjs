@@ -60,7 +60,7 @@ try {
   await copy();
   await composer.click(); await page.keyboard.type('Fix the failing build');
   await page.keyboard.press('Control+V');
-  const thumbnail = page.locator('#draft-host img.cm-image');
+  const thumbnail = page.locator('#draft-host .cm-image img');
   await thumbnail.waitFor();
   await until(() => thumbnail.evaluate(image => image.complete && image.naturalWidth > 0), 'The composer shows the pasted image');
   const [stored] = images();
@@ -78,7 +78,7 @@ try {
   const opened = app.waitForEvent('window');
   await page.locator(`[data-id="${task.id}"]`).getByRole('button',{name:'Preview full task',exact:true}).click();
   const preview = await opened; await preview.waitForURL('pinote-app://ui/preview.html');
-  const shown = preview.locator('#body img.note-image');
+  const shown = preview.locator('#body .note-image img');
   await shown.waitFor();
   await until(() => shown.evaluate(image => image.complete && image.naturalWidth === 2560), 'The preview shows the stored image');
   await preview.screenshot({ path:join(root,'preview.png') });
@@ -88,7 +88,7 @@ try {
   await page.getByRole('button',{name:`Actions for task ${task.id}`,exact:true}).click();
   await page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${task.id}:`)}).getByRole('button',{name:'Edit text…',exact:true}).click();
   const dialog = page.getByRole('dialog',{name:`Edit task ${task.id}`,exact:true});
-  const editorImage = dialog.locator('img.cm-image');
+  const editorImage = dialog.locator('.cm-image img');
   await until(() => editorImage.evaluate(image => image.complete && image.naturalWidth > 0).catch(() => false), 'The editor shows the image');
   await page.screenshot({ path:join(root,'editor.png') });
   const text = () => call('snapshot',{view:'active'}).notes.find(n => n.id === task.id).text;
@@ -120,6 +120,25 @@ try {
   await missingPreview.locator('#body .image-missing').getByText('Image unavailable',{exact:true}).waitFor();
   await missingPreview.screenshot({ path:join(root,'missing.png') });
   const missingClosed = missingPreview.waitForEvent('close'); await missingPreview.keyboard.press('Escape').catch(() => {}); await missingClosed;
+  // Enter right after a paste waits for the image to be stored, so it belongs to the task.
+  await copy(); await composer.click(); await page.keyboard.type('Submitted while storing');
+  await page.keyboard.press('Control+V'); await page.keyboard.press('Enter');
+  const submitted = () => call('snapshot',{view:'active'}).notes.find(n => n.text.startsWith('Submitted while storing'));
+  await until(submitted, 'The task is added once its image is stored');
+  assert.equal(images().length, 1);
+  assert.equal(submitted().text, `Submitted while storing\n![image](pinote:sha256-${images()[0].hash})`);
+
+  // Opening a missing image in the editor shows a placeholder without changing the saved reference.
+  const missingText = call('snapshot',{view:'active'}).notes.find(n => n.id === missing).text;
+  await page.getByRole('button',{name:`Actions for task ${missing}`,exact:true}).click();
+  await page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${missing}:`)}).getByRole('button',{name:'Edit text…',exact:true}).click();
+  const missingDialog = page.getByRole('dialog',{name:`Edit task ${missing}`,exact:true});
+  await missingDialog.locator('.cm-image.image-missing').getByText('Image unavailable').waitFor();
+  await page.waitForTimeout(1200);
+  await missingDialog.getByText('All changes saved',{exact:true}).waitFor();
+  assert.equal(call('snapshot',{view:'active'}).notes.find(n => n.id === missing).text, missingText, 'The placeholder is not saved as text');
+  await page.screenshot({ path:join(root,'missing-editor.png') });
+  await page.keyboard.press('Escape');
   assert.deepEqual(errors, []);
   console.log(`Image validation screenshots: ${root}`);
 } catch (error) { console.error(`Failure artifacts: ${root}`); throw error; }

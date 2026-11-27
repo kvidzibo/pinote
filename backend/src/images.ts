@@ -2,8 +2,8 @@ import { NoteError } from './compat.ts';
 
 /** Stored image limits. Electron converts pastes to fit; other bytes are refused, never converted. */
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024, MAX_IMAGE_SIDE = 4096;
-/** Task text references a stored image as `![alt](pinote:sha256-<hex>)`. */
-export const imageHashes = (text: string): string[] => Array.from(text.matchAll(/\]\(pinote:sha256-([0-9a-f]{64})\)/g), match => match[1]);
+/** Task text references a stored image as `![alt](pinote:sha256-<hex>)`. Any mention of a hash keeps it. */
+export const imageHashes = (text: string): string[] => Array.from(text.matchAll(/pinote:sha256-([0-9a-f]{64})/g), match => match[1]);
 export const validImageHash = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 export type ImageInfo = { mime: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; width: number; height: number };
 
