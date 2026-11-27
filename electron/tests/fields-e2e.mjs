@@ -36,10 +36,8 @@ try {
   const page = await app.firstWindow();
   page.on('pageerror',e=>errors.push(String(e)));
   await page.locator('#draft[aria-readonly="false"]').waitFor();
-  // The native menu is covered by e2e.mjs; here its choice is supplied directly.
-  await app.evaluate(({ipcMain})=>{ ipcMain.removeHandler('popup-menu'); ipcMain.handle('popup-menu',()=>'fields'); });
-  await page.getByRole('button',{name:'Menu',exact:true}).click();
-  const dialog = page.getByRole('dialog',{name:'Fields',exact:true}), list = dialog.getByRole('group',{name:'Fields',exact:true});
+  await page.getByRole('button',{name:'Settings',exact:true}).click(); await page.getByRole('tab',{name:'Fields',exact:true}).click();
+  const dialog = page.locator('#settings-pane-fields'), list = dialog.getByRole('group',{name:'Fields',exact:true});
   const save = dialog.getByRole('button',{name:'Save field settings',exact:true}), status = dialog.getByRole('status');
   const saveAll = async () => { await save.click(); await status.getByText('Saved.',{exact:true}).waitFor(); };
   const type = dialog.getByRole('combobox',{name:'Type',exact:true});
@@ -108,7 +106,9 @@ try {
   await save.click();
   await status.getByText(/changed while settings were open/).waitFor();
   assert.equal((await saved()).footer.fields[2].type,'list','The stale change is not written');
-  await page.keyboard.press('Escape'); await dialog.waitFor({state:'detached'});
+  // The refused change is still unsaved: leaving asks first.
+  assert.equal(await page.locator('#settings-tab-fields').getAttribute('aria-label'),'Fields, unsaved changes');
+  await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
 
   // Before any edit the value is still text; the preview already shows it as the list its type says.
   const openPreview = async () => {

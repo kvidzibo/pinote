@@ -38,6 +38,8 @@ const stopWatchers = () => watchersStop ??= Promise.race([
   new Promise<void>(done => setTimeout(done, 5000)),
 ]).then(() => { watchersStopped = true; });
 let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let tasks = Promise.resolve();
+// Set while a page such as Settings holds a fitted window taller than its content.
+let contentHeight: number | undefined;
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 // Window settings: fixed start-up position/size, kept in window.json beside the last geometry.
 let startup: WindowStartup = {};
@@ -115,8 +117,6 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
     const menu = Menu.buildFromTemplate([
       item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
-      item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('fields', 'Fields…', 'view-list'), item('watchers', 'Watchers…', 'view-reveal'),
-      item('kitty', 'Kitty…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'), separator,
       item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
     const content = owner.getContentBounds();
@@ -379,7 +379,7 @@ async function boot() {
     },
     'window-settings': () => {
       const current = window!.getBounds();
-      return { startup: structuredClone(startup), imageView, current: { x: current.x, y: current.y, width: current.width, height: collapsed ? fullSize.height : current.height } };
+      return { startup: structuredClone(startup), imageView, current: { x: current.x, y: current.y, width: current.width, height: collapsed ? fullSize.height : !manualSize && contentHeight !== undefined ? contentHeight : current.height } };
     },
     // Unlike best-effort geometry, a settings save reports failure and keeps the previous settings.
     'save-window-settings': async (_event, value: unknown, view: unknown) => {
@@ -399,7 +399,13 @@ async function boot() {
     },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
-    fit: (_event, height: unknown) => { if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > 100000) throw new Error('Invalid height'); const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top); },
+    fit: (_event, content: unknown, minimum: unknown) => {
+      const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100000;
+      const least = minimum ?? 0;
+      if (!valid(content) || !valid(least)) throw new Error('Invalid height');
+      const height = Math.max(content, least); contentHeight = height > content ? content : undefined;
+      const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top);
+    },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; fixedTop = undefined; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },
     'cancel-close': () => { if (!exiting) closing = false; },
     'finish-close': async () => {

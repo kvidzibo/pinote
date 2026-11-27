@@ -253,3 +253,15 @@ body.image-window { border: 0; border-radius: 0; background: #232832; cursor: zo
 .field-bar { display: flex; flex-direction: column; gap: 4px; }
 .field-bar .watcher-row { align-items: center; }
 .field-bar-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* Settings page: fills the window; each tab keeps its pane mounted. */
+.overlay.settings-page { padding: var(--notice-height, 0px) 0 0; background: #232832; align-items: stretch; }
+.settings-page > .panel { border-color: #4b5563; box-shadow: none; height: 100%; overflow: hidden; }
+.settings-page > .panel > header { justify-content: flex-start; }
+.settings-status { margin-left: auto; color: #b6bfce; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.settings-tabs { display: flex; gap: 2px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid #4b5563; }
+.settings-tabs::-webkit-scrollbar { display: none; }
+.settings-tabs button { padding: 4px 8px; color: #aab4c3; border-radius: 4px 4px 0 0; border-bottom: 3px solid transparent; }
+.settings-tabs button[aria-selected="true"] { background: #343c49; border-bottom-color: #89b4fa; color: #f3f5f8; font-weight: bold; }
+.settings-tabs button.unsaved::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #c69b51; }
+.settings-pane { display: flex; flex-direction: column; gap: 8px; flex: 1 1 0; min-height: 0; max-width: none; padding: 0; overflow: auto; }
+.settings-pane > .controls:last-child { position: sticky; bottom: 0; margin-top: auto; padding-top: 6px; background: #232832; }

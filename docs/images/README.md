@@ -6,9 +6,9 @@ request was used; the example PR is fictitious.
 
 | Image | Content | Versions |
 | --- | --- | --- |
-| `electron-checklist.png` | 560×460, default row actions, all tags, light hover, one unread agent update | pinote-electron 0.30.0, Pinote 0.29.0 |
+| `electron-checklist.png` | 560×460, default row actions, all tags, light hover, one unread agent update | pinote-electron 0.34.0, Pinote 0.31.0 |
 | `electron-actions.png` | 420×460, inline action toolbar open | same |
-| `electron-editor.png` | 560×460, task editor with Markdown source and an agent field | same |
+| `electron-editor.png` | 560×460, task editor with Markdown source and an agent field | pinote-electron 0.30.0, Pinote 0.29.0 |
 | `pi-integration.png` | Selected-task menu/footer beside the task's Agent preview (separate GTK and Pi captures) | Pinote 0.7.0, pi-note 0.11.0 |
 | `pi-task-suggestion.png`, `pi-task-selected.png` | Bold controls and compact selected-task spacing, cropped from Kitty | pi-note 0.15.1 |
 | `pi-task-replacement.png` | After replacing an unaccepted suggestion, cropped from Kitty | pi-note 0.17.0 |

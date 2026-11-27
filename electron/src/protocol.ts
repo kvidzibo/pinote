@@ -67,9 +67,11 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 }
 // fields holds unsaved agent field values by name; an empty value or list removes the field.
 export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, FieldValue> };
+export const SETTINGS_TABS = ['tags', 'actions', 'editor', 'fields', 'watchers', 'kitty', 'window'] as const;
+export type SettingsTab = typeof SETTINGS_TABS[number];
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
-  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; kittyStartPrompt?: string; tagBaseFolder?: string; scroll?: { ordinary: number; pinned: number };
+  creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; kittyStartPrompt?: string; tagBaseFolder?: string; settingsTab?: SettingsTab; scroll?: { ordinary: number; pinned: number };
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
@@ -77,7 +79,7 @@ export type RendererOperation = Exclude<Operation, 'handshake' | 'image'>;
 export type BackendApi = { [K in RendererOperation]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'fields' | 'watchers' | 'kitty' | 'window-settings' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'scheduled' | 'drafts' | 'close';
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
 export const APP_EVENTS = ['startup'] as const;
@@ -156,7 +158,7 @@ export type PinoteApi = BackendApi & {
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   /** Opens a stored image; true means this window should show it itself. */
   viewImage(hash: string): Promise<boolean>;
-  collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
+  collapse(collapsed: boolean): Promise<void>; fit(height: number, minimum?: number): Promise<void>;
   onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
 };
 declare global { interface Window { pinote: PinoteApi; pinotePreview: PreviewApi } }
