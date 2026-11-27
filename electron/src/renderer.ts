@@ -136,15 +136,19 @@ function persist(recovery = false): Promise<void> {
 // Images open editors, drafts or task text still use. Undo history counts as use while an editor is open.
 const liveEditors = new Set<MarkdownEditor>([composerEditor]);
 let imageAdds = 0, pruneQueued = false, pruning = false, closeRequested = false;
+// Accepted images are converted one at a time: each decodes a full-size bitmap.
+let imageTurn: Promise<void> = Promise.resolve();
 async function storeImage(file: File): Promise<string | null> {
   if (readonly || closing || closeRequested || !active) { report('Images cannot be added while saving is paused or Pinote is closing.'); return null; }
   imageAdds++;
+  const previous = imageTurn; let next!: () => void; imageTurn = new Promise(resolve => { next = resolve; });
   try {
+    await previous;
     const result = await call('image_add', { data: await base64(await convertImage(file)) });
     return result ? imageRef(result.hash) : null;
   } catch (e) { report(`Image not added: ${message(e)}`); return null; }
   // The caller inserts the reference before a queued prune runs.
-  finally { imageAdds--; if (!imageAdds && pruneQueued) setTimeout(pruneImages); }
+  finally { next(); imageAdds--; if (!imageAdds && pruneQueued) setTimeout(pruneImages); }
 }
 async function pruneImages(): Promise<void> {
   if (readonly || closing || !active) return;
