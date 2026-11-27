@@ -8,6 +8,7 @@ import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { getAgentDir } from './config-path.js';
 import { z } from 'zod';
 import { parsePullRequests, pullRequestValues } from './pull-requests.js';
+import { fieldItems, fieldText, fieldTexts, fieldType, type FieldValue } from './field-values.ts';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
 import { defaultAgentGuidance, defaultFooterField, defaultFieldInstructions, defaultHandoffPrompt, defaultNewSessionPrompt, effectiveFooterFields, footerBarNames, footerCatalog, footerDisplayFields, parseAgentGuidance, parseHandoffPrompt, parseKittyOneTaskPerTab, parseNewSessionPrompt, readConfigDocument, readFooterDocument, saveFooterConfig } from './footer-config.ts';
@@ -45,7 +46,7 @@ const Context = z.object({ conversationId: z.string().min(1).max(256), piSession
   field: z.string().refine((value) => [...value].length <= 64, 'Field name exceeds 64 code points').optional(), search: z.string().max(256).optional(),
 }).default({}) });
 type State = z.infer<typeof Context>['state'];
-type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, string>; 'pi-sessions': string[] };
+type Task = { id: number; text: string; state: string; tag: string | null; updated_at: string; agent_notes: Record<string, FieldValue>; 'pi-sessions': string[] };
 type Scalar = string | number | boolean | null;
 type Control = { id: string; label: string; revision?: string; kind: 'action' | 'text' | 'number' | 'toggle' | 'select'; value?: Scalar; icon?: string; description?: string; multiline?: boolean; confirm?: string; options?: { label: string; value: Scalar }[] };
 const Action = z.object({
@@ -109,8 +110,8 @@ async function selected(state: State, signal: AbortSignal): Promise<Task | null>
   const task: Task | null = JSON.parse(await note(['agent', 'get', String(state.selectedId)], signal));
   return task && ['active', 'in_progress'].includes(task.state) ? task : null;
 }
-function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?: Record<string, string>) {
-  return footerCatalog(config, notes);
+function fields(config: ReturnType<typeof readFooterDocument>['config'], notes?: Record<string, FieldValue>) {
+  return footerCatalog(config, fieldTexts(notes));
 }
 function settings() {
   const document = readFooterDocument();
@@ -202,7 +203,7 @@ const PR_STATUS_ORDER = ['failing', 'pending', 'passing', 'merged', 'unknown', '
 export function prStatus(data: Pick<Snapshot, 'task' | 'fieldStatuses'>): (typeof PR_STATUS_ORDER)[number] | undefined {
   if (!data.task) return undefined;
   // Each field is checked separately, so its own 64-link limit applies.
-  const urls = new Set(['PRs', 'PR'].flatMap((name) => parsePullRequests(data.task!.agent_notes[name]).map((pr) => pr.url)));
+  const urls = new Set(['PRs', 'PR'].flatMap((name) => parsePullRequests(fieldTexts(data.task!.agent_notes)[name]).map((pr) => pr.url)));
   const states = new Set([...urls].map((url) => {
     // Only a PR state (including closed) supersedes an older one; other watchers' summaries do not.
     const { status, result } = prObservation(data, url, (item) => item.state === 'closed' || Object.hasOwn(PR_STATUSES, item.state ?? ''));
@@ -215,7 +216,7 @@ export function prStatus(data: Pick<Snapshot, 'task' | 'fieldStatuses'>): (typeo
 function humanStatus(state: string): string {
   return state === 'in_progress' ? 'In progress' : state === 'active' ? 'Not started' : state;
 }
-function fullPreview(task: { text: string; agent_notes?: Record<string, string> }): string {
+function fullPreview(task: { text: string; agent_notes?: Record<string, FieldValue> }): string {
   const notes = task.agent_notes && Object.keys(task.agent_notes).length ? `\n\nHandoff notes:\n${JSON.stringify(task.agent_notes, null, 2)}` : '';
   const document = task.text + notes;
   return document.length <= 20_000 ? document : 'Full preview exceeds the 20000-character display limit. Nothing has been truncated here: read the complete task and handoff notes through the Pinote CLI or pinote_get_task.';
@@ -340,10 +341,12 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
   const slots = later ? 126 : 128;
   let fieldCount = 0;
   if (task) {
+    // The footer shows a list in its text form, one item per line.
+    const notes = fieldTexts(task.agent_notes);
     for (const field of footerDisplayFields(config.config, fields(config.config, task.agent_notes))) {
       if (fieldCount >= config.config.maxFields || footer.length >= slots) break;
-      const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(task.agent_notes)) : [];
-      const legacy = field.name === 'PRs' ? task.agent_notes.PR : undefined;
+      const prs = field.name === 'PRs' ? parsePullRequests(pullRequestValues(notes)) : [];
+      const legacy = field.name === 'PRs' ? notes.PR : undefined;
       const legacyRemainder = (legacy ?? '').split(/\r?\n/).filter((line) => !parsePullRequests(line).length).join('\n');
       const legacyExtra = Boolean(prs.length && legacyRemainder.trim());
       let room = field.width ?? config.config.fieldWidth;
@@ -369,7 +372,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       if (footer.length >= slots) break;
       // Preserve custom legacy text/links alongside valid plural URLs, using
       // the same field slot and the group's remaining column budget.
-      let raw: string | undefined = task.agent_notes[field.name];
+      let raw: string | undefined = notes[field.name];
       if (field.name === 'PRs') raw = legacyExtra ? legacyRemainder : raw?.trim() ? raw : legacy;
       if (!raw) continue;
       const link = /^\[([^\n]*)\]\((https?:\/\/[^\s]+)\)$/.exec(raw);
@@ -428,7 +431,7 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
   const guidance = agentGuidance();
   const config = task ? settings().config : null;
   const data = task
-    ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes).map(({ instructions: _instructions, ...field }) => field) })}`
+    ? `Selected task (complete text, revision and handoff notes):\n${JSON.stringify({ id: task.id, text: task.text, tag: task.tag, state: task.state, updated_at: task.updated_at, agent_notes: task.agent_notes, 'pi-sessions': task['pi-sessions'] })}\nEffective handoff field definitions:\n${JSON.stringify({ ...config, fields: fields(config!, task.agent_notes).map(({ instructions: _instructions, ...field }) => ({ ...field, type: fieldType(field) })) })}`
     : `No task is selected (including unavailable or completed selected targets).\nSaved tags:\n${await note(['agent', 'tags'], signal)}\nPending suggestion (not selected):\n${JSON.stringify(proposal ? { ...proposal, ...('task_id' in proposal ? { text: proposedTask!.text, tag: proposedTask!.tag } : {}) } : null)}`;
   const statuses = (task ? automation?.statuses(task) ?? [] : [])
     .filter((status) => !status.stale && status.result.state !== 'error')
@@ -595,7 +598,7 @@ return {
       const order = footerBarNames(before.config.config, catalog);
       cfg.bar = order.includes(name) ? order.filter((entry) => entry !== name) : [...order, name];
     } else {
-      const savedNames = new Set((cfg.fields ?? effectiveFooterFields(cfg, before.task?.agent_notes))
+      const savedNames = new Set((cfg.fields ?? effectiveFooterFields(cfg, fieldTexts(before.task?.agent_notes)))
         .map((field) => field.name === 'PR' ? 'PRs' : field.name));
       const editing = !['add-field', 'remove-field'].includes(action) ? state.field : undefined;
       // Offered presets do not consume configuration slots until edited.
@@ -666,28 +669,69 @@ return {
     }
     else if (name === 'fields') {
       const config = settings().config;
-      result = { ...config, fields: fields(config) };
+      result = { ...config, fields: fields(config).map((field) => ({ ...field, type: fieldType(field) })) };
     } else if (name === 'tags') result = JSON.parse(await note(['agent', 'tags'], signal));
     else if (name === 'update_current') {
-      const args = z.object({ expected_updated_at: z.string(), set: z.record(z.string(), z.string()).default({}), append: z.record(z.string(), z.string()).default({}), remove: z.array(z.string()).default([]) }).strict().parse(input);
+      const Value = z.union([z.string(), z.array(z.string()).max(256)]);
+      const Values = z.record(z.string(), Value).default({});
+      // The record parser skips this key: refuse it rather than report an update that was not made.
+      for (const operation of ['set', 'append', 'remove_items']) {
+        const values = (input as Record<string, unknown> | null)?.[operation];
+        if (values && typeof values === 'object' && Object.hasOwn(values, '__proto__')) throw new Error('This tool cannot update a field named __proto__');
+      }
+      const args = z.object({ expected_updated_at: z.string(), set: Values, append: Values, remove_items: Values, remove: z.array(z.string()).default([]) }).strict().parse(input);
       const task = await selected(state, signal);
       if (!task) throw new Error('No task is selected');
       const normalized = (key: string) => key.normalize('NFC').replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
-      const touched = new Set([...Object.keys(args.set), ...args.remove].map(normalized));
-      for (const rawKey of Object.keys(args.append)) {
+      const types = new Map(fields(settings().config).map((field) => [field.name, fieldType(field)]));
+      // A field without a definition keeps the untyped behaviour: a string that append extends by unique lines.
+      const describe = (key: string) => types.get(key) ?? 'text (it has no definition)';
+      const allowed = (key: string) => types.get(key) === 'list' || types.get(key) === 'unique-list' ? 'set, append, remove_items or remove'
+        : types.has(key) ? 'set or remove' : 'set, append or remove';
+      const reject = (key: string, operation: string): never => { throw new Error(`Field ${JSON.stringify(key)} is ${describe(key)}: use ${allowed(key)}, not ${operation}.`); };
+      const current = (key: string): FieldValue | undefined => Object.hasOwn(task.agent_notes, key) ? task.agent_notes[key] : undefined;
+      // Without a prototype: a field may be named __proto__.
+      const set: Record<string, FieldValue> = Object.create(null), remove = [...args.remove];
+      const touched = new Set(args.remove.map(normalized));
+      const claim = (rawKey: string) => {
         if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(rawKey)) throw new Error('Field names must be a single line without control characters');
         const key = normalized(rawKey);
         if (touched.has(key)) throw new Error('A field cannot have multiple operations after normalization');
         touched.add(key);
-        const current = Object.hasOwn(task.agent_notes, key) ? task.agent_notes[key] : '';
-        const seen = new Set(current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-        const additions = args.append[rawKey].split(/\r?\n/).map((line) => line.trim()).filter((line) => {
-          if (!line || seen.has(line)) return false;
-          seen.add(line); return true;
-        });
-        args.set = { ...args.set, [key]: additions.length ? [current, ...additions].filter(Boolean).join('\n') : current };
+        return key;
+      };
+      // An emptied list removes its field: the backend stores no empty lists.
+      const save = (key: string, items: string[]) => { if (items.length) set[key] = items; else if (current(key) !== undefined) remove.push(key); };
+      for (const [rawKey, value] of Object.entries(args.set)) {
+        const key = claim(rawKey), type = types.get(key);
+        if (type === 'list' || type === 'unique-list') save(key, fieldItems(value, type === 'unique-list'));
+        else if (typeof value === 'string') set[key] = value;
+        else throw new Error(`Field ${JSON.stringify(key)} is ${describe(key)}: set takes a string, not a list.`);
       }
-      result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(args.set), ...args.remove.map((key) => `--remove=${key}`)], signal));
+      for (const [rawKey, value] of Object.entries(args.append)) {
+        const key = claim(rawKey), type = types.get(key), existing = current(key);
+        if (type === 'text') reject(key, 'append');
+        const unique = type !== 'list', items = fieldItems([...fieldItems(existing), ...fieldItems(value)], unique);
+        if (type) save(key, items);
+        else if (typeof value !== 'string') throw new Error(`Field ${JSON.stringify(key)} is ${describe(key)}: append takes a string, not a list.`);
+        else {
+          const text = existing === undefined ? '' : fieldText(existing), seen = new Set(fieldItems(text));
+          const additions = fieldItems(value, true).filter((line) => !seen.has(line));
+          set[key] = additions.length ? [text, ...additions].filter(Boolean).join('\n') : text;
+        }
+      }
+      for (const [rawKey, value] of Object.entries(args.remove_items)) {
+        const key = claim(rawKey), type = types.get(key);
+        if (type !== 'list' && type !== 'unique-list') reject(key, 'remove_items');
+        const gone = new Set(fieldItems(value));
+        save(key, fieldItems(current(key), type === 'unique-list').filter((item) => !gone.has(item)));
+      }
+      {
+        // An earlier CLI reads no lists, so even its text update would rewrite the task without them.
+        const version = /^pinote (\d+)\.(\d+)\./.exec((await exec(noteCommand(), ['--version'], { signal, timeout: 10_000 })).stdout.trim());
+        if (!version || Number(version[1]) === 0 && Number(version[2]) < 31) throw new Error('Updating fields requires note 0.31.0+: earlier versions drop list fields');
+      }
+      result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(set), ...remove.map((key) => `--remove=${key}`)], signal));
       const caller = context(meta);
       options.fieldAutomation?.claim(task.id, caller.contextId ?? caller.conversationId, true);
       changed();

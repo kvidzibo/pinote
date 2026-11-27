@@ -107,9 +107,18 @@ complete it. The bottom cog menu (**Menu**) holds scheduled reminders, Archive
   immediately. **Undo** (**Ctrl+Z**) reverts text edits in the open editor, not
   tag changes.
 - **Agent fields**, below the text, lists the task's saved handoff fields plus
-  those configured in Pi's field settings (`pi-note.json`). Edits autosave;
-  clearing a value removes the field. Your own edit does not mark the task as an
-  unread agent update.
+  those configured under **Menu → Fields…**. A text field is one Markdown value;
+  a list is one entry per row, added with **Enter** or **+** (pasting several
+  lines adds several). A unique list refuses repeats. Edits autosave; clearing a
+  value or removing every entry removes the field. Your own edit does not mark
+  the task as an unread agent update.
+- **Menu → Fields…** edits the field definitions shared with Pi
+  (`pi-note.json`): name, [type](../pi/README.md#field-types), whether agents
+  maintain it and their instructions, label, format, footer width, link and
+  order. **Pi footer layout** sets the title and field widths, the maximum
+  number of fields and an optional bar order. Task values are kept when a
+  definition changes or is removed; a value saved as text becomes a list the
+  next time it is edited. Saving is refused if the file changed meanwhile.
 - **Failed saves** pause autosave and offer an explicit retry; unknown outcomes
   need the [recovery acknowledgement](#shared-tasks-separate-ui-state-and-recovery)
   first. If another client changed the task, the editor becomes read-only: close
@@ -179,8 +188,9 @@ once and shown on its own line; the text keeps a short
 ### Preview
 
 A row's eye opens a floating Markdown preview with all saved agent fields
-(including those disabled in Pi's field settings), full Pi session IDs, and
-unread updates. **Escape**, **Close** or losing focus dismisses it; **Edit**
+(including those disabled in the field settings), full Pi session IDs, and
+unread updates. A list field's entries appear as chips in the field's format,
+including a value still saved as text. **Escape**, **Close** or losing focus dismisses it; **Edit**
 opens the editor. Raw HTML and remote images are not loaded, and links open
 externally only on explicit activation.
 

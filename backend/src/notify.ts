@@ -8,7 +8,7 @@ export class NotificationError extends Error {
 }
 export function render(notes: Pick<Note, 'id' | 'text' | 'state'>[]): string {
   const lines = notes.slice(0, 10).map(note => {
-    // Python str.split whitespace includes the four information separators.
+    // Whitespace runs, including the four information separators, collapse to one space.
     const chars = [...note.text.replace(/[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/gu, ' ').replace(/^ | $/g, '')];
     const text = chars.length > 180 ? chars.slice(0, 179).join('') + '…' : chars.join('');
     const escaped = text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');

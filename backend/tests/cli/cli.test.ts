@@ -21,6 +21,16 @@ function fixture(t: {after(fn:()=>void):void}) {
   const ok = (...args:string[]) => { const result=cli(...args); assert.equal(result.status,0, result.stdout+result.stderr); return result.stdout; };
   return {root,bin,database,capture,cli,ok,env};
 }
+test('agent update accepts a list and reports it as an array, as Markdown and in text form to watchers',t=>{
+  const f=fixture(t); let task=JSON.parse(f.ok('agent','add','--text','listed'));
+  task=JSON.parse(f.ok('agent','update','1','--expected-updated-at',task.updated_at,'--set-json','{"PRs":["one","two"]}'));
+  assert.deepEqual(task.agent_notes,{PRs:['one','two']}); assert.equal(task.markdown,'listed\n\n## Agent\nPRs:\n- one\n- two');
+  assert.deepEqual(JSON.parse(f.ok('agent','get','1')).agent_notes.PRs,['one','two']);
+  assert.equal(JSON.parse(f.ok('field-events','--after','0')).events[0].value,'one\ntwo');
+  assert.match(f.ok('history','1'),/agent \{\} -> \{"PRs":\["one","two"\]\}/);
+  const invalid=f.cli('agent','update','1','--expected-updated-at',task.updated_at,'--set-json','{"PRs":[]}');
+  assert.equal(invalid.status,1); assert.match(invalid.stdout+invalid.stderr,/1–256 items/);
+});
 test('argument validation is exact for bigint IDs and bounded event cursors',()=>{
   assert.equal(positive_id('9223372036854775807'),9223372036854775807n);
   assert.equal(positive_id(' +١_٢ '),12n);
@@ -35,7 +45,7 @@ test('argument validation is exact for bigint IDs and bounded event cursors',()=
 });
 test('help/version/invalid input are side effect free',t=>{
   const f=fixture(t);
-  assert.equal(f.ok('--version'),'pinote 0.30.0\n');
+  assert.equal(f.ok('--version'),'pinote 0.31.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);

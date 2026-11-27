@@ -1,9 +1,11 @@
+import type { FieldType, FieldValue } from '../../pi/field-values.ts';
+export type { FieldType, FieldValue };
 export const PROTOCOL = 1;
 export type View = 'active' | 'archive' | 'scheduled';
 export type Task = {
   id: number; text: string; state: string; created_at: string; updated_at: string;
   tag: string | null; remind_at: string | null; reminder_due_at: string | null;
-  archived_at: string | null; agent_notes: Record<string, string>; agent_event_id: number; pi_sessions: string[];
+  archived_at: string | null; agent_notes: Record<string, FieldValue>; agent_event_id: number; pi_sessions: string[];
 };
 export type Tag = { name: string; folder: string | null; available?: boolean };
 export type Snapshot = { notes: Task[]; tags: Tag[]; config: { maxVisibleNotes: number; markdownPreview: boolean } };
@@ -16,7 +18,7 @@ export type Operations = {
   edit: { params: Target & { text: string }; result: Mutation };
   transition: { params: Target & { action: 'start' | 'reset' | 'done' | 'rm' | 'restore'; state: string }; result: Mutation };
   tag: { params: Target & { tag: string | null }; result: Mutation };
-  agent: { params: Target & { fields: Record<string, string | null> }; result: Mutation };
+  agent: { params: Target & { fields: Record<string, FieldValue | null> }; result: Mutation };
   schedule: { params: Target & { when: string }; result: Mutation };
   create_tag: { params: { name: string; folder: string | null; folderIfNew?: string | null; id?: number; revision?: string }; result: Mutation };
   rename_tag: { params: { name: string; newName: string }; result: Mutation };
@@ -63,8 +65,8 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
   });
   return { active: clone(value.active), in_progress: clone(value.in_progress), marked: clone(value.marked) };
 }
-// fields holds unsaved agent field values by name; an empty value removes the field.
-export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, string> };
+// fields holds unsaved agent field values by name; an empty value or list removes the field.
+export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, FieldValue> };
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
   creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; kittyStartPrompt?: string; tagBaseFolder?: string; scroll?: { ordinary: number; pinned: number };
@@ -75,7 +77,7 @@ export type RendererOperation = Exclude<Operation, 'handshake' | 'image'>;
 export type BackendApi = { [K in RendererOperation]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
-export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty' | 'window-settings' | 'drafts' | 'close';
+export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'fields' | 'watchers' | 'kitty' | 'window-settings' | 'drafts' | 'close';
 export const TASK_EVENTS = ['created', 'edited', 'tagged', 'started', 'completed', 'removed', 'restored', 'scheduled'] as const;
 export const FIELD_EVENTS = ['added', 'changed', 'removed'] as const;
 export const APP_EVENTS = ['startup'] as const;
@@ -103,7 +105,7 @@ export const validKittyTabTitle = (value: string) => !!value.trim() && Array.fro
 export const DEFAULT_KITTY_START_PROMPT = 'is task clear?';
 export const validKittyStartPrompt = (value: string) => Array.from(value).length <= 4000 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f\p{Bidi_Control}\uD800-\uDFFF]/u.test(value);
 export const validTagBaseFolder = (value: string) => value.length <= 4096 && value.startsWith('/') && !/[\p{Cc}\p{Cs}]/u.test(value);
-/** The name the backend saves for a new tag (its validate_tag: Python strip, NFC, 64 code points); null if rejected. */
+/** The name the backend saves for a new tag (its validate_tag: strip, NFC, 64 code points); null if rejected. */
 export function savedTagName(tag: string): string | null {
   if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(tag)) return null;
   const name = tag.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, '').normalize('NFC');
@@ -120,7 +122,16 @@ export type WindowStartup = { position?: { x: number; y: number }; size?: { widt
 export const IMAGE_VIEWS = ['window', 'overlay', 'system'] as const;
 export type ImageView = typeof IMAGE_VIEWS[number];
 export type WindowSettings = { startup: WindowStartup; imageView: ImageView; current: { x: number; y: number; width: number; height: number } };
-export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
+/** A handoff field definition from pi-note.json with its effective values; `saved` is false for a preset the file does not define yet. */
+export type FieldDefinition = { name: string; label: string; type: FieldType; enabled: boolean; link: boolean; format: string; instructions: string; width?: number; saved: boolean };
+export type FooterSettings = { titleWidth: number; fieldWidth: number; maxFields: number; bar: string[] | null; fields: FieldDefinition[]; fieldsDefined: boolean };
+/** Fields settings shared with Pi in pi-note.json. */
+export type FieldSettings = { raw: string | null; footer: FooterSettings };
+/** What Pi's parser accepts for a saved footer. */
+export type FooterInput = Omit<FooterSettings, 'fields' | 'bar' | 'fieldsDefined'> & { bar?: string[]; fields?: Omit<FieldDefinition, 'saved'>[] };
+/** How a field is shown: its type, and for list entries the definition's format and whether URLs are links. */
+export type FieldDisplay = Pick<FieldDefinition, 'name' | 'type' | 'link' | 'format'>;
+export type PreviewData = { task: Task; markdown: boolean; unread: boolean; fields?: FieldDisplay[] };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
 export type PreviewApi = {
   load(): Promise<PreviewData>; ready(height: number): Promise<void>;
@@ -130,7 +141,9 @@ export type PreviewApi = {
   onUpdate(callback: (data: PreviewData) => void): void;
 };
 export type PinoteApi = BackendApi & {
-  agentFields(): Promise<string[]>;
+  /** Every field definition, or none when pi-note.json cannot be read. */
+  agentFields(): Promise<FieldDefinition[]>;
+  fieldSettings(): Promise<FieldSettings>; saveFieldSettings(footer: FooterInput, raw: string | null): Promise<void>;
   openPreview(request: PreviewRequest): Promise<boolean>;
   updatePreview(token: number, data: PreviewData | null): Promise<void>;
   onPreviewClosed(callback: (token: number, edit: boolean) => void): void;

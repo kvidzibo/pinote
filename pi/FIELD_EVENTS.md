@@ -153,6 +153,8 @@ untrusted data: never interpolate them into shell commands.
 - `check`: a requested scheduled check. `eventId` and `previousValue` identify
   the originating change; `previousResult` holds the last stored result, if any.
 - A removed field has `value: null`; its result cannot style, notify or reschedule.
+- A list field's `value` is its entries joined by newlines; saving text as an
+  equal list is not a change.
 
 ### Task and startup events
 
@@ -264,7 +266,7 @@ parameter in the desktop), then enable **Forgejo PR**:
   instances, toggle the watcher off and on; after changing the environment,
   restart the desktop.
 
-Set `PRs` to `https://forgejo.example/owner/repo/pulls/123`, one per line. GitHub
+Set `PRs` to `https://forgejo.example/owner/repo/pulls/123`, one per entry. GitHub
 and Forgejo URLs can share a field: each watcher checks only its own, so both can
 be enabled.
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { backendCommand, backendEnvironment } from '../src/backend-command.ts';
 
-test('bundled backend uses supported trusted Node without injection or Python fallback', () => {
+test('bundled backend uses supported trusted Node without injection or another fallback', () => {
   const root = mkdtempSync(join(tmpdir(),'pinote-node-command-'));
   try {
     const bundle=join(root,'bridge.mjs'); writeFileSync(bundle,'');
@@ -16,7 +16,7 @@ test('bundled backend uses supported trusted Node without injection or Python fa
     assert.throws(()=>backendCommand(bundle,{PINOTE_NODE:old}),/22.19/);
     assert.throws(()=>backendCommand(bundle,{PINOTE_BRIDGE_COMMAND:'relative'}),/Install Pinote/);
     assert.deepEqual(backendCommand(bundle,{PINOTE_BRIDGE_COMMAND:old}),{executable:old,args:[]});
-    // A Python desktop launcher's old override no longer selects a backend.
+    // An earlier desktop launcher's override no longer selects a backend.
     assert.deepEqual(backendCommand(bundle,{PINOTE_NODE:process.execPath,PINOTE_ELECTRON_BACKEND:old}),{executable:process.execPath,args:[bundle]});
     assert.deepEqual(backendEnvironment({PATH:'/usr/bin',NODE_OPTIONS:'bad',NODE_PATH:'bad',ELECTRON_RUN_AS_NODE:'1'}),{PATH:'/usr/bin'});
   } finally { rmSync(root,{recursive:true,force:true}); }

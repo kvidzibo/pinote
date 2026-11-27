@@ -77,7 +77,9 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
       set: { Worktrees: '/tmp/example-worktree', 'Café': 'first' }, append: { PRs: 'https://github.com/o/r/pull/1\nhttps://github.com/o/r/pull/1' } }, _meta: meta() });
     assert.equal(fieldUpdate.isError, undefined);
     const appended = JSON.parse((fieldUpdate.content as any[])[0].text);
-    assert.equal(appended.agent_notes.PRs, 'https://github.com/o/r/pull/1');
+    // PRs and Worktrees are unique lists: saved as arrays, whether given as text or a list.
+    assert.deepEqual(appended.agent_notes.PRs, ['https://github.com/o/r/pull/1']);
+    assert.deepEqual(appended.agent_notes.Worktrees, ['/tmp/example-worktree']);
     view = await read();
     assert.ok(view.footer!.some((item) => item.text.includes('/tmp/example-worktree')));
     assert.ok(!view.footer!.some((item) => item.url?.includes('/pull/1')), 'Disabled presets never appear in the Pi footer');
@@ -93,7 +95,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
       append: { ' PRs ': 'https://github.com/o/r/pull/1\nhttps://github.com/o/r/pull/2', ' Cafe\u0301 ': 'second' } }, _meta: meta() });
     assert.equal(secondAppend.isError, undefined);
     const secondTask = JSON.parse((secondAppend.content as any[])[0].text);
-    assert.equal(secondTask.agent_notes.PRs, 'https://github.com/o/r/pull/1\nhttps://github.com/o/r/pull/2');
+    assert.deepEqual(secondTask.agent_notes.PRs, ['https://github.com/o/r/pull/1', 'https://github.com/o/r/pull/2']);
     assert.equal(secondTask.agent_notes['Café'], 'first\nsecond');
     assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: secondTask.updated_at, append: { PRs: 'one', ' PRs ': 'two' } }, _meta: meta() })).isError, true);
     assert.equal((await client.callTool({ name: 'update_current', arguments: { expected_updated_at: appended.updated_at, append: { PRs: 'stale' } }, _meta: meta() })).isError, true);

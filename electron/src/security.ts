@@ -14,7 +14,9 @@ export const MAX_IMAGE_BASE64 = Math.ceil(4 * 1024 * 1024 / 3) * 4;
 export const imageHash = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 const base64 = (v: unknown, max = MAX_IMAGE_BASE64) => typeof v === 'string' && v.length > 0 && v.length <= max && v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v);
 const imageMime = (v: unknown) => ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(String(v));
-const agentFields = (v: unknown, removable = false) => record(v) && Object.keys(v).length <= 64 && Object.entries(v).every(([k, value]) => str(k, 256) && (removable && value === null || str(value)));
+const fieldValue = (v: unknown) => str(v) || Array.isArray(v) && v.length <= 256 && [...v].every(item => str(item));
+// The store holds 32 KiB of fields per task; the total is bounded as well as each part.
+const agentFields = (v: unknown, removable = false) => record(v) && Object.keys(v).length <= 64 && JSON.stringify(v).length <= 131072 && Object.entries(v).every(([k, value]) => str(k, 256) && (removable && value === null || fieldValue(value)));
 const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   handshake: {}, snapshot: { view: v => ['active', 'archive', 'scheduled'].includes(String(v)) },
   add: { text: str, tag: nullable }, edit: { id, revision: str, text: str },
@@ -47,24 +49,16 @@ export function validWindowStartup(value: unknown): value is WindowStartup {
     (value.size === undefined || ints(value.size, ['width', 'height'], k => MIN_WINDOW[k as 'width' | 'height']));
 }
 export function validPreviewData(value: unknown): value is PreviewData {
-  return record(value) && Object.keys(value).every(k => ['task','markdown','unread'].includes(k)) &&
+  return record(value) && Object.keys(value).every(k => ['task','markdown','unread','fields'].includes(k)) &&
     validTask(value.task) && typeof value.markdown === 'boolean' && typeof value.unread === 'boolean' &&
+    (value.fields === undefined || Array.isArray(value.fields) && value.fields.length <= 128 && [...value.fields].every(field => record(field) &&
+      Object.keys(field).length === 4 && str(field.name, 256) && ['text', 'list', 'unique-list'].includes(field.type as string) && typeof field.link === 'boolean' && str(field.format, 4096))) &&
     Buffer.byteLength(JSON.stringify(value)) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function validPreviewRequest(value: unknown): value is PreviewRequest {
   return record(value) && Object.keys(value).every(k => ['token','data','point'].includes(k)) &&
     id(value.token) && validPreviewData(value.data) && record(value.point) && Object.keys(value.point).every(k => ['x','y'].includes(k)) &&
     validMenuRequest({ ...value.point, kind: 'app' });
-}
-// Names of the handoff fields in Pi's pi-note.json, as its footer settings accept them.
-export function agentFieldNames(config: unknown): string[] {
-  const fields = record(config) && record(config.footer) ? config.footer.fields : undefined;
-  if (!Array.isArray(fields) || fields.length > 64) return [];
-  const names = fields.map(entry => {
-    const source = typeof entry === 'string' ? entry : record(entry) ? entry.name ?? entry.label : undefined;
-    return typeof source === 'string' && !/[\x00-\x1f\x7f-\x9f]/u.test(source) ? source.normalize('NFC').trim() : '';
-  });
-  return [...new Set(names.filter(name => name && [...name].length <= 64))];
 }
 export const mutating = (op: string) => !['handshake','snapshot','completions','image'].includes(op);
 function validTaskActionPreferences(value: unknown, ids: readonly string[], legacy: boolean): boolean {
@@ -111,7 +105,7 @@ function validTask(value: unknown): boolean {
   if (!['remind_at','reminder_due_at','archived_at'].every(k => nullable(value[k]))) return false;
   if (!Array.isArray(value.pi_sessions) ||
     ![...value.pi_sessions].every(session => str(session,256) && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(session as string))) return false;
-  return typeof value.agent_event_id === 'number' && Number.isSafeInteger(value.agent_event_id) && value.agent_event_id >= 0 && record(value.agent_notes) && Object.entries(value.agent_notes).every(([k,v]) => str(k,256) && str(v));
+  return typeof value.agent_event_id === 'number' && Number.isSafeInteger(value.agent_event_id) && value.agent_event_id >= 0 && record(value.agent_notes) && Object.entries(value.agent_notes).every(([k,v]) => str(k,256) && fieldValue(v));
 }
 export function validEnvelope(operation: Operation, value: unknown): boolean {
   if (!record(value) || value.protocol !== 1 || typeof value.ok !== 'boolean') return false;

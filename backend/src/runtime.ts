@@ -5,7 +5,7 @@ import { delimiter, dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const VERSION = '0.30.0';
+export const VERSION = '0.31.0';
 export type Paths = { data: string; state: string; database: string; log: string };
 export class InputEncodingError extends Error {}
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -52,8 +52,8 @@ export function xdgPath(variable: string, fallback: string, env: NodeJS.ProcessE
   const home = value && isAbsolute(value) ? checkedEnv(variable, env)! : expandHome(`~/${fallback}`, env);
   const components = home.split('/');
   const parent = components.lastIndexOf('..');
-  // Python retains '..' during I/O, so it traverses symlinks before going up.
-  // Resolve through the last '..' before join() can erase it. Require that
+  // A '..' after a symlink must be resolved by the filesystem:
+  // resolve through the last '..' before join() can erase it. Require that
   // prefix to be traversable, but allow a not-yet-created profile after it.
   const prefix = components.slice(0, parent + 1).join('/');
   return parent < 0 ? (isAbsolute(home) ? home : `${realpathUtf8('.')}/${home}`) : join(

@@ -2,7 +2,8 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { FieldAutomation } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, watcherEntries, type FieldWatcher } from './field-watchers.ts';
-import { footerCatalog, parseFooterConfig, parseKittyOneTaskPerTab, parseTaskCompletion, readConfigDocument } from './footer-config.ts';
+import { defaultFieldInstructions, footerCatalog, parseFooterConfig, parseKittyOneTaskPerTab, parseTaskCompletion, readConfigDocument } from './footer-config.ts';
+import { fieldType } from './field-values.ts';
 
 /** Run the field-watcher scheduler for as long as the hosting process (the desktop) lives.
  * Pi sessions only read the results it saves. Failure details go to watchers.log beside the
@@ -44,6 +45,18 @@ export function kittySettings() {
   return { raw, oneTaskPerTab: parseKittyOneTaskPerTab(value), onTaskComplete: parseTaskCompletion(value) };
 }
 export { saveKittySettings } from './footer-config.ts';
+/** The desktop's Fields settings: every definition (saved ones, then unsaved presets) with its effective values, and the footer layout.
+ * `saved` is false for a preset that pi-note.json does not define yet. */
+export function fieldSettings() {
+  const { raw, value } = readConfigDocument();
+  const config = parseFooterConfig(value), { fields: _fields, bar, ...layout } = config;
+  const saved = new Set((config.fields ?? []).map((field) => field.name === 'PR' ? 'PRs' : field.name));
+  const fields = footerCatalog(config).map((field) => ({ ...field, type: fieldType(field), enabled: field.enabled !== false,
+    instructions: field.instructions ?? defaultFieldInstructions(field.name), saved: saved.has(field.name) }));
+  // Without a field list, Pi shows the fields a task's own Bar value names; saving must not end that by accident.
+  return { raw, footer: { ...layout, bar: bar ?? null, fields, fieldsDefined: config.fields != null } };
+}
+export { saveFooterSettings as saveFieldSettings } from './footer-config.ts';
 /** What saving these entries will trust, for the desktop's confirmation: enabled scripts and the shared values they are given. */
 export function watcherSaveSummary(input: unknown): string[] {
   const { entries, shared } = watcherEntries(input);

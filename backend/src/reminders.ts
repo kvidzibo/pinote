@@ -1,5 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill';
-import { NoteError, canonicalInstant, pythonStrip } from './compat.ts';
+import { NoteError, canonicalInstant, strip } from './compat.ts';
 
 // Local times use Node's bundled IANA time zone data, so no system date program
 // or zoneinfo files are needed. TZ, when set, must name an IANA zone; POSIX rules
@@ -31,7 +31,7 @@ function abbreviation(zone:string,epochMilliseconds:number):string {
 }
 
 export function parse_reminder_time(value: string): string {
-  value=pythonStrip(value);
+  value=strip(value);
   const invalid='Use a date and time like 2026-09-18 14:30 (local time).';
   if(!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(value) || value.startsWith('0000-')) throw new NoteError(invalid);
   let wall:Temporal.PlainDateTime;

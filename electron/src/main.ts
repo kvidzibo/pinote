@@ -11,10 +11,9 @@ import { backendCommand } from './backend-command.ts';
 import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
 import { imageViewer } from './image-window.ts';
-import { getAgentDir } from '../../pi/config-path.js';
 import { IMAGE_VIEWS, TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
 import type { ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
-import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
+import { MAX_STATE_FILE_BYTES, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.enableSandbox();
@@ -116,7 +115,7 @@ function popupMenu(request: MenuRequest): Promise<MenuAction | null> {
     const separator: Electron.MenuItemConstructorOptions = { type: 'separator' };
     const menu = Menu.buildFromTemplate([
       item('scheduled', 'Scheduled reminders', 'preferences-system-notifications'), item('archive', 'Archive', 'archive'), separator,
-      item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('watchers', 'Watchers…', 'view-reveal'),
+      item('manage-tags', 'Manage tags…', 'tag'), item('task-actions', 'Task actions…', 'open-menu'), item('composer-settings', 'New task editor…', 'list-add'), item('fields', 'Fields…', 'view-list'), item('watchers', 'Watchers…', 'view-reveal'),
       item('kitty', 'Kitty…', 'utilities-terminal'), item('window-settings', 'Window…', 'move'), separator,
       item('drafts', 'Recover edit drafts…', 'document-revert'), separator, item('close', 'Quit Pinote', 'window-close'),
     ]);
@@ -145,7 +144,7 @@ async function boot() {
   const hello = await backend.call('handshake', {});
   if (!hello.ok) throw new Error(hello.error.message);
   const identity = hello.result as { protocol?: unknown; database?: unknown; version?: unknown };
-  if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(2[3-9]|[3-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.23.0+ with protocol 1.');
+  if (identity.protocol !== 1 || typeof identity.database !== 'string' || !isAbsolute(identity.database) || typeof identity.version !== 'string' || !/^0\.(3[1-9]|[4-9]\d|\d{3,})\./.test(identity.version) && !/^[1-9]\d*\./.test(identity.version)) throw new Error('Incompatible Pinote backend; install Pinote 0.31.0+ with protocol 1.'); // Earlier backends drop list fields when they rewrite a task.
   const hash = createHash('sha256').update(identity.database).digest('hex').slice(0,32);
   dataDir = join(dirname(identity.database), 'electron');
   const profile = join(xdg('XDG_STATE_HOME', '.local/state'), 'pinote', 'electron', hash);
@@ -297,8 +296,16 @@ async function boot() {
       if (result.response !== 1) return false;
       uncertain = false; state.warning = ''; await persist(); return true;
     },
-    // Field names configured in Pi's settings; the editor offers them even when a task has no value yet.
-    'agent-fields': async () => { try { return agentFieldNames(JSON.parse(await readFile(join(getAgentDir(), 'pi-note.json'), 'utf8'))); } catch { return []; } },
+    // Field definitions from Pi's settings: the editor offers saved ones even when a task has no value yet.
+    'agent-fields': async () => { try { return (await watcherHost()).fieldSettings().footer.fields; } catch { return []; } },
+    'field-settings': async () => (await watcherHost()).fieldSettings(),
+    // Pi validates the footer and rejects a file changed since it was read.
+    'save-field-settings': async (_event, footer: unknown, raw: unknown) => {
+      if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing fields.');
+      if (closing || footer === null || typeof footer !== 'object' || Array.isArray(footer) || !(raw === null || typeof raw === 'string') ||
+        Buffer.byteLength(JSON.stringify([footer, raw])) > 2 * 1024 * 1024) throw new Error('Invalid field settings');
+      (await watcherHost()).saveFieldSettings(footer, raw);
+    },
     // A new base folder must come from the folder picker: the backend creates tag folders inside it.
     'save-state': async (_event, value: unknown) => {
       if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);

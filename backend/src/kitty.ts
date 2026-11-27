@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NoteError, type Note } from './store.ts';
 import { findExecutable, jsonStringify, checkCancelled, realpathUtf8, checkedEnv, nulFields, expandHome } from './runtime.ts';
-import { pythonStrip } from './compat.ts';
+import { strip } from './compat.ts';
 const exec = promisify(execFile);
 const macos = () => process.platform === 'darwin';
 // Kitty resolves relative `listen_on unix:` paths in its temporary directory.
@@ -24,7 +24,7 @@ function reason(error: any): string {
 }
 export async function remote(kitty: string, address: string, ...args: string[]): Promise<string> {
   checkCancelled();
-  try { return pythonStrip((await exec(kitty, ['@', '--to', address, ...args], { timeout: 5000, maxBuffer: Infinity })).stdout); }
+  try { return strip((await exec(kitty, ['@', '--to', address, ...args], { timeout: 5000, maxBuffer: Infinity })).stdout); }
   catch (error) { throw new NoteError(`Kitty remote control failed at ${shown(address)}: ${reason(error)}`); }
 }
 export function kittyAddressEnv(): { explicit?: string; display?: string } {
@@ -70,7 +70,7 @@ export async function address(kitty: string): Promise<string | null> {
   for (const pid of readdirSync('/proc')) {
     if (!/^\d+$/.test(pid)) continue;
     try {
-      if (statSync(`/proc/${pid}`).uid !== process.getuid!() || pythonStrip(readFileSync(`/proc/${pid}/comm`, 'utf8')) !== 'kitty') continue;
+      if (statSync(`/proc/${pid}`).uid !== process.getuid!() || strip(readFileSync(`/proc/${pid}/comm`, 'utf8')) !== 'kitty') continue;
       const fields = nulFields(readFileSync(`/proc/${pid}/environ`));
       if (!Array.from(fields).some(field => matches.some(value => value.equals(field)))) continue;
       const target = `unix:@mykitty-${pid}`; await remote(kitty, target, 'ls'); return target;
@@ -97,7 +97,7 @@ function locate(name: 'kitty' | 'pi'): string | undefined {
 // {title} the first line without a Markdown heading marker; {title:N} keeps its first N characters.
 export const DEFAULT_TAB_TITLE = '{tag}{title:30}';
 export function validate_tab_title(template: string): void {
-  if (!pythonStrip(template) || Array.from(template).length > 256 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(template))
+  if (!strip(template) || Array.from(template).length > 256 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(template))
     throw new NoteError('The Kitty tab name must be one line of at most 256 characters without control characters.');
 }
 // Start in Kitty's draft for an empty Pi editor; empty disables it.
@@ -109,7 +109,7 @@ export function validate_start_prompt(prompt: string): void {
 export function tab_title(note: Note, template = DEFAULT_TAB_TITLE): string {
   const summary = Array.from(note.text.split(/[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u)[0].replace(/^ {0,3}#{1,6}[ \t]+/, ''));
   // Repeated placeholders can expand far beyond a useful name; stay well within one process argument.
-  return pythonStrip(Array.from(template.replace(/\{tag\}|\{id\}|\{title(?::([1-9]\d{0,3}))?\}/g, (match, limit?: string) =>
+  return strip(Array.from(template.replace(/\{tag\}|\{id\}|\{title(?::([1-9]\d{0,3}))?\}/g, (match, limit?: string) =>
     match === '{tag}' ? (note.tag ? `[${note.tag}] ` : '') : match === '{id}' ? String(note.id) : summary.slice(0, limit ? Number(limit) : undefined).join(''))).slice(0, 1024).join(''));
 }
 export async function start_in_kitty(directory: string, note: Note, title: string, prompt: string): Promise<void> {

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-// Outputs captured from the removed Python implementation; see fixtures/python-reference/README.md.
-const reference = (name:string) => readFileSync(new URL('../fixtures/python-reference/'+name, import.meta.url), 'utf8');
+// Frozen databases and expected results; see fixtures/reference/README.md.
+const reference = (name:string) => readFileSync(new URL('../fixtures/reference/'+name, import.meta.url), 'utf8');
 import { DatabaseSync } from 'node:sqlite';
 import { Store, NoteError, markdown } from '../../src/store.ts';
 import { timestamp, validate_tag, validate_text, agentJSON, codepointCompare } from '../../src/compat.ts';
@@ -31,7 +31,7 @@ test('lifecycle, revisions, private creation, no-ops and transactional rollback'
  assert.equal(s.add('second'),2n); assert.deepEqual(s.query('PRAGMA foreign_key_check'),[]);
 });
 
-test('Unicode normalization, Python whitespace, folding, length, codepoint ordering',t=>{
+test('Unicode normalization, whitespace, folding, length, codepoint ordering',t=>{
  const {store:s}=fixture(t);
  assert.equal(validate_text('\x1c x \x85'),'x'); assert.equal(validate_text('\ufeffx\ufeff'),'\ufeffx\ufeff');
  assert.equal(validate_text('🐦'.repeat(4096)).length,8192); assert.throws(()=>validate_text('🐦'.repeat(4097)),NoteError);
@@ -127,7 +127,7 @@ function snapshot(path:string) {
  } finally { c.close(); }
 }
 const migrations:Record<string,{before:string|null,after:unknown}>=JSON.parse(reference('migrations.json'));
-for(let version=0;version<=8;version++) test(`migration schema/data/sequence matches the Python reference v${version}`,t=>{
+for(let version=0;version<=8;version++) test(`migration schema/data/sequence matches the reference v${version}`,t=>{
  const dir=mkdtempSync(join(tmpdir(),'pinote-migrate-')); t.after(()=>rmSync(dir,{recursive:true,force:true})); const path=join(dir,'notes.db');
  const {before,after}=migrations[version];
  assert.equal(before===null,version===0);
@@ -139,19 +139,34 @@ for(let version=0;version<=8;version++) test(`migration schema/data/sequence mat
  } finally{s.close();}
 });
 
-test('a database written by the Python reference keeps tag casing and agent JSON bytes',t=>{
- const dir=mkdtempSync(join(tmpdir(),'pinote-store-')); t.after(()=>rmSync(dir,{recursive:true,force:true})); const path=join(dir,'notes.db');
- load(path,reference('python-written.sql'));
- const s=new Store(path); t.after(()=>s.close());
- const current=s.get(1n); assert.equal(s.get(2n).tag,'Straße');
+test('list fields are validated, stored as JSON arrays and reported to watchers in text form',t=>{
+ const {store:s}=fixture(t); let n=s.add_note('task');
+ const set=(fields:any)=>s.update_agent(n.id,fields,[],{expected_updated_at:n.updated_at});
+ n=set({PRs:'https://example.test/1\nhttps://example.test/2',Notes:'text'});
+ const start=s.history().at(-1)!.id;
+ // Storing a text value as an equal list changes its shape but is no field event.
+ n=set({PRs:[' https://example.test/1 ','https://example.test/2']});
+ assert.deepEqual(n.agent_notes.PRs,['https://example.test/1','https://example.test/2']);
+ assert.equal(s.row('SELECT agent_notes FROM notes WHERE id=?',n.id)!.agent_notes,'{"Notes":"text","PRs":["https://example.test/1","https://example.test/2"]}');
+ assert.deepEqual(s.field_events(start).events,[]);
+ assert.equal(set({PRs:['https://example.test/1','https://example.test/2']}).updated_at,n.updated_at);
+ n=set({PRs:['https://example.test/2','duplicate','duplicate']});
+ assert.deepEqual(s.field_events(start).events.map((e:any)=>[e.field,e.event,e.value,e.previousValue]),[['PRs','changed','https://example.test/2\nduplicate\nduplicate','https://example.test/1\nhttps://example.test/2']]);
+ assert.equal(markdown(n),'task\n\n## Agent\nNotes: text\n\nPRs:\n- https://example.test/2\n- duplicate\n- duplicate');
+ for(const [value,message] of [[[],/1–256/],[Array(257).fill('x'),/1–256/],[['a\nb'],/single lines/],[[' '],/cannot be empty/],[[1],/must be strings/],[['x'.repeat(4097)],/4096/],[['a\u0000'],/control/],[{a:'b'},/strings or lists/]] as [unknown,RegExp][]) assert.throws(()=>set({PRs:value}),message);
+ s.transition(n.id,'done');
+ assert.deepEqual(s.task_events(start).events.at(-1)!.fields,{Notes:'text',PRs:'https://example.test/2\nduplicate\nduplicate'});
+});
+
+test('agent notes saved with spaced JSON separators read back and an unchanged update is a no-op',t=>{
+ const {store:s}=fixture(t); const n=s.add_note('task');
+ // Earlier releases wrote ", " and ": " separators; such rows remain in existing databases.
+ s.connection.prepare('UPDATE notes SET agent_notes=? WHERE id=?').run('{"10": "ten", "2": "two", "Next": "日本語\\nreview", "__proto__": "safe"}',n.id);
+ const current=s.get(n.id);
  assert.deepEqual({...current.agent_notes},{'10':'ten','2':'two',Next:'日本語\nreview',...JSON.parse('{"__proto__":"safe"}')});
- const encoded=s.row('SELECT agent_notes FROM notes WHERE id=?',1n)!.agent_notes; assert.equal(encoded,agentJSON(current.agent_notes));
- assert.equal(s.update_agent(1n,{},[],{expected_updated_at:current.updated_at}).updated_at,current.updated_at);
- s.transition(1n,'done');
- // A separate connection sees only what the transition committed.
- const c=new DatabaseSync(path,{readOnly:true});
- try {
-  assert.deepEqual({state:c.prepare('SELECT state FROM notes WHERE id=1').get()!.state,
-   actions:c.prepare('SELECT action FROM events WHERE note_id=1 ORDER BY id').all().map(r=>r.action)},{state:'done',actions:['add','agent','done']});
- } finally { c.close(); }
+ assert.equal(s.update_agent(n.id,{Next:'日本語\nreview'},[],{expected_updated_at:current.updated_at}).updated_at,current.updated_at);
+ assert.equal(s.history(n.id).length,1);
+ const changed=s.update_agent(n.id,{Next:'done'},[],{expected_updated_at:current.updated_at});
+ assert.equal(s.row('SELECT agent_notes FROM notes WHERE id=?',n.id)!.agent_notes,agentJSON(changed.agent_notes));
+ assert.equal(agentJSON(changed.agent_notes),'{"10":"ten","2":"two","Next":"done","__proto__":"safe"}');
 });

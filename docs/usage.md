@@ -96,11 +96,13 @@ completion; a stale revision fails without changing anything.
 - **`tag`** only changes active or in-progress tasks; `--clear` removes the tag.
   Tags reuse a case-insensitive match's saved spelling: `--tag pi` saves `Pi` if
   that tag exists. `tags` lists saved names.
-- **`update`** merges label/Markdown-string pairs; it never overwrites task text
-  or tag. Labels are trimmed, Unicode-normalized and case-sensitive (64
-  characters maximum). Values follow task-text rules. Up to 64 fields / 32 KiB
-  JSON per task. Empty values are rejected; use `--remove`. Conflicting
-  set/remove labels are rejected.
+- **`update`** merges label/value pairs; it never overwrites task text or tag.
+  Labels are trimmed, Unicode-normalized and case-sensitive (64 characters
+  maximum). A value is a Markdown string following task-text rules or, with
+  note 0.31.0+, a list: a JSON array of 1–256 single-line strings, stored as an
+  array. Up to 64 fields / 32 KiB JSON per task. Empty values and empty lists
+  are rejected; use `--remove`. Conflicting set/remove labels are rejected.
+  `field-events` and `task-events` report a list as text, one entry per line.
 - **`image`** (note 0.30.0+) reads an image pasted in Electron by the
   64-character hash in its `![image](pinote:sha256-HASH)` reference.
 

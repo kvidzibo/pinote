@@ -133,7 +133,7 @@ test('handshake and folder/selection keys never substitute a U+FFFD sibling for 
     f.fresh(join(sibling, 'pinote'));
     const canonical = f.reply(f.run(bridge, { input: request('handshake'), bindings: { XDG_DATA_HOME: good } })).result.database;
     assert.equal(canonical, join(sibling, 'pinote/notes.db'));
-    // Independent of model.ts: SHA-256 of the canonical database path's bytes, as the Python reference computed it.
+    // Independent of model.ts: SHA-256 of the canonical database path's bytes.
     assert.equal(application_id(discoverPaths({ ...f.env, XDG_DATA_HOME: good })),
       'io.github.kvidzibo.pinote.g' + createHash('sha256').update(canonical).digest('hex').slice(0, 32));
     assert.equal(f.reply(f.run(bridge, { input: tag(good) })).ok, true);

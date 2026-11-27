@@ -1,5 +1,5 @@
 import { Store, NoteError } from './store.ts';
-import { validate_tag, validate_text, validate_folder, validate_new_folder, validateAgentPatch, timestamp } from './compat.ts';
+import { validate_tag, validate_text, validate_folder, validate_new_folder, validateAgentPatch, timestamp, type AgentNotes, type AgentValue } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
@@ -72,7 +72,7 @@ export function validate(request: any): [string, Record<string, any>] {
     else if (key === 'keep') { if (!Array.isArray(v) || v.length > 10000 || !v.every(validImageHash)) invalid(); }
     else if (v === null && ['tag', 'folder', 'folderIfNew'].includes(key)) continue;
     // A null field value removes that field; labels and values are validated below.
-    else if (key === 'fields') { if (!isObject(v) || Object.keys(v).length > 64 || !Object.values(v).every(value => value === null || typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value))) invalid(); }
+    else if (key === 'fields') { if (!isObject(v) || Object.keys(v).length > 64 || !Object.values(v).every(value => value === null || wellFormed(value) || Array.isArray(value) && value.length <= 256 && value.every(wellFormed))) invalid(); }
     else if (typeof v !== 'string' || /[\uD800-\uDFFF]/u.test(v)) invalid();
   }
   if (Object.hasOwn(p, 'revision') && (!p.revision || Array.from(p.revision).length > 128 || /[\p{C}\p{Zl}\p{Zp}]|[^\S\x20]/u.test(p.revision) || /[\p{Zs}]/u.test(p.revision.replaceAll(' ', '')))) invalid();
@@ -97,9 +97,10 @@ export function validate(request: any): [string, Record<string, any>] {
   if (op === 'schedule' && parse_reminder_time(p.when) <= timestamp()) throw new NoteError('Choose a reminder time in the future.');
   return [op, p];
 }
-const agentPatch = (fields: Record<string, string | null>): [Record<string, string>, string[]] => {
+const wellFormed = (value: unknown) => typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value);
+const agentPatch = (fields: Record<string, AgentValue | null>): [AgentNotes, string[]] => {
   const entries = Object.entries(fields);
-  return [Object.fromEntries(entries.filter(([, v]) => v !== null)) as Record<string, string>, entries.filter(([, v]) => v === null).map(([k]) => k)];
+  return [Object.fromEntries(entries.filter(([, v]) => v !== null)) as AgentNotes, entries.filter(([, v]) => v === null).map(([k]) => k)];
 };
 export async function dispatch(op: string, p: Record<string, any>, paths: Paths): Promise<any> {
   checkCancelled();
