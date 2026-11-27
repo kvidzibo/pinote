@@ -234,6 +234,8 @@ must be executable (`chmod u+x`).
 - Each PR has its own durable acknowledgement. New failures, and recovery
   followed by failure, alert again; adding or removing other URLs does not.
 - **Passing** means reported checks passed, not that review or protection rules did.
+- A mergeable PR without checks is pending on the first check and passing once
+  the next check of the same head still finds none.
 
 ### Forgejo PR
 

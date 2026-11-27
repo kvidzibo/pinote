@@ -51,13 +51,14 @@ export async function handleFieldEvent(event) {
     const url = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
     try { if (new URL(url).hostname !== 'github.com') return {}; } catch { /* Invalid GitHub values remain errors. */ }
     if (requests.length !== 1) return withInterval(event, errorResult());
-    return withInterval(event, await checkPullRequest(requests[0], AbortSignal.timeout(25_000)));
+    return withInterval(event, await checkPullRequest(requests[0], AbortSignal.timeout(25_000), event.previousResult));
   }
   if (!requests.length && event.value?.trim()) return {};
-  return checkPRBatch(event, requests, checkPullRequest, errorResult);
+  return checkPRBatch(event, requests, (request, signal) => checkPullRequest(request, signal,
+    event.previousResult?.items?.find((item) => item.url === request.url)), errorResult);
 }
 
-async function checkPullRequest({ url, number }, signal) {
+async function checkPullRequest({ url, number }, signal, previous) {
   const [, owner, repo] = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\//.exec(url);
   signal.throwIfAborted();
   const execution = run('gh', ['pr', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'state,mergeable,statusCheckRollup,headRefOid'], { timeout: 20_000, signal, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024, encoding: 'utf8' });
@@ -88,9 +89,16 @@ async function checkPullRequest({ url, number }, signal) {
       notification: { key: `pr:${owner}/${repo}:${number}:${fingerprint}`, message: conflict ? 'PR has merge conflicts' : 'PR checks failed' },
       recheckAfterSeconds: 60 };
   }
-  const pending = pr.mergeable === 'UNKNOWN' || checks.length === 0 || checks.some((check) => check.pending);
-  return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : 'checks passing'}`,
-    display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
+  const result = (pending, text) => ({ state: pending ? 'pending' : 'passing', summary: `${summary} ${text}`,
+    display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 });
+  if (!checks.length && pr.mergeable === 'MERGEABLE') {
+    // Checks may not have been queued yet. Only the same empty observation of this head on two consecutive checks means there are none.
+    const head = `(head ${pr.headRefOid.toLowerCase().slice(0, 12)})`;
+    const confirmed = [`${summary} awaiting checks ${head}`, `${summary} has no checks ${head}`].includes(previous?.summary);
+    return confirmed ? result(false, `has no checks ${head}`) : result(true, `awaiting checks ${head}`);
+  }
+  const pending = pr.mergeable === 'UNKNOWN' || checks.some((check) => check.pending);
+  return result(pending, pending ? 'checks pending' : 'checks passing');
 }
 
 // import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.
