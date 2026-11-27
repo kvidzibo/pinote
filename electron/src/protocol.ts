@@ -116,12 +116,17 @@ export function tagFolderPath(base: string, tag: string): string | null {
 }
 /** Fixed start-up geometry in desktop coordinates; an omitted part restores the last one. */
 export type WindowStartup = { position?: { x: number; y: number }; size?: { width: number; height: number } };
-export type WindowSettings = { startup: WindowStartup; current: { x: number; y: number; width: number; height: number } };
+/** Where a clicked image opens: Pinote's image window, inside the window showing it, or the system image viewer. */
+export const IMAGE_VIEWS = ['window', 'overlay', 'system'] as const;
+export type ImageView = typeof IMAGE_VIEWS[number];
+export type WindowSettings = { startup: WindowStartup; imageView: ImageView; current: { x: number; y: number; width: number; height: number } };
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
 export type PreviewApi = {
   load(): Promise<PreviewData>; ready(height: number): Promise<void>;
   action(action: 'copy' | 'edit' | 'close'): Promise<void>; openLink(url: string): Promise<void>;
+  /** Opens a stored image; true means this window should show it itself. */
+  viewImage(hash: string): Promise<boolean>;
   onUpdate(callback: (data: PreviewData) => void): void;
 };
 export type PinoteApi = BackendApi & {
@@ -134,8 +139,10 @@ export type PinoteApi = BackendApi & {
   watcherSettings(): Promise<WatcherSettings>; chooseWatcher(): Promise<Watcher | null>;
   saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<boolean>;
   kittySettings(): Promise<KittySettings>; saveKittySettings(oneTaskPerTab: boolean, onTaskComplete: TaskCompletionAction, raw: string | null): Promise<void>;
-  windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup): Promise<void>;
+  windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup, imageView: ImageView): Promise<void>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
+  /** Opens a stored image; true means this window should show it itself. */
+  viewImage(hash: string): Promise<boolean>;
   collapse(collapsed: boolean): Promise<void>; fit(height: number): Promise<void>;
   onCloseRequested(callback: () => void): void; finishClose(): Promise<void>; cancelClose(): Promise<void>;
 };

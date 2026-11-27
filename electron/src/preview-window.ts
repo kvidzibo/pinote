@@ -4,7 +4,7 @@ import type { PreviewData, PreviewRequest } from './protocol';
 import { safeLink, validPreviewData, validPreviewRequest } from './security';
 
 // The preview has its own restricted preload, never the checklist's mutation API.
-export function previewWindow(owner: BrowserWindow) {
+export function previewWindow(owner: BrowserWindow, images: { open(hash: unknown, from: BrowserWindow): Promise<boolean>; isOpen(): boolean }) {
   let current: { window: BrowserWindow; request: PreviewRequest; ready: (height: number) => Promise<void>; edit: boolean } | undefined;
   const close = () => current?.window.destroy();
   const handlers: Record<string, (...args: any[]) => unknown> = {
@@ -19,6 +19,7 @@ export function previewWindow(owner: BrowserWindow) {
       current!.edit = action === 'edit';
       owner.show(); owner.focus(); close();
     },
+    'preview-image': (hash: unknown) => images.open(hash, current!.window),
     'preview-link': async (url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
   };
   for (const [name, handler] of Object.entries(handlers)) ipcMain.handle(name, (event, ...args) => {
@@ -66,7 +67,8 @@ export function previewWindow(owner: BrowserWindow) {
           placementTimer = setTimeout(() => { popup.setBounds(bounds); resolve(true); ready(); }, 100);
         }) };
         current = entry;
-        popup.on('blur', () => { if (shown) popup.destroy(); });
+        // Pinote's image window, opened from this preview, keeps it open underneath.
+        popup.on('blur', () => { if (shown && !images.isOpen()) popup.destroy(); });
         popup.on('closed', () => {
           clearTimeout(timer); clearTimeout(placementTimer);
           if (current === entry) current = undefined;

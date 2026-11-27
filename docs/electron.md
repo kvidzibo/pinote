@@ -122,6 +122,12 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   database when no task or draft uses it any more: after its editor closes, after
   the composer loses focus or adds its task, and at start-up. Archived tasks keep
   their images; task history does not, so older text may show **Image unavailable**.
+  Click a picture in a task preview or expanded archive row, or double-click it in
+  an editor, to open it. **Menu → Window… → Open images in** chooses where:
+  **Image window** (default) shows it at full size, scaled down to the screen;
+  **This window** shows it over the window you clicked in; **System viewer** opens a
+  temporary copy, removed when Pinote quits, in your default image application.
+  A click or **Escape** closes Pinote's own views. Pictures inside links open the link.
   The CLI, Dunst and Pi show the reference text.
 - **Menu → New task editor… → Start as Markdown** starts new drafts with `# `
   and live heading formatting. It defaults off, preserving the current behavior.
