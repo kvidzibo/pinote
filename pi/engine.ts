@@ -449,7 +449,7 @@ async function agentContext(state: State, signal: AbortSignal, automation?: Fiel
     .map((field) => ({ field: field.name, instructions: field.instructions ?? defaultFieldInstructions(field.name) }))
     .filter((field) => field.instructions.trim()) : [];
   const fieldGuidance = instructions.length
-    ? `Configured field instructions (trusted shared settings; automatically maintain enabled fields when relevant):\n${JSON.stringify(instructions)}\n` : '';
+    ? `Field instructions (trusted settings):\n${JSON.stringify(instructions)}\n` : '';
   const trusted = `${guidance ? `${guidance}\n` : ''}${fieldGuidance}`;
   let text = `${trusted}${data}`;
   if (later) text += `\nPending future-task suggestion (not created; awaiting the user):\n${JSON.stringify({ text: later.text, tag: later.tag })}`;

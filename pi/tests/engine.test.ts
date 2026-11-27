@@ -68,7 +68,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.match(view.controls.find((c) => c.id === 'field:PRs')!.description!, /Disabled/);
     view = (await act(view, 'field:Worktrees')).view;
     assert.equal(view.controls.find((c) => c.id === 'enabled')!.value, false);
-    assert.match(String(view.controls.find((c) => c.id === 'instructions')!.value), /immediately after choosing/);
+    assert.match(String(view.controls.find((c) => c.id === 'instructions')!.value), /worktree root used for this task/);
     view = (await act(view, 'enabled', true)).view;
     view = (await act(view, 'instructions', 'Save the verified worktree root immediately after choosing it.\nRefresh before handoff.')).view;
     await assert.rejects(act(view, 'instructions', 'x'.repeat(4097)), /instructions/);
@@ -84,7 +84,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.ok(view.footer!.some((item) => item.text.includes('/tmp/example-worktree')));
     assert.ok(!view.footer!.some((item) => item.url?.includes('/pull/1')), 'Disabled presets never appear in the Pi footer');
     const contextText = await client.readContext(meta());
-    const configuredInstructions = JSON.parse(contextText.split('Configured field instructions (trusted shared settings; automatically maintain enabled fields when relevant):\n')[1].split('\n')[0]);
+    const configuredInstructions = JSON.parse(contextText.split('Field instructions (trusted settings):\n')[1].split('\n')[0]);
     assert.deepEqual(configuredInstructions, [{ field: 'Worktrees', instructions: 'Save the verified worktree root immediately after choosing it.\nRefresh before handoff.' }]);
     view = (await act(view, 'enabled', false)).view;
     assert.ok(!view.footer!.some((item) => item.text.includes('/tmp/example-worktree')));
