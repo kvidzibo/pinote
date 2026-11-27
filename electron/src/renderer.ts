@@ -271,7 +271,7 @@ function layer(title: string, kind = '', taskId?: number): Layer {
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
   panel.addEventListener('keydown', e => {
     if (e.key !== 'Tab' || e.defaultPrevented) return;
-    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]'));
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')).filter(node => node.getClientRects().length);
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) { e.preventDefault(); last?.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -342,7 +342,8 @@ async function openMenu(event: MouseEvent): Promise<void> {
   }
 }
 // One page hosts every settings section. A pane has the layer members its builder uses.
-type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean) => void; saved: () => void };
+// `rebase` follows a save of the file shared with Pi by another tab: take its revision, keep this draft.
+type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean) => void; busy: (value: boolean) => void; saved: () => void; rebase?: () => unknown };
 const settingsTabs: [SettingsTab, string, (pane: Pane, tag?: string) => void][] = [
   ['tags', 'Tags', manageTags], ['actions', 'Actions', configureTaskActions], ['editor', 'Editor', configureComposer], ['fields', 'Fields', configureFields],
   ['watchers', 'Watchers', configureWatchers], ['kitty', 'Kitty', configureKitty], ['window', 'Window', configureWindow],
@@ -354,8 +355,12 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
   const header = page.panel.querySelector('header')!;
   header.replaceChildren(button('back', 'Back', () => page.close()), header.querySelector('h2')!, status);
   const strip = el('div', undefined, 'settings-tabs'); strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', 'Settings sections');
-  page.panel.append(strip);
-  const panes = new Map<SettingsTab, Pane>(), unsaved = new Set<SettingsTab>();
+  const panes = new Map<SettingsTab, Pane>(), unsaved = new Set<SettingsTab>(), saving = new Set<SettingsTab>();
+  const panels = settingsTabs.map(([id]) => {
+    const panel = el('div', undefined, 'settings-pane'); panel.id = `settings-pane-${id}`; panel.hidden = true;
+    panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', `settings-tab-${id}`); return panel;
+  });
+  page.panel.append(strip, ...panels);
   const tabs = settingsTabs.map(([id], index) => {
     const b = textButton('', () => select(id)); b.id = `settings-tab-${id}`; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `settings-pane-${id}`);
     b.addEventListener('keydown', event => {
@@ -376,15 +381,15 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
     const index = Math.max(0, settingsTabs.findIndex(([value]) => value === id)), [chosen, text, build] = settingsTabs[index];
     let pane = panes.get(chosen); const fresh = !pane;
     if (!pane) {
-      const panel = el('div', undefined, 'settings-pane'); panel.id = `settings-pane-${chosen}`;
-      panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', `settings-tab-${chosen}`);
-      pane = { panel, close: () => undefined, saved: () => { status.textContent = `${text} saved.`; },
+      const own: Pane = pane = { panel: panels[index], close: () => undefined,
+        saved: () => { status.textContent = `${text} saved.`; for (const other of panes.values()) if (other !== own) void other.rebase?.(); },
+        busy: value => { if (value) saving.add(chosen); else saving.delete(chosen); },
         dirty: value => { if (value === unsaved.has(chosen)) return; if (value) { unsaved.add(chosen); status.textContent = ''; } else unsaved.delete(chosen); label(index); } };
-      panes.set(chosen, pane); page.panel.append(panel);
+      panes.set(chosen, pane);
     }
     status.textContent = '';
     tabs.forEach((b, at) => { b.setAttribute('aria-selected', String(at === index)); b.tabIndex = at === index ? 0 : -1; });
-    for (const [key, other] of panes) other.panel.hidden = key !== chosen;
+    panels.forEach((panel, at) => { panel.hidden = at !== index; });
     // Builders measure their content, so a pane is shown before it is built.
     if (fresh) build(pane, tag); else fitTaskRows();
     tabs[index].focus(); tabs[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -393,6 +398,8 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
   page.update = () => { for (const pane of panes.values()) pane.update?.(); };
   const close = page.close, leave = () => { close(); for (const pane of panes.values()) pane.close(); };
   page.close = () => {
+    // A save in flight settles first: its tab is still marked unsaved.
+    if (saving.size) return;
     if (!unsaved.size) { leave(); return; }
     const names = settingsTabs.filter(([id]) => unsaved.has(id)).map(([, text]) => text).join(', ');
     confirmAction('Discard changes?', `Unsaved changes in ${names} will be lost.`, async () => leave());
@@ -407,10 +414,10 @@ function configureComposer(modal: Pane): void {
   toggle.addEventListener('change', mark);
   // A changed start is ready to type into once the page closes.
   let saving = false, applied = false;
-  modal.close = () => { if (applied && !closing) composerEditor.view.focus(); };
+  modal.close = () => { if (applied && !closing && !layers.length) composerEditor.view.focus(); };
   const save = button('save', 'Save new task editor settings', async () => {
     if (readonly || closing || saving || !stateLoaded) return;
-    saving = true; save.disabled = toggle.disabled = true;
+    saving = true; save.disabled = toggle.disabled = true; modal.busy(true);
     const previous = state.composerStartAsMarkdown;
     state.composerStartAsMarkdown = toggle.checked;
     try {
@@ -418,7 +425,7 @@ function configureComposer(modal: Pane): void {
       if (!composerEditor.value || (previous && composerEditor.value === '# ')) setComposerDraft(newComposerDraft());
       applied = true; mark(); modal.saved();
     } catch (error) { state.composerStartAsMarkdown = previous; throw error; }
-    finally { saving = false; save.disabled = toggle.disabled = readonly; }
+    finally { saving = false; save.disabled = toggle.disabled = readonly; modal.busy(false); }
   }, readonly);
   controls(modal.panel).append(save);
 }
@@ -457,15 +464,17 @@ function configureKitty(modal: Pane): void {
     for (const input of radios) input.disabled = toggle.disabled;
     name.input.disabled = prompt.disabled = !stateLoaded || saving || readonly;
     save.disabled = name.input.disabled || !validKittyTabTitle(name.input.value) || !validKittyStartPrompt(prompt.value);
-    modal.dirty(name.input.value.trim() !== (state.kittyTabTitle ?? DEFAULT_KITTY_TAB_TITLE) || prompt.value !== (state.kittyStartPrompt ?? DEFAULT_KITTY_START_PROMPT)
-      || (!!settings && (toggle.checked !== settings.oneTaskPerTab || chosen() !== settings.onTaskComplete)));
+    modal.busy(saving);
+    modal.dirty(name.input.value.trim() !== (state.kittyTabTitle ?? DEFAULT_KITTY_TAB_TITLE) || prompt.value !== (state.kittyStartPrompt ?? DEFAULT_KITTY_START_PROMPT) || shared());
   };
+  const shared = () => !!settings && (toggle.checked !== settings.oneTaskPerTab || chosen() !== settings.onTaskComplete);
   // The shared file is read again after a save: its revision guards the next one.
-  const load = () => api.kittySettings().then(loaded => {
-    settings = loaded; toggle.checked = loaded.oneTaskPerTab;
-    for (const input of radios) input.checked = input.value === loaded.onTaskComplete;
+  const load = (keep = false) => api.kittySettings().then(loaded => {
+    const edited = keep && shared(); settings = loaded;
+    if (!edited) { toggle.checked = loaded.oneTaskPerTab; for (const input of radios) input.checked = input.value === loaded.onTaskComplete; }
     status.textContent = ''; update();
   }, error => { status.textContent = `Could not load Kitty settings: ${ipcMessage(error)}`; });
+  modal.rebase = () => load(true);
   const save = button('save', 'Save Kitty settings', async () => {
     if (saving || readonly || closing || !stateLoaded || !validKittyTabTitle(name.input.value) || !validKittyStartPrompt(prompt.value)) return;
     saving = true; status.textContent = ''; update();
@@ -530,6 +539,7 @@ function configureWindow(modal: Pane): void {
     for (const group of [position, size]) { group.remember.disabled = group.fixed.disabled = off; group.inputs.forEach(input => { input.disabled = off || !group.fixed.checked; }); }
     for (const view of views) view.input.disabled = off;
     save.disabled = off || !position.valid() || !size.valid();
+    modal.busy(saving);
     modal.dirty(!!settings && (!same(position.value(), settings.startup.position) || !same(size.value(), settings.startup.size) || views.find(view => view.input.checked)?.input.value !== settings.imageView));
   };
   const load = () => api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); for (const view of views) view.input.checked = view.input.value === loaded.imageView; status.textContent = ''; update(); },
@@ -786,7 +796,9 @@ function actionBlocked(task: Task, id: TaskAction): boolean {
 function configureTaskActions(modal: Pane): void {
   modal.panel.classList.add('action-settings');
   const draft = normalizeTaskActions(state.taskActions);
-  const mark = () => modal.dirty(JSON.stringify(normalizeTaskActions(draft)) !== JSON.stringify(normalizeTaskActions(state.taskActions)));
+  // Hidden actions are a set: their order carries no meaning.
+  const key = (settings: typeof state.taskActions) => { const all = normalizeTaskActions(settings); return JSON.stringify(TASK_ACTION_STATES.map(state => [all[state].order, [...all[state].hidden].sort(), all[state].row])); };
+  const mark = () => modal.dirty(key(draft) !== key(state.taskActions));
   let selected: TaskActionState = 'active', saving = false;
   const tabs = el('div', undefined, 'action-state-tabs');
   tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Task state');
@@ -924,7 +936,7 @@ function configureTaskActions(modal: Pane): void {
   const reset = button('reset', 'Restore default task actions', () => { if (readonly || saving) return; draft[selected] = defaultTaskActions()[selected]; draw(); }, readonly);
   const save = button('save', 'Save task actions', async () => {
     if (readonly || closing || saving || !stateLoaded) return;
-    saving = true; reset.disabled = save.disabled = true; draw();
+    saving = true; reset.disabled = save.disabled = true; modal.busy(true); draw();
     const previous = state.taskActions;
     state.taskActions = structuredClone(draft);
     try {
@@ -932,7 +944,7 @@ function configureTaskActions(modal: Pane): void {
     } catch (error) {
       state.taskActions = previous; renderTasks();
       throw error;
-    } finally { saving = false; reset.disabled = save.disabled = readonly; if (modal.panel.isConnected) draw(); }
+    } finally { saving = false; reset.disabled = save.disabled = readonly; modal.busy(false); if (modal.panel.isConnected) draw(); }
   }, readonly);
   bar.append(reset, save); draw(); fitWindow();
 }
@@ -1562,6 +1574,13 @@ function configureFields(modal: Pane): void {
     } catch (reason) { settings = undefined; draft = undefined; note = `Could not load fields: ${ipcMessage(reason)}`; }
     draw();
   };
+  modal.rebase = async () => {
+    if (!settings || busy) return;
+    busy = true; update();
+    try { const fresh = await api.fieldSettings(), keep = dirty(); settings = fresh; if (!keep) draft = structuredClone(fresh.footer); }
+    catch { /* The next save reports a file that cannot be read. */ }
+    finally { busy = false; draw(); }
+  };
   const addField = () => {
     if (!draft || busy) return;
     const name = newName.value.normalize('NFC').trim();
@@ -1582,7 +1601,7 @@ function configureFields(modal: Pane): void {
   const save = button('save', 'Save field settings', async () => {
     if (!settings || !draft || busy || readonly || !dirty() || footerProblem(draft)) return;
     busy = true; error = ''; update();
-    try { await api.saveFieldSettings(input(draft), settings.raw); note = 'Saved.'; await load(); void loadFieldDefinitions(); }
+    try { await api.saveFieldSettings(input(draft), settings.raw); note = 'Saved.'; await load(); void loadFieldDefinitions(); modal.saved(); }
     catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
@@ -1668,7 +1687,7 @@ function configureFields(modal: Pane): void {
       row.querySelector('.field-kind')!.textContent = type;
       row.title = `${item.name}: ${type}, ${item.enabled ? 'enabled' : 'disabled'}${item.saved ? '' : ', preset'}`; row.setAttribute('aria-label', row.title);
     }
-    modal.dirty(dirty());
+    modal.busy(busy); modal.dirty(dirty());
     status.textContent = error || problem || (dirty() ? 'Unsaved changes.' : note);
     status.classList.toggle('watcher-problem', !!(error || problem));
     save.disabled = busy || readonly || !dirty() || !!problem; revert.disabled = busy || !dirty(); add.disabled = newName.disabled = busy || !draft;
@@ -1733,6 +1752,13 @@ function configureWatchers(modal: Pane): void {
     } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${ipcMessage(error)}`; }
     draw();
   };
+  modal.rebase = async () => {
+    if (!settings || busy) return;
+    busy = true; update();
+    try { const fresh = await api.watcherSettings(), keep = dirty(); settings = fresh; if (!keep) draft = structuredClone(fresh.watchers); }
+    catch { /* The next save reports a file that cannot be read. */ }
+    finally { busy = false; draw(); }
+  };
   const add = button('add', 'Add watcher script…', async () => {
     if (!settings || busy) return;
     try {
@@ -1747,7 +1773,7 @@ function configureWatchers(modal: Pane): void {
   const save = button('save', 'Save watcher settings…', async () => {
     if (!settings || busy || !dirty()) return;
     busy = true; error = ''; update();
-    try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); } }
+    try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); modal.saved(); } }
     catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
@@ -1880,7 +1906,7 @@ function configureWatchers(modal: Pane): void {
     }
     refreshEditor();
     // A failed save stays visible until the next attempt or selection.
-    modal.dirty(dirty());
+    modal.busy(busy); modal.dirty(dirty());
     status.textContent = error || (dirty() ? 'Unsaved changes. Saving asks for confirmation.' : note);
     status.classList.toggle('watcher-problem', !!error);
     save.disabled = revert.disabled = busy || !dirty(); add.disabled = busy || !settings;

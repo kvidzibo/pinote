@@ -13,7 +13,7 @@ import { previewWindow } from './preview-window.ts';
 import { imageViewer } from './image-window.ts';
 import { IMAGE_VIEWS, TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
 import type { ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
-import { MAX_STATE_FILE_BYTES, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
+import { MAX_STATE_FILE_BYTES, MIN_WINDOW, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.enableSandbox();
@@ -403,7 +403,7 @@ async function boot() {
       const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100000;
       const least = minimum ?? 0;
       if (!valid(content) || !valid(least)) throw new Error('Invalid height');
-      const height = Math.max(content, least); contentHeight = height > content ? content : undefined;
+      const height = Math.max(content, least); contentHeight = height > content ? Math.max(MIN_WINDOW.height, Math.round(content)) : undefined;
       const top = fixedTop; fixedTop = undefined; if (!manualSize && !collapsed && window && Math.abs(window.getBounds().height - height) > 1) resize(fullSize.width,height,true,top);
     },
     collapse: (_event, value: unknown) => { if (typeof value !== 'boolean') throw new Error('Invalid collapse'); if (value === collapsed) return; fixedTop = undefined; if (value && window) { const [width,height] = window.getSize(); fullSize = {width,height}; } collapsed = value; resize(fullSize.width,value ? 132 : fullSize.height); },

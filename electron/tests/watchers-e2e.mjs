@@ -190,7 +190,20 @@ try {
   await openKitty(); assert.equal(await kittyTab.getAttribute('aria-selected'),'true','The last-used tab reopens');
   assert.equal(await oneTask.isChecked(),true,'The saved value loads');
   assert.equal(await completion('Close Pi and its pane').isChecked(),true,'The saved completion loads');
-  await page.keyboard.press('Escape');
+  // Both tabs write pi-note.json: a save in one leaves the other's unsaved draft saveable.
+  await page.locator('#settings-tab-watchers').click(); await list.getByRole('button',{name:/^GitHub PR:/}).click();
+  const removed = dialog.getByRole('group',{name:'Field events',exact:true}).getByRole('checkbox',{name:'removed',exact:true});
+  await removed.uncheck();
+  await page.locator('#settings-tab-kitty').click(); await completion('Close Pi').check();
+  await kitty.getByRole('button',{name:'Save Kitty settings',exact:true}).click(); await page.getByRole('dialog',{name:'Settings',exact:true}).getByText('Kitty saved.',{exact:true}).waitFor();
+  await page.locator('#settings-tab-watchers').click();
+  assert.equal(await removed.isChecked(),false,'The unsaved watcher draft is kept');
+  await saveAll();
+  assert.equal((await saved()).onTaskComplete,'close-pi');
+  // Hidden tabs stay out of the keyboard loop.
+  await page.getByRole('button',{name:'Back',exact:true}).focus(); await page.keyboard.press('Shift+Tab');
+  assert.ok(await page.evaluate(()=>document.querySelector('#settings-pane-watchers').contains(document.activeElement)),'Shift+Tab wraps to the visible tab');
+  await page.keyboard.press('Escape'); await dialog.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');
 } catch (error) {
