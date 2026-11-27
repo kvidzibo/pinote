@@ -106,7 +106,7 @@ test('Kitty existing address, exact launch envelope and literal argv, no shell',
   const launch = JSON.parse(calls[1].find((x: string) => x.startsWith('--env=PINOTE_LAUNCH_TASK=')).slice('--env=PINOTE_LAUNCH_TASK='.length));
   assert.deepEqual(launch, { task_id: Number(id), updated_at: note.updated_at, prompt });
   assert.deepEqual(calls[2].slice(3), ['set-tab-title', '--match=window_id:42', '--', title]); assert.deepEqual(calls[3].slice(3), ['focus-window', '--match=id:42']);
-  process.env.TEST_KITTY_FAIL = 'yes'; await assert.rejects(() => address(join(tools.bin, 'kitty')), /remote control failed/);
+  process.env.TEST_KITTY_FAIL = 'yes'; assert.equal(await address(join(tools.bin, 'kitty')), null);
   assert.equal(tools.calls().slice(4).every((a: string[]) => a[0] === '@' && a[2] === 'unix:@explicit'), true);
   await assert.rejects(() => remote(join(tools.bin, 'missing'), 'unix:@x', 'ls'), /remote control failed/);
 });
@@ -187,9 +187,11 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
   for (const tabTitle of ['', '   ', 'a\tb', '‮{title}', 'x'.repeat(257), 42])
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle } }, paths)).error.code, 'invalid');
   assert.equal(tools.calls().length, launches);
-  const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_FAIL = 'yes';
-  // Nothing launches when the explicit address is unreachable.
-  assert.deepEqual((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).error, { code: 'invalid', message: 'Kitty remote control failed at unix:@explicit: Error: simulated failure' });
+  const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_PREFIX = 'unix:@mykitty-';
+  // An unreachable explicit address, such as one inherited from a Kitty that has exited, falls back to a new window.
+  assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).ok, true); await sleep(300);
+  const fallback = tools.calls().slice(launches);
+  assert.deepEqual(fallback[0], ['@', '--to', 'unix:@explicit', 'ls']); assert.ok(fallback.some((a: string[]) => a[0] === '--session=none')); assert.equal(fallback.some((a: string[]) => a.includes('launch')), false);
 });
 test('interruption preserves signal status and prevents later Kitty launch steps', async () => {
   const tools = fakeTools(); process.env.KITTY_LISTEN_ON = 'unix:@explicit'; process.env.TEST_KITTY_DELAY_LS = 'yes';

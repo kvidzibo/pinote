@@ -30,7 +30,7 @@ export async function remote(kitty: string, address: string, ...args: string[]):
 export function kittyAddressEnv(): { explicit?: string; display?: string } {
   const explicit = checkedEnv('KITTY_LISTEN_ON');
   // macOS Kitty does not use X11; XQuartz's DISPLAY does not identify it.
-  return explicit ? { explicit } : macos() ? {} : { display: checkedEnv('DISPLAY')?.replace(/\.0$/, '') };
+  return { explicit, ...(macos() ? {} : { display: checkedEnv('DISPLAY')?.replace(/\.0$/, '') }) };
 }
 // macOS has no /proc or abstract sockets, so Kitty sockets live in $TMPDIR. Only a
 // private directory guarantees that a socket path still belongs to this user when the
@@ -58,7 +58,8 @@ function macosSockets(): string[] {
 }
 export async function address(kitty: string): Promise<string | null> {
   const { explicit, display } = kittyAddressEnv();
-  if (explicit) { await remote(kitty, explicit, 'ls'); return explicit; }
+  // Pinote may outlive the Kitty it inherited KITTY_LISTEN_ON from; then search like without it.
+  if (explicit) try { await remote(kitty, explicit, 'ls'); return explicit; } catch { /* Stale or unavailable instance. */ }
   if (macos()) {
     for (const target of macosSockets()) {
       try { await remote(kitty, target, 'ls'); return target; } catch { /* Stale or unavailable instance. */ }

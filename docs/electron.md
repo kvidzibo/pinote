@@ -215,8 +215,9 @@ Requirements:
 - `kitty` and `pi` in absolute `PATH` directories, the
   [pi-note extension](../pi/README.md), and a `note` CLI using the same database.
 - To reuse Kitty, enable `allow_remote_control socket-only` and point
-  `KITTY_LISTEN_ON` at its socket; if that address is unreachable, launch fails.
-- Without `KITTY_LISTEN_ON`, Pinote searches same-user Kitty instances on the same
+  `KITTY_LISTEN_ON` at its socket.
+- Without `KITTY_LISTEN_ON`, or if its address is unreachable (for example after
+  Kitty restarts), Pinote searches same-user Kitty instances on the same
   X11 display at `unix:@mykitty-<pid>` (`listen_on unix:@mykitty`). If none is
   reachable, it opens a new window without restoring saved tabs.
 
@@ -239,7 +240,7 @@ with Pi through `pi-note.json`.
 
 On macOS, Pinote also looks for `kitty` in `/Applications/kitty.app` and
 `~/Applications/kitty.app`, for `pi` in `~/.pi/agent/bin`, and for both in
-`/opt/homebrew/bin` and `/usr/local/bin`. Without `KITTY_LISTEN_ON`, it reuses
+`/opt/homebrew/bin` and `/usr/local/bin`. Without a reachable `KITTY_LISTEN_ON`, it reuses
 same-user Kitty sockets named `mykitty-<pid>` in the private per-user `$TMPDIR`;
 configure `allow_remote_control socket-only` and `listen_on unix:mykitty`. New
 windows also listen in `$TMPDIR`; a shared one, such as `/tmp`, is refused.
