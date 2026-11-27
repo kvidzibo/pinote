@@ -41,7 +41,7 @@ at the top. All search terms must match the title, description, tag or numeric I
 | **Tab** | Opens **Settings**; **Tab** or **Escape** returns with the search kept |
 | **Escape** / **Ctrl+R** | Back / refresh |
 | **Clear selection** | Deselects; progress is unchanged |
-| **Preview** | Scrollable read-only document |
+| **Preview** | Scrollable read-only document; above 20,000 characters it says to read through the CLI instead |
 | **Insert task prompt…** | Reviews, then inserts into an empty editor only; never submits |
 
 In the menu, creation, suggestion acceptance and shared setting changes need a
@@ -132,7 +132,8 @@ in Pi**) applies after you complete the selected task from the menu or footer:
 
 - `close-pi` (default): exit Pi. A **Start in Kitty…** tab closes with it.
 - `close-pane`: exit Pi, then close its Kitty pane, ending the shell Pi ran in.
-  **Complete task and exit** closes the pane too.
+  **Complete task and exit** closes the pane too. Both need local Kitty remote
+  control to identify the pane; otherwise only Pi exits.
 - `keep-open`: keep the conversation and editor.
 
 An externally completed task, or a failed or uncertain completion, never closes
@@ -246,8 +247,8 @@ pi.events.on('pinote:task-completed', (event) => {
   and avoid blocking synchronous work.
 - On teardown, `signal.reason` is Pi's shutdown reason (`quit`, `reload`, `new`,
   `resume` or `fork`).
-- Rejection, timeout or cancellation never undo the completion or retry writes;
-  they produce only a generic warning. An exception thrown before `waitUntil`
+- Rejection, timeout or cancellation never undo the completion or retry writes.
+  Rejection and timeout produce only a generic warning when UI is available. An exception thrown before `waitUntil`
   registers goes to Pi's own logger, which may print its raw text.
 
 This is a trusted local extension API, not task instructions or authorization to

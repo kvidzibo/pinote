@@ -5,7 +5,7 @@ Independently enabled executables that run on task-field and task changes. The
 Pi sessions read the saved results and receive the alerts. Pi never runs
 watchers, and no extra daemon is installed.
 
-Requires **note 0.25.0+** (task events: **0.27.0+**) and pi-note **0.47.0+**.
+Requires **note 0.25.0+** (task events: **0.27.0+**); in Pi, pi-note **0.47.0+**.
 
 > Watchers are **trusted code, not sandboxed**. They run with the desktop user's
 > permissions, environment and credentials. Enabling one authorizes its alerts to
@@ -347,8 +347,9 @@ a minute.
 **Alerts.**
 
 - Alerts belong to the conversation that last explicitly selected or updated the
-  task; other sessions still see field status. None is delivered while that
-  conversation has another task selected.
+  task; for an unowned task, the first selected-task view claims them. Other
+  sessions still see field status. None is delivered while that conversation
+  has another task selected.
 - Pi triggers one worker turn per current alert; several PR alerts arrive as one
   group. Busy workers defer delivery until idle, then recheck ownership,
   selection and status. A closed Pi is never launched.

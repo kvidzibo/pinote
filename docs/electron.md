@@ -144,7 +144,9 @@ once and shown on its own line; the text keeps a short
   **Start in Kitty…**, **Copy**, **Edit**, **Reminder**, and **Tag**. Navigate
   with arrow keys or **Home/End**, activate with **Enter/Space**, and dismiss
   with **Close**, **Escape**, **Tab** or a click outside.
-- Right-click an in-progress task's checkmark to reset progress.
+- Right-click a row action (other than Preview): on an unstarted task it marks
+  the task for deletion, on an in-progress task it resets progress, and on a
+  marked task it deletes (archives) the task.
 - While the pointer is inside the window, rows keep their order and section even
   after a state change. Completed, archived and filtered-out tasks still disappear.
 - **Menu → Task actions…** configures the row separately for **Not started**,
