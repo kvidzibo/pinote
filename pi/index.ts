@@ -71,10 +71,11 @@ export default function pinote(pi: ExtensionAPI): void {
       const branch = ctx.sessionManager.getBranch();
       let carried = reason === 'new' && previous ? transfers.get(previous) : undefined;
       let launch: { task_id: number; updated_at: string } | undefined;
-      let prompt: string | undefined;
+      let prompt: string | undefined, pickedUp = false;
+      const fresh = reason === 'startup' && !branch.some((entry) => entry.type === 'message' || entry.type === 'custom' && entry.customType === ENTRY_TYPE);
       if (request) {
         try {
-          if (reason !== 'startup' || branch.some((entry) => entry.type === 'message' || entry.type === 'custom' && entry.customType === ENTRY_TYPE)) throw new Error('Launch requires a fresh Pi session');
+          if (!fresh) throw new Error('Launch requires a fresh Pi session');
           const parsed = JSON.parse(request);
           if (!parsed || !Number.isSafeInteger(parsed.task_id) || parsed.task_id < 1 ||
               typeof parsed.updated_at !== 'string' || !parsed.updated_at.length || parsed.updated_at.length > 128) throw new Error('Invalid launch request');
@@ -101,9 +102,20 @@ export default function pinote(pi: ExtensionAPI): void {
           if (ctx.ui.getEditorText().length) ctx.ui.notify('Launch draft not inserted: the editor already contains a draft.', 'warning');
           else ctx.ui.setEditorText(prompt);
         }
+        if (ctx.mode === 'tui' && session.view?.state.selectedId === launch.task_id) await kitty.claim(launch.task_id, session.signal);
+      } else if ((fresh || reason === 'new') && ctx.mode === 'tui' && session.view?.state.selectedId == null) {
+        // A new conversation in a Kitty tab named after a task continues it, unless another Pi in the tab
+        // holds that task. Opening Pi there is the consent; resume and reload never pick up.
+        const view = session.view, id = await kitty.tabTask(session.signal);
+        const control = id === undefined ? undefined : view?.controls.find((item) => item.id === `select:${id}` && item.kind === 'action');
+        if (view && control) {
+          try { await session.action(view, control); } catch { /* Reported below; never retried. */ }
+          pickedUp = session.view?.state.selectedId === id;
+          ctx.ui.notify(pickedUp ? `Pinote: continuing this Kitty tab's task #${id}.` : `Pinote: this Kitty tab's task #${id} was not selected. Use /pinote to select manually.`, pickedUp ? 'info' : 'warning');
+        }
       }
       if (reason === 'new' && previous) transfers.delete(previous);
-      if (reason === 'new' || (launch && session.view?.state.selectedId === launch.task_id)) await showStartupTask(pi, ctx, session);
+      if (reason === 'new' || pickedUp || (launch && session.view?.state.selectedId === launch.task_id)) await showStartupTask(pi, ctx, session);
     } catch (error) {
       // Fixed strings only: CLI output is never shown.
       ctx.ui.notify(error instanceof PinoteFailure ? error.message : 'Pinote unavailable or launch task changed: check the note CLI and task revision. Use /pinote to select manually; launch requests are never retried.', 'warning');

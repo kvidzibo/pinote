@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
@@ -9,13 +11,22 @@ const PR_VAR = 'pinote_pr';
 export type PRStatus = 'failing' | 'pending' | 'passing' | 'merged';
 type Exec = ExtensionAPI['exec'];
 type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown>; foreground_processes?: { pid?: unknown }[] };
-type OsWindow = { tabs?: { is_active?: unknown; windows?: Window[] }[] };
+type Tab = { id?: unknown; is_active?: unknown; windows?: Window[] };
+type OsWindow = { tabs?: Tab[] };
 
 /** This pane in a local Kitty with remote control; SSH and other terminals are left alone. */
 function pane(): { window: string; socket: string } | undefined {
   const window = process.env.KITTY_WINDOW_ID, socket = process.env.KITTY_LISTEN_ON;
   if (!window || !/^[1-9]\d*$/.test(window) || !socket || process.env.SSH_CONNECTION || process.env.SSH_TTY) return undefined;
   return { window, socket };
+}
+
+/** Where this Kitty's tabs record the task they were named after, one file per tab. Kitty has no tab
+ * variables, and a pane's own variables go with it. Private per-user storage; unavailable elsewhere. */
+function tabRecords(): { dir: string; prefix: string } | undefined {
+  const base = process.env.XDG_RUNTIME_DIR || (process.platform === 'darwin' ? process.env.TMPDIR : undefined), kitty = process.env.KITTY_PID;
+  if (!base || !isAbsolute(base) || !kitty || !/^[1-9]\d*$/.test(kitty)) return undefined;
+  return { dir: join(base, 'pinote', 'kitty-tabs'), prefix: `${kitty}-` };
 }
 
 let closing = false;
@@ -60,6 +71,42 @@ export class KittyPane {
     if (result.code !== 0 || result.killed) throw new Error('Kitty remote control failed');
     return result;
   }
+  /** The tab holding this pane. */
+  private async tab(target: { window: string; socket: string }, signal?: AbortSignal): Promise<Tab | undefined> {
+    const id = Number(target.window);
+    for (const os of JSON.parse((await this.kitty(target.socket, ['ls'], signal)).stdout) as OsWindow[])
+      for (const tab of os.tabs ?? []) if (tab.windows?.some((window) => window.id === id)) return tab;
+  }
+  /** Record that this pane's tab belongs to a task, so a later Pi in the tab can continue it. Best effort. */
+  async claim(taskId: number, signal?: AbortSignal): Promise<void> {
+    const target = pane(), records = tabRecords();
+    if (!target || !records) return;
+    try {
+      const tab = await this.tab(target, signal);
+      if (!Number.isSafeInteger(tab?.id)) return;
+      mkdirSync(records.dir, { recursive: true, mode: 0o700 });
+      // A later Kitty can reuse a process ID and its tab IDs: drop records of Kitty instances that have exited.
+      for (const name of readdirSync(records.dir)) {
+        try { process.kill(Number(name.split('-')[0]), 0); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(records.dir, name), { force: true }); }
+      }
+      writeFileSync(join(records.dir, `${records.prefix}${tab!.id}`), String(taskId));
+    } catch { /* The tab only loses its automatic pickup. */ }
+  }
+  /** The task this pane's tab belongs to, unless another pane in the tab holds it: one agent per task. */
+  async tabTask(signal?: AbortSignal): Promise<number | undefined> {
+    const target = pane(), records = tabRecords();
+    if (!target || !records) return;
+    try {
+      if (!readdirSync(records.dir).some((name) => name.startsWith(records.prefix))) return; // No Kitty call for nothing.
+      const tab = await this.tab(target, signal);
+      if (!Number.isSafeInteger(tab?.id)) return;
+      const task = readFileSync(join(records.dir, `${records.prefix}${tab!.id}`), 'utf8');
+      if (!/^[1-9]\d{0,14}$/.test(task)) return;
+      if (tab!.windows!.some((window) => window.id !== Number(target.window) && window.user_vars?.[TASK_VAR] === task)) return;
+      return Number(task);
+    } catch { return; }
+  }
   /** Record this pane's selected task (or none) and its PR state, in order. A failed update is retried on later calls,
    * at most three times per value, so a stale marker cannot split another pane indefinitely. */
   mark(taskId: number | null, pr?: PRStatus): Promise<void> {
@@ -102,10 +149,9 @@ export class KittyPane {
       if (oneTaskPerTab) {
         const id = Number(target.window);
         let shared = false, active = false;
-        for (const os of JSON.parse((await this.kitty(target.socket, ['ls'], signal)).stdout) as OsWindow[]) for (const tab of os.tabs ?? []) {
-          const self = tab.windows?.find((window) => window.id === id);
-          if (!self) continue;
-          active = tab.is_active === true && self.is_active === true;
+        const tab = await this.tab(target, signal);
+        if (tab) {
+          active = tab.is_active === true && tab.windows!.find((window) => window.id === id)!.is_active === true;
           shared = tab.windows!.some((window) => {
             const task = window.user_vars?.[TASK_VAR];
             return window.id !== id && typeof task === 'string' && task !== '' && task !== String(taskId);
@@ -131,5 +177,6 @@ export class KittyPane {
     } catch {
       return signal.aborted ? undefined : 'Pinote task selected, but the Kitty tab could not be renamed.';
     }
+    await this.claim(taskId, signal);
   }
 }
