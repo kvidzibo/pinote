@@ -20,6 +20,7 @@ timestamp alone does not add another task-context update to the model conversati
 
 Requires **Pi 1.4.0+**, **Node.js 22.19+** and the Node **note 0.26.0+** CLI on
 `PATH` ([CLI install](../docs/usage.md#install)); Python is not needed.
+`pinote_get_image`, which shows the agent images pasted into tasks, needs note 0.30.0+.
 
 ```sh
 pi install npm:pi-note
@@ -192,7 +193,7 @@ Pinote does not display their error or response text. This is a trusted local ex
 
 ### Agent tools and context
 
-The extension registers `pinote_search`, `pinote_get_task`, `pinote_get_current`,
+The extension registers `pinote_search`, `pinote_get_task`, `pinote_get_current`, `pinote_get_image`,
 `pinote_update_current`, `pinote_fields`, `pinote_tags`, `pinote_propose`, and
 `pinote_suggest_later`.
 Default guidance suggests tasks only for substantial work requiring changes, not

@@ -93,7 +93,8 @@ async function executable(command: string): Promise<string | null> {
 }
 async function note(args: string[], signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
-  const options = { signal, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 };
+  // A stored image is at most 4 MiB, about 5.6 MiB as base64.
+  const options = { signal, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 };
   const command = noteCommand(), identity = await executable(command);
   if (identity === null || !supported.has(identity)) {
     const version = (await exec(command, ['--version'], options)).stdout.trim();
@@ -653,6 +654,12 @@ return {
       const args = ExistingProposal.parse(input);
       result = JSON.parse(await note(['agent', 'get', String(args.task_id)], signal));
     } else if (name === 'get_current') result = await selected(state, signal);
+    else if (name === 'get_image') {
+      const args = z.object({ hash: z.string().regex(/^[0-9a-f]{64}$/) }).strict().parse(input);
+      // The hash is already valid, so a usage error (exit 2) means a note CLI before 0.30.0, which is otherwise still usable.
+      try { result = JSON.parse(await note(['agent', 'image', args.hash], signal)); }
+      catch (error) { if ((error as { code?: unknown }).code !== 2) throw error; result = { unsupported: true }; }
+    }
     else if (name === 'fields') {
       const config = settings().config;
       result = { ...config, fields: fields(config) };
