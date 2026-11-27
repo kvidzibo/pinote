@@ -304,7 +304,7 @@ async function boot() {
       if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing fields.');
       if (closing || footer === null || typeof footer !== 'object' || Array.isArray(footer) || !(raw === null || typeof raw === 'string') ||
         Buffer.byteLength(JSON.stringify([footer, raw])) > 2 * 1024 * 1024) throw new Error('Invalid field settings');
-      (await watcherHost()).saveFieldSettings(footer, raw);
+      return (await watcherHost()).saveFieldSettings(footer, raw);
     },
     // A new base folder must come from the folder picker: the backend creates tag folders inside it.
     'save-state': async (_event, value: unknown) => {
@@ -366,8 +366,7 @@ async function boot() {
           detail: trusted.length ? `Enabled watchers are trusted code, not sandboxed. They run with your permissions and credentials while Pinote is open:\n\n${trusted.join('\n')}` : 'No watcher will be enabled.',
           buttons: ['Cancel', 'Save'], defaultId: 0, cancelId: 0 });
         if (result.response !== 1) return false;
-        host.saveWatcherSettings(entries, raw);
-        return true;
+        return host.saveWatcherSettings(entries, raw);
       } finally { watcherSaving = false; }
     },
     'kitty-settings': async () => (await watcherHost()).kittySettings(),
@@ -375,7 +374,7 @@ async function boot() {
       if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing Kitty settings.');
       if (closing || typeof oneTaskPerTab !== 'boolean' || !TASK_COMPLETION_ACTIONS.includes(onTaskComplete as TaskCompletionAction) ||
         !(raw === null || typeof raw === 'string' && Buffer.byteLength(raw) <= 2 * 1024 * 1024)) throw new Error('Invalid Kitty settings');
-      (await watcherHost()).saveKittySettings(oneTaskPerTab, onTaskComplete, raw);
+      return (await watcherHost()).saveKittySettings(oneTaskPerTab, onTaskComplete, raw);
     },
     'window-settings': () => {
       const current = window!.getBounds();

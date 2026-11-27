@@ -203,7 +203,16 @@ try {
   // Hidden tabs stay out of the keyboard loop.
   await page.getByRole('button',{name:'Back',exact:true}).focus(); await page.keyboard.press('Shift+Tab');
   assert.ok(await page.evaluate(()=>document.querySelector('#settings-pane-watchers').contains(document.activeElement)),'Shift+Tab wraps to the visible tab');
-  await page.keyboard.press('Escape'); await dialog.waitFor({state:'detached'});
+  // A change made elsewhere is not adopted: after a tab that read it saves, the older draft is still refused.
+  await removed.check();
+  await writeFile(settingsFile,`${await readFile(settingsFile,'utf8')}\n`);
+  await page.locator('#settings-tab-fields').click();
+  const fields = page.locator('#settings-pane-fields'), fieldSave = fields.getByRole('button',{name:'Save field settings',exact:true});
+  await fields.getByRole('checkbox',{name:'Agents maintain this field',exact:true}).click();
+  await fieldSave.click(); await page.getByRole('dialog',{name:'Settings',exact:true}).getByText('Fields saved.',{exact:true}).waitFor();
+  await page.locator('#settings-tab-watchers').click(); await save.click();
+  await status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true}).waitFor();
+  await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');
 } catch (error) {

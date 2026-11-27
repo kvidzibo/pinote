@@ -145,15 +145,16 @@ export type PreviewApi = {
 export type PinoteApi = BackendApi & {
   /** Every field definition, or none when pi-note.json cannot be read. */
   agentFields(): Promise<FieldDefinition[]>;
-  fieldSettings(): Promise<FieldSettings>; saveFieldSettings(footer: FooterInput, raw: string | null): Promise<void>;
+  fieldSettings(): Promise<FieldSettings>; saveFieldSettings(footer: FooterInput, raw: string | null): Promise<string>;
   openPreview(request: PreviewRequest): Promise<boolean>;
   updatePreview(token: number, data: PreviewData | null): Promise<void>;
   onPreviewClosed(callback: (token: number, edit: boolean) => void): void;
   popupMenu(request: MenuRequest): Promise<MenuAction | null>;
   loadState(): Promise<UIState>; saveState(state: UIState): Promise<void>; acknowledgeWarning(): Promise<boolean>;
   watcherSettings(): Promise<WatcherSettings>; chooseWatcher(): Promise<Watcher | null>;
-  saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<boolean>;
-  kittySettings(): Promise<KittySettings>; saveKittySettings(oneTaskPerTab: boolean, onTaskComplete: TaskCompletionAction, raw: string | null): Promise<void>;
+  /** The saves of the file shared with Pi resolve to its written text; a watcher save declined in its confirmation, to false. */
+  saveWatchers(watchers: WatcherEntry[], raw: string | null): Promise<string | false>;
+  kittySettings(): Promise<KittySettings>; saveKittySettings(oneTaskPerTab: boolean, onTaskComplete: TaskCompletionAction, raw: string | null): Promise<string>;
   windowSettings(): Promise<WindowSettings>; saveWindowSettings(startup: WindowStartup, imageView: ImageView): Promise<void>;
   chooseFolder(): Promise<string | null>; copy(text: string): Promise<void>; openLink(url: string): Promise<void>;
   /** Opens a stored image; true means this window should show it itself. */

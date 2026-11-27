@@ -788,7 +788,12 @@ try {
     const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
     const settings = page.locator('#settings-pane-editor');
     const open = () => openSettingsTab(page,'editor');
-    const save = async () => { await settings.getByRole('button',{name:'Save new task editor settings',exact:true}).click(); await settingsSaved(page,'Editor'); await closeSettings(page); };
+    // Saved from the keyboard: the button is disabled meanwhile, and focus must stay in the page.
+    const save = async () => {
+      await settings.getByRole('button',{name:'Save new task editor settings',exact:true}).focus(); await page.keyboard.press('Enter'); await settingsSaved(page,'Editor');
+      await page.waitForFunction(()=>document.querySelector('.settings-page')?.contains(document.activeElement));
+      await closeSettings(page);
+    };
     const waitSavedDraft = async text => {
       for(let i=0;i<200;i++) {
         if((await page.evaluate(()=>window.pinote.loadState())).draft===text) return;

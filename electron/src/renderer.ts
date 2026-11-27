@@ -342,8 +342,10 @@ async function openMenu(event: MouseEvent): Promise<void> {
   }
 }
 // One page hosts every settings section. A pane has the layer members its builder uses.
-// `rebase` follows a save of the file shared with Pi by another tab: take its revision, keep this draft.
-type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean) => void; busy: (value: boolean) => void; saved: () => void; rebase?: () => unknown };
+// Tabs sharing pi-note.json pass `saved` the revision they replaced and the one they wrote. `rebase` gives it to
+// the other tabs: one holding the replaced revision takes the new one and keeps its draft, any other stays stale.
+type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean) => void; busy: (value: boolean) => void;
+  saved: (from?: string | null, to?: string) => void; rebase?: (from: string | null, to: string) => void };
 const settingsTabs: [SettingsTab, string, (pane: Pane, tag?: string) => void][] = [
   ['tags', 'Tags', manageTags], ['actions', 'Actions', configureTaskActions], ['editor', 'Editor', configureComposer], ['fields', 'Fields', configureFields],
   ['watchers', 'Watchers', configureWatchers], ['kitty', 'Kitty', configureKitty], ['window', 'Window', configureWindow],
@@ -356,6 +358,7 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
   header.replaceChildren(button('back', 'Back', () => page.close()), header.querySelector('h2')!, status);
   const strip = el('div', undefined, 'settings-tabs'); strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', 'Settings sections');
   const panes = new Map<SettingsTab, Pane>(), unsaved = new Set<SettingsTab>(), saving = new Set<SettingsTab>();
+  let focused: HTMLElement | null = null;
   const panels = settingsTabs.map(([id]) => {
     const panel = el('div', undefined, 'settings-pane'); panel.id = `settings-pane-${id}`; panel.hidden = true;
     panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', `settings-tab-${id}`); return panel;
@@ -382,8 +385,13 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
     let pane = panes.get(chosen); const fresh = !pane;
     if (!pane) {
       const own: Pane = pane = { panel: panels[index], close: () => undefined,
-        saved: () => { status.textContent = `${text} saved.`; for (const other of panes.values()) if (other !== own) void other.rebase?.(); },
-        busy: value => { if (value) saving.add(chosen); else saving.delete(chosen); },
+        saved: (from, to) => { status.textContent = `${text} saved.`; if (from !== undefined && to !== undefined) for (const other of panes.values()) if (other !== own) other.rebase?.(from, to); },
+        // A save disables its focused button: focus returns to the page once it settles.
+        busy: value => {
+          if (value) { if (!saving.has(chosen)) focused = document.activeElement as HTMLElement | null; saving.add(chosen); return; }
+          if (!saving.delete(chosen) || layers[layers.length - 1] !== page || page.panel.contains(document.activeElement)) return;
+          (focused?.isConnected && !(focused as HTMLButtonElement).disabled && focused.getClientRects().length ? focused : tabs[index]).focus();
+        },
         dirty: value => { if (value === unsaved.has(chosen)) return; if (value) { unsaved.add(chosen); status.textContent = ''; } else unsaved.delete(chosen); label(index); } };
       panes.set(chosen, pane);
     }
@@ -469,12 +477,12 @@ function configureKitty(modal: Pane): void {
   };
   const shared = () => !!settings && (toggle.checked !== settings.oneTaskPerTab || chosen() !== settings.onTaskComplete);
   // The shared file is read again after a save: its revision guards the next one.
-  const load = (keep = false) => api.kittySettings().then(loaded => {
-    const edited = keep && shared(); settings = loaded;
-    if (!edited) { toggle.checked = loaded.oneTaskPerTab; for (const input of radios) input.checked = input.value === loaded.onTaskComplete; }
+  const load = () => api.kittySettings().then(loaded => {
+    settings = loaded; toggle.checked = loaded.oneTaskPerTab;
+    for (const input of radios) input.checked = input.value === loaded.onTaskComplete;
     status.textContent = ''; update();
   }, error => { status.textContent = `Could not load Kitty settings: ${ipcMessage(error)}`; });
-  modal.rebase = () => load(true);
+  modal.rebase = (from, to) => { if (settings?.raw === from) settings.raw = to; };
   const save = button('save', 'Save Kitty settings', async () => {
     if (saving || readonly || closing || !stateLoaded || !validKittyTabTitle(name.input.value) || !validKittyStartPrompt(prompt.value)) return;
     saving = true; status.textContent = ''; update();
@@ -489,8 +497,8 @@ function configureKitty(modal: Pane): void {
       }
       // Only changed values rewrite the file shared with Pi.
       const action = chosen() ?? settings?.onTaskComplete;
-      if (settings && action && (toggle.checked !== settings.oneTaskPerTab || action !== settings.onTaskComplete)) { await api.saveKittySettings(toggle.checked, action, settings.raw); await load(); }
-      modal.saved();
+      if (settings && action && (toggle.checked !== settings.oneTaskPerTab || action !== settings.onTaskComplete)) { const from = settings.raw, to = await api.saveKittySettings(toggle.checked, action, from); modal.saved(from, to); await load(); }
+      else modal.saved();
     } catch (error) { status.textContent = ipcMessage(error); }
     finally { saving = false; update(); }
   }, true);
@@ -540,7 +548,7 @@ function configureWindow(modal: Pane): void {
     for (const view of views) view.input.disabled = off;
     save.disabled = off || !position.valid() || !size.valid();
     modal.busy(saving);
-    modal.dirty(!!settings && (!same(position.value(), settings.startup.position) || !same(size.value(), settings.startup.size) || views.find(view => view.input.checked)?.input.value !== settings.imageView));
+    modal.dirty(!!settings && (!position.valid() || !size.valid() || !same(position.value(), settings.startup.position) || !same(size.value(), settings.startup.size) || views.find(view => view.input.checked)?.input.value !== settings.imageView));
   };
   const load = () => api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); for (const view of views) view.input.checked = view.input.value === loaded.imageView; status.textContent = ''; update(); },
     error => { status.textContent = `Could not load window settings: ${ipcMessage(error)}`; });
@@ -1574,13 +1582,7 @@ function configureFields(modal: Pane): void {
     } catch (reason) { settings = undefined; draft = undefined; note = `Could not load fields: ${ipcMessage(reason)}`; }
     draw();
   };
-  modal.rebase = async () => {
-    if (!settings || busy) return;
-    busy = true; update();
-    try { const fresh = await api.fieldSettings(), keep = dirty(); settings = fresh; if (!keep) draft = structuredClone(fresh.footer); }
-    catch { /* The next save reports a file that cannot be read. */ }
-    finally { busy = false; draw(); }
-  };
+  modal.rebase = (from, to) => { if (settings?.raw === from) settings.raw = to; };
   const addField = () => {
     if (!draft || busy) return;
     const name = newName.value.normalize('NFC').trim();
@@ -1601,7 +1603,7 @@ function configureFields(modal: Pane): void {
   const save = button('save', 'Save field settings', async () => {
     if (!settings || !draft || busy || readonly || !dirty() || footerProblem(draft)) return;
     busy = true; error = ''; update();
-    try { await api.saveFieldSettings(input(draft), settings.raw); note = 'Saved.'; await load(); void loadFieldDefinitions(); modal.saved(); }
+    try { const from = settings.raw; modal.saved(from, await api.saveFieldSettings(input(draft), from)); note = 'Saved.'; await load(); void loadFieldDefinitions(); }
     catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
@@ -1738,7 +1740,9 @@ function configureWatchers(modal: Pane): void {
   const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, appEvents: w.appEvents, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
     timeoutSeconds: w.timeoutSeconds, cooldownSeconds: w.cooldownSeconds,
     params: Object.fromEntries(Object.entries(w.params).map(([key, value]) => [key, Array.isArray(value) ? value.filter(row => Object.keys(row).length) : value] as const).filter(([, value]) => !empty(value))) });
-  const dirty = () => !!settings && JSON.stringify(draft.map(entry)) !== JSON.stringify(settings.watchers.map(entry));
+  // Parameters compare by key: clearing and refilling one moves it to the end.
+  const saved = (list: Watcher[]) => JSON.stringify(list.map(entry).map(item => ({ ...item, params: Object.entries(item.params).sort(([a], [b]) => a < b ? -1 : 1) })));
+  const dirty = () => !!settings && saved(draft) !== saved(settings.watchers);
   const limitLabels = { timeoutSeconds: 'Time limit', cooldownSeconds: 'Cooldown' } as const;
   const problem = (w: Watcher) => {
     const missing = w.spec.find(param => param.required && empty(entry(w).params[param.key]));
@@ -1752,13 +1756,7 @@ function configureWatchers(modal: Pane): void {
     } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${ipcMessage(error)}`; }
     draw();
   };
-  modal.rebase = async () => {
-    if (!settings || busy) return;
-    busy = true; update();
-    try { const fresh = await api.watcherSettings(), keep = dirty(); settings = fresh; if (!keep) draft = structuredClone(fresh.watchers); }
-    catch { /* The next save reports a file that cannot be read. */ }
-    finally { busy = false; draw(); }
-  };
+  modal.rebase = (from, to) => { if (settings?.raw === from) settings.raw = to; };
   const add = button('add', 'Add watcher script…', async () => {
     if (!settings || busy) return;
     try {
@@ -1773,7 +1771,7 @@ function configureWatchers(modal: Pane): void {
   const save = button('save', 'Save watcher settings…', async () => {
     if (!settings || busy || !dirty()) return;
     busy = true; error = ''; update();
-    try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); modal.saved(); } }
+    try { const from = settings.raw, to = await api.saveWatchers(draft.map(entry), from); if (to !== false) { modal.saved(from, to); note = 'Saved.'; await load(); } }
     catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
