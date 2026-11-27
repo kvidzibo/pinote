@@ -5,6 +5,7 @@ import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPat
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, realpathUtf8, resolvePath, expandHome, checkProfileIdentity, checkedEnv, InputEncodingError, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
+import { validImageHash } from './images.ts';
 import * as notify from './notify.ts';
 
 const COMMANDS = new Set(['add', 'list', 'done', 'start', 'rm', 'restore', 'history', 'events', 'field-events', 'task-events', 'show', 'import', 'export', 'schedule', 'reminders', 'agent']);
@@ -41,7 +42,7 @@ export interface Arguments {
   text?: string[]; when?: string; path?: string; all?: boolean; json?: boolean;
   after?: bigint; limit: number; cwd?: string; expected_updated_at?: string;
   pi_session_id?: string; set_json: string; remove: string[]; tag?: string; clear?: boolean;
-  help?: boolean; version?: boolean; agent_text?: string;
+  help?: boolean; version?: boolean; agent_text?: string; hash?: string;
 }
 export function arguments_(input: string[]): Arguments {
   let argv = [...input];
@@ -57,7 +58,7 @@ export function arguments_(input: string[]): Arguments {
   if (args.command === 'agent') {
     if (['-h', '--help'].includes(argv[0])) { args.help = true; return args; }
     args.agent_action = argv.shift();
-    if (!['get', 'selected', 'select', 'start', 'update', 'done', 'add', 'tag', 'tags'].includes(args.agent_action ?? '')) throw new ArgumentError('the following arguments are required: agent_action');
+    if (!['get', 'selected', 'select', 'start', 'update', 'done', 'add', 'tag', 'tags', 'image'].includes(args.agent_action ?? '')) throw new ArgumentError('the following arguments are required: agent_action');
   }
   const positionals: string[] = [];
   const allowed = new Set<string>(args.command === 'agent' ? [] : ['--no-notify']);
@@ -116,8 +117,9 @@ export function arguments_(input: string[]): Arguments {
     if (action === 'tag' && (args.clear ? args.tag !== undefined : args.tag === undefined)) throw new ArgumentError('one of the arguments --tag --clear is required (and mutually exclusive)');
   }
   if (positionals.length > count) throw new ArgumentError(`unrecognized arguments: ${positionals.slice(count).join(' ')}`);
-  if (positionals.length < count && !optional) throw new ArgumentError(`the following arguments are required: ${args.command === 'import' ? 'path' : positionals.length ? 'when' : 'id'}`);
+  if (positionals.length < count && !optional) throw new ArgumentError(`the following arguments are required: ${args.command === 'import' ? 'path' : args.agent_action === 'image' ? 'hash' : positionals.length ? 'when' : 'id'}`);
   if (args.command === 'import') args.path = positionals[0];
+  else if (args.agent_action === 'image') { if (!validImageHash(positionals[0])) throw new ArgumentError('hash must be 64 lowercase hexadecimal characters'); args.hash = positionals[0]; }
   else if (positionals.length) { args.id = positive_id(positionals[0]); if (args.command === 'schedule') args.when = positionals[1]; }
   return args;
 }
@@ -152,6 +154,10 @@ export function execute_agent(args: Arguments, store: Store): void {
   const action = args.agent_action!;
   if (['select', 'selected'].includes(action) && !isAbsolute(args.cwd!)) throw new NoteError('--cwd must be an absolute project directory.');
   if (action === 'tags') { print(jsonStringify(store.tags())); return; }
+  if (action === 'image') {
+    const image = store.image(args.hash!);
+    print(JSON.stringify(image && { mime: image.mime, data: Buffer.from(image.bytes).toString('base64') })); return;
+  }
   let note: Note | null;
   if (action === 'selected') note = store.selected(args.cwd!);
   else if (action === 'select') note = store.select(args.id!, args.cwd!);
@@ -270,7 +276,7 @@ function help(args: Arguments): string {
     export: 'write active notes as Markdown to stdout\n  --all  include active/in-progress/done notes',
     schedule: 'schedule a reminder for a note\n  id\n  when  local time or ISO time, e.g. "2030-01-02 09:30"',
     reminders: 'list scheduled reminders',
-    agent: 'add/tag tasks and read/update agent fields (JSON, no desktop refresh)\n  {get,selected,select,start,update,done,add,tag,tags}\n  get ID\n  selected --cwd CWD\n  select ID --cwd CWD\n  start ID --expected-updated-at REVISION [--pi-session-id SESSION]\n  update ID --expected-updated-at REVISION [--set-json JSON] [--remove LABEL ...]\n  done ID --expected-updated-at REVISION\n  add --text TEXT [--tag TAG] [--cwd CWD]\n  tag ID --expected-updated-at REVISION (--tag TAG | --clear)\n  tags',
+    agent: 'add/tag tasks and read/update agent fields (JSON, no desktop refresh)\n  {get,selected,select,start,update,done,add,tag,tags,image}\n  get ID\n  selected --cwd CWD\n  select ID --cwd CWD\n  start ID --expected-updated-at REVISION [--pi-session-id SESSION]\n  update ID --expected-updated-at REVISION [--set-json JSON] [--remove LABEL ...]\n  done ID --expected-updated-at REVISION\n  add --text TEXT [--tag TAG] [--cwd CWD]\n  tag ID --expected-updated-at REVISION (--tag TAG | --clear)\n  tags\n  image HASH',
   };
   return `usage: note [--version] [--no-notify] COMMAND ...\n\nPinned desktop reminders with stable IDs and durable history.\n\nCommands:\n${[...COMMANDS].map(command => `  ${command}  ${descriptions[command].split('\n')[0]}`).join('\n')}\n\n${args.command}: ${descriptions[args.command]}\n\nOptions:\n  -h, --help  show this help message and exit\n  --version   show program's version number and exit\n  --no-notify skip automatic desktop refresh\n\nShortcuts: note lists active notes; note "some text" adds a note. Use note add "done" for text matching a command name.`;
 }

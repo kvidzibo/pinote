@@ -7,6 +7,7 @@ import { spawnSync, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { arguments_, positive_id, event_cursor, event_limit } from '../../src/cli.ts';
+import { Store } from '../../src/store.ts';
 const entry = resolve(import.meta.dirname, '../../src/cli-entry.ts');
 function fixture(t: {after(fn:()=>void):void}) {
   const root = mkdtempSync(join(tmpdir(),'pinote-cli-'));
@@ -34,7 +35,7 @@ test('argument validation is exact for bigint IDs and bounded event cursors',()=
 });
 test('help/version/invalid input are side effect free',t=>{
   const f=fixture(t);
-  assert.equal(f.ok('--version'),'pinote 0.29.0\n');
+  assert.equal(f.ok('--version'),'pinote 0.30.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);
@@ -199,4 +200,17 @@ test('termination during desktop delivery does not write a late warning', async 
   assert.equal(await closed,143);
   assert.equal(readFileSync(join(f.root,'state/pinote/app.log'),'utf8'),'');
   assert.match(f.ok(),/committed before cancellation/);
+});
+test('agent image returns stored bytes as base64 JSON, null when missing, and rejects other hashes',t=>{
+  const f=fixture(t);
+  f.ok('agent','add','--text=Task');
+  // A full-size image exceeds the pipe buffer several times over; the output must still arrive whole.
+  const png=Buffer.alloc(3*1024*1024,7); Buffer.from('\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x03','latin1').copy(png);
+  const store=new Store(f.database); const {hash}=store.add_image(png); store.close();
+  const read=spawnSync(process.execPath,['--experimental-strip-types',entry,'agent','image',hash],{env:f.env,encoding:'utf8',maxBuffer:8*1024*1024});
+  assert.equal(read.status,0,read.stderr);
+  const image=JSON.parse(read.stdout);
+  assert.equal(image.mime,'image/png'); assert.ok(Buffer.from(image.data,'base64').equals(png));
+  assert.equal(f.ok('agent','image','0'.repeat(64)),'null\n');
+  for(const args of [['agent','image'],['agent','image','1'],['agent','image',hash.toUpperCase()],['agent','image',hash,'extra']]) assert.equal(f.cli(...args).status,2);
 });

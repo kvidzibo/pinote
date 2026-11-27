@@ -82,6 +82,7 @@ note agent update 2 --expected-updated-at 'REVISION_FROM_GET' \
 note agent update 2 --expected-updated-at 'LATEST_REVISION' --remove Next
 note agent done 2 --expected-updated-at 'LATEST_REVISION'
 note agent tags
+note agent image HASH               # pasted image as {mime, data (base64)}, or null
 note agent add --text "check backups" --tag pinote
 note agent add --text "follow up" --tag pinote --cwd "$PWD"
 note agent tag 2 --expected-updated-at 'REVISION' --tag Work
@@ -94,6 +95,9 @@ active or in-progress tasks; `--clear` removes the tag. `tags` lists saved names
 Adding or assigning a tag reuses a case-insensitive match's saved spelling:
 `--tag pi` saves `Pi` if that tag already exists.
 These commands do not refresh Dunst.
+
+Task text references an image pasted in Electron as `![image](pinote:sha256-HASH)`.
+`agent image` (note 0.30.0+) reads it by that 64-character hash.
 
 Update merges arbitrary label/Markdown-string pairs; it never overwrites task
 text or its tag. Labels are trimmed, Unicode-normalized and case-sensitive (64 characters
