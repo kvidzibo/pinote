@@ -144,11 +144,12 @@ test('Kitty on macOS finds pi in ~/.pi/agent/bin, passes PATH and reuses only pr
   const temp = realpathSync(join(root, 'tmp')); // The host's temporary directory may be a symlink, as on macOS.
   symlinkSync(temp, join(root, 'tmp-link')); // Sockets use the resolved, checked directory.
   process.env.PATH = tools.bin; process.env.TMPDIR = join(root, 'tmp-link/'); process.env.DISPLAY = ':0'; process.env.TEST_KITTY_PREFIX = `unix:${temp}/`;
+  process.env.KITTY_LISTEN_ON = 'unix:@stale'; // An unreachable explicit address still finds the running Kitty.
   const server = createServer(); await new Promise<void>(done => server.listen(join(temp, 'mykitty-1'), done));
   setPlatform('darwin');
   try {
     await start_in_kitty(root, note, 'title', 'prompt');
-    let calls = tools.calls(); assert.deepEqual(calls[0], ['@', '--to', `unix:${temp}/mykitty-1`, 'ls']);
+    let calls = tools.calls(); assert.deepEqual(calls.slice(0, 2), [['@', '--to', 'unix:@stale', 'ls'], ['@', '--to', `unix:${temp}/mykitty-1`, 'ls']]); delete process.env.KITTY_LISTEN_ON; calls = calls.slice(1);
     assert.deepEqual(calls[1].slice(2, 5), [`unix:${temp}/mykitty-1`, 'launch', '--type=tab']); assert.deepEqual(calls[1].slice(-2), [`--env=PATH=${tools.bin}`, join(agent, 'pi')]);
     chmodSync(temp, 0o777); rmSync(tools.log); // A shared directory is neither searched nor used.
     await assert.rejects(() => start_in_kitty(root, note, 'title', 'prompt'), /needs TMPDIR to be a private directory/); assert.equal(existsSync(tools.log), false);
