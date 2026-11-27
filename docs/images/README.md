@@ -1,18 +1,20 @@
 # README images
 
 These are real Linux/X11 captures with synthetic tasks. The Electron screenshots
-use pinote-electron 0.10.1 and Pinote 0.25.1. `pi-integration.png` combines separate
+use pinote-electron 0.30.0 and Pinote 0.29.0. `pi-integration.png` combines separate
 GTK and Pi captures using Pinote 0.7.0 and pi-note 0.11.0. The example PR is fictitious.
 Pi used an offline demo model configuration, and no prompt was submitted to a provider.
 
-- `electron-checklist.png`: 880×560 Electron window with customized Kitty/Edit
-  buttons, right-aligned tags, single-line rows, inset separators, and a light
-  hover on “Add screenshots to the README”. In-progress rows use Complete/Edit.
-- `electron-compact.png`: 420×460 Electron window with the default row actions
-  and the same hover treatment. Both Electron images were captured from the
-  running app under isolated Xvfb, private D-Bus/i3, and temporary HOME/XDG data;
-  no personal tasks or desktop were used. These are documentation captures,
-  separate from the temporary regression-test artifacts.
+- `electron-checklist.png`: 560×460 window with the default row actions, all tags
+  shown, a light hover on “Add screenshots to the README”, and an unread agent
+  update on “Polish the task list”.
+- `electron-actions.png`: 420×460 window with the inline action toolbar open.
+- `electron-editor.png`: 560×460 task editor with Markdown source and an agent field.
+
+The Electron images were captured from the running app under isolated Xvfb,
+private D-Bus/i3, and temporary HOME/XDG data; no personal tasks or desktop were
+used. These are documentation captures, separate from the temporary
+regression-test artifacts.
 - `pi-integration.png`: selected-task menu/footer and the same task's Agent preview.
 - `pi-task-suggestion.png` and `pi-task-selected.png`: pi-note 0.15.1 bold controls
   and compact selected-task spacing, cropped from isolated Kitty captures with

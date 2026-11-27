@@ -7,18 +7,22 @@ the shared CLI/backend use Node.js. Electron runs as a separate process, not a s
 
 ## See it in action
 
-![Pinote Electron checklist with single-line tasks, right-aligned tags, subtle row separators, a lightly highlighted task, and amber in-progress controls.](docs/images/electron-checklist.png)
+![Pinote Electron checklist: each row has a Start button, tag, task title, Preview and Actions buttons; two in-progress tasks with amber checkmarks sit above the add-task input and the tag, filter, collapse, move and settings toolbar.](docs/images/electron-checklist.png)
 
-*Electron on Linux/i3 with sample tasks, customized row actions, and a light hover
-highlight on “Add screenshots to the README”. [Install and controls](docs/electron.md).*
+*Electron on Linux/i3 with sample tasks and the default row actions. In-progress
+tasks sit above the composer; the blue dot on an eye marks an unread agent update.
+[Install and controls](docs/electron.md).*
 
 <details>
-<summary>Compact Electron layout with default actions</summary>
+<summary>Inline task actions and the task editor</summary>
 
-![420-pixel-wide Electron checklist with default Start, Preview and Actions buttons, inline tags, and single-line task titles.](docs/images/electron-compact.png)
+![420-pixel-wide checklist with one row replaced by an inline toolbar: Start in Kitty, Copy, Start, Complete, Archive, Edit, Reminder, Tag, Preview and Close.](docs/images/electron-actions.png)
 
-*Rows stay single-line at 33px high. Separators follow the text/tag area;
-hover does not move controls or replace task-state colors.*
+*Right-click a task or use its Actions button to open the inline toolbar.*
+
+![Task editor with a tag picker, Markdown source styling for a heading, bullets, bold, italic and code, an agent field, and autosave status.](docs/images/electron-editor.png)
+
+*The editor styles Markdown source, autosaves, and edits Pi handoff fields.*
 
 </details>
 
