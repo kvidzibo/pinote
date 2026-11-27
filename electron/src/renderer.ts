@@ -17,7 +17,7 @@ const composerEditor = new MarkdownEditor($('draft-host'), '', 'Add a task…', 
 }, () => { void track(addTask()); }, file => storeImage(file));
 const composer = composerEditor.dom; composer.id = 'draft';
 // Images are pruned when deleted from the composer once it loses focus; undo works until then.
-composer.addEventListener('blur', () => { if (composerEditor.releaseImages()) pruneImages(); });
+composer.addEventListener('blur', () => { if (composerEditor.releaseImages()) void pruneImages(); });
 $('draft-host').addEventListener('load', () => fitWindow(), true);
 const toolbar = $('toolbar'), notice = $('notice'), popupRoot = $('popups');
 new ResizeObserver(() => document.documentElement.style.setProperty('--notice-height', `${notice.hidden ? 0 : notice.getBoundingClientRect().height + 6}px`)).observe(notice);
@@ -119,13 +119,14 @@ function tagBadge(name: string): HTMLElement {
 function textButton(text: string, action: () => unknown): HTMLButtonElement {
   const b = button('save', text, action); b.replaceChildren(document.createTextNode(text)); return b;
 }
+let statePending = false;
 function saveSoon(): void {
   if (readonly || closing) return;
-  clearTimeout(persistTimer);
+  clearTimeout(persistTimer); statePending = true;
   persistTimer = setTimeout(() => { void persist().catch(() => undefined); }, 180);
 }
 function persist(recovery = false): Promise<void> {
-  clearTimeout(persistTimer);
+  clearTimeout(persistTimer); statePending = false;
   if ((readonly && !recovery) || !stateLoaded) return Promise.resolve();
   const copy: UIState = JSON.parse(JSON.stringify({ ...state, creationTag, collapsed }));
   const work = persistChain.then(() => api.saveState(copy));
@@ -145,17 +146,22 @@ async function storeImage(file: File): Promise<string | null> {
   // The caller inserts the reference before a queued prune runs.
   finally { imageAdds--; if (!imageAdds && pruneQueued) setTimeout(pruneImages); }
 }
-function pruneImages(): void {
+async function pruneImages(): Promise<void> {
   if (readonly || closing || !active) return;
   if (imageAdds || pruning) { pruneQueued = true; return; }
   pruneQueued = false; pruning = true;
-  const keep = new Set(imageHashes(state.draft));
-  for (const editor of liveEditors) for (const hash of editor.imageHashes) keep.add(hash);
-  for (const draft of Object.values(state.edits)) for (const hash of imageHashes(draft.text)) keep.add(hash);
-  // Not a journaled task write: a failure only leaves unused images until the next prune.
-  void track(api.image_prune({ keep: [...keep] }).then(result => {
+  try {
+    // Save the drafts that dropped a reference first; until then the saved draft keeps its images.
+    if (statePending || draftSaveFailed) { try { await persist(); } catch { return; } }
+    if (imageAdds || readonly || closing) { pruneQueued = imageAdds > 0; return; }
+    const keep = new Set(imageHashes(state.draft));
+    for (const editor of liveEditors) for (const hash of editor.imageHashes) keep.add(hash);
+    for (const draft of Object.values(state.edits)) for (const hash of imageHashes(draft.text)) keep.add(hash);
+    // Not a journaled task write: a failure only leaves unused images until the next prune.
+    const result = await track(api.image_prune({ keep: [...keep] }));
     if (!result.ok && result.error.code !== 'busy') report(`Unused images were not deleted: ${result.error.message}`);
-  }, e => report(`Unused images were not deleted: ${message(e)}`))).finally(() => { pruning = false; if (pruneQueued) pruneImages(); });
+  } catch (e) { report(`Unused images were not deleted: ${message(e)}`); }
+  finally { pruning = false; if (pruneQueued) void pruneImages(); }
 }
 async function call<K extends RendererOperation>(name: K, params: Operations[K]['params'], drainEdit = false): Promise<Operations[K]['result'] | null> {
   const write = name !== 'snapshot' && name !== 'completions';
@@ -215,7 +221,7 @@ async function addTask(): Promise<void> {
     const result = await call('add', { text, tag });
     if (!result) return;
     if (version === draftVersion) setComposerDraft(newComposerDraft());
-    if (composerEditor.releaseImages()) pruneImages();
+    if (composerEditor.releaseImages()) void pruneImages();
     // Commit success is independent of the following read/cache operations.
     scrollToId = result.id;
     await refresh(); showSaved(result.id);
@@ -1089,7 +1095,7 @@ async function edit(task: Task): Promise<void> {
   modal.close = () => {
     if (detached) return;
     detached = true; close(); clearTimeout(timer);
-    const done = track(flush().finally(() => { editor.destroy(); liveEditors.delete(editor); editFlushers.delete(flush); closedEdits.delete(task.id); pruneImages(); }));
+    const done = track(flush().finally(() => { editor.destroy(); liveEditors.delete(editor); editFlushers.delete(flush); closedEdits.delete(task.id); void pruneImages(); }));
     closedEdits.set(task.id, done);
   };
   modal.panel.append(warning, editorHost, fieldList, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
@@ -1113,7 +1119,7 @@ function recoverDrafts(): void {
         report('This task is not active. Copy its private draft here, or restore the task from Archive first.');
       }), button('trash', 'Discard private draft', () => confirmAction('Discard draft?', `Discard the private text for task ${id}? No task will be changed.`, async () => {
         if (closedEdits.has(Number(id))) { report('This editor is still saving. Wait for it to finish before discarding local text.'); return; }
-        delete state.edits[id]; saveSoon(); draw(); pruneImages();
+        delete state.edits[id]; saveSoon(); draw(); void pruneImages();
       }), readonly));
       list.append(row);
     }
@@ -1665,7 +1671,14 @@ function setClosing(value: boolean): void {
   checklist.inert = $('composer').inert = popupRoot.inert = notice.inert = value;
   composerEditor.readOnly = readonly || value; updateEditors();
 }
+let closeRequested = false;
 api.onCloseRequested(() => {
+  if (closing || closeRequested) return;
+  closeRequested = true;
+  // Pastes already accepted are stored and inserted before editors freeze and save.
+  void Promise.all([...liveEditors].map(editor => editor.imagesSettled())).finally(() => { closeRequested = false; finishClosing(); });
+});
+function finishClosing(): void {
   if (closing) return;
   const focused = document.activeElement as HTMLElement | null;
   for (const flush of editFlushers) void track(flush());
@@ -1683,7 +1696,7 @@ api.onCloseRequested(() => {
     report(`Could not finish closing: ${detail}`);
     if (focused?.isConnected) focused.focus();
   });
-});
+}
 async function init(): Promise<void> {
   composerEditor.readOnly = true;
   try { state = await api.loadState(); stateLoaded = true; if (state.warning) { readonly = true; report(`Read-only draft recovery: ${state.warning}`); } }
@@ -1699,7 +1712,7 @@ async function init(): Promise<void> {
   resizeComposer(); renderToolbar();
   await refresh(); composerEditor.view.focus();
   // Removes images left unreferenced, for example by a crash before their task was saved.
-  pruneImages();
+  void pruneImages();
   setInterval(() => { if (!document.hidden && !closing) void track(refresh()); }, 1000);
 }
 void track(init()).catch(e => report(message(e)));

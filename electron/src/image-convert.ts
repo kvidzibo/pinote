@@ -8,7 +8,8 @@ export async function convertImage(source: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(source).catch(() => { throw new Error('This image cannot be read.'); });
   try {
     const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
-    if (source.type === 'image/gif') {
+    // Only real GIF bytes are kept unchanged; anything else labelled GIF is converted (dropping metadata).
+    if (source.type === 'image/gif' && /^GIF8[79]a$/.test(await source.slice(0, 6).text())) {
       if (scale < 1 || source.size > MAX_IMAGE_BYTES) throw new Error(`GIFs must be at most ${MAX_IMAGE_SIDE} pixels per side and 4 MiB.`);
       return source;
     }

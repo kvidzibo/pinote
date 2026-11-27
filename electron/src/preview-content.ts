@@ -14,7 +14,8 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, classN
 // Markdown tokens become only known DOM elements. No HTML, style, or event attributes are copied.
 const allowed = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'em', 'strong', 's', 'blockquote', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td']);
 function safeLink(value: string): boolean { try { return ['http:', 'https:', 'mailto:'].includes(new URL(value).protocol); } catch { return false; } }
-function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions, firstLineHeading = true): void {
+// Only task text shows stored images: they are kept while task text uses them, not agent fields.
+function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions, firstLineHeading = true, images = true): void {
   if (!options.markdown) { parent.append(el('pre', text, 'literal')); return; }
   const stack: HTMLElement[] = [parent];
   function tokens(items: Token[]): void {
@@ -25,7 +26,7 @@ function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions,
       if (token.type === 'softbreak' || token.type === 'hardbreak') { top().append(el('br')); continue; }
       if (token.type === 'image') {
         // Only images stored by Pinote load; other sources (such as the web) stay text.
-        const src = token.attrs?.find(a => a[0] === 'src')?.[1] ?? '', source = text.includes(src) ? imageSource(src) : null;
+        const src = token.attrs?.find(a => a[0] === 'src')?.[1] ?? '', source = images && text.includes(src) ? imageSource(src) : null;
         top().append(source ? imageElement(source, token.content || 'image', 'note-image') : document.createTextNode(token.content || '(image)')); continue;
       }
       if (token.type === 'code_inline') { top().append(el('code', token.content)); continue; }
@@ -60,7 +61,7 @@ export function fillPreview(parent: HTMLElement, task: Task, options: PreviewOpt
   if (Object.keys(task.agent_notes).length || task.agent_event_id > 0) {
     const agent = el('section', undefined, 'agent'); agent.append(el('h3', 'Agent'));
     if (!Object.keys(task.agent_notes).length) agent.append(el('p', 'Agent fields were removed.'));
-    for (const [key, value] of Object.entries(task.agent_notes)) { agent.append(el('h4', key)); const body = el('div'); markdownDOM(value, body, options, false); agent.append(body); }
+    for (const [key, value] of Object.entries(task.agent_notes)) { agent.append(el('h4', key)); const body = el('div'); markdownDOM(value, body, options, false, false); agent.append(body); }
     parent.append(agent);
   }
   if (task.pi_sessions.length) {

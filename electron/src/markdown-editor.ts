@@ -59,7 +59,7 @@ class ImageWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const image = imageElement(`images/${this.hash}`, this.alt || 'image', 'cm-image');
     // Loaded pictures change line heights: keep the cursor in view, as after typing.
-    image.addEventListener('load', () => { if (view.hasFocus) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) }); else view.requestMeasure(); }, { once: true });
+    image.querySelector('img')!.addEventListener('load', () => { if (view.hasFocus) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) }); else view.requestMeasure(); }, { once: true });
     return image;
   }
 }
@@ -143,7 +143,12 @@ export class MarkdownEditor {
       ]),
       EditorView.updateListener.of(update => {
         if (!update.docChanged) return;
-        for (const target of this.targets) { target.from = update.changes.mapPos(target.from, 1); target.to = Math.max(target.from, update.changes.mapPos(target.to, -1)); }
+        // Text typed over a pending paste's selection stays; the image then goes after it.
+        for (const target of this.targets) {
+          const replaced = target.from < target.to && !!update.changes.touchesRange(target.from, target.to);
+          target.from = update.changes.mapPos(replaced ? target.to : target.from, 1);
+          target.to = replaced ? target.from : Math.max(target.from, update.changes.mapPos(target.to, -1));
+        }
         for (const hash of imageHashes(update.state.doc.toString())) this.images.add(hash);
         if (!this.settingText) changed();
       }),

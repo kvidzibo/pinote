@@ -314,12 +314,14 @@ async function boot() {
       }
       // Pruning only deletes unused images: an uncertain outcome needs no reconciliation.
       const journaled = mutating(op) && op !== 'image_prune';
-      if (op === 'image_prune') {
-        const saved = [durableState.draft, ...Object.values(durableState.edits).map(edit => edit.text)].flatMap(imageHashes);
-        params = { keep: [...new Set([...(params as Operations['image_prune']['params']).keep, ...saved])] };
-      }
       const work = tasks.then(async () => {
         if (mutating(op) && (readonly || state.warning)) return { protocol:1 as const,ok:false as const,error:{code:'invalid' as const,message:'Resolve the previous warning before making further changes.'} };
+        // Drafts last written to disk keep their images too, sampled after any write in flight.
+        if (op === 'image_prune') {
+          await stateWrites.catch(() => {});
+          const saved = [durableState.draft, ...Object.values(durableState.edits).map(edit => edit.text)].flatMap(imageHashes);
+          params = { keep: [...new Set([...(params as Operations['image_prune']['params']).keep, ...saved])] };
+        }
         if (journaled) { uncertain = true; await persist(); }
         const response = await backend.call(op,params);
         if (op === 'image_prune') forgetImages(response.ok ? (response.result as Operations['image_prune']['result']).removed : undefined);
