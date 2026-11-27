@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, symlinkSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, statSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { discoverPaths, jsonStringify, resolvePath, withDisplayLock, BusyError } from '../src/runtime.ts';
 
-test('retained flock descriptor excludes other writers and releases on close and writer death', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pinote-runtime-'));
+test('display lock excludes other writers and releases on close and writer death', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pinote-runtime-')));
   const paths = discoverPaths({ HOME: root });
-  const probe = () => spawnSync('flock', ['-n', '-E', '75', join(paths.data, 'display.lock'), 'true']).status;
+  // Another process tries the same lock: 75 while held, 0 once released.
+  const probe = () => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', `const {DatabaseSync}=require('node:sqlite');try{new DatabaseSync(${JSON.stringify(join(paths.data, 'display.lock'))}).exec('BEGIN EXCLUSIVE')}catch(e){process.exit(e.errcode===5?75:1)}`]).status;
   try {
     await withDisplayLock(paths, false, async () => {
       assert.equal(probe(), 75);

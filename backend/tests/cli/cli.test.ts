@@ -34,7 +34,7 @@ test('argument validation is exact for bigint IDs and bounded event cursors',()=
 });
 test('help/version/invalid input are side effect free',t=>{
   const f=fixture(t);
-  assert.equal(f.ok('--version'),'pinote 0.27.0\n');
+  assert.equal(f.ok('--version'),'pinote 0.28.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);
@@ -53,7 +53,8 @@ test('help/version/invalid input are side effect free',t=>{
     assert.equal(db.prepare('SELECT count(*) AS n FROM events').get()!.n,before);
   } finally {db.close();}
 });
-test('Markdown import rejects a non-UTF-8 canonical path without importing its U+FFFD sibling',t=>{
+// macOS file systems reject non-UTF-8 names.
+test('Markdown import rejects a non-UTF-8 canonical path without importing its U+FFFD sibling',{skip:process.platform==='darwin'},t=>{
   const f=fixture(t);
   const target=Buffer.concat([Buffer.from(`${f.root}/notes-`),Buffer.from([0xff]),Buffer.from('.md')]);
   const sibling=join(f.root,'notes-\ufffd.md'), alias=join(f.root,'alias.md');
@@ -98,6 +99,7 @@ test('unsupported time zones reject wall times before saves and display explicit
   const f=fixture(t), env:NodeJS.ProcessEnv=f.env;
   for(const [tz,tzdir] of [
     ['EST5EDT,M3.2.0,M11.1.0'], ['UTC-3'], [':/etc/localtime'], ['Europe/NotInstalled'], ['Europe/Prague',f.root],
+    ['CST'], ['ist'], ['SystemV/AST4'], // ICU aliases, not IANA zones
   ]) {
     env.TZ=tz;
     if(tzdir===undefined) delete env.TZDIR; else env.TZDIR=tzdir;

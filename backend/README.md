@@ -1,10 +1,11 @@
 # Pinote Node backend
 
 Provides the `note` CLI used by Pi and a one-request JSON bridge for Electron.
-Preserves the schema-8 database, history, and display-lock behavior of the earlier
-Python implementation; no data conversion is needed.
+Preserves the schema-8 database and history of the earlier Python implementation;
+no data conversion is needed.
 
-Requires Linux, Node.js 22.19+, util-linux `flock` on an absolute PATH, and GNU `/usr/bin/date` with system timezone data for local reminders.
+Requires Node.js 22.19+ on Linux or macOS. Local reminder times use Node's bundled
+IANA time zone data.
 Dunst is optional for notifications. Electron bundles the bridge but requires
 external Node; there is no automatic Python fallback.
 

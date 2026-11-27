@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { Store } from '../../src/store.ts';
 import { discoverPaths, withDisplayLock, jsonStringify, type Paths } from '../../src/runtime.ts';
 let root: string, paths: Paths, saved: NodeJS.ProcessEnv;
 beforeEach(() => {
-  saved = { ...process.env }; root = mkdtempSync(join(tmpdir(), 'pinote-bridge-'));
+  saved = { ...process.env }; root = realpathSync(mkdtempSync(join(tmpdir(), 'pinote-bridge-')));
   for (const [name, folder] of Object.entries({ HOME: 'home', XDG_DATA_HOME: 'data', XDG_STATE_HOME: 'state', XDG_CONFIG_HOME: 'config', XDG_CACHE_HOME: 'cache', XDG_RUNTIME_DIR: 'runtime' })) process.env[name] = join(root, folder);
   for (const name of ['DISPLAY', 'WAYLAND_DISPLAY', 'KITTY_LISTEN_ON', 'I3SOCK']) delete process.env[name];
   process.env.DBUS_SESSION_BUS_ADDRESS = 'unix:path=/nonexistent-bridge-test'; paths = discoverPaths();
@@ -26,7 +26,7 @@ function processRequest(data: Buffer | string, args: string[] = []) {
 }
 test('handshake, help and version are side-effect free', async () => {
   const r = processRequest(JSON.stringify(request('handshake'))); assert.equal(r.status, 0); assert.equal(r.stderr, '');
-  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.27.0', protocol: 1, database: paths.database } });
+  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.28.0', protocol: 1, database: paths.database } });
   for (const flag of ['--help', '--version']) assert.equal(processRequest('', [flag]).status, 0);
   assert.equal(existsSync(paths.data), false); assert.equal(existsSync(paths.state), false);
   assert.equal((await respond(request('handshake'), paths)).ok, true);
@@ -42,9 +42,10 @@ test('symlink/.. in XDG_DATA_HOME resolves through the filesystem and honours a 
   assert.equal(existsSync(join(root, 'actual', 'profile')), false);
   assert.equal(existsSync(paths.state), false);
 
-  // Another process holds flock(2) on display.lock in the physical directory, as the Python CLI did.
+  // Another process holds display.lock in the physical directory.
   mkdirSync(dirname(expected), { recursive: true, mode: 0o700 });
-  const locked = spawnSync('flock', ['-x', join(dirname(expected), 'display.lock'), ...bridgeCommand],
+  const holder = `const {DatabaseSync}=require('node:sqlite');const {spawnSync}=require('node:child_process');new DatabaseSync(${JSON.stringify(join(dirname(expected), 'display.lock'))}).exec('BEGIN EXCLUSIVE');const r=spawnSync(${JSON.stringify(bridgeCommand[0])},${JSON.stringify(bridgeCommand.slice(1))},{input:require('node:fs').readFileSync(0),encoding:'utf8'});process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exitCode=r.status;`;
+  const locked = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '-e', holder],
     { input: JSON.stringify(request('add', { text: 'blocked', tag: null })), env: process.env, encoding: 'utf8', timeout: 10000 });
   assert.equal(locked.status, 0, locked.stderr);
   assert.equal(JSON.parse(locked.stdout).error.code, 'busy');

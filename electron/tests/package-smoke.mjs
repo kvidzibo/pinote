@@ -16,7 +16,7 @@ const env = { ...process.env, PINOTE_NODE:process.execPath, HOME:join(root,'home
 for(const key of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE','NODE_OPTIONS','PYTHONPATH','PINOTE_BRIDGE_COMMAND']) delete env[key];
 for(const key of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR']) await mkdir(env[key],{recursive:true,mode:0o700});
 await mkdir(join(root,'bin'));
-for(const command of ['node','flock','i3','i3-msg','xdotool','import','which']) {
+for(const command of ['node','i3','i3-msg','xdotool','import','which']) {
   const located=spawnSync('which',[command],{encoding:'utf8'}); assert.equal(located.status,0);
   await symlink(located.stdout.trim(),join(root,'bin',command));
 }

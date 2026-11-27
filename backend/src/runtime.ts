@@ -2,10 +2,10 @@ import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync,
 import { userInfo } from 'node:os';
 import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { delimiter, dirname, isAbsolute, join, parse, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const VERSION = '0.27.0';
+export const VERSION = '0.28.0';
 export type Paths = { data: string; state: string; database: string; log: string };
 export class InputEncodingError extends Error {}
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -122,30 +122,26 @@ export function checkCancelled(): void {
   if (sharedCancellation) { const code = Atomics.load(sharedCancellation, 0); if (code) abort(code); }
   cancellation.signal.throwIfAborted();
 }
+// Strong references: garbage collection of a pending action must not close a held lock.
+const heldLocks = new Set<DatabaseSync>();
 export async function withDisplayLock<T>(paths: Paths, blocking: boolean, action: () => Promise<T> | T): Promise<T> {
   checkCancelled();
-  const flock = findExecutable('flock');
-  if (!flock) throw new Error('Pinote requires util-linux flock on an absolute PATH.');
   privateDirectory(paths.data);
   const path = join(paths.data, 'display.lock'); privateFile(path);
-  const fd = openSync(path, 'a');
+  // An exclusive transaction on this empty SQLite file takes an OS file lock
+  // (fcntl on POSIX, LockFileEx on Windows); closing or process death releases it.
+  const lock = new DatabaseSync(path);
   try {
     for (;;) {
       checkCancelled();
-      // flock(2) belongs to this open file description, retained by Node after helper exit.
-      // No writer supervisor and no descendant inherits the descriptor after acquisition.
-      const result = spawnSync(flock, ['-x', '-n', '-E', '75', '3'], { stdio: ['ignore', 'ignore', 'pipe', fd], timeout: 5000 });
-      if (result.error) throw result.error;
-      if (result.status === 0) break;
-      if (result.status !== 75) throw new Error('Cannot acquire Pinote display lock.');
+      try { lock.exec('BEGIN EXCLUSIVE'); heldLocks.add(lock); break; }
+      catch (error) { if ((error as { errcode?: number }).errcode !== 5) throw new Error('Cannot acquire Pinote display lock.'); }
       if (!blocking) throw new BusyError('Pinote is busy. Please try again.');
       await delay(25, undefined, { signal: cancellation.signal });
     }
-    // Drain any signal queued while the synchronous nonblocking flock helper ran.
-    await delay(0, undefined, { signal: cancellation.signal });
     checkCancelled();
     return await action();
-  } finally { closeSync(fd); }
+  } finally { heldLocks.delete(lock); lock.close(); }
 }
 let logPaths: Paths | undefined; let stderr = false;
 export function configureLogging(paths: Paths, options: { stderr?: boolean } = {}): void {

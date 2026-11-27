@@ -19,8 +19,8 @@ npm --prefix backend run test:package
 Backend tests use temporary databases and
 [frozen Python-reference fixtures](../backend/tests/fixtures/python-reference/README.md)
 to check migrations (schemas 0–8), a mutation sequence, a Python-written database,
-and bridge snapshots without running Python. Reminder time-zone checks use GNU
-`/usr/bin/date` as the reference.
+and bridge snapshots without running Python. Reminder time-zone checks use fixed
+past dates, which do not depend on the tzdb version bundled with Node.
 
 The real Dunst test runs the Node CLI with temporary storage. It requires `dunst`,
 `dunstify`, `dunstctl`, `dbus-send`, `dbus-daemon`, `xvfb-run`, and `xauth`.
@@ -56,7 +56,8 @@ parallel jobs trade additional runner setup for shorter elapsed CI time.
 
 The `macos` job checks basic macOS behavior on a disposable runner session; the
 remaining suites, including the platform-neutral Pi unit tests, run only on Linux.
-It runs `electron/tests/macos-smoke.mjs` (task list, composer and Start in
+It runs the backend unit tests (skipping the non-UTF-8 file-name checks, which
+macOS file systems reject), `electron/tests/macos-smoke.mjs` (task list, composer and Start in
 Kitty from a built app) and `backend/tests/desktop/kitty-macos.e2e.ts` (new Kitty
 window, reuse, and a Kitty opened by Launch Services). Hosted runners lack the
 OpenGL 3.3 Kitty needs, so CI installs `backend/tests/desktop/kitty-stub.mjs` as
@@ -68,7 +69,7 @@ uses. Both tests start apps and refuse to run without `CI` set.
 The [Electron guide](electron.md) covers installation, state, recovery, packaging,
 and limitations. These checks supplement the backend, Dunst, and Pi checks above.
 
-Use Node.js 22.19+ (CI uses Node 24), Linux `flock`, and Electron runtime libraries:
+Use Node.js 22.19+ (CI uses Node 24) and Electron runtime libraries:
 GTK 3 (`libgtk-3`), NSS, ALSA, ATK/AT-SPI, CUPS, GBM/DRM, and X11 libraries.
 End-to-end tests additionally need `xvfb-run`, `dbus-run-session`, `xauth`, `i3-wm`,
 `xdotool`, and ImageMagick's `import` command (`imagemagick` on Debian/Ubuntu) for
@@ -107,10 +108,10 @@ machine configuration as a test workaround.
 ## Architecture and integration
 
 `backend/` is the only CLI and backend implementation. It uses Node/TypeScript and
-`node:sqlite`, preserving the schema, history, and display-lock behavior of the
-earlier Python implementation. Build-time dependencies are bundled into
-self-contained ES modules. Linux util-linux `flock` acquires the retained
-file-description lock. CLI/bridge work runs in a worker thread in the same process,
+`node:sqlite`, preserving the schema and history of the earlier Python
+implementation. Build-time dependencies are bundled into
+self-contained ES modules. An exclusive transaction on the empty SQLite file
+`display.lock` serializes writers; the OS releases it on close or process death. CLI/bridge work runs in a worker thread in the same process,
 without a writer supervisor, keeping signal handling responsive during SQLite
 waits and large imports. A shared cancellation flag is checked before work and
 commit; exclusive write transactions acquire reader exclusion up front, avoiding

@@ -8,8 +8,8 @@ performance guarantee. [macOS](#macos-experimental) support is experimental.
 
 ## Install and launch from a checkout
 
-Requires Node.js **22.19.0+**, npm, Linux `flock` (util-linux), GNU `/usr/bin/date`
-for local reminders, and Electron's desktop runtime libraries, including GTK 3 (`libgtk-3`).
+Requires Node.js **22.19.0+**, npm, and on Linux Electron's desktop runtime
+libraries, including GTK 3 (`libgtk-3`).
 The private `electron/` package bundles the matching Node backend;
 editor autosave does not require Python.
 Run from the repository root:
@@ -37,10 +37,9 @@ Installation does not change desktop login startup, i3 rules, or user configurat
 
 ### macOS (experimental)
 
-Install Homebrew `flock` (`brew install flock`) and start Pinote from a terminal
-with the commands above, so `PATH` contains `node` and `flock`. Reminders need GNU
-`/usr/bin/date` and are unavailable. Only Start in Kitty has macOS-specific
-handling. CI runs only a [basic macOS check](development.md#macos); Start in Kitty
+Start Pinote from a terminal with the commands above, so `PATH` contains `node`.
+Dunst notifications are unavailable; the desktop window shows the reminders. Only
+Start in Kitty has other macOS-specific handling. CI runs only a [basic macOS check](development.md#macos); Start in Kitty
 is checked against a Kitty stand-in, not real Kitty.
 
 ## Field watchers
@@ -341,8 +340,8 @@ electron/out/pinote-electron-linux-x64/pinote-electron
 On x64 Linux this creates `electron/out/pinote-electron-linux-x64/`, an unpacked
 application, not an installer. Packaging follows the host architecture. The
 backend and its dependency notices are bundled outside ASAR; source files and
-checkout dependencies are not needed on the target. External Node.js 22.19+ and
-`flock` are required; local reminders use GNU `/usr/bin/date` and system timezone data. Python is not required. There is no auto-updater or public publishing flow.
+checkout dependencies are not needed on the target. External Node.js 22.19+ is
+required; local reminders use its bundled time zone data. Python is not required. There is no auto-updater or public publishing flow.
 
 The renderer uses a custom secure protocol, restrictive CSP, sandboxing,
 context isolation, and a narrow isolated preload API. Packaged native fuses

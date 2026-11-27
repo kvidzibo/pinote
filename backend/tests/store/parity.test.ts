@@ -3,56 +3,30 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../../src/store.ts';
 import { jsonStringify } from '../../src/runtime.ts';
 import { parse_reminder_time, local_reminder_time } from '../../src/reminders.ts';
 
-test('Vancouver reminder parsing and display match the system timezone rules',t=>{
- const TZ='America/Vancouver';
- const inputs=[
-  '2030-01-01 12:00:00.123456', // Winter offset and abbreviation changed in tzdb 2026b.
-  '2030-11-03 01:30', // Former fold under older rules.
-  '2025-03-09 02:30', '2025-11-02 01:30', '2025-11-02 02:00',
-  '1870-01-01 12:00:00.123456', // Historical offset has seconds.
-  '1969-12-31 15:59:59.123456', // Fractional second before the epoch.
- ];
- // Independent reading of the same system rules, as the Python reference did:
- // an instant is valid when the system zone displays it as the requested wall
- // time, and the wall time must name exactly one instant.
- const date=(args:string[])=>{
-  const r=spawnSync('/usr/bin/date',args,{encoding:'utf8',env:{LC_ALL:'C',TZ}});
-  assert.equal(r.status,0,r.stderr); return r.stdout.trim();
- };
- const expected=inputs.map(wall=>{
-  const [seconds,fraction='']=wall.length===16?[wall+':00']:wall.split('.');
-  const asUTC=Number(date(['--utc','--date='+seconds.replace(' ','T')+'Z','+%s']));
-  const instants=new Set<number>();
-  // Every offset this zone has used or may use: local mean time, PST, PDT/MST.
-  for(const offset of [-(8*3600+12*60+28),-8*3600,-7*3600]) {
-   if(date(['--date=@'+(asUTC-offset),'+%Y-%m-%d %H:%M:%S'])===seconds) instants.add(asUTC-offset);
-  }
-  if(instants.size!==1) return null;
-  const [instant]=instants;
-  const utc=date(['--utc','--date=@'+instant,'+%Y-%m-%dT%H:%M:%S'])+'.'+fraction.padEnd(6,'0')+'+00:00';
-  return [utc,date(['--date=@'+instant,'+%Y-%m-%d %H:%M:%S %Z'])];
- });
- assert.ok(expected[0]);
- assert.deepEqual(expected.slice(2,4),[null,null]);
- assert.ok(expected[4]);
+test('Vancouver reminder parsing and display follow IANA rules, DST gaps, folds and historical offsets',t=>{
  const previousTZ=process.env.TZ, previousTZDIR=process.env.TZDIR;
- process.env.TZ=TZ; delete process.env.TZDIR;
+ process.env.TZ='America/Vancouver'; delete process.env.TZDIR;
  t.after(()=>{
   if(previousTZ===undefined) delete process.env.TZ; else process.env.TZ=previousTZ;
   if(previousTZDIR!==undefined) process.env.TZDIR=previousTZDIR;
  });
- for(const [i,wall] of inputs.entries()) {
-  if(expected[i]===null) assert.throws(()=>parse_reminder_time(wall),/daylight saving/,wall);
-  else {
-   const utc=parse_reminder_time(wall);
-   assert.deepEqual([utc,local_reminder_time(utc)],expected[i],wall);
-  }
+ // Past dates only: future offsets depend on the tzdb version bundled with Node.
+ for(const wall of ['2025-03-09 02:30','2025-11-02 01:30']) assert.throws(()=>parse_reminder_time(wall),/daylight saving/,wall);
+ for(const [wall,utc,local] of [
+  ['2025-01-01 12:00:00.123456','2025-01-01T20:00:00.123456+00:00','2025-01-01 12:00:00 PST'],
+  ['2025-11-02 02:00','2025-11-02T10:00:00.000000+00:00','2025-11-02 02:00:00 PST'],
+  ['1870-01-01 12:00:00.123456','1870-01-01T20:12:28.123456+00:00'], // Local mean time has seconds.
+  ['1969-12-31 15:59:59.123456','1969-12-31T23:59:59.123456+00:00'], // Fractional second before the epoch.
+ ]) {
+  assert.equal(parse_reminder_time(wall),utc,wall);
+  // Historical abbreviations vary with ICU data; the wall time must not.
+  if(local) assert.equal(local_reminder_time(utc),local);
+  else assert.ok(local_reminder_time(utc).startsWith(wall.slice(0,19)+' '),wall);
  }
 });
 

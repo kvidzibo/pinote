@@ -246,7 +246,8 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
           checkCancelled();
           if (!(error instanceof notify.NotificationError)) throw error;
           if (args.command === 'show') { log('error', error.message); return 1; }
-          log('warning', `Notes saved, but desktop refresh failed: ${error.message}`);
+          // Without Dunst, macOS shows reminders only in the desktop window.
+          if (!(error.missing && process.platform === 'darwin')) log('warning', `Notes saved, but desktop refresh failed: ${error.message}`);
         }
       }
       return 0;
@@ -295,7 +296,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     checkCancelled();
     const paths = discoverPaths(); checkProfileIdentity(paths);
-    if (needsDisplayLock(args)) checkedEnv('PATH');
+    // Only the notifier searches PATH; check it before any save.
+    if (MUTATIONS.has(args.command) && !args.no_notify || args.command === 'show') checkedEnv('PATH');
     configureLogging(paths);
     return await execute(args, paths, imported);
   }

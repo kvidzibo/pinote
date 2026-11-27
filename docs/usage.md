@@ -6,10 +6,11 @@ Run checkout-relative commands from the repository root.
 
 ## Install
 
-Requires **Node.js 22.19+**, npm, Linux `flock` (util-linux), and GNU `/usr/bin/date` with system timezone data for local reminders.
+Requires **Node.js 22.19+** and npm. Local reminder times use Node's bundled IANA time zone data; `TZ`, if set, must name an IANA zone.
 Use UTF-8 for profile paths, launcher paths, and filenames passed to the CLI.
 Pinote rejects undecodable paths rather than using a different file with a similar name.
-Dunst (`dunstify`) is needed only for desktop notifications.
+Dunst (`dunstify`) is needed only for desktop notifications; on macOS without it,
+CLI changes skip the refresh silently.
 The notifier uses portable short options and a stack-tag hint to support older
 distribution packages as well as current Dunst releases.
 Terminal commands work without Dunst. Install Dunst using your distribution's
@@ -171,7 +172,8 @@ escape sequences. Dunst's pause, fullscreen, placement, and display policies
 still apply; pinote does not override your desktop preferences.
 
 Data is committed **before** notification delivery. If Dunst is missing or
-unavailable, mutations still succeed (exit 0) with a warning. `note show` returns
+unavailable, mutations still succeed (exit 0) with a warning; on macOS a missing
+Dunst is silent. `note show` returns
 1 on notification failure. Validation/storage errors return 1; CLI syntax errors
 return 2. Do not repeat an add just because desktop delivery failed.
 
@@ -256,7 +258,8 @@ staged files before publishing. Uninstalling the tool does not delete data.
 
 Back up `notes.db` first. Update every installation that opens the database,
 including Electron and the CLI used by Pi. `note` versions before 0.25.0 cannot read
-schema 8.
+schema 8. Since 0.28.0 the write lock no longer uses `flock` and does not exclude
+older versions: update the CLI and Electron together, then restart Electron.
 
 The first database open upgrades schema 1–7 to **8** atomically, retaining note
 IDs, timestamps, tags, reminders, history, and import markers. Tasks from schema

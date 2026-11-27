@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { application_id } from '../src/model.ts';
@@ -16,8 +16,10 @@ const cli = resolve(wrappers ? 'bin/note' : 'src/cli-entry.ts');
 const request = (operation: string, params: object = {}) => JSON.stringify({ protocol: 1, operation, params });
 const malformed = (path: string) => Buffer.concat([Buffer.from(path), Buffer.from([0xff])]);
 const hex = (value: string | Buffer) => Buffer.from(value).toString('hex');
+// macOS file systems reject non-UTF-8 names, and there is no /proc to read raw bytes from.
+const skip = process.platform === 'darwin' && 'needs non-UTF-8 file names and /proc';
 function fixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), 'pinote-identity-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pinote-identity-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, 'bin'); mkdirSync(bin); symlinkSync(process.execPath, join(bin, 'node'));
   const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), LC_ALL: 'C.UTF-8' };
@@ -47,7 +49,7 @@ function fixture(t: TestContext) {
   return { root, env, run, fresh, reply };
 }
 
-test('standalone import rejects raw argv rather than opening a real U+FFFD sibling', t => {
+test('standalone import rejects raw argv rather than opening a real U+FFFD sibling', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'notes-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   writeFileSync(raw, '- [ ] raw bytes\n');
@@ -66,7 +68,7 @@ test('standalone import rejects raw argv rather than opening a real U+FFFD sibli
   } finally { unlinkSync(raw); }
 });
 
-test('active inherited path values are checked without exposing or rejecting unrelated env', t => {
+test('active inherited path values are checked without exposing or rejecting unrelated env', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'PRIVATE-env-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   const add = request('add', { text: 'must not save', tag: null });
@@ -81,7 +83,12 @@ test('active inherited path values are checked without exposing or rejecting unr
   reject({ XDG_STATE_HOME: raw });
   reject({ XDG_DATA_HOME: '', HOME: raw });
   reject({ XDG_CONFIG_HOME: raw }, request('snapshot', { view: 'archive' }));
-  reject({ PATH: raw });
+  // Only the notifier and Kitty search PATH, so a CLI refresh checks it before saving.
+  const path = f.run(cli, { args: ['add', 'must not save'], bindings: { PATH: raw } });
+  assert.equal(path.status, 1);
+  assert.match(path.stdout, /PATH.*UTF-8/);
+  assert.doesNotMatch(path.stdout + path.stderr, /PRIVATE-env-/);
+  f.fresh(sibling);
   const note = f.run(cli, { args: ['--no-notify', 'add', 'must not save'], bindings: { XDG_DATA_HOME: raw } });
   assert.equal(note.status, 1);
   assert.match(note.stdout, /XDG_DATA_HOME.*UTF-8/);
@@ -100,9 +107,13 @@ test('active inherited path values are checked without exposing or rejecting unr
   assert.equal(fallback.result.database, join(f.root, '.local/share/pinote/notes.db'));
   assert.equal(f.run(cli, { args: ['--version'], bindings: { XDG_DATA_HOME: raw } }).status, 0);
   f.fresh(sibling);
+  // Lock-only saves do not search PATH.
+  assert.equal(f.reply(f.run(bridge, { input: request('add', { text: 'bridge save', tag: null }), bindings: { PATH: raw } })).ok, true);
+  assert.equal(f.run(cli, { args: ['--no-notify', 'add', 'CLI save'], bindings: { PATH: raw } }).status, 0);
+  assert.equal(f.reply(f.run(bridge, { input: request('snapshot', { view: 'active' }) })).result.notes.length, 2);
 });
 
-test('handshake and folder/selection keys never substitute a U+FFFD sibling for a symlink target', t => {
+test('handshake and folder/selection keys never substitute a U+FFFD sibling for a symlink target', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'project-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   const bad = join(f.root, 'bad'), good = join(f.root, 'good');
@@ -130,7 +141,7 @@ test('handshake and folder/selection keys never substitute a U+FFFD sibling for 
   } finally { rmdirSync(raw); }
 });
 
-test('relative folder identities check physical cwd bytes, but absolute input does not need cwd', t => {
+test('relative folder identities check physical cwd bytes, but absolute input does not need cwd', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'cwd-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   mkdirSync(raw);
