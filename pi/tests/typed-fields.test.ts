@@ -37,7 +37,7 @@ test('the desktop reads every definition with effective values and saves only th
   assert.deepEqual(settings.footer.fields.map(({ name, type, enabled, saved }) => [name, type, enabled, saved]),
     [['Notes', 'text', false, true], ['Worktrees', 'unique-list', false, false], ['PRs', 'unique-list', false, false]]);
   assert.match(settings.footer.fields[1].instructions, /worktree root/);
-  assert.deepEqual([settings.footer.maxFields, settings.footer.bar], [2, null]);
+  assert.deepEqual([settings.footer.maxFields, settings.footer.bar, settings.footer.fieldsDefined], [2, null, true]);
   const footer = { ...settings.footer, bar: ['Links'], fields: [{ name: 'Links', label: 'Links', type: 'list', enabled: true, link: true, format: '<value>', instructions: '' }] };
   assert.throws(() => saveFieldSettings({ ...footer, fields: [{ name: 'Links', type: 'set' }] }, settings.raw), /type must be/);
   const raw = saveFieldSettings(footer, settings.raw);
@@ -93,7 +93,7 @@ test('update_current applies each field type and converts saved text to a list o
   assert.match(await client.readContext(meta()), /"agent_notes":\{"Notes":"first\\nsecond","Other":\["a","b","c"\]\}[^]*"name":"Other","label":"Other","link":true,"format":"<value>","type":"unique-list"/);
 });
 
-test('a list needs a note CLI that stores arrays', async (t) => {
+test('field updates need a note CLI that keeps lists', async (t) => {
   const dir = await profile(t), command = join(dir, 'note');
   await writeFile(command, `#!${process.execPath}
 const args = process.argv.slice(2);
@@ -102,8 +102,8 @@ console.log(args[0] === '--version' ? 'pinote 0.30.0' : JSON.stringify({ id: 1, 
   process.env.PINOTE_NOTE_COMMAND = command;
   const client = connectEngine();
   t.after(() => client.close());
-  const result = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: 'r', append: { PRs: 'https://example.test/1' } },
+  const result = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: 'r', set: { Notes: 'text only' } },
     _meta: { 'native-ui/context': { conversationId: 'conversation', piSessionId: '12345678-1234-4234-8234-123456789012', state: { selectedId: 1 } } } });
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /List fields require note 0\.31\.0\+/);
+  assert.match(result.content[0].text, /Updating fields requires note 0\.31\.0\+/);
 });

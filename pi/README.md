@@ -14,7 +14,8 @@ conversation/branch.
 ## Install
 
 Requires **Pi 1.4.0+**, **Node.js 22.19+** and the Node **note 0.26.0+** CLI on
-`PATH` ([CLI install](../docs/usage.md#install)). `pinote_get_image` needs note 0.30.0+.
+`PATH` ([CLI install](../docs/usage.md#install)). `pinote_get_image` needs note 0.30.0+;
+`pinote_update_current` needs note 0.31.0+.
 
 ```sh
 pi install npm:pi-note
@@ -200,7 +201,9 @@ Each definition has a `type`, edited in the desktop's **Fields** settings (or
   entry per line. An emptied list removes its field.
 - Text saved before a field became a list is split into lines on the next write.
 - A field without a definition stays text; `append` adds unique lines to it.
-- Lists need `note` 0.31.0+. The footer and watchers still see a list as text,
+- `pinote_update_current` needs `note` 0.31.0+: an earlier CLI drops lists when
+  it rewrites a task, so update every `note` and restart older Pi sessions before
+  the first list is saved. The footer and watchers still see a list as text,
   one entry per line.
 
 Disabling stops the guidance; saved values stay visible in Electron's preview.

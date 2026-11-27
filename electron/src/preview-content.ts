@@ -1,4 +1,5 @@
 import type { FieldDisplay, Task } from './protocol';
+import { fieldItems } from '../../pi/field-values.ts';
 import { parsePR } from '../../pi/pr-url.js';
 import MarkdownIt from 'markdown-it';
 import { imageElement, imageSource } from './image-refs';
@@ -83,8 +84,10 @@ export function fillPreview(parent: HTMLElement, task: Task, options: PreviewOpt
     if (!Object.keys(task.agent_notes).length) agent.append(el('p', 'Agent fields were removed.'));
     for (const [key, value] of Object.entries(task.agent_notes)) {
       agent.append(el('h4', key));
-      if (Array.isArray(value)) { agent.append(fieldChips(value, options.fields?.find(field => field.name === key), options)); continue; }
-      const body = el('div'); markdownDOM(value, body, options, false, false); agent.append(body);
+      // The definition's type decides, whatever shape is stored: a value changes shape only when next edited.
+      const display = options.fields?.find(field => field.name === key), list = display ? display.type !== 'text' : Array.isArray(value);
+      if (list) { agent.append(fieldChips(fieldItems(value), display, options)); continue; }
+      const body = el('div'); markdownDOM(Array.isArray(value) ? value.map(item => `- ${item}`).join('\n') : value, body, options, false, false); agent.append(body);
     }
     parent.append(agent);
   }

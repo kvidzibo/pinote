@@ -110,6 +110,22 @@ try {
   assert.equal((await saved()).footer.fields[2].type,'list','The stale change is not written');
   await page.keyboard.press('Escape'); await dialog.waitFor({state:'detached'});
 
+  // Before any edit the value is still text; the preview already shows it as the list its type says.
+  const openPreview = async () => {
+    const opened = app.waitForEvent('window');
+    await page.locator(`[data-id="${task.id}"]`).getByRole('button',{name:/^(Preview full task|Unread agent update — click to view\.)$/}).click();
+    const preview = await opened;
+    await preview.waitForURL('pinote-app://ui/preview.html');
+    await preview.locator('.field-chips').first().waitFor();
+    return preview;
+  };
+  const chips = preview => preview.locator('.agent h4:text-is("PRs") + .field-chips');
+  {
+    const preview = await openPreview(), closed = preview.waitForEvent('close');
+    assert.deepEqual(await chips(preview).locator('li').allTextContents(),['#1','#2']);
+    await preview.keyboard.press('Escape').catch(error => { if (!preview.isClosed()) throw error; });
+    await closed;
+  }
   // The task editor: a list is one entry per row and saves as an array.
   await page.getByRole('button',{name:`Actions for task ${task.id}`,exact:true}).click();
   await page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${task.id}:`)}).getByRole('button',{name:'Edit text…',exact:true}).click();
@@ -129,7 +145,20 @@ try {
   await until(() => Array.isArray(notes().PRs) && notes().PRs.length === 3,'The list saves as an array');
   await allSaved();
   assert.deepEqual(notes(),{ Notes:'Free **text**', PRs:pulls });
-  await add('Owner','ana'); await add('Owner','ana'); await add('Links','https://example.test/a'); await add('Links','https://example.test/a');
+  // Editing an entry into a repeat keeps the entry: nothing is saved over it.
+  const second = group('PRs').getByRole('textbox',{name:'PRs entry 2',exact:true});
+  await second.fill(pulls[0]);
+  await group('PRs').getByRole('status').getByText(`Already in this list: ${pulls[0]}`,{exact:true}).waitFor();
+  await second.blur();
+  assert.deepEqual(await entries('PRs'),pulls,'The entry returns to its value');
+  await page.waitForTimeout(900);
+  assert.deepEqual(notes().PRs,pulls,'A repeat deletes nothing');
+  // Several pasted lines are several entries.
+  await group('Owner').getByRole('textbox',{name:'Add Owner entry',exact:true}).evaluate(input => {
+    const clipboardData = new DataTransfer(); clipboardData.setData('text/plain','ana\nana');
+    input.dispatchEvent(new ClipboardEvent('paste',{clipboardData,bubbles:true,cancelable:true}));
+  });
+  await add('Links','https://example.test/a'); await add('Links','https://example.test/a');
   await until(() => notes().Owner?.length === 2 && notes().Links?.length === 1,'A list keeps repeats; a unique list does not');
   await allSaved();
   await group('PRs').getByRole('button',{name:'Remove PRs entry 1',exact:true}).click();
@@ -145,15 +174,10 @@ try {
   await page.keyboard.press('Escape'); await editor.waitFor({state:'detached'});
 
   // The preview shows list entries as chips in the field's format, linked.
-  const opened = app.waitForEvent('window');
-  await page.locator(`[data-id="${task.id}"]`).getByRole('button',{name:/^(Preview full task|Unread agent update — click to view\.)$/}).click();
-  const preview = await opened;
-  await preview.waitForURL('pinote-app://ui/preview.html');
-  await preview.locator('.field-chips').first().waitFor();
+  const preview = await openPreview();
   assert.deepEqual((await preview.locator('.agent h4').allTextContents()).sort(),['Links','Notes','PRs']);
-  const chips = preview.locator('.agent h4:text-is("PRs") + .field-chips');
-  assert.deepEqual(await chips.locator('li').allTextContents(),['#2','#3']);
-  assert.deepEqual(await chips.locator('a').evaluateAll(nodes=>nodes.map(node=>node.href)),pulls.slice(1));
+  assert.deepEqual(await chips(preview).locator('li').allTextContents(),['#2','#3']);
+  assert.deepEqual(await chips(preview).locator('a').evaluateAll(nodes=>nodes.map(node=>node.href)),pulls.slice(1));
   assert.equal(await preview.locator('.agent strong').textContent(),'text','Text fields stay Markdown');
   await preview.screenshot({path:join(root,'preview-chips.png')});
   assert.deepEqual(errors,[]);

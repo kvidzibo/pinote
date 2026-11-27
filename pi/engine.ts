@@ -718,10 +718,10 @@ return {
         const gone = new Set(fieldItems(value));
         save(key, fieldItems(current(key), type === 'unique-list').filter((item) => !gone.has(item)));
       }
-      if (Object.values(set).some(Array.isArray)) {
-        // Earlier CLIs accept only strings; say so rather than relay their validation error.
+      {
+        // An earlier CLI reads no lists, so even its text update would rewrite the task without them.
         const version = /^pinote (\d+)\.(\d+)\./.exec((await exec(noteCommand(), ['--version'], { signal, timeout: 10_000 })).stdout.trim());
-        if (!version || Number(version[1]) === 0 && Number(version[2]) < 31) throw new Error('List fields require note 0.31.0+');
+        if (!version || Number(version[1]) === 0 && Number(version[2]) < 31) throw new Error('Updating fields requires note 0.31.0+: earlier versions drop list fields');
       }
       result = JSON.parse(await note(['agent', 'update', String(task.id), '--expected-updated-at', args.expected_updated_at, '--set-json', JSON.stringify(set), ...remove.map((key) => `--remove=${key}`)], signal));
       const caller = context(meta);

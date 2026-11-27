@@ -15,7 +15,8 @@ import { fieldText, type FieldValue } from './field-values.ts';
 const exec = promisify(execFile);
 const integer = z.number().int().nonnegative().safe();
 const field = z.string().min(1).max(128);
-const value = z.string().max(8192).nullable();
+// A list arrives joined by newlines: up to the 32 KiB a task's fields may hold.
+const value = z.string().max(32768).nullable();
 const Event = z.object({ id: integer, taskId: integer.positive(), field,
   event: z.enum(['added', 'changed', 'removed']), value, previousValue: value }).strict();
 const Batch = z.object({ cursor: integer, events: z.array(Event).max(3200) }).strict();

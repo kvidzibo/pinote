@@ -124,13 +124,13 @@ export type ImageView = typeof IMAGE_VIEWS[number];
 export type WindowSettings = { startup: WindowStartup; imageView: ImageView; current: { x: number; y: number; width: number; height: number } };
 /** A handoff field definition from pi-note.json with its effective values; `saved` is false for a preset the file does not define yet. */
 export type FieldDefinition = { name: string; label: string; type: FieldType; enabled: boolean; link: boolean; format: string; instructions: string; width?: number; saved: boolean };
-export type FooterSettings = { titleWidth: number; fieldWidth: number; maxFields: number; bar: string[] | null; fields: FieldDefinition[] };
+export type FooterSettings = { titleWidth: number; fieldWidth: number; maxFields: number; bar: string[] | null; fields: FieldDefinition[]; fieldsDefined: boolean };
 /** Fields settings shared with Pi in pi-note.json. */
 export type FieldSettings = { raw: string | null; footer: FooterSettings };
 /** What Pi's parser accepts for a saved footer. */
-export type FooterInput = Omit<FooterSettings, 'fields' | 'bar'> & { bar?: string[]; fields: Omit<FieldDefinition, 'saved'>[] };
-/** How a list field's entries are shown: the definition's format and whether URLs are links. */
-export type FieldDisplay = Pick<FieldDefinition, 'name' | 'link' | 'format'>;
+export type FooterInput = Omit<FooterSettings, 'fields' | 'bar' | 'fieldsDefined'> & { bar?: string[]; fields?: Omit<FieldDefinition, 'saved'>[] };
+/** How a field is shown: its type, and for list entries the definition's format and whether URLs are links. */
+export type FieldDisplay = Pick<FieldDefinition, 'name' | 'type' | 'link' | 'format'>;
 export type PreviewData = { task: Task; markdown: boolean; unread: boolean; fields?: FieldDisplay[] };
 export type PreviewRequest = { token: number; data: PreviewData; point: MenuPoint };
 export type PreviewApi = {

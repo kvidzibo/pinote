@@ -28,7 +28,7 @@ let active: Snapshot | null = null;
 let creationTag: string | null = null;
 // Field definitions shared with Pi, as last read: the editor and previews use their types and formats.
 let fieldDefinitions: FieldDefinition[] = [];
-const fieldDisplays = (): FieldDisplay[] => fieldDefinitions.map(({ name, link, format }) => ({ name, link, format }));
+const fieldDisplays = (): FieldDisplay[] => fieldDefinitions.map(({ name, type, link, format }) => ({ name, type, link, format }));
 async function loadFieldDefinitions(): Promise<FieldDefinition[]> {
   fieldDefinitions = await api.agentFields().catch(() => []);
   if (active) { renderTasks(); updatePreview(); }
@@ -1009,50 +1009,53 @@ async function edit(task: Task): Promise<void> {
   fieldList.append(el('h3', 'Agent fields'));
   // A list is edited one entry per row. A unique list refuses an entry it already has.
   const listField = (name: string, unique: boolean) => {
-    const items = fieldItems(draftFields.get(name) ?? savedFields.get(name), unique && !draftFields.has(name));
+    const items = fieldItems(draftFields.get(name) ?? savedFields.get(name), unique);
     const row = el('div', undefined, 'field-row'), label = el('span', name), box = el('div', undefined, 'field-list'), hint = el('p', undefined, 'field-hint');
     label.title = `${name} (${unique ? 'unique list' : 'list'})`; hint.setAttribute('role', 'status'); hint.hidden = true;
     row.setAttribute('role', 'group'); row.setAttribute('aria-label', `Agent field ${name}`);
     const say = (text: string) => { hint.textContent = text; hint.hidden = !text; };
-    const mark = () => {
-      const seen = new Set<string>(); let repeated = false;
-      for (const input of box.querySelectorAll<HTMLInputElement>('.field-item:not(.field-add) input')) {
-        const value = input.value.trim(), duplicate = unique && !!value && seen.has(value);
-        seen.add(value); repeated ||= duplicate;
-        if (duplicate) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
-      }
-      if (repeated) say('Repeated entries are saved once.'); else if (hint.textContent === 'Repeated entries are saved once.') say('');
-    };
     const draw = (focusAdd = false) => {
       box.replaceChildren();
       items.forEach((item, index) => {
         const line = el('div', undefined, 'field-item'), input = el('input');
         input.value = item; input.spellcheck = false; input.maxLength = 4096; input.setAttribute('aria-label', `${name} entry ${index + 1}`);
-        input.addEventListener('input', () => { items[index] = input.value; mark(); changed(); });
+        // A repeat in a unique list is not taken: the entry keeps its last value, and returns to it on leaving the row.
+        input.addEventListener('input', () => {
+          const value = input.value.trim(), repeat = unique && !!value && items.some((item, other) => other !== index && item.trim() === value);
+          if (repeat) { input.setAttribute('aria-invalid', 'true'); say(`Already in this list: ${value}`); return; }
+          input.removeAttribute('aria-invalid'); say(''); items[index] = input.value; changed();
+        });
+        input.addEventListener('change', () => { if (input.getAttribute('aria-invalid')) { input.value = items[index]; input.removeAttribute('aria-invalid'); say(''); } });
         line.append(input, button('close', `Remove ${name} entry ${index + 1}`, () => { items.splice(index, 1); say(''); draw(); changed(); }));
         box.append(line);
       });
       const line = el('div', undefined, 'field-item field-add'), adder = el('input');
       adder.placeholder = unique ? 'Add entry (no duplicates)' : 'Add entry'; adder.spellcheck = false; adder.setAttribute('aria-label', `Add ${name} entry`);
-      const commit = () => {
-        const entries = fieldItems(adder.value), skipped = entries.filter(entry => unique && items.some(item => item.trim() === entry));
+      const commit = (text = adder.value) => {
+        const entries = fieldItems(text), skipped = entries.filter(entry => unique && items.some(item => item.trim() === entry));
         if (!entries.length || fieldsLocked) return;
-        for (const entry of unique ? new Set(entries) : entries) if (!skipped.includes(entry) && items.length < 256) items.push(entry.slice(0, 4096));
+        const added = (unique ? [...new Set(entries)] : entries).filter(entry => !skipped.includes(entry));
+        // What the store would refuse stays in the input, with the reason.
+        const refused = entries.some(entry => Array.from(entry).length > 4096) ? 'An entry takes at most 4096 characters.'
+          : items.length + added.length > 256 ? 'A list holds at most 256 entries.' : '';
+        if (refused) { say(refused); return; }
+        items.push(...added);
         say(skipped.length ? `Already in this list: ${[...new Set(skipped)].join(', ')}` : '');
-        if (skipped.length === entries.length) { adder.select(); return; }
+        if (!added.length) { adder.select(); return; }
         // Emptied first: removing the focused input reports its value as a change again.
         adder.value = ''; draw(true); changed();
       };
       adder.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); commit(); } });
       // Leaving the row keeps what was typed; several pasted lines become several entries.
-      adder.addEventListener('change', commit);
+      adder.addEventListener('change', () => commit());
       adder.addEventListener('paste', event => {
         const text = event.clipboardData?.getData('text/plain') ?? '';
         if (!/[\r\n]/.test(text) || fieldsLocked) return;
-        event.preventDefault(); adder.value += text; commit();
+        // Split here: a single-line input would join the lines.
+        event.preventDefault(); commit(adder.value + text);
       });
-      line.append(adder, button('add', `Add ${name} entry`, commit)); box.append(line, hint);
-      mark(); lockFields();
+      line.append(adder, button('add', `Add ${name} entry`, () => commit())); box.append(line, hint);
+      lockFields();
       if (focusAdd) adder.focus();
     };
     draw(); row.append(label, box); fieldList.append(row);
@@ -1487,7 +1490,9 @@ function configureFields(): void {
   let settings: FieldSettings | undefined, draft: FooterSettings | undefined, selected: string | undefined, layoutSelected = false, busy = false, note = '', error = '';
   // Presets that were never changed stay out of the file.
   const input = (source: FooterSettings): FooterInput => ({ titleWidth: source.titleWidth, fieldWidth: source.fieldWidth, maxFields: source.maxFields,
-    ...(source.bar ? { bar: source.bar } : {}), fields: source.fields.filter(field => field.saved).map(({ saved: _saved, ...field }) => field) });
+    ...(source.bar ? { bar: source.bar } : {}),
+    // No field list at all stays that way until a field is saved: Pi then shows what a task's own Bar names.
+    ...(source.fieldsDefined || source.fields.some(field => field.saved) ? { fields: source.fields.filter(field => field.saved).map(({ saved: _saved, ...field }) => field) } : {}) });
   const dirty = () => !!settings && !!draft && JSON.stringify(input(draft)) !== JSON.stringify(input(settings.footer));
   const load = async () => {
     try {

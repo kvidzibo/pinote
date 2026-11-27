@@ -11,7 +11,7 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(!validParams('edit', { id: true, revision: 'rev', text: 'x' }));
   assert.ok(validParams('agent', { id: 1, revision: 'rev', fields: { PRs: 'https://example.test/1', Worktree: null } }));
   assert.ok(validParams('agent', { id: 1, revision: 'rev', fields: { PRs: ['https://example.test/1', 'https://example.test/2'] } }));
-  for (const fields of [undefined, null, [], { PRs: 1 }, { PRs: [1] }, { PRs: [null] }, { PRs: Array(257).fill('x') }, { ['x'.repeat(257)]: 'v' }]) assert.ok(!validParams('agent', { id: 1, revision: 'rev', fields }));
+  for (const fields of [undefined, null, [], { PRs: 1 }, { PRs: [1] }, { PRs: [null] }, { PRs: Array(257).fill('x') }, { PRs: Array(256).fill('x'.repeat(1024)) }, { ['x'.repeat(257)]: 'v' }]) assert.ok(!validParams('agent', { id: 1, revision: 'rev', fields }));
   assert.ok(!validParams('transition', { id: 1, revision: 'rev', state: 'active', action: 'erase' }));
   assert.ok(validMenuRequest({ kind: 'app', x: 0, y: 100 }));
   for (const startup of [{}, { position: { x: -2560, y: 1030 } }, { size: { width: 280, height: 120 } }, { position: { x: 30, y: 1030 }, size: { width: 650, height: 400 } }]) assert.ok(validWindowStartup(startup));
@@ -25,8 +25,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   const request = { token: 1, data, point: { x: 0, y: 100 } };
   assert.ok(validPreviewData(data));
   // A list field arrives as an array, with the definitions that format its entries.
-  assert.ok(validPreviewData({ ...data, task: { ...task, agent_notes: { PRs: ['https://example.test/1'], Notes: 'text' } }, fields: [{ name: 'PRs', link: true, format: '#<number>' }] }));
-  for (const fields of [null, {}, [{ name: 'PRs' }], [{ name: 'PRs', link: 'yes', format: '' }], [{ name: 'PRs', link: true, format: '', extra: 1 }]]) assert.ok(!validPreviewData({ ...data, fields }));
+  assert.ok(validPreviewData({ ...data, task: { ...task, agent_notes: { PRs: ['https://example.test/1'], Notes: 'text' } }, fields: [{ name: 'PRs', type: 'unique-list', link: true, format: '#<number>' }] }));
+  for (const fields of [null, {}, [{ name: 'PRs' }], [{ name: 'PRs', link: true, format: '' }], [{ name: 'PRs', type: 'set', link: true, format: '' }], [{ name: 'PRs', type: 'list', link: 'yes', format: '' }], [{ name: 'PRs', type: 'list', link: true, format: '', extra: 1 }]]) assert.ok(!validPreviewData({ ...data, fields }));
   assert.ok(!validPreviewData({ ...data, task: { ...task, agent_notes: { PRs: [1] } } }));
   assert.ok(validPreviewRequest(request));
   const snapshot = (pi_sessions: unknown) => ({ protocol: 1, ok: true, result: {

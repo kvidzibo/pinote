@@ -53,7 +53,8 @@ export function fieldSettings() {
   const saved = new Set((config.fields ?? []).map((field) => field.name === 'PR' ? 'PRs' : field.name));
   const fields = footerCatalog(config).map((field) => ({ ...field, type: fieldType(field), enabled: field.enabled !== false,
     instructions: field.instructions ?? defaultFieldInstructions(field.name), saved: saved.has(field.name) }));
-  return { raw, footer: { ...layout, bar: bar ?? null, fields } };
+  // Without a field list, Pi shows the fields a task's own Bar value names; saving must not end that by accident.
+  return { raw, footer: { ...layout, bar: bar ?? null, fields, fieldsDefined: config.fields != null } };
 }
 export { saveFooterSettings as saveFieldSettings } from './footer-config.ts';
 /** What saving these entries will trust, for the desktop's confirmation: enabled scripts and the shared values they are given. */

@@ -15,7 +15,8 @@ export const imageHash = (v: unknown): v is string => typeof v === 'string' && /
 const base64 = (v: unknown, max = MAX_IMAGE_BASE64) => typeof v === 'string' && v.length > 0 && v.length <= max && v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v);
 const imageMime = (v: unknown) => ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(String(v));
 const fieldValue = (v: unknown) => str(v) || Array.isArray(v) && v.length <= 256 && [...v].every(item => str(item));
-const agentFields = (v: unknown, removable = false) => record(v) && Object.keys(v).length <= 64 && Object.entries(v).every(([k, value]) => str(k, 256) && (removable && value === null || fieldValue(value)));
+// The store holds 32 KiB of fields per task; the total is bounded as well as each part.
+const agentFields = (v: unknown, removable = false) => record(v) && Object.keys(v).length <= 64 && JSON.stringify(v).length <= 131072 && Object.entries(v).every(([k, value]) => str(k, 256) && (removable && value === null || fieldValue(value)));
 const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   handshake: {}, snapshot: { view: v => ['active', 'archive', 'scheduled'].includes(String(v)) },
   add: { text: str, tag: nullable }, edit: { id, revision: str, text: str },
@@ -51,7 +52,7 @@ export function validPreviewData(value: unknown): value is PreviewData {
   return record(value) && Object.keys(value).every(k => ['task','markdown','unread','fields'].includes(k)) &&
     validTask(value.task) && typeof value.markdown === 'boolean' && typeof value.unread === 'boolean' &&
     (value.fields === undefined || Array.isArray(value.fields) && value.fields.length <= 128 && [...value.fields].every(field => record(field) &&
-      Object.keys(field).length === 3 && str(field.name, 256) && typeof field.link === 'boolean' && str(field.format, 4096))) &&
+      Object.keys(field).length === 4 && str(field.name, 256) && ['text', 'list', 'unique-list'].includes(field.type as string) && typeof field.link === 'boolean' && str(field.format, 4096))) &&
     Buffer.byteLength(JSON.stringify(value)) <= MAX_STATE_PAYLOAD_BYTES;
 }
 export function validPreviewRequest(value: unknown): value is PreviewRequest {

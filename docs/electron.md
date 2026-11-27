@@ -189,7 +189,8 @@ once and shown on its own line; the text keeps a short
 
 A row's eye opens a floating Markdown preview with all saved agent fields
 (including those disabled in the field settings), full Pi session IDs, and
-unread updates. List entries appear as chips in the field's format. **Escape**, **Close** or losing focus dismisses it; **Edit**
+unread updates. A list field's entries appear as chips in the field's format,
+including a value still saved as text. **Escape**, **Close** or losing focus dismisses it; **Edit**
 opens the editor. Raw HTML and remote images are not loaded, and links open
 externally only on explicit activation.
 
