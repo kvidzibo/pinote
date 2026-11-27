@@ -1,31 +1,24 @@
 # README images
 
-These are real Linux/X11 captures with synthetic tasks. The Electron screenshots
-use pinote-electron 0.30.0 and Pinote 0.29.0. `pi-integration.png` combines separate
-GTK and Pi captures using Pinote 0.7.0 and pi-note 0.11.0. The example PR is fictitious.
-Pi used an offline demo model configuration, and no prompt was submitted to a provider.
+Real Linux/X11 captures with synthetic tasks, taken under isolated Xvfb, private
+D-Bus/i3, and temporary HOME/XDG data. No personal tasks, live desktop, or model
+request was used; the example PR is fictitious.
 
-- `electron-checklist.png`: 560×460 window with the default row actions, all tags
-  shown, a light hover on “Add screenshots to the README”, and an unread agent
-  update on “Polish the task list”.
-- `electron-actions.png`: 420×460 window with the inline action toolbar open.
-- `electron-editor.png`: 560×460 task editor with Markdown source and an agent field.
+| Image | Content | Versions |
+| --- | --- | --- |
+| `electron-checklist.png` | 560×460, default row actions, all tags, light hover, one unread agent update | pinote-electron 0.30.0, Pinote 0.29.0 |
+| `electron-actions.png` | 420×460, inline action toolbar open | same |
+| `electron-editor.png` | 560×460, task editor with Markdown source and an agent field | same |
+| `pi-integration.png` | Selected-task menu/footer beside the task's Agent preview (separate GTK and Pi captures) | Pinote 0.7.0, pi-note 0.11.0 |
+| `pi-task-suggestion.png`, `pi-task-selected.png` | Bold controls and compact selected-task spacing, cropped from Kitty | pi-note 0.15.1 |
+| `pi-task-replacement.png` | After replacing an unaccepted suggestion, cropped from Kitty | pi-note 0.17.0 |
 
-The Electron images were captured from the running app under isolated Xvfb,
-private D-Bus/i3, and temporary HOME/XDG data; no personal tasks or desktop were
-used. These are documentation captures, separate from the temporary
-regression-test artifacts.
-- `pi-integration.png`: selected-task menu/footer and the same task's Agent preview.
-- `pi-task-suggestion.png` and `pi-task-selected.png`: pi-note 0.15.1 bold controls
-  and compact selected-task spacing, cropped from isolated Kitty captures with
-  synthetic data and no model request.
-- `pi-task-replacement.png`: pi-note 0.17.0 after replacing an unaccepted
-  suggestion, cropped from isolated Kitty with temporary app data and no model request.
+## Refreshing
 
-When refreshing these assets, use the [Electron development setup](../development.md#electron-frontend)
-and an isolated Xvfb display, private D-Bus and private i3 socket. Use temporary
-HOME, XDG and `PI_CODING_AGENT_DIR` directories with sample data only; do not
-capture a live desktop or reuse personal Pi credentials. Set `LANG=C.UTF-8`
-and make the configured font available to fontconfig. Disable PR polling with
-`PINOTE_PR_POLL_SECONDS=0`; selecting a demo task needs no model request.
-Keep native text readable and include complete controls.
+- Use the [Electron development setup](../development.md#electron-frontend) with an
+  isolated Xvfb display, private D-Bus and private i3 socket.
+- Use temporary HOME, XDG and `PI_CODING_AGENT_DIR` directories with sample data
+  only; never capture a live desktop or reuse personal Pi credentials.
+- Set `LANG=C.UTF-8`, make the configured font available to fontconfig, and
+  disable PR polling with `PINOTE_PR_POLL_SECONDS=0`.
+- Keep native text readable and include complete controls.
