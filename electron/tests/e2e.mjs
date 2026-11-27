@@ -966,6 +966,14 @@ try {
       assert.equal(await sourceValue(textbox),'    - Imported','Indent commands use two spaces, never tabs');
       await textbox.press('Shift+Tab');
       assert.equal(await textbox.evaluate(node=>node===document.activeElement),false,'Shift+Tab remains available for focus navigation');
+      await textbox.fill('# Colon\n- Parent:  '); await textbox.press('Control+End');
+      await textbox.press('Shift+Enter'); await page.keyboard.type('Child');
+      await textbox.press('Shift+Enter'); await textbox.press('Shift+Enter');
+      assert.equal(await sourceValue(textbox),'# Colon\n- Parent:\n  - Child\n- ','A colon nests the next bullet without trailing spaces; an empty nested bullet steps out one level');
+      await textbox.press('Shift+Enter'); await page.keyboard.type('Plain:'); await textbox.press('Shift+Enter');
+      assert.equal(await sourceValue(textbox),'# Colon\n- Parent:\n  - Child\nPlain:\n- ','A plain line ending with a colon starts a list');
+      await textbox.fill('```\nkey:'); await textbox.press('Control+End'); await textbox.press('Shift+Enter');
+      assert.equal(await sourceValue(textbox),'```\nkey:\n','Fenced code keeps plain newlines');
       await textbox.fill('# Bullet indentation\n- Parent\n- Child');
       await textbox.press('Control+End'); await textbox.press('Tab');
       await textbox.press('Shift+Enter'); await page.keyboard.type('Grandchild');

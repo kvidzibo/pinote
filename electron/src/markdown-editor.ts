@@ -3,7 +3,7 @@ import { Decoration, EditorView, WidgetType, keymap, placeholder, type Decoratio
 import { IMAGE_REF, imageElement, imageHashes } from './image-refs';
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
 // Only explicit editing commands transform source; loading, paste and copy never do.
@@ -28,6 +28,12 @@ function sourceBulletIndent(view: EditorView, backspace: boolean): boolean {
   return true;
 }
 
+function inFencedCode(state: EditorState, pos: number): boolean {
+  const cursor = syntaxTree(state).cursorAt(pos, -1);
+  do { if (cursor.name === 'FencedCode') return true; } while (cursor.parent());
+  return false;
+}
+
 export function sourceNewline(view: EditorView): boolean {
   if (view.composing) return false;
   if (view.state.readOnly) return true;
@@ -37,15 +43,23 @@ export function sourceNewline(view: EditorView): boolean {
     const prefix = state.sliceDoc(line.from, range.from);
     const bullet = /^([ \t]*)-([ \t]+|$)/.exec(prefix);
     if (bullet && !prefix.slice(bullet[0].length).trim() && range.to === line.to) {
-      return { changes: { from: line.from, to: range.to, insert: '' }, range: EditorSelection.cursor(line.from) };
+      // An empty nested bullet steps out one level; only a top-level one ends the list.
+      const indent = bullet[1].replace(/\t/g, '  ');
+      const insert = indent ? indent.slice(0, -2) + '- ' : '';
+      return { changes: { from: line.from, to: range.to, insert }, range: EditorSelection.cursor(line.from + insert.length) };
     }
-    const promote = state.selection.ranges.length === 1 && state.doc.lines === 1 && !!prefix.trim()
-      && !/^\s*(?:#{1,6}(?:\s|$)|[>*+-](?:\s|$)|\d+[.)]\s|`{3,}|~{3,})/.test(prefix);
+    const plain = !/^\s*(?:#{1,6}(?:\s|$)|[>*+-](?:\s|$)|\d+[.)]\s|`{3,}|~{3,})/.test(prefix);
+    const promote = state.selection.ranges.length === 1 && state.doc.lines === 1 && !!prefix.trim() && plain;
     const heading = /^ {0,3}#{1,6}[ \t]+/.test(prefix);
-    const insert = '\n' + (promote || heading ? '- ' : bullet ? bullet[1] + '- ' : '');
+    // A line ending with ":" opens a list: nested under a bullet, at the same indent under plain text.
+    const text = prefix.trimEnd();
+    const colon = text.endsWith(':') && !state.sliceDoc(range.to, line.to).trim() && !inFencedCode(state, range.from);
+    const insert = '\n' + (promote || heading ? '- ' : bullet ? bullet[1] + (colon ? '  - ' : '- ')
+      : colon && plain ? /^[ \t]*/.exec(prefix)![0] + '- ' : '');
+    const from = colon ? line.from + text.length : range.from;
     return {
-      changes: [...(promote ? [{ from: 0, insert: '# ' }] : []), { from: range.from, to: range.to, insert }],
-      range: EditorSelection.cursor(range.from + insert.length + (promote ? 2 : 0)),
+      changes: [...(promote ? [{ from: 0, insert: '# ' }] : []), { from, to: colon ? line.to : range.to, insert }],
+      range: EditorSelection.cursor(from + insert.length + (promote ? 2 : 0)),
     };
   });
   view.dispatch({ ...changes, scrollIntoView: true, userEvent: 'input.type', annotations: isolateHistory.of('full') });

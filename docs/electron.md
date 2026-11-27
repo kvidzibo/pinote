@@ -102,8 +102,11 @@ The cog beside it opens **Settings** in the window, with one tab per section:
 - Both style Markdown **source** live (headings, bold, italic, code); markers
   stay visible and stored text is never rewritten by styling.
 - The first newline after a plain single-line task turns it into `# Task`
-  followed by `- `. Newlines after headings and bullets continue `- `; an empty
-  bullet ends the list.
+  followed by `- `. Newlines after headings and bullets continue `- `. After a
+  line ending with `:` the newline drops trailing spaces and starts a bullet:
+  one level deeper under a bullet, at the same indent under plain text; headings
+  and fenced code are unchanged. An empty nested bullet steps out one level; an
+  empty top-level bullet ends the list.
 - **Tab** indents a `-` bullet by two spaces. **Backspace** at the start of its
   text removes one level, then the bullet prefix. **Shift+Tab**, or Tab on a
   non-bullet line, moves focus.
