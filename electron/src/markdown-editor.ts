@@ -3,7 +3,7 @@ import { Decoration, EditorView, WidgetType, keymap, placeholder, type Decoratio
 import { IMAGE_REF, imageElement, imageHashes } from './image-refs';
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { HighlightStyle, ensureSyntaxTree, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
 // Only explicit editing commands transform source; loading, paste and copy never do.
@@ -29,7 +29,10 @@ function sourceBulletIndent(view: EditorView, backspace: boolean): boolean {
 }
 
 function inFencedCode(state: EditorState, pos: number): boolean {
-  const cursor = syntaxTree(state).cursorAt(pos, -1);
+  // Long documents parse incrementally; an unknown position counts as code.
+  const tree = ensureSyntaxTree(state, pos, 100);
+  if (!tree) return true;
+  const cursor = tree.cursorAt(pos, -1);
   do { if (cursor.name === 'FencedCode') return true; } while (cursor.parent());
   return false;
 }
