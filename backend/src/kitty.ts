@@ -60,7 +60,8 @@ function macosSockets(): string[] {
 export async function address(kitty: string): Promise<string | null> {
   const { explicit } = kittyAddressEnv();
   // Pinote may outlive the Kitty it inherited KITTY_LISTEN_ON from; then search like without it.
-  if (explicit) try { await remote(kitty, explicit, 'ls'); return explicit; } catch { /* Stale or unavailable instance. */ }
+  // A Kitty that answers but refuses the command is still the chosen one, so that error stands.
+  if (explicit) try { await remote(kitty, explicit, 'ls'); return explicit; } catch (error) { if (!(error as Error).message.includes(': Error: Failed to connect to ')) throw error; }
   if (macos()) {
     for (const target of macosSockets()) {
       try { await remote(kitty, target, 'ls'); return target; } catch { /* Stale or unavailable instance. */ }

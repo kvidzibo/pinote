@@ -89,7 +89,7 @@ test('application id uses canonical database without exposing paths', () => {
 });
 function fakeTools() {
   const bin = join(root, 'bin'); mkdirSync(bin); const log = join(root, 'kitty.log');
-  writeFileSync(join(bin, 'kitty'), `#!${process.execPath}\nconst fs = require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_KITTY_LOG,JSON.stringify(args)+'\\n');const fail=process.env.TEST_KITTY_FAIL;if(fail==='yes'||fail&&args.includes(fail)||args[0]==='@'&&!args[2].startsWith(process.env.TEST_KITTY_PREFIX||'')){process.stderr.write('Error: simulated failure\\n');process.exit(1);}if(args.includes('launch'))process.stdout.write('42\\n');if(args[0]!=='@')setTimeout(()=>{},200);if(args.includes('ls')&&process.env.TEST_KITTY_DELAY_LS)setTimeout(()=>{},500);\n`, { mode: 0o700 });
+  writeFileSync(join(bin, 'kitty'), `#!${process.execPath}\nconst fs = require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.TEST_KITTY_LOG,JSON.stringify(args)+'\\n');const fail=process.env.TEST_KITTY_FAIL;if(args[0]==='@'&&!args[2].startsWith(process.env.TEST_KITTY_PREFIX||'')){process.stderr.write('Error: Failed to connect to '+args[2]+' with error: connection refused\\n');process.exit(1);}if(fail==='yes'||fail&&args.includes(fail)){process.stderr.write('Error: simulated failure\\n');process.exit(1);}if(args.includes('launch'))process.stdout.write('42\\n');if(args[0]!=='@')setTimeout(()=>{},200);if(args.includes('ls')&&process.env.TEST_KITTY_DELAY_LS)setTimeout(()=>{},500);\n`, { mode: 0o700 });
   writeFileSync(join(bin, 'pi'), '#!/bin/sh\nexit 99\n', { mode: 0o700 });
   process.env.PATH = bin + ':' + env.PATH; process.env.TEST_KITTY_LOG = log;
   return { bin, log, calls: () => readFileSync(log, 'utf8').trim().split('\n').map(x => JSON.parse(x)) };
@@ -106,7 +106,7 @@ test('Kitty existing address, exact launch envelope and literal argv, no shell',
   const launch = JSON.parse(calls[1].find((x: string) => x.startsWith('--env=PINOTE_LAUNCH_TASK=')).slice('--env=PINOTE_LAUNCH_TASK='.length));
   assert.deepEqual(launch, { task_id: Number(id), updated_at: note.updated_at, prompt });
   assert.deepEqual(calls[2].slice(3), ['set-tab-title', '--match=window_id:42', '--', title]); assert.deepEqual(calls[3].slice(3), ['focus-window', '--match=id:42']);
-  process.env.TEST_KITTY_FAIL = 'yes'; assert.equal(await address(join(tools.bin, 'kitty')), null);
+  process.env.TEST_KITTY_FAIL = 'yes'; await assert.rejects(() => address(join(tools.bin, 'kitty')), /remote control failed/);
   assert.equal(tools.calls().slice(4).every((a: string[]) => a[0] === '@' && a[2] === 'unix:@explicit'), true);
   await assert.rejects(() => remote(join(tools.bin, 'missing'), 'unix:@x', 'ls'), /remote control failed/);
 });
@@ -188,10 +188,13 @@ test('bridge Kitty headings, stale revisions and unknown partial launch outcomes
   for (const tabTitle of ['', '   ', 'a\tb', '‮{title}', 'x'.repeat(257), 42])
     assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(long), revision: longNote.updated_at, directory: root, tabTitle } }, paths)).error.code, 'invalid');
   assert.equal(tools.calls().length, launches);
-  const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_PREFIX = 'unix:@mykitty-';
+  const id = await model.add('task'), note = store(s => s.get(id)); process.env.TEST_KITTY_FAIL = 'yes';
+  // Nothing launches when the Kitty at the explicit address rejects the command.
+  assert.deepEqual((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).error, { code: 'invalid', message: 'Kitty remote control failed at unix:@explicit: Error: simulated failure' });
+  assert.equal(tools.calls().length, launches + 1); delete process.env.TEST_KITTY_FAIL; process.env.TEST_KITTY_PREFIX = 'unix:@mykitty-';
   // An unreachable explicit address, such as one inherited from a Kitty that has exited, falls back to a new window.
   assert.equal((await respond({ protocol: 1, operation: 'kitty', params: { id: Number(id), revision: note.updated_at, directory: root } }, paths)).ok, true); await sleep(300);
-  const fallback = tools.calls().slice(launches);
+  const fallback = tools.calls().slice(launches + 1);
   assert.deepEqual(fallback[0], ['@', '--to', 'unix:@explicit', 'ls']); assert.ok(fallback.some((a: string[]) => a[0] === '--session=none')); assert.equal(fallback.some((a: string[]) => a.includes('launch')), false);
 });
 test('interruption preserves signal status and prevents later Kitty launch steps', async () => {
