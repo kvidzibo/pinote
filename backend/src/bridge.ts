@@ -125,12 +125,12 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
   if (op === 'stats') {
     const file = (path: string) => { try { return statSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
     // Files are measured before SQLite opens, which can create WAL sidecars beside the real file.
-    // Until a checkpoint the newest writes are only in the WAL.
-    const path = resolvePath(paths.database), database = file(path), wal = file(`${path}-wal`), shm = file(`${path}-shm`), logFile = file(paths.log);
+    // Until a checkpoint the newest writes are only in the WAL; the -shm index holds no data and a reader leaves it behind.
+    const path = resolvePath(paths.database), database = file(path), wal = file(`${path}-wal`), logFile = file(paths.log);
     if (!database) throw new NoteError('The database does not exist yet.');
     const store = new Store(path, { timeout: 0.1, readOnly: true });
     try {
-      return { database: { path, bytes: database.size + (wal?.size ?? 0) + (shm?.size ?? 0), modified: new Date(Math.max(database.mtimeMs, wal?.size ? wal.mtimeMs : 0)).toISOString() },
+      return { database: { path, bytes: database.size + (wal?.size ?? 0), modified: new Date(Math.max(database.mtimeMs, wal?.size ? wal.mtimeMs : 0)).toISOString() },
         log: { path: resolvePath(paths.log), bytes: logFile?.size ?? null }, ...store.stats() };
     } finally { store.close(); }
   }
