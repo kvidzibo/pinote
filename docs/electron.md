@@ -111,7 +111,8 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   Compact row/archive titles omit a leading heading marker, not stored text.
 - **Images:** paste (**Ctrl+V**) or drop an image into the composer or task editor.
   It is saved at once and shows as a picture on its own line; the text keeps a
-  short `![image](pinote:sha256-…)` reference. PNG, BMP and WebP become lossless
+  short `![image](pinote:sha256-…)` reference. Pasted into an empty list item, it
+  takes that line and the item continues below. PNG, BMP and WebP become lossless
   WebP (quality 90 only if lossless exceeds 4 MiB), JPEG becomes WebP at quality
   85 (dropping camera and GPS metadata), and sides over 2560 px are scaled down.
   GIFs are kept as they are (up to 2560 px). Stored images are limited to 4 MiB.
