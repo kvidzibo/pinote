@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
   const temp = mkdtempSync(join(tmpdir(), 'pinote-kitty-'));
   const original = { ...process.env };
   delete process.env.KITTY_LISTEN_ON; // No live terminal controls in the mocked UI test.
+  let exec: (command: string, args: string[]) => Promise<unknown> = async () => assert.fail('completion must not run Git, even with an unavailable upstream');
   const clients: { handlers: Map<string, Function>; ctx: any; entries: any[]; notices: string[] }[] = [];
   Object.assign(process.env, {
     PINOTE_NOTE_COMMAND: join(root, 'backend/bin/note'), PI_CODING_AGENT_DIR: join(temp, 'agent'),
@@ -36,7 +37,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     const choices: unknown[] = [];
     let shutdowns = 0, idle = true;
     const pi: any = {
-      exec: async () => assert.fail('completion must not run Git, even with an unavailable upstream'),
+      exec: (command: string, args: string[]) => exec(command, args),
       on: (name: string, handler: Function) => {
         const previous = handlers.get(name);
         handlers.set(name, async (...args: any[]) => { await previous?.(...args); return handler(...args); });
@@ -190,6 +191,41 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     await kept.choose('Complete');
     assert.equal(kept.shutdowns, 0);
     assert.equal(cli('agent', 'get', String(keptTask.id)).state, 'done');
+
+    // A Kitty tab keeps the task it was opened for: a new conversation there continues it, one agent per task.
+    const tabTask = cli('agent', 'add', '--text=Continue in this Kitty tab');
+    let holder: string | undefined;
+    mkdirSync(join(temp, 'run'), { mode: 0o700 });
+    Object.assign(process.env, { KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', KITTY_PID: String(process.pid), XDG_RUNTIME_DIR: join(temp, 'run') });
+    delete process.env.SSH_CONNECTION; delete process.env.SSH_TTY;
+    exec = async (_command, args) => ({ code: 0, stderr: '', stdout: args[3] !== 'ls' ? '' : JSON.stringify([{ tabs: [
+      { id: 4, windows: [{ id: 41, foreground_processes: [{ pid: process.pid }], user_vars: { pinote_task: String(tabTask.id) } }] },
+      { id: 5, windows: [{ id: 42, foreground_processes: [{ pid: process.pid }], user_vars: {} }, { id: 43, user_vars: holder === undefined ? {} : { pinote_task: holder } }] }] }]) });
+    await open({ task_id: tabTask.id, updated_at: tabTask.updated_at });
+    assert.equal(readFileSync(join(temp, 'run/pinote/kitty-tabs', `${process.pid}-5`), 'utf8'), `${tabTask.id}\n${join(temp, 'data/pinote/notes.db')}`);
+    holder = String(tabTask.id);
+    assert.equal((await open(undefined)).selection().selectedId, null, 'Another Pi in the tab already holds the task');
+    holder = String(keptTask.id);
+    const continued = await open(undefined);
+    assert.equal(continued.selection().selectedId, tabTask.id);
+    assert.deepEqual(continued.cards(), [{ id: tabTask.id, text: tabTask.text }]);
+    assert.deepEqual(continued.notices, [`Pinote: continuing this Kitty tab's task #${tabTask.id}.`]);
+    await continued.choose('Clear');
+    assert.equal((await open(undefined, [], 'new')).selection().selectedId, tabTask.id, '/new continues the tab task too');
+    assert.equal((await open(undefined, [{ type: 'message' }])).selection().selectedId, null, 'A resumed conversation keeps its own state');
+    assert.equal((await open('not-json')).selection().selectedId, null, 'A rejected launch handoff selects nothing');
+    process.env.KITTY_WINDOW_ID = '41';
+    assert.equal((await open(undefined)).selection().selectedId, null, 'Other tabs are unaffected');
+    // A task that changes while it is picked up fails closed and leaves the ordinary task list.
+    process.env.KITTY_WINDOW_ID = '42';
+    const racing: any[] = [];
+    racing.push = (...items: any[]) => {
+      if (items[0]?.data?.state?.launch) execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', 'done', String(tabTask.id)]);
+      return Array.prototype.push.apply(racing, items);
+    };
+    const changed = await open(undefined, racing);
+    assert.deepEqual(changed.notices, [`Pinote: this Kitty tab's task #${tabTask.id} was not selected. Use /pinote to select manually.`]);
+    assert.deepEqual([changed.selection().selectedId, changed.selection().launch], [null, undefined]);
 
     const saved = JSON.stringify(clients.map((client) => client.entries));
     assert.ok(!saved.includes('is task clear?') && !saved.includes('Clarify scope'));

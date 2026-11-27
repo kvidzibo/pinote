@@ -95,6 +95,17 @@ then names it. A pane that is not focused within its Kitty OS window stays put a
 the shared tab keeps its name, with a warning; select the task again after focusing it.
 Verified with Kitty 0.48.
 
+**Continuing a tab's task.** A Kitty tab named after a task, by **Start in Kitty…**
+or by selecting the task in Pi, keeps that task. A new conversation in the tab, from
+starting `pi` or `/new` without a selection, selects it automatically, announces it and shows the task. It
+does not when another Pi pane in the tab already holds the task (one agent per
+task; select it there to share), or when the task is completed or archived.
+Resume and reload never pick up a task. The tab's task
+is kept in `$XDG_RUNTIME_DIR/pinote/kitty-tabs` (`$TMPDIR` on macOS; the directory must be
+yours and writable by no one else) and needs Kitty's `KITTY_PID`. It applies only to the
+task database it was recorded for, and only to a Pi in the pane's foreground (not through tmux). A Pi that was killed can leave its `pinote_task` behind in a
+surviving pane; other panes then do not pick up until that pane is closed or reused.
+
 The same window also gets a `pinote_pr` user variable with the selected task's most
 urgent current PR status: `failing` (failed checks or conflicts), `pending`, `passing`
 or `merged`. It is unset without a task or a current status; closed, unavailable and
@@ -110,7 +121,7 @@ current session open. `/quit` exits without completing.
 
 Reload/resume restores the active branch's selection. Starting a new session
 without completing retains the selection; completing starts it unselected.
-A GUI task launch or `/new` with a retained selection shows `Task #<id>` and the full task Markdown in the Pi transcript. This display entry is not sent to the model. Unrelated fresh launches start unselected.
+A GUI task launch or `/new` with a retained selection shows `Task #<id>` and the full task Markdown in the Pi transcript. This display entry is not sent to the model. Other fresh launches start unselected, except in a Kitty tab that keeps a task (see **Continuing a tab's task**).
 Unsaved Pi sessions cannot guarantee selection persistence.
 
 Selecting a task

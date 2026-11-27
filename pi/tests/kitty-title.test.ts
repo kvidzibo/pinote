@@ -16,6 +16,7 @@ test('only acknowledged task acceptance renames the originating Kitty tab, best 
   Object.assign(process.env, { KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', PI_CODING_AGENT_DIR: agent });
   delete process.env.SSH_CONNECTION;
   delete process.env.SSH_TTY;
+  delete process.env.KITTY_PID; // No tab task records outside the test.
   const signal = new AbortController().signal;
   const calls: any[][] = [], notices: string[] = [];
   let failAction = false, failExec = false;
@@ -87,6 +88,7 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
   Object.assign(process.env, { KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', PI_CODING_AGENT_DIR: agent });
   delete process.env.SSH_CONNECTION;
   delete process.env.SSH_TTY;
+  delete process.env.KITTY_PID; // No tab task records outside the test.
   const settings = (value: boolean) => writeFileSync(join(agent, 'pi-note.json'), JSON.stringify({ kittyOneTaskPerTab: value }));
   const signal = new AbortController().signal;
   const calls: string[][] = [], notices: string[] = [];

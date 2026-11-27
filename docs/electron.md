@@ -277,6 +277,9 @@ Pi tabs get Pinote's `PATH`, because Kitty opened from the Dock lacks `node`.
   **Close Pi and its pane**. Closing Pi also closes a **Start in Kitty…** tab;
   closing the pane also ends the shell Pi ran in.
 
+A tab keeps its task: starting Pi again in it, or `/new`, selects the task
+automatically unless another Pi pane in the tab already holds it.
+
 See the [pi-note README](../pi/README.md).
 
 Pi needs the [pi-note extension](../pi/README.md) and a `note` CLI using the same
