@@ -36,7 +36,7 @@ export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promis
       }
       close();
       if (from.isDestroyed()) return false;
-      const at = from.getBounds(), area = screen.getDisplayNearestPoint({ x: Math.round(at.x + at.width / 2), y: Math.round(at.y + at.height / 2) }).workArea;
+      const asked = from.isFocused(), at = from.getBounds(), area = screen.getDisplayNearestPoint({ x: Math.round(at.x + at.width / 2), y: Math.round(at.y + at.height / 2) }).workArea;
       const popup = new BrowserWindow({ width: 320, height: 240, parent: from, type: 'popup-menu', frame: false, resizable: false, show: false,
         skipTaskbar: true, alwaysOnTop: true, title: 'Image', backgroundColor: '#232832',
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
@@ -69,6 +69,8 @@ export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promis
         const scale = Math.min(1, area.width / size[0], area.height / size[1]);
         const width = Math.min(area.width, Math.max(160, Math.round(size[0] * scale))), height = Math.min(area.height, Math.max(120, Math.round(size[1] * scale)));
         const bounds = { x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2), width, height };
+        // Focus moved on while the image loaded: do not take it back.
+        if (asked && !from.isFocused()) { left = true; popup.destroy(); return false; }
         popup.setBounds(bounds); popup.show(); popup.focus();
         popup.on('blur', () => { left = true; popup.destroy(); });
         // X11 window managers can apply frame offsets after mapping (as for the task preview).
