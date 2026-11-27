@@ -106,4 +106,8 @@ console.log(args[0] === '--version' ? 'pinote 0.30.0' : JSON.stringify({ id: 1, 
     _meta: { 'native-ui/context': { conversationId: 'conversation', piSessionId: '12345678-1234-4234-8234-123456789012', state: { selectedId: 1 } } } });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /Updating fields requires note 0\.31\.0\+/);
+  // A key the argument parser would skip is refused, not silently left out of the update.
+  const skipped = await client.callTool({ name: 'update_current', arguments: { expected_updated_at: 'r', set: JSON.parse('{"Notes":"kept","__proto__":"lost"}') },
+    _meta: { 'native-ui/context': { conversationId: 'conversation', piSessionId: '12345678-1234-4234-8234-123456789012', state: { selectedId: 1 } } } });
+  assert.match(skipped.content[0].text, /cannot update a field named __proto__/);
 });

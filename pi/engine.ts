@@ -672,6 +672,11 @@ return {
     else if (name === 'update_current') {
       const Value = z.union([z.string(), z.array(z.string()).max(256)]);
       const Values = z.record(z.string(), Value).default({});
+      // The record parser skips this key: refuse it rather than report an update that was not made.
+      for (const operation of ['set', 'append', 'remove_items']) {
+        const values = (input as Record<string, unknown> | null)?.[operation];
+        if (values && typeof values === 'object' && Object.hasOwn(values, '__proto__')) throw new Error('This tool cannot update a field named __proto__');
+      }
       const args = z.object({ expected_updated_at: z.string(), set: Values, append: Values, remove_items: Values, remove: z.array(z.string()).default([]) }).strict().parse(input);
       const task = await selected(state, signal);
       if (!task) throw new Error('No task is selected');
