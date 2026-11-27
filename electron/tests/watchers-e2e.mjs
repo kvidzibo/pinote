@@ -216,7 +216,10 @@ try {
   await until(async()=>(await dialog.locator('#watcher-field-names option').evaluateAll(nodes=>nodes.map(node=>node.value))).includes('Owner'),'A field saved in Fields is suggested');
   assert.equal(await removed.isChecked(),true,'The draft survives the refreshed suggestions');
   assert.equal(await refused.isVisible(),true,'The refusal stays shown');
-  await save.click(); await page.waitForTimeout(300); await refused.waitFor();
+  // Reselecting clears the message, so the retry's refusal is a new one.
+  await list.getByRole('button',{name:/^GitHub PR:/}).click(); await refused.waitFor({state:'detached'});
+  assert.equal(await removed.isChecked(),true);
+  await save.click(); await refused.waitFor();
   await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');
