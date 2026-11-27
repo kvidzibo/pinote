@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { application_id } from '../src/model.ts';
@@ -19,7 +19,7 @@ const hex = (value: string | Buffer) => Buffer.from(value).toString('hex');
 // macOS file systems reject non-UTF-8 names, and there is no /proc to read raw bytes from.
 const skip = process.platform === 'darwin' && 'needs non-UTF-8 file names and /proc';
 function fixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), 'pinote-identity-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pinote-identity-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, 'bin'); mkdirSync(bin); symlinkSync(process.execPath, join(bin, 'node'));
   const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: root, XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'), XDG_CONFIG_HOME: join(root, 'config'), LC_ALL: 'C.UTF-8' };

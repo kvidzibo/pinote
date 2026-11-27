@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, statSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { Store } from '../../src/store.ts';
 import { discoverPaths, withDisplayLock, jsonStringify, type Paths } from '../../src/runtime.ts';
 let root: string, paths: Paths, saved: NodeJS.ProcessEnv;
 beforeEach(() => {
-  saved = { ...process.env }; root = mkdtempSync(join(tmpdir(), 'pinote-bridge-'));
+  saved = { ...process.env }; root = realpathSync(mkdtempSync(join(tmpdir(), 'pinote-bridge-')));
   for (const [name, folder] of Object.entries({ HOME: 'home', XDG_DATA_HOME: 'data', XDG_STATE_HOME: 'state', XDG_CONFIG_HOME: 'config', XDG_CACHE_HOME: 'cache', XDG_RUNTIME_DIR: 'runtime' })) process.env[name] = join(root, folder);
   for (const name of ['DISPLAY', 'WAYLAND_DISPLAY', 'KITTY_LISTEN_ON', 'I3SOCK']) delete process.env[name];
   process.env.DBUS_SESSION_BUS_ADDRESS = 'unix:path=/nonexistent-bridge-test'; paths = discoverPaths();

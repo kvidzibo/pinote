@@ -4,7 +4,9 @@ import { NoteError, canonicalInstant, pythonStrip } from './compat.ts';
 // Local times use Node's bundled IANA time zone data, so no system date program
 // or zoneinfo files are needed. TZ, when set, must name an IANA zone; POSIX rules
 // and custom TZDIR data are rejected rather than silently read differently.
-const nonIanaZone=/^(?:right\/|posix\/|localtime$|posixrules$)/;
+// ICU also accepts SystemV zones and Java-style abbreviations that name no IANA
+// zone (CST could be Chicago or China); reject them rather than guess a region.
+const nonIanaZone=/^(?:right\/|posix\/|SystemV\/|localtime$|posixrules$|(?:ACT|AET|AGT|ART|AST|BET|BST|CAT|CNT|CST|CTT|EAT|ECT|IET|IST|JST|MIT|NET|NST|PLT|PNT|PRT|PST|SST|VST)$)/i;
 function knownZone(name:string|undefined):string|undefined {
   if(!name || name==='Etc/Unknown') return;
   try { return new Intl.DateTimeFormat('en-US',{timeZone:name}).resolvedOptions().timeZone; } catch { return; }

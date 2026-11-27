@@ -99,6 +99,7 @@ test('unsupported time zones reject wall times before saves and display explicit
   const f=fixture(t), env:NodeJS.ProcessEnv=f.env;
   for(const [tz,tzdir] of [
     ['EST5EDT,M3.2.0,M11.1.0'], ['UTC-3'], [':/etc/localtime'], ['Europe/NotInstalled'], ['Europe/Prague',f.root],
+    ['CST'], ['ist'], ['SystemV/AST4'], // ICU aliases, not IANA zones
   ]) {
     env.TZ=tz;
     if(tzdir===undefined) delete env.TZDIR; else env.TZDIR=tzdir;

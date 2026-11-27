@@ -172,7 +172,8 @@ escape sequences. Dunst's pause, fullscreen, placement, and display policies
 still apply; pinote does not override your desktop preferences.
 
 Data is committed **before** notification delivery. If Dunst is missing or
-unavailable, mutations still succeed (exit 0) with a warning. `note show` returns
+unavailable, mutations still succeed (exit 0) with a warning; on macOS a missing
+Dunst is silent. `note show` returns
 1 on notification failure. Validation/storage errors return 1; CLI syntax errors
 return 2. Do not repeat an add just because desktop delivery failed.
 
