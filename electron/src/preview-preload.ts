@@ -5,6 +5,7 @@ const api: PreviewApi = {
   ready: height => ipcRenderer.invoke('preview-ready', height),
   action: action => ipcRenderer.invoke('preview-action', action),
   openLink: url => ipcRenderer.invoke('preview-link', url),
+  viewImage: hash => ipcRenderer.invoke('preview-image', hash),
   onUpdate: callback => { ipcRenderer.removeAllListeners('preview-update'); ipcRenderer.on('preview-update', (_event, data) => callback(data)); },
 };
 contextBridge.exposeInMainWorld('pinotePreview', Object.freeze(api));

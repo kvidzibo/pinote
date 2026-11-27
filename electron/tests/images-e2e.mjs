@@ -1,6 +1,6 @@
 // Pasted images in the running desktop: real clipboard paste, conversion, preview, Backspace deletion and pruning.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -17,6 +17,9 @@ const env = { ...process.env, PINOTE_BRIDGE_COMMAND: resolve('../backend/bin/pin
   XDG_RUNTIME_DIR: join(root,'runtime'), PI_CODING_AGENT_DIR: join(root,'pi-agent'), NO_AT_BRIDGE:'1', GIO_USE_VFS:'local', GSETTINGS_BACKEND:'memory' };
 for (const name of ['WAYLAND_DISPLAY','I3SOCK','SWAYSOCK','KITTY_LISTEN_ON','KITTY_WINDOW_ID','ELECTRON_RUN_AS_NODE']) delete env[name];
 for (const name of ['HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR','PI_CODING_AGENT_DIR']) await mkdir(env[name], {recursive:true,mode:0o700});
+// The system image viewer is a stub recording the file it was asked to open.
+await mkdir(join(root,'bin')); await writeFile(join(root,'bin','xdg-open'), `#!/bin/sh\nprintf %s "$1" > '${join(root,'opened')}'\n`); await chmod(join(root,'bin','xdg-open'), 0o755);
+env.PATH = `${join(root,'bin')}:${env.PATH}`;
 const call = bridgeCaller(env.PINOTE_BRIDGE_COMMAND, [], env);
 const images = () => {
   const db = new DatabaseSync(join(env.XDG_DATA_HOME,'pinote','notes.db'), { readOnly:true, timeout:2000 });
@@ -83,6 +86,46 @@ try {
   await shown.waitFor();
   await until(() => shown.evaluate(image => image.complete && image.naturalWidth === 2560), 'The preview shows the stored image');
   await preview.screenshot({ path:join(root,'preview.png') });
+  // A click opens Pinote's image window at the image's size, scaled down to the screen; Escape returns to the preview.
+  const windowBounds = url => app.evaluate(({BrowserWindow}, url) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().startsWith(url))?.getBounds(), url);
+  const area = await app.evaluate(({BrowserWindow,screen}) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea);
+  const viewerOpened = app.waitForEvent('window');
+  await shown.click();
+  const viewer = await viewerOpened; await viewer.waitForURL(`pinote-app://ui/image.html#${stored.hash}`);
+  await until(() => viewer.locator('img').evaluate(image => image.complete && image.naturalWidth === 2560), 'The image window shows the stored image');
+  const scale = Math.min(1, area.width / 2560, area.height / 1280), expected = { width:Math.round(2560 * scale), height:Math.round(1280 * scale) };
+  await until(async () => { const b = await windowBounds('pinote-app://ui/image.html'); return b?.width === expected.width && b.height === expected.height; }, 'The image window fits the image to the screen');
+  await viewer.waitForTimeout(200);
+  await viewer.screenshot({ path:join(root,'image-window.png') });
+  const viewerClosed = viewer.waitForEvent('close'); await viewer.keyboard.press('Escape').catch(() => {}); await viewerClosed;
+  await page.waitForTimeout(300);
+  assert.equal(await app.evaluate(({BrowserWindow}) => BrowserWindow.getFocusedWindow()?.webContents.getURL()), 'pinote-app://ui/preview.html', 'Closing the image returns to the still-open preview');
+  // Selecting the preview under the image window closes only the image.
+  const again = app.waitForEvent('window');
+  await shown.click();
+  const second = await again; await until(() => windowBounds('pinote-app://ui/image.html').then(b => b?.width === expected.width), 'The image window opens again');
+  const secondClosed = second.waitForEvent('close');
+  await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL() === 'pinote-app://ui/preview.html').focus());
+  await secondClosed; await page.waitForTimeout(300);
+  assert.ok(await windowBounds('pinote-app://ui/preview.html'), 'Selecting the preview keeps it open');
+  // "This window" shows the image over the preview; Escape closes only the image.
+  await page.evaluate(() => window.pinote.saveWindowSettings({}, 'overlay'));
+  await shown.click();
+  const overPreview = preview.getByRole('dialog',{name:'Image',exact:true});
+  await overPreview.locator('img').waitFor();
+  await preview.screenshot({ path:join(root,'image-overlay-preview.png') });
+  await preview.keyboard.press('Shift+Tab');
+  assert.equal(await overPreview.evaluate(node => node === document.activeElement), true, 'Tab stays on the image');
+  await preview.keyboard.press('Escape');
+  await overPreview.waitFor({ state:'detached' });
+  assert.ok(await windowBounds('pinote-app://ui/preview.html'), 'Escape closes the image, not the preview');
+  // "System viewer" opens a private temporary copy of the stored bytes.
+  await page.evaluate(() => window.pinote.saveWindowSettings({}, 'system'));
+  await shown.click();
+  let copyPath; await until(async () => (copyPath = await readFile(join(root,'opened'),'utf8').catch(() => '')), 'The system viewer is asked to open the image');
+  assert.match(copyPath, new RegExp(`/pinote-images-[^/]+/${stored.hash}\\.webp$`));
+  assert.equal((await readFile(copyPath)).length, stored.size, 'The temporary copy holds the stored image');
+  await page.evaluate(() => window.pinote.saveWindowSettings({}, 'overlay'));
   const closed = preview.waitForEvent('close'); await preview.keyboard.press('Escape').catch(() => {}); await closed;
 
   // Backspace deletes the whole image; undo restores it while the editor is open; closing prunes it.
@@ -92,6 +135,16 @@ try {
   const editorImage = dialog.locator('.cm-image img');
   await until(() => editorImage.evaluate(image => image.complete && image.naturalWidth > 0).catch(() => false), 'The editor shows the image');
   await page.screenshot({ path:join(root,'editor.png') });
+  // In an editor one click places the cursor; a double click opens the image, here over the checklist window.
+  await editorImage.click();
+  const overEditor = page.getByRole('dialog',{name:'Image',exact:true});
+  assert.equal(await overEditor.count(), 0, 'One click in an editor does not open the image');
+  await editorImage.dblclick();
+  await overEditor.locator('img').waitFor();
+  await page.screenshot({ path:join(root,'image-overlay-editor.png') });
+  await page.keyboard.press('Escape');
+  await overEditor.waitFor({ state:'detached' });
+  await dialog.waitFor();
   const text = () => call('snapshot',{view:'active'}).notes.find(n => n.id === task.id).text;
   await dialog.getByRole('textbox',{name:'Task text',exact:true}).click(); await page.keyboard.press('Control+End');
   await page.keyboard.press('Backspace');

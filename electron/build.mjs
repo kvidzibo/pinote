@@ -18,6 +18,7 @@ const [served, watched] = await Promise.all([
   build({ entryPoints: ['src/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preview-preload.ts'], outfile: 'dist/preview-preload.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], target: 'node22' }),
   build({ entryPoints: ['src/preview.ts'], outfile: 'dist/preview.js', bundle: true, platform: 'browser', target: 'chrome132' }),
+  build({ entryPoints: ['src/image.ts'], outfile: 'dist/image.js', bundle: true, platform: 'browser', target: 'chrome132' }),
   build({ entryPoints: ['src/renderer.ts'], outfile: 'dist/renderer.js', bundle: true, platform: 'browser', target: 'chrome132' }),
 ]);
 await Promise.all(watchers.map(name => chmod(`dist/pinote-backend/service/watchers/${name}`, 0o755)));
@@ -25,6 +26,7 @@ await Promise.all(watchers.map(name => chmod(`dist/pinote-backend/service/watche
 await Promise.all(watcherFiles.filter(name => name.endsWith('.params.json')).map(name => cp(`../pi/watchers/${name}`, `dist/pinote-backend/service/watchers/${name}`)));
 await cp('src/index.html', 'dist/index.html');
 await cp('src/preview.html', 'dist/preview.html');
+await cp('src/image.html', 'dist/image.html');
 await cp('src/style.css', 'dist/style.css');
 await cp('icons', 'dist/icons', { recursive: true });
 const lock = JSON.parse(await readFile('package-lock.json', 'utf8'));

@@ -6,7 +6,8 @@ import type { Task, Tag, Snapshot, UIState, View, Operations, RendererOperation,
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
-import type { KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
+import { openImagesOnClick } from './image-open';
+import type { ImageView, KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
 import { APP_EVENTS, DEFAULT_KITTY_START_PROMPT, DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, WATCHER_LIMITS, savedTagName, tagFolderPath, validKittyStartPrompt, validKittyTabTitle } from './protocol';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -448,10 +449,19 @@ function configureWindow(): void {
   };
   const position = group('Starting position', 'window-position', [['X', 'x', -100000], ['Y', 'y', -100000]]);
   const size = group('Starting size', 'window-size', [['Width', 'width', 280], ['Height', 'height', 120]]);
-  modal.panel.append(el('p', 'Applies when Pinote starts, kept on screen. Positions are desktop coordinates. Your window manager may still tile or move it.'), status);
+  modal.panel.append(el('p', 'Applies when Pinote starts, kept on screen. Positions are desktop coordinates. Your window manager may still tile or move it.'));
+  const views = ([['window', 'Image window'], ['overlay', 'This window'], ['system', 'System viewer']] as [ImageView, string][]).map(([value, text]) => {
+    const input = el('input'); input.type = 'radio'; input.name = 'image-view'; input.value = value;
+    const label = el('label', undefined, 'setting-toggle'); label.append(input, el('span', text)); return { input, label };
+  });
+  const viewSection = el('div', undefined, 'window-setting'); viewSection.setAttribute('role', 'radiogroup'); viewSection.setAttribute('aria-label', 'Open images in');
+  const viewChoice = el('div', undefined, 'window-choice'); viewChoice.append(...views.map(view => view.label));
+  viewSection.append(el('p', 'Open images in', 'settings-heading'), viewChoice);
+  modal.panel.append(viewSection, el('p', 'Click a picture in a task, or double-click it in an editor.'), status);
   const update = () => {
     const off = !settings || saving || readonly;
     for (const group of [position, size]) { group.remember.disabled = group.fixed.disabled = off; group.inputs.forEach(input => { input.disabled = off || !group.fixed.checked; }); }
+    for (const view of views) view.input.disabled = off;
     save.disabled = off || !position.valid() || !size.valid();
   };
   const save = button('save', 'Save window settings', async () => {
@@ -461,13 +471,13 @@ function configureWindow(): void {
     const fixedPosition = position.value(), fixedSize = size.value();
     if (fixedPosition) startup.position = fixedPosition as WindowStartup['position'];
     if (fixedSize) startup.size = fixedSize as WindowStartup['size'];
-    try { await api.saveWindowSettings(startup); modal.close(); }
+    try { await api.saveWindowSettings(startup, views.find(view => view.input.checked)!.input.value as ImageView); modal.close(); }
     catch (error) { status.textContent = ipcMessage(error); }
     finally { saving = false; update(); }
   }, true);
   for (const input of [...position.inputs, ...size.inputs]) input.addEventListener('input', update);
   controls(modal.panel).append(save);
-  void api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); status.textContent = ''; update(); },
+  void api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); for (const view of views) view.input.checked = view.input.value === loaded.imageView; status.textContent = ''; update(); },
     error => { status.textContent = `Could not load window settings: ${ipcMessage(error)}`; });
 }
 function dueLabel(task: Task): string {
@@ -1646,6 +1656,7 @@ async function refresh(): Promise<void> {
     for (const modal of [...layers]) modal.update?.();
   } finally { polling = false; }
 }
+openImagesOnClick(hash => api.viewImage(hash), error => report(ipcMessage(error)));
 document.addEventListener('keydown', e => {
   if (closing) { e.preventDefault(); return; }
   if (nativeMenuOpen || e.key !== 'Escape') return;

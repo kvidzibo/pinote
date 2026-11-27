@@ -10,9 +10,10 @@ import { imageHashes } from './image-refs.ts';
 import { backendCommand } from './backend-command.ts';
 import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
+import { imageViewer } from './image-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
-import { TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
-import type { MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
+import { IMAGE_VIEWS, TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
+import type { ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -41,6 +42,8 @@ let stateWrites = Promise.resolve(); let geometryWrites = Promise.resolve(); let
 let manualSize = false; let changingSize = false; let geometryReady = false; let collapsed = false; let fullSize = { width: 420, height: 360 };
 // Window settings: fixed start-up position/size, kept in window.json beside the last geometry.
 let startup: WindowStartup = {};
+// Window settings: where a clicked image opens.
+let imageView: ImageView = 'window';
 // A fixed start-up position keeps its requested top edge through the first content fit.
 let fixedTop: number | undefined;
 const warning = 'A previous operation may have succeeded without confirmation. Check saved tasks or any new Kitty tab before retrying; drafts were preserved.';
@@ -91,13 +94,13 @@ function geometry() {
   return { ...fullSize, x: current.x, y: current.y, manualSize };
 }
 // Settings are added when the write runs, so queued geometry keeps only saved settings.
-const writeGeometry = (content: ReturnType<typeof geometry>, settings: WindowStartup) =>
-  atomic(join(dataDir, 'window.json'), settings.position || settings.size ? { ...content, startup: settings } : content);
+const writeGeometry = (content: ReturnType<typeof geometry>, settings: WindowStartup, view: ImageView) =>
+  atomic(join(dataDir, 'window.json'), { ...content, ...(settings.position || settings.size ? { startup: settings } : {}), ...(view === 'window' ? {} : { imageView: view }) });
 function saveGeometry() {
   if (!window || !geometryReady) return;
   const content = geometry();
   // Geometry is best-effort; it must not poison draft writes or trap a read-only window.
-  geometryWrites = geometryWrites.then(() => writeGeometry(content, startup))
+  geometryWrites = geometryWrites.then(() => writeGeometry(content, startup, imageView))
     .catch(() => log('Cannot save Electron window geometry.'));
   return geometryWrites;
 }
@@ -176,7 +179,7 @@ async function boot() {
     } catch { log('Pinote field watchers did not start; check the watcher state directory. The desktop remains usable.'); }
   })();
   const styleNonce = randomUUID();
-  const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
+  const assets = new Set(['index.html','renderer.js','preview.html','preview.js','image.html','image.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
   // Stored images never change under their hash: keep recent ones in memory and drop pruned ones.
   const images = new Map<string, { mime: string; bytes: Buffer }>(); let imageBytes = 0;
   const loadImage = async (hash: string) => {
@@ -218,6 +221,7 @@ async function boot() {
     const saved = JSON.parse(await readFile(join(dataDir, 'window.json'), 'utf8'));
     // Fixed start-up values replace the last position and/or size; the last ones are still saved.
     if (validWindowStartup(saved.startup)) startup = saved.startup;
+    if (IMAGE_VIEWS.includes(saved.imageView)) imageView = saved.imageView;
     const at = startup.position ?? (Number.isSafeInteger(saved.x) && Number.isSafeInteger(saved.y) ? { x: saved.x, y: saved.y } : undefined);
     if (at) { position = { ...at }; area = screen.getDisplayNearestPoint(position).workArea; fixedTop = startup.position?.y; }
     const size = startup.size ?? (Number.isFinite(saved.width) && Number.isFinite(saved.height) ? saved : undefined);
@@ -232,7 +236,8 @@ async function boot() {
     minWidth: 280, minHeight: 120, type: 'utility', frame: false, show: false, title: 'Pinote Electron', backgroundColor: '#232832', alwaysOnTop: true,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
   });
-  const preview = previewWindow(window);
+  const viewer = imageViewer(window, loadImage, () => imageView);
+  const preview = previewWindow(window, viewer);
   window.webContents.setWindowOpenHandler(() => ({ action:'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
@@ -282,6 +287,7 @@ async function boot() {
   });
   const handlers: Record<string, (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown> = {
     'open-preview': (_event, request: unknown) => closing ? false : preview.open(request),
+    'view-image': (_event, hash: unknown) => closing ? false : viewer.open(hash, window!),
     'update-preview': (_event, token: unknown, data: unknown) => preview.update(token, data),
     'popup-menu': async (_event, request: unknown) => { if (!validMenuRequest(request)) throw new Error('Invalid menu request'); return popupMenu(request); },
     'load-state': () => structuredClone(state),
@@ -366,16 +372,16 @@ async function boot() {
     },
     'window-settings': () => {
       const current = window!.getBounds();
-      return { startup: structuredClone(startup), current: { x: current.x, y: current.y, width: current.width, height: collapsed ? fullSize.height : current.height } };
+      return { startup: structuredClone(startup), imageView, current: { x: current.x, y: current.y, width: current.width, height: collapsed ? fullSize.height : current.height } };
     },
     // Unlike best-effort geometry, a settings save reports failure and keeps the previous settings.
-    'save-window-settings': async (_event, value: unknown) => {
+    'save-window-settings': async (_event, value: unknown, view: unknown) => {
       if (readonly || state.warning) throw new Error('Resolve the saved-state warning before changing window settings.');
-      if (closing || !validWindowStartup(value)) throw new Error('Invalid window settings');
+      if (closing || !validWindowStartup(value) || !IMAGE_VIEWS.includes(view as ImageView)) throw new Error('Invalid window settings');
       if (!geometryReady) throw new Error('Pinote is still placing its window; try again.');
       const next = structuredClone(value), content = geometry();
       // Committed only once written; later queued geometry then keeps the new settings.
-      const write = geometryWrites.then(async () => { await writeGeometry(content, next); startup = next; });
+      const write = geometryWrites.then(async () => { await writeGeometry(content, next, view as ImageView); startup = next; imageView = view as ImageView; });
       geometryWrites = write.catch(() => {});
       try { await write; } catch { throw new Error('Cannot save window settings.'); }
     },

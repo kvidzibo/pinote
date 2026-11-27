@@ -1,5 +1,6 @@
 import type { PreviewData } from './protocol';
 import { fillPreview } from './preview-content';
+import { openImagesOnClick } from './image-open';
 
 const api = window.pinotePreview;
 const panel = document.querySelector<HTMLElement>('.panel')!;
@@ -28,6 +29,7 @@ document.addEventListener('keydown', event => {
   if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
 });
+openImagesOnClick(hash => api.viewImage(hash), report);
 api.onUpdate(draw);
 async function init(): Promise<void> {
   const data = await api.load();

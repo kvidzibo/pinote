@@ -759,7 +759,7 @@ try {
     assert.equal(await preview.evaluate(()=>window.compromised),undefined);
     assert.equal(await preview.getByRole('dialog').locator('img[src^="http"]').count(),0);
     assert.equal(await preview.evaluate(()=>typeof window.pinote),'undefined');
-    assert.deepEqual(await preview.evaluate(()=>Object.keys(window.pinotePreview).sort()),['action','load','onUpdate','openLink','ready']);
+    assert.deepEqual(await preview.evaluate(()=>Object.keys(window.pinotePreview).sort()),['action','load','onUpdate','openLink','ready','viewImage']);
     assert.equal(await page.evaluate(()=>typeof window.pinotePreview),'undefined');
     await app.evaluate(async ({BrowserWindow, ipcMain}) => {
       const child = BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()==='pinote-app://ui/preview.html');
@@ -1684,6 +1684,8 @@ try {
       await open();
       for(const name of ['Starting position','Starting size']) assert.equal(await group(name).getByRole('radio',{name:'Remember last',exact:true}).isChecked(),true);
       assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).isDisabled(),true);
+      assert.equal(await group('Open images in').getByRole('radio',{name:'Image window',exact:true}).isChecked(),true,'Images open in the image window by default');
+      await group('Open images in').getByRole('radio',{name:'System viewer',exact:true}).check();
       await group('Starting position').getByRole('radio',{name:'Fixed',exact:true}).check();
       await reopened.waitForFunction(()=>document.querySelector('[data-key="y"]')?.value!=='');
       assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).inputValue(),String(original.x),'Fixed values start from the current window');
@@ -1703,6 +1705,8 @@ try {
       assert.deepEqual(await bounds(),{x:40,y:60,width:360,height:300},'Fixed start-up geometry replaces the last one');
       await open();
       assert.equal(await group('Starting size').getByRole('spinbutton',{name:'Height',exact:true}).inputValue(),'300');
+      assert.equal(await group('Open images in').getByRole('radio',{name:'System viewer',exact:true}).isChecked(),true,'The image setting survives a restart');
+      await group('Open images in').getByRole('radio',{name:'Image window',exact:true}).check();
       for(const name of ['Starting position','Starting size']) await group(name).getByRole('radio',{name:'Remember last',exact:true}).check();
       await save(); await restart();
       assert.deepEqual(await bounds(),last,'Remember last restores the last geometry');
