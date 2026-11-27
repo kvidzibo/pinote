@@ -125,10 +125,11 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
   if (op === 'stats') {
     const store = new Store(paths.database, { timeout: 0.1 });
     try {
-      const size = (path: string) => { try { return statSync(path).size; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
-      const database = statSync(paths.database);
-      return { database: { path: resolvePath(paths.database), bytes: database.size + (size(`${paths.database}-wal`) ?? 0) + (size(`${paths.database}-shm`) ?? 0), modified: database.mtime.toISOString() },
-        log: { path: resolvePath(paths.log), bytes: size(paths.log) }, ...store.stats() };
+      const file = (path: string) => { try { return statSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
+      // SQLite keeps WAL sidecars beside the real file; until a checkpoint the newest writes are only in the WAL.
+      const path = resolvePath(paths.database), database = statSync(path), wal = file(`${path}-wal`);
+      return { database: { path, bytes: database.size + (wal?.size ?? 0) + (file(`${path}-shm`)?.size ?? 0), modified: new Date(Math.max(database.mtimeMs, wal?.mtimeMs ?? 0)).toISOString() },
+        log: { path: resolvePath(paths.log), bytes: file(paths.log)?.size ?? null }, ...store.stats() };
     } finally { store.close(); }
   }
   return withDisplayLock(paths, false, async () => {

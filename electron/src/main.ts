@@ -169,12 +169,15 @@ async function boot() {
   const watcherHost = () => import(pathToFileURL(join(bundles, 'service/watcher-host.mjs')).href);
   let watcherSaving = false;
   // Settings → Data: main resolves every path it shows or reveals; the renderer only names a file.
+  let dataPaths: Record<DataFile, string> | undefined;
   const dataStats = async (): Promise<DataStats> => {
     const response = await backend.call('stats', {});
     if (!response.ok) throw new Error(response.error.message);
     const path = resolve((await watcherHost()).settingsPath() as string);
     const bytes = await stat(path).then(file => file.size, (error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
-    return { ...response.result as Operations['stats']['result'], settings: { path, bytes }, home: homedir() };
+    const result = response.result as Operations['stats']['result'];
+    dataPaths = { database: result.database.path, settings: path, log: result.log.path };
+    return { ...result, settings: { path, bytes }, home: homedir() };
   };
   // Field watchers run exactly as long as this desktop; Pi sessions read their saved results.
   watchers = (async () => {
@@ -405,9 +408,9 @@ async function boot() {
       return folder;
     },
     'data-stats': () => dataStats(),
-    'show-data-file': async (_event, which: unknown) => {
-      if (!DATA_FILES.includes(which as DataFile)) throw new Error('Invalid data file');
-      const stats = await dataStats(); shell.showItemInFolder(stats[which as DataFile].path);
+    'show-data-file': (_event, which: unknown) => {
+      if (!dataPaths || !DATA_FILES.includes(which as DataFile)) throw new Error('Invalid data file');
+      shell.showItemInFolder(dataPaths[which as DataFile]);
     },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },
