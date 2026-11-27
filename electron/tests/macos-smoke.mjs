@@ -17,8 +17,8 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), 'pinote-macos-')));
 const env = { HOME: join(root, 'home'), TMPDIR: join(root, 'tmp'), XDG_DATA_HOME: join(root, 'data'), XDG_STATE_HOME: join(root, 'state'),
   XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache'), PI_CODING_AGENT_DIR: join(root, 'pi-agent'),
   PINOTE_NOTE_COMMAND: resolve('../backend/bin/note'),
-  // The bundled backend needs node and Homebrew flock; kitty and pi are found in their macOS locations.
-  PATH: [dirname(process.execPath), dirname(execFileSync('which', ['flock'], { encoding: 'utf8' }).trim()), '/usr/bin', '/bin'].join(':') };
+  // The bundled backend needs only node; kitty and pi are found in their macOS locations.
+  PATH: [dirname(process.execPath), '/usr/bin', '/bin'].join(':') };
 const records = join(root, 'pi'), work = join(root, 'work');
 for (const directory of [...Object.values(env).filter(value => value.startsWith(root)), records, work]) mkdirSync(directory, { recursive: true, mode: 0o700 });
 mkdirSync(join(env.HOME, '.pi/agent/bin'), { recursive: true });

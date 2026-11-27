@@ -2,7 +2,10 @@ import { execFile } from 'node:child_process';
 import type { Note } from './store.ts';
 import { findExecutable } from './runtime.ts';
 export const STACK_TAG = 'pinote-reminders';
-export class NotificationError extends Error {}
+export class NotificationError extends Error {
+  missing: boolean;
+  constructor(message: string, missing = false) { super(message); this.missing = missing; }
+}
 export function render(notes: Pick<Note, 'id' | 'text' | 'state'>[]): string {
   const lines = notes.slice(0, 10).map(note => {
     // Python str.split whitespace includes the four information separators.
@@ -18,7 +21,7 @@ export function render(notes: Pick<Note, 'id' | 'text' | 'state'>[]): string {
 }
 export async function show(notes: Note[]): Promise<void> {
   const executable = findExecutable('dunstify', process.env);
-  if (!executable) throw new NotificationError('dunstify is not installed; install Dunst to show reminders.');
+  if (!executable) throw new NotificationError('dunstify is not installed; install Dunst to show reminders.', true);
   await new Promise<void>((resolve, reject) => {
     execFile(executable, ['-a', 'pinote', '-u', 'normal', '-t', '0', '-h',
       `string:x-dunst-stack-tag:${STACK_TAG}`, '--', 'Reminders', render(notes).replaceAll('\\', '\\\\')],

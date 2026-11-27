@@ -246,7 +246,8 @@ async function execute(args: Arguments, paths: Paths, imported: PreparedImport |
           checkCancelled();
           if (!(error instanceof notify.NotificationError)) throw error;
           if (args.command === 'show') { log('error', error.message); return 1; }
-          log('warning', `Notes saved, but desktop refresh failed: ${error.message}`);
+          // Without Dunst, macOS shows reminders only in the desktop window.
+          if (!(error.missing && process.platform === 'darwin')) log('warning', `Notes saved, but desktop refresh failed: ${error.message}`);
         }
       }
       return 0;

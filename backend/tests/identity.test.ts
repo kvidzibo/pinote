@@ -16,6 +16,8 @@ const cli = resolve(wrappers ? 'bin/note' : 'src/cli-entry.ts');
 const request = (operation: string, params: object = {}) => JSON.stringify({ protocol: 1, operation, params });
 const malformed = (path: string) => Buffer.concat([Buffer.from(path), Buffer.from([0xff])]);
 const hex = (value: string | Buffer) => Buffer.from(value).toString('hex');
+// macOS file systems reject non-UTF-8 names, and there is no /proc to read raw bytes from.
+const skip = process.platform === 'darwin' && 'needs non-UTF-8 file names and /proc';
 function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'pinote-identity-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -47,7 +49,7 @@ function fixture(t: TestContext) {
   return { root, env, run, fresh, reply };
 }
 
-test('standalone import rejects raw argv rather than opening a real U+FFFD sibling', t => {
+test('standalone import rejects raw argv rather than opening a real U+FFFD sibling', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'notes-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   writeFileSync(raw, '- [ ] raw bytes\n');
@@ -66,7 +68,7 @@ test('standalone import rejects raw argv rather than opening a real U+FFFD sibli
   } finally { unlinkSync(raw); }
 });
 
-test('active inherited path values are checked without exposing or rejecting unrelated env', t => {
+test('active inherited path values are checked without exposing or rejecting unrelated env', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'PRIVATE-env-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   const add = request('add', { text: 'must not save', tag: null });
@@ -102,7 +104,7 @@ test('active inherited path values are checked without exposing or rejecting unr
   f.fresh(sibling);
 });
 
-test('handshake and folder/selection keys never substitute a U+FFFD sibling for a symlink target', t => {
+test('handshake and folder/selection keys never substitute a U+FFFD sibling for a symlink target', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'project-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   const bad = join(f.root, 'bad'), good = join(f.root, 'good');
@@ -130,7 +132,7 @@ test('handshake and folder/selection keys never substitute a U+FFFD sibling for 
   } finally { rmdirSync(raw); }
 });
 
-test('relative folder identities check physical cwd bytes, but absolute input does not need cwd', t => {
+test('relative folder identities check physical cwd bytes, but absolute input does not need cwd', { skip }, t => {
   const f = fixture(t);
   const prefix = join(f.root, 'cwd-'), raw = malformed(prefix), sibling = prefix + '\ufffd';
   mkdirSync(raw);

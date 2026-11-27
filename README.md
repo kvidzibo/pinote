@@ -27,7 +27,7 @@ recoverable from Archive.
 
 ## Install
 
-Requires **Node.js 22.19+**, npm, Linux `flock` (util-linux), and GNU `date` for local reminder times. From a checkout:
+Requires **Node.js 22.19+** and npm. From a checkout:
 
 ```sh
 npm --prefix backend ci --ignore-scripts
