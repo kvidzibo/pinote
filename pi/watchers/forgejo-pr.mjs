@@ -80,9 +80,10 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
   const timeout = AbortSignal.timeout(20_000);
   const signal = batchSignal ? AbortSignal.any([timeout, batchSignal]) : timeout;
   const api = `${instance.url}/api/v1/repos/${owner}/${repo}`;
-  async function request(path) {
+  async function request(path, deadline) {
     // Never follow API redirects or URLs returned by the server with credentials.
-    const response = await fetch(path ? `${api}/${path}` : api, { headers, redirect: 'error', signal });
+    const response = await fetch(path ? `${api}/${path}` : api, { headers, redirect: 'error',
+      signal: deadline ? AbortSignal.any([signal, AbortSignal.timeout(deadline)]) : signal });
     if (!response.ok) throw new Error('API request failed');
     let body = '';
     let size = 0;
@@ -122,14 +123,14 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
       checks.push({ context: check.context, status: check.status });
     }
   }
-  let actions, runs;
+  // Failures here matter only if the final snapshot still needs this evidence.
+  let repository, runs;
   if (!checks.length && pr.mergeable && !pr.draft) {
-    const repository = await request('');
-    if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
-    actions = repository.has_actions;
+    repository = await request('').catch(() => null);
     // Actions publishes each queued job as a commit status; also look for runs that have yet to queue one.
-    // An unavailable runs API is no evidence, never a reason to fail the check.
-    if (actions) runs = await request(`actions/runs?head_sha=${pr.head.sha}&status=unknown&status=waiting&status=running&status=blocked&limit=1`).catch(() => undefined);
+    // An unavailable runs API is no evidence, and its own deadline leaves time for the final read.
+    if (repository?.has_actions === true) runs = await request(`actions/runs?head_sha=${pr.head.sha}`
+      + '&status=unknown&status=waiting&status=running&status=blocked&limit=1', 5_000).catch(() => undefined);
   }
   // Evidence describes the head it was collected for; decisions use this later snapshot.
   const current = validatePR(await request(`pulls/${number}`));
@@ -160,8 +161,9 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
   }
   if (checks.length) return passing('checks passing');
   // Mergeability changed during the check: no Actions evidence was collected.
-  if (actions === undefined) return pending('checks pending');
-  if (!actions) return passing('has no checks');
+  if (repository === undefined) return pending('checks pending');
+  if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
+  if (!repository.has_actions) return passing('has no checks');
   // Any active, uncounted or unrecognized run evidence never lets a PR pass without checks.
   if (!object(runs) || !Array.isArray(runs.workflow_runs) || runs.workflow_runs.length || runs.total_count !== 0) return pending('checks pending');
   const confirmed = [`${summary} awaiting checks ${head}`, `${summary} has no checks ${head}`].includes(previous?.summary);

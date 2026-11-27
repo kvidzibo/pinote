@@ -26,7 +26,8 @@ globalThis.fetch = async (url, options) => {
   if (scenario.httpStatus) return new Response('SECRET credential', {status:scenario.httpStatus});
   if (scenario.oversize) return new Response('x'.repeat(1024 * 1024 + 1));
   if (scenario.raw !== undefined) return new Response(scenario.raw);
-  if (/\\/repos\\/owner\\/[^/]+$/.test(url)) return new Response(JSON.stringify(scenario.repository ?? {has_actions:false}));
+  if (/\\/repos\\/owner\\/[^/]+$/.test(url)) return scenario.repositoryStatus ? new Response('{}', {status:scenario.repositoryStatus})
+    : new Response(JSON.stringify(scenario.repository ?? {has_actions:false}));
   if (/\\/actions\\/runs\\?/.test(url)) return scenario.runsStatus ? new Response('{}', {status:scenario.runsStatus})
     : new Response(JSON.stringify(scenario.runs ?? {workflow_runs:[],total_count:0}));
   const page = /[?&]page=(\\d+)/.exec(url)?.[1];
@@ -118,10 +119,16 @@ globalThis.fetch = async (url, options) => {
     'PR #42 awaiting checks (head bbbbbbbbbbbb)', 'A new head may have yet to queue its runs');
   assert.equal(run({ ...actions, pulls: [pr, moved] }, { previousResult: unreported.output }).output.summary,
     'PR #42 head changed; checks pending', 'A push during the runs lookup supersedes its evidence');
-  assert.equal(run({ ...actions, pulls: [pr, { ...pr, draft: true, mergeable: false }] }, { previousResult: unreported.output }).output.summary,
-    'PR #42 is a draft', 'Decisions use the snapshot read after the runs lookup');
-  assert.equal(run({ ...actions, runs: { workflow_runs: [{ status: 'running' }], total_count: 1 }, pulls: [pr, { state: 'closed', merged: false }] }).output.state,
-    'closed', 'A PR closed during the runs lookup is closed');
+  const runsThenPull = (requests: any[]) => assert.deepEqual(requests.slice(-2).map((r) => r.url.replace(/\?.*/, '')),
+    [`${base}/api/v1/repos/owner/repo/actions/runs`, `${base}/api/v1/repos/owner/repo/pulls/42`]);
+  const drafted = run({ ...actions, pulls: [pr, { ...pr, draft: true, mergeable: false }] }, { previousResult: unreported.output });
+  assert.equal(drafted.output.summary, 'PR #42 is a draft', 'Decisions use the snapshot read after the runs lookup');
+  runsThenPull(drafted.requests);
+  const closedRun = run({ ...actions, runs: { workflow_runs: [{ status: 'running' }], total_count: 1 }, pulls: [pr, { state: 'closed', merged: false }] });
+  assert.equal(closedRun.output.state, 'closed', 'A PR closed during the runs lookup is closed');
+  runsThenPull(closedRun.requests);
+  assert.equal(run({ pages: [], repositoryStatus: 500, pulls: [pr, { state: 'closed', merged: false }] }).output.state, 'closed',
+    'An unneeded repository error never hides a closed PR');
   assert.equal(run({ pages: [], pulls: [{ ...pr, mergeable: false }, pr] }).output.summary, 'PR #42 checks pending',
     'A PR that became mergeable during the check awaits evidence for its checks');
   for (const scenario of [{ runs: { workflow_runs: [{ status: 'running' }], total_count: 1 } }, { runs: { workflow_runs: [], total_count: 1 } },
@@ -173,7 +180,7 @@ globalThis.fetch = async (url, options) => {
   }
   for (const scenario of [{ fail: true }, { httpStatus: 401 }, { httpStatus: 302 }, { raw: 'SECRET not JSON' },
     { oversize: true }, { pulls: [{}] }, { pulls: [{ ...pr, head: { sha: 'invalid' } }] }, { pulls: [{ ...pr, draft: 'yes' }] },
-    { pages: [{}] }, { pages: [{ statuses: [], total_count: 1 }] }, { pages: [page([{ ...check, status: 'bogus' }])] },
+    { pages: [], repositoryStatus: 500 }, { pages: [{}] }, { pages: [{ statuses: [], total_count: 1 }] }, { pages: [page([{ ...check, status: 'bogus' }])] },
     { pages: [{ ...page([check]), sha: moved.head.sha }] }, { pages: [page([check]), page([check])] },
     { pages: Array.from({ length: 21 }, (_, i) => page([{ ...check, context: `CI ${i}` }])) }]) {
     const { output, stderr } = run(scenario);
@@ -286,11 +293,14 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   const pullPath = `${api}/pulls/135`;
   const statusPath = `${api}/commits/${sha}/status`;
   const requests: { path: string | undefined; token: string | undefined; accept: string | undefined }[] = [];
-  let mode: 'passing' | 'merged' | 'redirect' | 'batch' = 'passing';
+  let mode: 'passing' | 'merged' | 'redirect' | 'batch' | 'stalled' = 'passing';
   const server = createServer((req, res) => {
     requests.push({ path: req.url, token: req.headers.authorization, accept: req.headers.accept });
     res.setHeader('Content-Type', 'application/json');
-    if (mode === 'batch' && req.url === `${api}/pulls/137`) {
+    if (mode === 'stalled' && req.url?.startsWith(`${api}/actions/runs?`)) return;
+    if (mode === 'stalled' && req.url === api) res.end(JSON.stringify({ has_actions: true }));
+    else if (mode === 'stalled' && req.url?.startsWith(statusPath)) res.end(JSON.stringify({ sha, total_count: 0, statuses: [] }));
+    else if (mode === 'batch' && req.url === `${api}/pulls/137`) {
       res.end(JSON.stringify({ state: 'closed', merged: true }));
     } else if ((mode === 'redirect' && req.url === pullPath) || (mode === 'batch' && req.url === `${api}/pulls/136`)) {
       res.writeHead(302, { Location: '/redirect-target' });
@@ -359,6 +369,14 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   assert.equal(requests.filter((request) => request.path === `${api}/pulls/136`).length, 1);
   assert.equal(requests.filter((request) => request.path === `${api}/pulls/137`).length, 1);
   assert.equal(requests.length, 6, 'Each PR is independent; foreign scopes and redirect targets are never requested');
+
+  requests.length = 0;
+  mode = 'stalled';
+  const started = Date.now();
+  const stalled = FieldResult.parse(await handleFieldEvent(event));
+  assert.equal(stalled.summary, 'PR #135 checks pending', 'A stalled runs lookup is no evidence and leaves time for the final read');
+  assert.ok(Date.now() - started < 15_000);
+  assert.equal(requests.at(-1)?.path, pullPath);
 
   requests.length = 0;
   mode = 'redirect';
