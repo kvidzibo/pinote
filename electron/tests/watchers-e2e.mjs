@@ -44,16 +44,15 @@ try {
   const page = await app.firstWindow();
   page.on('pageerror',e=>errors.push(String(e)));
   await page.locator('#draft-host').waitFor();
-  // The native menu is covered by e2e.mjs; here its choice and the native dialogs are supplied directly.
+  // The native dialogs are supplied directly.
   await app.evaluate(({ipcMain,dialog},script)=>{
-    ipcMain.removeHandler('popup-menu'); ipcMain.handle('popup-menu',()=>'watchers');
     globalThis.__confirmations=[]; globalThis.__script=script;
     dialog.showMessageBox=async(_window,options)=>{globalThis.__confirmations.push(options.detail); return {response:1,checkboxChecked:false};};
     dialog.showOpenDialog=async(_window,options)=>({canceled:false,filePaths:[options.properties.includes('openFile')?globalThis.__script:globalThis.__folder]});
   },custom);
   await app.evaluate((_electron,folder)=>{globalThis.__folder=folder;},worktrees);
-  await page.getByRole('button',{name:'Menu',exact:true}).click();
-  const dialog = page.getByRole('dialog',{name:'Watchers',exact:true}), list = dialog.getByRole('group',{name:'Watchers',exact:true});
+  await page.getByRole('button',{name:'Settings',exact:true}).click(); await page.getByRole('tab',{name:'Watchers',exact:true}).click();
+  const dialog = page.locator('#settings-pane-watchers'), list = dialog.getByRole('group',{name:'Watchers',exact:true});
   const save = dialog.getByRole('button',{name:'Save watcher settings…',exact:true}), status = dialog.getByRole('status');
   const saveAll = async () => { await save.click(); await status.getByText('Saved.',{exact:true}).waitFor(); };
   // An automatic height fit in flight can restore the previous width: repeat until the size holds.
@@ -169,13 +168,13 @@ try {
   await status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true}).waitFor();
 
   // Kitty: Pi's one-task-per-tab and completion keys, saved without touching the rest of the shared file.
-  await page.keyboard.press('Escape'); await dialog.waitFor({state:'detached'});
-  await app.evaluate(({ipcMain})=>{ ipcMain.removeHandler('popup-menu'); ipcMain.handle('popup-menu',()=>'kitty'); });
-  const kitty = page.getByRole('dialog',{name:'Kitty',exact:true}), oneTask = kitty.getByRole('checkbox',{name:'One task per tab',exact:true});
+  await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
+  const kitty = page.locator('#settings-pane-kitty'), oneTask = kitty.getByRole('checkbox',{name:'One task per tab',exact:true});
   const completion = (name) => kitty.getByRole('radio',{name,exact:true});
-  const openKitty = async () => { await page.getByRole('button',{name:'Menu',exact:true}).click(); await until(async()=>!await oneTask.isDisabled(),'Kitty settings must load'); };
+  const kittyTab = page.getByRole('tab',{name:'Kitty',exact:true});
+  const openKitty = async () => { await page.getByRole('button',{name:'Settings',exact:true}).click(); await until(async()=>!await oneTask.isDisabled(),'Kitty settings must load'); };
   const shared = await saved();
-  await openKitty();
+  await page.getByRole('button',{name:'Settings',exact:true}).click(); await kittyTab.click(); await until(async()=>!await oneTask.isDisabled(),'Kitty settings must load');
   assert.equal(await oneTask.isChecked(),false,'Off by default');
   assert.equal(await completion('Close Pi').isChecked(),true,'Completion closes Pi by default');
   await oneTask.check(); await completion('Close Pi and its pane').check();
@@ -184,11 +183,44 @@ try {
     assert.equal(await kitty.evaluate(node=>node.scrollWidth<=node.clientWidth),true,`No horizontal overflow at ${width}px`);
     await page.screenshot({path:join(root,`kitty-${width}.png`)});
   }
-  await kitty.getByRole('button',{name:'Save Kitty settings',exact:true}).click(); await kitty.waitFor({state:'detached'});
+  await kitty.getByRole('button',{name:'Save Kitty settings',exact:true}).click(); await page.getByRole('dialog',{name:'Settings',exact:true}).getByText('Kitty saved.',{exact:true}).waitFor();
+  assert.equal(await kittyTab.getAttribute('aria-label'),'Kitty','Saving clears the unsaved mark and keeps the page open');
+  await page.keyboard.press('Escape'); await kitty.waitFor({state:'detached'});
   assert.deepEqual(await saved(),{...shared,kittyOneTaskPerTab:true,onTaskComplete:'close-pane'},'Only the Kitty keys change');
-  await openKitty(); assert.equal(await oneTask.isChecked(),true,'The saved value loads');
+  await openKitty(); assert.equal(await kittyTab.getAttribute('aria-selected'),'true','The last-used tab reopens');
+  assert.equal(await oneTask.isChecked(),true,'The saved value loads');
   assert.equal(await completion('Close Pi and its pane').isChecked(),true,'The saved completion loads');
-  await page.keyboard.press('Escape');
+  // Both tabs write pi-note.json: a save in one leaves the other's unsaved draft saveable.
+  await page.locator('#settings-tab-watchers').click(); await list.getByRole('button',{name:/^GitHub PR:/}).click();
+  const removed = dialog.getByRole('group',{name:'Field events',exact:true}).getByRole('checkbox',{name:'removed',exact:true});
+  await removed.uncheck();
+  await page.locator('#settings-tab-kitty').click(); await completion('Close Pi').check();
+  await kitty.getByRole('button',{name:'Save Kitty settings',exact:true}).click(); await page.getByRole('dialog',{name:'Settings',exact:true}).getByText('Kitty saved.',{exact:true}).waitFor();
+  await page.locator('#settings-tab-watchers').click();
+  assert.equal(await removed.isChecked(),false,'The unsaved watcher draft is kept');
+  await saveAll();
+  assert.equal((await saved()).onTaskComplete,'close-pi');
+  // Hidden tabs stay out of the keyboard loop.
+  await page.getByRole('button',{name:'Back',exact:true}).focus(); await page.keyboard.press('Shift+Tab');
+  assert.ok(await page.evaluate(()=>document.querySelector('#settings-pane-watchers').contains(document.activeElement)),'Shift+Tab wraps to the visible tab');
+  // A change made elsewhere is not adopted: after a tab that read it saves, the older draft is still refused.
+  await removed.check();
+  await writeFile(settingsFile,`${await readFile(settingsFile,'utf8')}\n`);
+  const refused = status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true});
+  await save.click(); await refused.waitFor();
+  await page.locator('#settings-tab-fields').click();
+  const fields = page.locator('#settings-pane-fields'), fieldSave = fields.getByRole('button',{name:'Save field settings',exact:true});
+  await fields.getByRole('textbox',{name:'New field name',exact:true}).fill('Owner'); await page.keyboard.press('Enter');
+  await fieldSave.click(); await page.getByRole('dialog',{name:'Settings',exact:true}).getByText('Fields saved.',{exact:true}).waitFor();
+  await page.locator('#settings-tab-watchers').click();
+  await until(async()=>(await dialog.locator('#watcher-field-names option').evaluateAll(nodes=>nodes.map(node=>node.value))).includes('Owner'),'A field saved in Fields is suggested');
+  assert.equal(await removed.isChecked(),true,'The draft survives the refreshed suggestions');
+  assert.equal(await refused.isVisible(),true,'The refusal stays shown');
+  // Reselecting clears the message, so the retry's refusal is a new one.
+  await list.getByRole('button',{name:/^GitHub PR:/}).click(); await refused.waitFor({state:'detached'});
+  assert.equal(await removed.isChecked(),true);
+  await save.click(); await refused.waitFor();
+  await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');
 } catch (error) {

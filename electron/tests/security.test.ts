@@ -60,6 +60,8 @@ test('privileged boundary rejects malformed commands, unsafe links and corrupt d
   assert.ok(validState({ ...initialState(), kittyTabTitle: '{tag}{title}' }));
   for (const kittyStartPrompt of ['', 'Check scope\n\tthen wait 🌱', '🌱'.repeat(4000)]) assert.ok(validState({ ...initialState(), kittyStartPrompt }));
   assert.ok(validState({ ...initialState(), tagBaseFolder: '/home/me/projects' }));
+  assert.ok(validState({ ...initialState(), settingsTab: 'window' }));
+  for (const settingsTab of ['Window', 'manage-tags', 1, null]) assert.ok(!validState({ ...initialState(), settingsTab }));
   for (const extra of [
     ...[null, 'true', 1, {}].map(composerStartAsMarkdown => ({ composerStartAsMarkdown })),
     ...[1, '', ' ', 'a\tb', '\ud800', 'x'.repeat(257)].map(kittyTabTitle => ({ kittyTabTitle })), ...[1, '', 'relative', '/a\nb', '/' + 'x'.repeat(4096)].map(tagBaseFolder => ({ tagBaseFolder })),

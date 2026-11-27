@@ -26,7 +26,7 @@ const api: PinoteApi = {
   openLink: url => ipcRenderer.invoke('open-link', url),
   viewImage: hash => ipcRenderer.invoke('view-image', hash),
   collapse: collapsed => ipcRenderer.invoke('collapse', collapsed),
-  fit: height => ipcRenderer.invoke('fit', height),
+  fit: (height, minimum) => ipcRenderer.invoke('fit', height, minimum),
   onCloseRequested: callback => { ipcRenderer.removeAllListeners('close-requested'); ipcRenderer.on('close-requested', () => callback()); },
   finishClose: () => ipcRenderer.invoke('finish-close'),
   cancelClose: () => ipcRenderer.invoke('cancel-close'),

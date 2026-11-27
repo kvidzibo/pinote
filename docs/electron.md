@@ -54,7 +54,7 @@ Pi sessions read watcher results and alerts from the shared watcher state.
 - **Logs:** start and stop lines go to the desktop's `app.log`; failed checks to
   `watchers.log` beside the watcher state. If watchers cannot start, the desktop
   stays usable.
-- **Menu → Watchers…** adds a script, chooses the app, task and field events it
+- **Settings → Watchers** adds a script, chooses the app, task and field events it
   listens for, names its fields, fills in the
   [parameters it declares](../pi/FIELD_EVENTS.md#watcher-settings), and sets its
   time limit and cooldown under **Limits**. The **startup** app event runs a
@@ -84,8 +84,17 @@ Upgrading from older versions:
 ## Controls
 
 Rows are single-line. Click a task's play icon to start it, then its checkmark to
-complete it. The bottom cog menu (**Menu**) holds scheduled reminders, Archive
-(with restore), settings, draft recovery and **Quit Pinote**.
+complete it. The bottom **Menu** button holds scheduled reminders, Archive (with
+restore), draft recovery and **Quit Pinote**.
+
+The cog beside it opens **Settings** in the window, with one tab per section:
+**Tags**, **Actions**, **Editor**, **Fields**, **Watchers**, **Kitty** and
+**Window**. It reopens on the tab used last.
+
+- Each tab saves on its own and the page stays open. Unsaved changes survive
+  switching tabs; a dot marks their tab.
+- The back arrow or **Escape** returns to the tasks, asking first when changes
+  are unsaved.
 
 ### Composer and editor
 
@@ -98,7 +107,7 @@ complete it. The bottom cog menu (**Menu**) holds scheduled reminders, Archive
 - **Tab** indents a `-` bullet by two spaces. **Backspace** at the start of its
   text removes one level, then the bullet prefix. **Shift+Tab**, or Tab on a
   non-bullet line, moves focus.
-- **Menu → New task editor… → Start as Markdown** (default off) starts new drafts
+- **Settings → Editor → Start as Markdown** (default off) starts new drafts
   with `# `.
 - The editor **autosaves after a 650 ms typing pause** and shows its status in the
   footer. **Ctrl+Enter** saves and closes. **Escape/Close** dismisses the editor
@@ -107,12 +116,12 @@ complete it. The bottom cog menu (**Menu**) holds scheduled reminders, Archive
   immediately. **Undo** (**Ctrl+Z**) reverts text edits in the open editor, not
   tag changes.
 - **Agent fields**, below the text, lists the task's saved handoff fields plus
-  those configured under **Menu → Fields…**. A text field is one Markdown value;
+  those configured under **Settings → Fields**. A text field is one Markdown value;
   a list is one entry per row, added with **Enter** or **+** (pasting several
   lines adds several). A unique list refuses repeats. Edits autosave; clearing a
   value or removing every entry removes the field. Your own edit does not mark
   the task as an unread agent update.
-- **Menu → Fields…** edits the field definitions shared with Pi
+- **Settings → Fields** edits the field definitions shared with Pi
   (`pi-note.json`): name, [type](../pi/README.md#field-types), whether agents
   maintain it and their instructions, label, format, footer width, link and
   order. **Pi footer layout** sets the title and field widths, the maximum
@@ -141,7 +150,7 @@ once and shown on its own line; the text keeps a short
   it. Archived tasks keep their images; task history does not, so older text may
   show **Image unavailable**.
 - **Viewing:** click a picture in a preview or expanded archive row, or
-  double-click it in an editor. **Menu → Window… → Open images in** chooses
+  double-click it in an editor. **Settings → Window → Open images in** chooses
   **Image window** (default, full size scaled to the screen), **This window**, or
   **System viewer** (a temporary copy, removed when Pinote quits). A click or
   **Escape** closes Pinote's own views. Pictures inside links open the link.
@@ -158,7 +167,7 @@ once and shown on its own line; the text keeps a short
   marked task it deletes (archives) the task.
 - While the pointer is inside the window, rows keep their order and section even
   after a state change. Completed, archived and filtered-out tasks still disappear.
-- **Menu → Task actions…** configures the row separately for **Not started**,
+- **Settings → Actions** configures the row separately for **Not started**,
   **In progress** and **Marked for deletion** tasks. Drag elements or use
   **↑/↓**; top-to-bottom order becomes left-to-right, shown in a live preview.
   **Tag** and **Task text** are required but movable; other elements can be
@@ -166,8 +175,8 @@ once and shown on its own line; the text keeps a short
 - **Add actions / configure menu** adds row buttons and separately sets the
   action menu's order and **In menu** visibility. On narrow rows, text shortens
   first, then excess buttons move under **Actions**.
-- **Save** applies all tabs; **Escape/Close** discards changes; **Restore
-  defaults** resets only the selected tab. Editing settings never runs an action.
+- **Save** applies all three task states; leaving Settings without saving
+  discards changes; **Restore defaults** resets only the selected state. Editing settings never runs an action.
   These preferences affect Electron only.
 - **Set reminder…** opens a local date-time picker. Skipped or repeated
   daylight-saving times are rejected; choose another time or use `note schedule`
@@ -178,7 +187,7 @@ once and shown on its own line; the text keeps a short
 - Tag selectors and filters are searchable. Tags with the newest tasks come
   first, then unused tags and Untagged. A highlighted funnel means a filter is
   active; in-progress tasks stay visible regardless of filters.
-- **Menu → Manage tags…** renames a tag across its tasks, sets or clears its
+- **Settings → Tags** renames a tag across its tasks, sets or clears its
   default Kitty folder, creates tags, and deletes them after confirmation
   (keeping tasks and history).
 - **Base folder** prefills each new tag's folder with `<base folder>/<tag>` (`/`
@@ -216,7 +225,7 @@ select the task if the revision no longer matches. Launching never submits a
 prompt or completes the task. A tab keeps its task: starting Pi again in it, or
 `/new`, selects the task unless another Pi pane in the tab already holds it.
 
-**Menu → Kitty…** sets:
+**Settings → Kitty** sets:
 
 | Setting | Behavior |
 | --- | --- |
@@ -262,10 +271,10 @@ external changes and refuses stale saves.
 
 Restarting restores the new-task tag, tag filters, composer and edit drafts,
 collapsed state, scroll positions, task-action and editor preferences, Kitty
-settings, the tag base folder, agent read cursors, and window position and size.
-Dialogs, menu search text, unsaved settings, and pending deletion marks are not kept.
+settings, the tag base folder, the last Settings tab, agent read cursors, and
+window position and size. Dialogs, menu search text, unsaved settings, and pending deletion marks are not kept.
 
-**Menu → Window…** can instead start Pinote at a fixed position and/or size (at
+**Settings → Window** can instead start Pinote at a fixed position and/or size (at
 least 280×120), kept on screen; **Remember last** restores the previous ones. A
 tiling window manager may still place the window itself.
 

@@ -4,7 +4,7 @@ import { imageHashes, imageRef } from './image-refs';
 import { undo, undoDepth } from '@codemirror/commands';
 import type { Task, Tag, Snapshot, UIState, View, Operations, RendererOperation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
-import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
+import type { SettingsTab, TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
 import { openImagesOnClick } from './image-open';
 import type { FieldDefinition, FieldDisplay, FieldSettings, FieldType, FieldValue, FooterInput, FooterSettings, ImageView, KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
@@ -69,7 +69,7 @@ const icons = {
   filter: 'view-filter', clear: 'view-filter-clear', all: 'edit-select-all',
   preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu', settings: 'settings',
   close: 'window-close', kitty: 'utilities-terminal', schedule: 'preferences-system-notifications',
-  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo', up: 'go-up', down: 'go-down',
+  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo', up: 'go-up', down: 'go-down', back: 'go-previous',
 } as const;
 type Icon = keyof typeof icons;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
@@ -87,7 +87,7 @@ function fitWindow(): void {
   if (!active || collapsed) return;
   const count = active.notes.filter(visible).length;
   const height = Math.min(count, Math.max(2, active.config.maxVisibleNotes)) * 34 + $('composer').offsetHeight + (notice.hidden ? 0 : notice.offsetHeight + 5) + 20;
-  void api.fit(layers.some(l => l.kind === 'task-actions' || l.kind === 'manage-tags' || l.kind === 'watchers' || l.kind === 'fields' || l.kind === 'kitty' || l.kind === 'edit') ? Math.max(560, height) : height).catch(e => console.error(message(e)));
+  void api.fit(height, layers.some(l => l.kind === 'settings' || l.kind === 'edit') ? 560 : undefined).catch(e => console.error(message(e)));
 }
 function report(message: string): void {
   notice.replaceChildren(el('span', message));
@@ -265,13 +265,13 @@ function layer(title: string, kind = '', taskId?: number): Layer {
     layers.splice(index, 1); overlay.remove();
     if (prior?.isConnected) prior.focus(); else composer.focus();
     renderSelected();
-    if (kind === 'task-actions' || kind === 'manage-tags' || kind === 'watchers' || kind === 'fields' || kind === 'kitty' || kind === 'edit') fitWindow();
+    if (kind === 'settings' || kind === 'edit') fitWindow();
   } };
   header.append(button('close', `Close ${title}`, () => item.close())); panel.append(header); overlay.append(panel); popupRoot.append(overlay); layers.push(item);
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) item.close(); });
   panel.addEventListener('keydown', e => {
     if (e.key !== 'Tab' || e.defaultPrevented) return;
-    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]'));
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')).filter(node => node.getClientRects().length);
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) { e.preventDefault(); last?.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -302,8 +302,8 @@ const collapseControl = button('collapse', 'Collapse checklist', async () => {
   saveSoon(); renderToolbar();
 });
 const moveControl = button('move', 'Drag to move window', () => undefined); moveControl.className = 'move-handle';
-const menuControl = button('settings', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
-toolbar.append(tagControl, filterControl, collapseControl, moveControl, menuControl);
+const menuControl = button('menu', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
+toolbar.append(tagControl, filterControl, collapseControl, moveControl, menuControl, button('settings', 'Settings', () => openSettings()));
 function renderToolbar(): void {
   tagLabel.textContent = creationTag ?? 'Untagged';
   tagControl.title = `New-task tag: ${creationTag ?? 'Untagged'}`; tagControl.setAttribute('aria-label', tagControl.title);
@@ -337,40 +337,114 @@ async function openMenu(event: MouseEvent): Promise<void> {
   switch (action) {
     case 'scheduled': auxiliary('scheduled'); break;
     case 'archive': auxiliary('archive'); break;
-    case 'manage-tags': manageTags(); break;
-    case 'task-actions': configureTaskActions(); break;
-    case 'composer-settings': configureComposer(); break;
-    case 'fields': configureFields(); break;
-    case 'watchers': configureWatchers(); break;
-    case 'kitty': configureKitty(); break;
-    case 'window-settings': configureWindow(); break;
     case 'drafts': recoverDrafts(); break;
     case 'close': window.close(); break;
   }
 }
-function configureComposer(): void {
-  const modal = layer('New task editor');
+// One page hosts every settings section. A pane has the layer members its builder uses.
+// Tabs sharing pi-note.json pass `saved` the revision they replaced and the one they wrote. `rebase` gives it to
+// the other tabs: one holding the replaced revision takes the new one and keeps its draft, any other stays stale.
+type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean) => void; busy: (value: boolean) => void;
+  saved: (from?: string | null, to?: string) => void; rebase?: (from: string | null, to: string) => void };
+const settingsTabs: [SettingsTab, string, (pane: Pane, tag?: string) => void][] = [
+  ['tags', 'Tags', manageTags], ['actions', 'Actions', configureTaskActions], ['editor', 'Editor', configureComposer], ['fields', 'Fields', configureFields],
+  ['watchers', 'Watchers', configureWatchers], ['kitty', 'Kitty', configureKitty], ['window', 'Window', configureWindow],
+];
+function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: string): void {
+  const existing = layers.find(l => l.kind === 'settings'); if (existing) { existing.panel.focus(); return; }
+  const page = layer('Settings', 'settings'); page.overlay.classList.add('settings-page');
+  const status = el('span', undefined, 'settings-status'); status.setAttribute('role', 'status');
+  const header = page.panel.querySelector('header')!;
+  header.replaceChildren(button('back', 'Back', () => page.close()), header.querySelector('h2')!, status);
+  const strip = el('div', undefined, 'settings-tabs'); strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', 'Settings sections');
+  const panes = new Map<SettingsTab, Pane>(), unsaved = new Set<SettingsTab>(), saving = new Set<SettingsTab>();
+  let focused: HTMLElement | null = null;
+  const panels = settingsTabs.map(([id]) => {
+    const panel = el('div', undefined, 'settings-pane'); panel.id = `settings-pane-${id}`; panel.hidden = true;
+    panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', `settings-tab-${id}`); return panel;
+  });
+  page.panel.append(strip, ...panels);
+  const tabs = settingsTabs.map(([id], index) => {
+    const b = textButton('', () => select(id)); b.id = `settings-tab-${id}`; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', `settings-pane-${id}`);
+    b.addEventListener('keydown', event => {
+      const count = settingsTabs.length;
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : event.key === 'ArrowRight' ? (index + 1) % count : event.key === 'ArrowLeft' ? (index + count - 1) % count : undefined;
+      if (next === undefined) return;
+      event.preventDefault(); select(settingsTabs[next][0]);
+    });
+    strip.append(b); return b;
+  });
+  const label = (index: number) => {
+    const [id, text] = settingsTabs[index], dirty = unsaved.has(id);
+    tabs[index].textContent = text; tabs[index].classList.toggle('unsaved', dirty);
+    tabs[index].title = dirty ? `${text}, unsaved changes` : text; tabs[index].setAttribute('aria-label', tabs[index].title);
+    if (tabs[index].tabIndex === 0) tabs[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+  function select(id: SettingsTab): void {
+    const index = Math.max(0, settingsTabs.findIndex(([value]) => value === id)), [chosen, text, build] = settingsTabs[index];
+    let pane = panes.get(chosen); const fresh = !pane;
+    if (!pane) {
+      // The revision is handed over at once; the save is announced when its pane has settled.
+      let announce = false;
+      const own: Pane = pane = { panel: panels[index], close: () => undefined,
+        saved: (from, to) => {
+          if (from !== undefined && to !== undefined) for (const other of panes.values()) if (other !== own) other.rebase?.(from, to);
+          if (saving.has(chosen)) announce = true; else status.textContent = `${text} saved.`;
+        },
+        // A save disables its focused button: focus returns to the page once it settles.
+        busy: value => {
+          if (value) { if (!saving.has(chosen)) focused = document.activeElement as HTMLElement | null; saving.add(chosen); return; }
+          if (!saving.delete(chosen)) return;
+          if (announce) { announce = false; status.textContent = `${text} saved.`; }
+          if (layers[layers.length - 1] !== page || page.panel.contains(document.activeElement)) return;
+          (focused?.isConnected && !(focused as HTMLButtonElement).disabled && focused.getClientRects().length ? focused : tabs[index]).focus();
+        },
+        dirty: value => { if (value === unsaved.has(chosen)) return; if (value) { unsaved.add(chosen); status.textContent = ''; } else unsaved.delete(chosen); label(index); } };
+      panes.set(chosen, pane);
+    }
+    status.textContent = '';
+    tabs.forEach((b, at) => { b.setAttribute('aria-selected', String(at === index)); b.tabIndex = at === index ? 0 : -1; });
+    panels.forEach((panel, at) => { panel.hidden = at !== index; });
+    // Builders measure their content, so a pane is shown before it is built.
+    if (fresh) build(pane, tag); else fitTaskRows();
+    tabs[index].focus(); tabs[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (state.settingsTab !== chosen) { state.settingsTab = chosen; saveSoon(); }
+  }
+  page.update = () => { for (const pane of panes.values()) pane.update?.(); };
+  const close = page.close, leave = () => { close(); for (const pane of panes.values()) pane.close(); };
+  page.close = () => {
+    // A save in flight settles first: its tab is still marked unsaved.
+    if (saving.size) return;
+    if (!unsaved.size) { leave(); return; }
+    const names = settingsTabs.filter(([id]) => unsaved.has(id)).map(([, text]) => text).join(', ');
+    confirmAction('Discard changes?', `Unsaved changes in ${names} will be lost.`, async () => leave());
+  };
+  tabs.forEach((_tab, index) => label(index)); select(tab); fitWindow();
+}
+function configureComposer(modal: Pane): void {
   const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = state.composerStartAsMarkdown === true; toggle.disabled = readonly;
   const label = el('label', undefined, 'setting-toggle'); label.append(toggle, el('span', 'Start as Markdown'));
   modal.panel.append(label, el('p', 'Start new drafts with # and heading formatting. Off keeps the current plain-text start. Existing text is kept.'));
-  let saving = false;
+  const mark = () => modal.dirty(toggle.checked !== (state.composerStartAsMarkdown === true));
+  toggle.addEventListener('change', mark);
+  // A changed start is ready to type into once the page closes.
+  let saving = false, applied = false;
+  modal.close = () => { if (applied && !closing && !layers.length) composerEditor.view.focus(); };
   const save = button('save', 'Save new task editor settings', async () => {
     if (readonly || closing || saving || !stateLoaded) return;
-    saving = true; save.disabled = toggle.disabled = true;
+    saving = true; save.disabled = toggle.disabled = true; modal.busy(true);
     const previous = state.composerStartAsMarkdown;
     state.composerStartAsMarkdown = toggle.checked;
     try {
       await persist();
       if (!composerEditor.value || (previous && composerEditor.value === '# ')) setComposerDraft(newComposerDraft());
-      modal.close(); composerEditor.view.focus();
+      applied = true; mark(); modal.saved();
     } catch (error) { state.composerStartAsMarkdown = previous; throw error; }
-    finally { saving = false; save.disabled = toggle.disabled = readonly; }
+    finally { saving = false; save.disabled = toggle.disabled = readonly; modal.busy(false); }
   }, readonly);
   controls(modal.panel).append(save);
 }
-function configureKitty(): void {
-  const existing = layers.find(l => l.kind === 'kitty'); if (existing) { existing.panel.focus(); return; }
-  const modal = layer('Kitty', 'kitty');
+function configureKitty(modal: Pane): void {
   const status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
   // Start in Kitty: Electron-only working state.
   const name = field('Tab name', state.kittyTabTitle ?? DEFAULT_KITTY_TAB_TITLE);
@@ -390,6 +464,7 @@ function configureKitty(): void {
     const input = el('input'); input.type = 'radio'; input.name = 'kitty-completion'; input.value = value; input.disabled = true;
     const option = el('label', undefined, 'setting-toggle'); option.append(input, el('span', text)); return input;
   });
+  for (const input of [toggle, ...radios]) input.addEventListener('change', () => update());
   const completion = el('div', undefined, 'window-setting'); completion.setAttribute('role', 'radiogroup'); completion.setAttribute('aria-label', 'When a task is completed in Pi');
   completion.append(el('p', 'When a task is completed in Pi', 'settings-heading'), ...radios.map(input => input.parentElement!));
   const piGroup = el('div', undefined, 'window-setting'); piGroup.setAttribute('role', 'group'); piGroup.setAttribute('aria-label', 'Pi');
@@ -404,7 +479,17 @@ function configureKitty(): void {
     for (const input of radios) input.disabled = toggle.disabled;
     name.input.disabled = prompt.disabled = !stateLoaded || saving || readonly;
     save.disabled = name.input.disabled || !validKittyTabTitle(name.input.value) || !validKittyStartPrompt(prompt.value);
+    modal.busy(saving);
+    modal.dirty(name.input.value.trim() !== (state.kittyTabTitle ?? DEFAULT_KITTY_TAB_TITLE) || prompt.value !== (state.kittyStartPrompt ?? DEFAULT_KITTY_START_PROMPT) || shared());
   };
+  const shared = () => !!settings && (toggle.checked !== settings.oneTaskPerTab || chosen() !== settings.onTaskComplete);
+  // The shared file is read again after a save: its revision guards the next one.
+  const load = () => api.kittySettings().then(loaded => {
+    settings = loaded; toggle.checked = loaded.oneTaskPerTab;
+    for (const input of radios) input.checked = input.value === loaded.onTaskComplete;
+    status.textContent = ''; update();
+  }, error => { status.textContent = `Could not load Kitty settings: ${ipcMessage(error)}`; });
+  modal.rebase = (from, to) => { if (settings?.raw === from) settings.raw = to; };
   const save = button('save', 'Save Kitty settings', async () => {
     if (saving || readonly || closing || !stateLoaded || !validKittyTabTitle(name.input.value) || !validKittyStartPrompt(prompt.value)) return;
     saving = true; status.textContent = ''; update();
@@ -419,21 +504,14 @@ function configureKitty(): void {
       }
       // Only changed values rewrite the file shared with Pi.
       const action = chosen() ?? settings?.onTaskComplete;
-      if (settings && action && (toggle.checked !== settings.oneTaskPerTab || action !== settings.onTaskComplete)) await api.saveKittySettings(toggle.checked, action, settings.raw);
-      modal.close();
+      if (settings && action && (toggle.checked !== settings.oneTaskPerTab || action !== settings.onTaskComplete)) { const from = settings.raw, to = await api.saveKittySettings(toggle.checked, action, from); modal.saved(from, to); await load(); }
+      else modal.saved();
     } catch (error) { status.textContent = ipcMessage(error); }
     finally { saving = false; update(); }
   }, true);
-  controls(modal.panel).append(save); update(); fitWindow();
-  void api.kittySettings().then(loaded => {
-    settings = loaded; toggle.checked = loaded.oneTaskPerTab;
-    for (const input of radios) input.checked = input.value === loaded.onTaskComplete;
-    status.textContent = ''; update();
-  }, error => { status.textContent = `Could not load Kitty settings: ${ipcMessage(error)}`; });
+  controls(modal.panel).append(save); update(); void load();
 }
-function configureWindow(): void {
-  const existing = layers.find(l => l.kind === 'window-settings'); if (existing) { existing.panel.focus(); return; }
-  const modal = layer('Window', 'window-settings');
+function configureWindow(modal: Pane): void {
   const status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
   let settings: WindowSettings | undefined, saving = false;
   // One setting: Remember last, or fixed values that fill from the current window when first chosen.
@@ -467,6 +545,8 @@ function configureWindow(): void {
   });
   const viewSection = el('div', undefined, 'window-setting'); viewSection.setAttribute('role', 'radiogroup'); viewSection.setAttribute('aria-label', 'Open images in');
   const viewChoice = el('div', undefined, 'window-choice'); viewChoice.append(...views.map(view => view.label));
+  for (const view of views) view.input.addEventListener('change', () => update());
+  const same = (a?: Record<string, number>, b?: Record<string, number>) => a && b ? Object.keys(b).every(key => a[key] === b[key]) : !a && !b;
   viewSection.append(el('p', 'Open images in', 'settings-heading'), viewChoice);
   modal.panel.append(viewSection, el('p', 'Click a picture in a task, or double-click it in an editor.'), status);
   const update = () => {
@@ -474,7 +554,11 @@ function configureWindow(): void {
     for (const group of [position, size]) { group.remember.disabled = group.fixed.disabled = off; group.inputs.forEach(input => { input.disabled = off || !group.fixed.checked; }); }
     for (const view of views) view.input.disabled = off;
     save.disabled = off || !position.valid() || !size.valid();
+    modal.busy(saving);
+    modal.dirty(!!settings && (!position.valid() || !size.valid() || !same(position.value(), settings.startup.position) || !same(size.value(), settings.startup.size) || views.find(view => view.input.checked)?.input.value !== settings.imageView));
   };
+  const load = () => api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); for (const view of views) view.input.checked = view.input.value === loaded.imageView; status.textContent = ''; update(); },
+    error => { status.textContent = `Could not load window settings: ${ipcMessage(error)}`; });
   const save = button('save', 'Save window settings', async () => {
     if (!settings || saving || closing || !position.valid() || !size.valid()) return;
     saving = true; status.textContent = ''; update();
@@ -482,14 +566,12 @@ function configureWindow(): void {
     const fixedPosition = position.value(), fixedSize = size.value();
     if (fixedPosition) startup.position = fixedPosition as WindowStartup['position'];
     if (fixedSize) startup.size = fixedSize as WindowStartup['size'];
-    try { await api.saveWindowSettings(startup, views.find(view => view.input.checked)!.input.value as ImageView); modal.close(); }
+    try { await api.saveWindowSettings(startup, views.find(view => view.input.checked)!.input.value as ImageView); await load(); modal.saved(); }
     catch (error) { status.textContent = ipcMessage(error); }
     finally { saving = false; update(); }
   }, true);
   for (const input of [...position.inputs, ...size.inputs]) input.addEventListener('input', update);
-  controls(modal.panel).append(save);
-  void api.windowSettings().then(loaded => { settings = loaded; position.load(loaded.startup.position); size.load(loaded.startup.size); for (const view of views) view.input.checked = view.input.value === loaded.imageView; status.textContent = ''; update(); },
-    error => { status.textContent = `Could not load window settings: ${ipcMessage(error)}`; });
+  controls(modal.panel).append(save); void load();
 }
 function dueLabel(task: Task): string {
   const date = task.reminder_due_at ?? task.remind_at;
@@ -726,12 +808,12 @@ function taskAction(task: Task, id: TaskActionId): { id: TaskAction; icon: Icon;
 function actionBlocked(task: Task, id: TaskAction): boolean {
   return id !== 'copy' && id !== 'edit' && id !== 'preview' && (readonly || busyTasks.has(task.id));
 }
-function configureTaskActions(): void {
-  const existing = layers.find(l => l.kind === 'task-actions');
-  if (existing) { existing.panel.focus(); return; }
-  const modal = layer('Task actions', 'task-actions');
+function configureTaskActions(modal: Pane): void {
   modal.panel.classList.add('action-settings');
   const draft = normalizeTaskActions(state.taskActions);
+  // Hidden actions are a set: their order carries no meaning.
+  const key = (settings: typeof state.taskActions) => { const all = normalizeTaskActions(settings); return JSON.stringify(TASK_ACTION_STATES.map(state => [all[state].order, [...all[state].hidden].sort(), all[state].row])); };
+  const mark = () => modal.dirty(key(draft) !== key(state.taskActions));
   let selected: TaskActionState = 'active', saving = false;
   const tabs = el('div', undefined, 'action-state-tabs');
   tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Task state');
@@ -772,7 +854,7 @@ function configureTaskActions(): void {
     const move = (id: T, to: number) => {
       const from = order.indexOf(id);
       if (readonly || saving || from === to || to < 0 || to >= order.length) return;
-      order.splice(from, 1); order.splice(to, 0, id); redraw(id);
+      order.splice(from, 1); order.splice(to, 0, id); redraw(id); mark();
       status.textContent = `${choice(id).label}, position ${to + 1} of ${order.length}`;
     };
     container.replaceChildren();
@@ -833,7 +915,7 @@ function configureTaskActions(): void {
         const shown = el('input'); shown.type = 'checkbox'; shown.checked = !preferences.hidden.includes(id);
         shown.setAttribute('aria-label', `Show ${choice(id).label} in menu`); shown.title = `Show ${choice(id).label} in menu`;
         shown.disabled = readonly || saving;
-        shown.addEventListener('change', () => { preferences.hidden = shown.checked ? preferences.hidden.filter(value => value !== id) : [...preferences.hidden, id]; });
+        shown.addEventListener('change', () => { preferences.hidden = shown.checked ? preferences.hidden.filter(value => value !== id) : [...preferences.hidden, id]; mark(); });
         const added = preferences.row.includes(id);
         row.append(shown, button(added ? 'done' : 'add', added ? `${choice(id).label} already in row` : `Add ${choice(id).label} to row`, () => add(id), readonly || saving || added));
       });
@@ -860,7 +942,7 @@ function configureTaskActions(): void {
       }, readonly || saving));
     });
     add.disabled = readonly || saving;
-    modal.panel.scrollTop = top; fitTaskRows(); focusHandle(list, focus);
+    modal.panel.scrollTop = top; fitTaskRows(); focusHandle(list, focus); mark();
   }
   const add = button('add', 'Add actions / configure menu', availableActions, readonly);
   const addLine = el('div', undefined, 'controls'); addLine.append(add, el('span', 'Add actions / configure menu', 'settings-hint')); modal.panel.append(addLine);
@@ -869,15 +951,15 @@ function configureTaskActions(): void {
   const reset = button('reset', 'Restore default task actions', () => { if (readonly || saving) return; draft[selected] = defaultTaskActions()[selected]; draw(); }, readonly);
   const save = button('save', 'Save task actions', async () => {
     if (readonly || closing || saving || !stateLoaded) return;
-    saving = true; reset.disabled = save.disabled = true; draw();
+    saving = true; reset.disabled = save.disabled = true; modal.busy(true); draw();
     const previous = state.taskActions;
     state.taskActions = structuredClone(draft);
     try {
-      await persist(); closeTaskActions(false); renderTasks(); modal.close();
+      await persist(); closeTaskActions(false); renderTasks(); modal.saved();
     } catch (error) {
       state.taskActions = previous; renderTasks();
       throw error;
-    } finally { saving = false; reset.disabled = save.disabled = readonly; if (layers.includes(modal)) draw(); }
+    } finally { saving = false; reset.disabled = save.disabled = readonly; modal.busy(false); if (modal.panel.isConnected) draw(); }
   }, readonly);
   bar.append(reset, save); draw(); fitWindow();
 }
@@ -1288,7 +1370,7 @@ function tagsMenu(mode: TagMode, task?: Task, selectTag?: (tag: string | null, f
       b.className = `tag-choice${selected ? ' chosen' : ''}`; b.dataset.tag = name;
       b.append(el('span', `${name || 'Untagged'} ${counts(name)}`));
       if (mode === 'filter') { b.setAttribute('role', 'checkbox'); b.setAttribute('aria-checked', String(selected)); b.prepend(el('span', selected ? '☑' : '☐')); }
-      b.addEventListener('contextmenu', e => { e.preventDefault(); manageTags(name || undefined); });
+      b.addEventListener('contextmenu', e => { e.preventDefault(); openSettings('tags', name || undefined); });
       list.append(b);
     }
     if (query && !active?.tags.some(t => t.name.toLocaleLowerCase() === lower)) {
@@ -1354,8 +1436,8 @@ function newTag(prefill = '', after?: (name: string) => unknown, attachTask?: Ta
     }, readonly));
   name.input.focus();
 }
-function manageTags(selected?: string): void {
-  const modal = layer('Manage tags', 'manage-tags'); modal.panel.classList.add('manage-tags');
+function manageTags(modal: Pane, selected?: string): void {
+  modal.panel.classList.add('manage-tags');
   const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar');
   const searchBar = el('div', undefined, 'tag-search'), search = el('input');
   search.type = 'search'; search.placeholder = 'Find tag…'; search.setAttribute('aria-label', 'Find saved tag');
@@ -1484,9 +1566,8 @@ function footerProblem(footer: FooterSettings): string | undefined {
   }
   return footer.fields.filter(field => field.saved).length > 64 ? 'At most 64 fields can be saved.' : undefined;
 }
-function configureFields(): void {
-  const existing = layers.find(l => l.kind === 'fields'); if (existing) { existing.panel.focus(); return; }
-  const modal = layer('Fields', 'fields'); modal.panel.classList.add('manage-tags', 'watchers', 'fields');
+function configureFields(modal: Pane): void {
+  modal.panel.classList.add('manage-tags', 'watchers', 'fields');
   const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar'), editor = el('div', undefined, 'tag-editor watcher-editor');
   const addBar = el('div', undefined, 'tag-search'), newName = el('input');
   newName.placeholder = 'New field…'; newName.spellcheck = false; newName.setAttribute('aria-label', 'New field name');
@@ -1508,6 +1589,7 @@ function configureFields(): void {
     } catch (reason) { settings = undefined; draft = undefined; note = `Could not load fields: ${ipcMessage(reason)}`; }
     draw();
   };
+  modal.rebase = (from, to) => { if (settings?.raw === from) settings.raw = to; };
   const addField = () => {
     if (!draft || busy) return;
     const name = newName.value.normalize('NFC').trim();
@@ -1528,7 +1610,7 @@ function configureFields(): void {
   const save = button('save', 'Save field settings', async () => {
     if (!settings || !draft || busy || readonly || !dirty() || footerProblem(draft)) return;
     busy = true; error = ''; update();
-    try { await api.saveFieldSettings(input(draft), settings.raw); note = 'Saved.'; await load(); void loadFieldDefinitions(); }
+    try { const from = settings.raw; modal.saved(from, await api.saveFieldSettings(input(draft), from)); note = 'Saved.'; await load(); void loadFieldDefinitions(); }
     catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
@@ -1614,6 +1696,7 @@ function configureFields(): void {
       row.querySelector('.field-kind')!.textContent = type;
       row.title = `${item.name}: ${type}, ${item.enabled ? 'enabled' : 'disabled'}${item.saved ? '' : ', preset'}`; row.setAttribute('aria-label', row.title);
     }
+    modal.busy(busy); modal.dirty(dirty());
     status.textContent = error || problem || (dirty() ? 'Unsaved changes.' : note);
     status.classList.toggle('watcher-problem', !!(error || problem));
     save.disabled = busy || readonly || !dirty() || !!problem; revert.disabled = busy || !dirty(); add.disabled = newName.disabled = busy || !draft;
@@ -1649,9 +1732,8 @@ function configureFields(): void {
   });
   draw(); newName.focus(); fitWindow(); void load();
 }
-function configureWatchers(): void {
-  const existing = layers.find(l => l.kind === 'watchers'); if (existing) { existing.panel.focus(); return; }
-  const modal = layer('Watchers', 'watchers'); modal.panel.classList.add('manage-tags', 'watchers');
+function configureWatchers(modal: Pane): void {
+  modal.panel.classList.add('manage-tags', 'watchers');
   const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar'), editor = el('div', undefined, 'tag-editor watcher-editor');
   const searchBar = el('div', undefined, 'tag-search'), search = el('input');
   search.type = 'search'; search.placeholder = 'Find watcher…'; search.setAttribute('aria-label', 'Find watcher');
@@ -1659,13 +1741,15 @@ function configureWatchers(): void {
   list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Watchers');
   const footer = el('div', undefined, 'watcher-footer'), status = el('p', 'Loading watchers…', 'tag-hint'); status.setAttribute('role', 'status');
   let settings: WatcherSettings | undefined, draft: Watcher[] = [], selected: string | undefined, busy = false, note = '', error = '';
-  let refreshEditor = () => {};
+  let refreshEditor = () => {}, suggestFields = () => {};
   const empty = (value: WatcherValue | undefined) => value === undefined || value === '' || Array.isArray(value) && !value.length;
   // Rows left blank in a list are not saved.
   const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, appEvents: w.appEvents, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
     timeoutSeconds: w.timeoutSeconds, cooldownSeconds: w.cooldownSeconds,
     params: Object.fromEntries(Object.entries(w.params).map(([key, value]) => [key, Array.isArray(value) ? value.filter(row => Object.keys(row).length) : value] as const).filter(([, value]) => !empty(value))) });
-  const dirty = () => !!settings && JSON.stringify(draft.map(entry)) !== JSON.stringify(settings.watchers.map(entry));
+  // Compared by key at every depth: clearing and refilling a parameter or a row's cell moves it to the end.
+  const saved = (list: Watcher[]) => JSON.stringify(list.map(entry), (_key, value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : 1)) : value);
+  const dirty = () => !!settings && saved(draft) !== saved(settings.watchers);
   const limitLabels = { timeoutSeconds: 'Time limit', cooldownSeconds: 'Cooldown' } as const;
   const problem = (w: Watcher) => {
     const missing = w.spec.find(param => param.required && empty(entry(w).params[param.key]));
@@ -1678,6 +1762,11 @@ function configureWatchers(): void {
       if (!draft.some(w => w.id === selected)) selected = draft[0]?.id;
     } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${ipcMessage(error)}`; }
     draw();
+  };
+  // Fields may have changed the names suggested here; nothing else is redrawn or taken from that read.
+  modal.rebase = (from, to) => {
+    if (settings?.raw === from) settings.raw = to;
+    void api.watcherSettings().then(fresh => { if (!settings) return; settings.fieldNames = fresh.fieldNames; suggestFields(); }, () => undefined);
   };
   const add = button('add', 'Add watcher script…', async () => {
     if (!settings || busy) return;
@@ -1693,7 +1782,7 @@ function configureWatchers(): void {
   const save = button('save', 'Save watcher settings…', async () => {
     if (!settings || busy || !dirty()) return;
     busy = true; error = ''; update();
-    try { if (await api.saveWatchers(draft.map(entry), settings.raw)) { note = 'Saved.'; await load(); } }
+    try { const from = settings.raw, to = await api.saveWatchers(draft.map(entry), from); if (to !== false) { modal.saved(from, to); note = 'Saved.'; await load(); } }
     catch (reason) { error = ipcMessage(reason); }
     finally { busy = false; update(); }
   });
@@ -1764,7 +1853,7 @@ function configureWatchers(): void {
     return box;
   };
   const drawEditor = (w?: Watcher) => {
-    editor.replaceChildren(); refreshEditor = () => {};
+    editor.replaceChildren(); refreshEditor = suggestFields = () => {};
     if (!w) { editor.append(el('p', settings ? 'Select a watcher, or add a script with +.' : '', 'empty')); return; }
     const issue = el('p', undefined, 'watcher-problem'), toggle = el('label', undefined, 'setting-toggle'), enabled = el('input');
     enabled.type = 'checkbox'; toggle.append(enabled, el('span', 'Enabled while Pinote is open'));
@@ -1775,7 +1864,8 @@ function configureWatchers(): void {
     };
     const chips = el('div', undefined, 'watcher-chips'), input = el('input'), options = el('datalist');
     options.id = 'watcher-field-names'; input.setAttribute('list', options.id); input.placeholder = 'Add field…'; input.setAttribute('aria-label', 'Add field');
-    for (const name of settings?.fieldNames ?? []) if (!w.fields.includes(name)) { const option = el('option'); option.value = name; options.append(option); }
+    suggestFields = () => { options.replaceChildren(); for (const name of settings?.fieldNames ?? []) if (!w.fields.includes(name)) { const option = el('option'); option.value = name; options.append(option); } };
+    suggestFields();
     const addField = () => {
       const name = input.value.normalize('NFC').trim();
       if (!name || name.length > 128 || w.fields.length >= 64) return;
@@ -1826,6 +1916,7 @@ function configureWatchers(): void {
     }
     refreshEditor();
     // A failed save stays visible until the next attempt or selection.
+    modal.busy(busy); modal.dirty(dirty());
     status.textContent = error || (dirty() ? 'Unsaved changes. Saving asks for confirmation.' : note);
     status.classList.toggle('watcher-problem', !!error);
     save.disabled = revert.disabled = busy || !dirty(); add.disabled = busy || !settings;

@@ -4,7 +4,7 @@ Pinned desktop reminders with a small `note` CLI, stable IDs, and durable histor
 Linux/i3 first, with Dunst notifications and an Electron desktop frontend for
 editing, tags, progress, scheduled reminders, and archived tasks.
 
-![Pinote Electron checklist: rows begin with Start, or an amber Complete checkmark for the two in-progress tasks, followed by tag, task title, Preview and Actions buttons; in-progress tasks sit above the add-task input and the tag, filter, collapse, move and settings toolbar.](docs/images/electron-checklist.png)
+![Pinote Electron checklist: rows begin with Start, or an amber Complete checkmark for the two in-progress tasks, followed by tag, task title, Preview and Actions buttons; in-progress tasks sit above the add-task input and the tag, filter, collapse, move, menu and settings toolbar.](docs/images/electron-checklist.png)
 
 *In-progress tasks sit above the composer; the blue dot on an eye marks an unread
 agent update.*

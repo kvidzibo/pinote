@@ -107,6 +107,15 @@ const dismissNativeMenu = async () => {
   nativeKey('Escape');
   await waitMenu(s=>!s.pending,'Escape must dismiss the native menu');
 };
+// Settings sections are tabs of one page; a save keeps it open.
+const settingsPage = page => page.getByRole('dialog',{name:'Settings',exact:true});
+const openSettingsTab = async (page, id) => { await page.getByRole('button',{name:'Settings',exact:true}).click(); await page.locator(`#settings-tab-${id}`).click(); await page.locator(`#settings-pane-${id}`).waitFor(); };
+const settingsSaved = (page, label) => settingsPage(page).getByText(`${label} saved.`,{exact:true}).waitFor();
+const closeSettings = async (page, discard=false) => {
+  await page.keyboard.press('Escape');
+  if (discard) await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click();
+  await settingsPage(page).waitFor({state:'detached'});
+};
 // Existing workflow tests select the captured native item, not a DOM imitation.
 const selectNativeMenu = async (opener, id) => {
   await openNativeMenu(opener);
@@ -517,7 +526,7 @@ try {
     assert.deepEqual({x:state.request.x,y:state.request.y},point);
     const bounds=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getContentBounds());
     assert.deepEqual(state.options,{x:Math.min(point.x,bounds.width-1),y:Math.min(point.y,bounds.height-1)});
-    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','manage-tags','task-actions','composer-settings','fields','watchers','kitty','window-settings','drafts','close']);
+    assert.deepEqual(state.items.filter(i=>i.type!=='separator').map(i=>i.id),['scheduled','archive','drafts','close']);
     assert.ok(state.items.every(i=>i.type==='separator' || i.hasIcon),'Every native menu item needs a bundled icon');
     const capture=spawnSync('import',['-window','root',join(root,'native-menu-root.png')],{env,encoding:'utf8'});
     assert.ifError(capture.error); assert.equal(capture.status,0,capture.stderr);
@@ -526,18 +535,15 @@ try {
   }
   // Row and menu settings are one draft, independent for each task state.
   {
-    const settings = page.getByRole('dialog',{name:'Task actions',exact:true});
+    const settings = page.locator('#settings-pane-actions');
     const picker = page.getByRole('dialog',{name:'Available actions',exact:true});
-    const openSettings = async () => {
-      await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'task-actions');
-      await settings.waitFor();
-    };
+    const openSettings = () => openSettingsTab(page,'actions');
     const available = async () => { await settings.getByRole('button',{name:'Add actions / configure menu',exact:true}).click(); await picker.waitFor(); };
     const closePicker = async () => { await page.keyboard.press('Escape'); await picker.waitFor({state:'detached'}); assert.ok(await settings.isVisible()); };
     const rowOrder = () => settings.locator('.row-settings-list [data-element]').evaluateAll(nodes=>nodes.map(n=>n.dataset.element));
     const menuOrder = () => picker.locator('.action-settings-list [data-element]').evaluateAll(nodes=>nodes.map(n=>n.dataset.element));
     const tab = name => settings.getByRole('tab',{name,exact:true});
-    const save = async () => { await settings.getByRole('button',{name:'Save task actions',exact:true}).click(); await settings.waitFor({state:'detached'}); };
+    const save = async () => { await settings.getByRole('button',{name:'Save task actions',exact:true}).click(); await settingsSaved(page,'Actions'); await closeSettings(page); };
     const add = label => picker.getByRole('button',{name:`Add ${label} to row`,exact:true}).click();
     const remove = label => settings.getByRole('button',{name:`Remove ${label} from row`,exact:true}).click();
     const original = ['kitty','copy','start','done','archive','edit','schedule','tag'];
@@ -713,7 +719,7 @@ try {
       await tab(name).click(); await settings.getByRole('button',{name:`Restore default actions for ${name}`,exact:true}).click();
       await remove('Preview');
     }
-    await page.keyboard.press('Escape');
+    await closeSettings(page,true);
     assert.deepEqual((await load()).in_progress,defaults.in_progress);
     assert.deepEqual((await load()).marked,defaults.marked);
     assert.deepEqual((await load()).active.row,customRow.filter(id=>id!=='actions'));
@@ -780,9 +786,14 @@ try {
   // Composer preference: native settings, new-draft lifecycle, source styling and recovery.
   {
     const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
-    const settings = page.getByRole('dialog',{name:'New task editor',exact:true});
-    const open = () => selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'composer-settings');
-    const save = async () => { await settings.getByRole('button',{name:'Save new task editor settings',exact:true}).click(); await settings.waitFor({state:'detached'}); };
+    const settings = page.locator('#settings-pane-editor');
+    const open = () => openSettingsTab(page,'editor');
+    // Saved from the keyboard: the button is disabled meanwhile, and focus must stay in the page.
+    const save = async () => {
+      await settings.getByRole('button',{name:'Save new task editor settings',exact:true}).focus(); await page.keyboard.press('Enter'); await settingsSaved(page,'Editor');
+      await page.waitForFunction(()=>document.querySelector('.settings-page')?.contains(document.activeElement));
+      await closeSettings(page);
+    };
     const waitSavedDraft = async text => {
       for(let i=0;i<200;i++) {
         if((await page.evaluate(()=>window.pinote.loadState())).draft===text) return;
@@ -793,7 +804,13 @@ try {
     const geometry = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
     await composer.fill('Existing plain draft');
     await open(); assert.equal(await settings.getByRole('checkbox',{name:'Start as Markdown',exact:true}).isChecked(),false);
-    await settings.getByRole('checkbox').check(); await page.keyboard.press('Escape');
+    await settings.getByRole('checkbox').check();
+    // An unsaved change marks its tab and survives a visit to another one.
+    await page.locator('#settings-tab-kitty').click(); assert.equal(await settings.isHidden(),true);
+    await page.locator('#settings-tab-editor').click();
+    assert.equal(await settings.getByRole('checkbox').isChecked(),true);
+    assert.equal(await page.locator('#settings-tab-editor').getAttribute('aria-label'),'Editor, unsaved changes');
+    await closeSettings(page,true);
     assert.equal((await page.evaluate(()=>window.pinote.loadState())).composerStartAsMarkdown,undefined,'Closing settings discards unsaved changes');
     await open(); await settings.getByRole('checkbox').check(); await save();
     assert.equal(await sourceValue(composer),'Existing plain draft','Enabling must preserve unfinished text');
@@ -875,17 +892,17 @@ try {
     await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"] [data-row-element="done"]`)?.disabled,id);
     // A saved tab name and start prompt reach the launch; defaults are not sent.
     {
-      const kitty = page.getByRole('dialog',{name:'Kitty',exact:true}), name = kitty.getByRole('textbox',{name:'Tab name',exact:true});
+      const kitty = page.locator('#settings-pane-kitty'), name = kitty.getByRole('textbox',{name:'Tab name',exact:true});
       const prompt = kitty.getByRole('textbox',{name:'Start prompt',exact:true});
       const save = kitty.getByRole('button',{name:'Save Kitty settings',exact:true});
-      await selectNativeMenu(() => page.getByRole('button',{name:'Menu',exact:true}).click(),'kitty');
+      await openSettingsTab(page,'kitty');
       await name.waitFor(); for(let i=0;i<200 && await name.isDisabled();i++) await page.waitForTimeout(10);
       assert.equal(await name.inputValue(),'{tag}{title:30}');
       assert.equal(await prompt.inputValue(),'is task clear?');
       await name.fill('  '); assert.equal(await save.isDisabled(),true,'A blank tab name cannot be saved');
       await name.fill('{tag}{title}'); await prompt.fill('\u202e'); assert.equal(await save.isDisabled(),true,'A prompt with terminal controls cannot be saved');
       const shared = join(env.PI_CODING_AGENT_DIR,'pi-note.json'), before = await readFile(shared,'utf8').catch(()=>null);
-      await prompt.fill('Check scope\nthen wait'); await save.click(); await kitty.waitFor({state:'detached'});
+      await prompt.fill('Check scope\nthen wait'); await save.click(); await settingsSaved(page,'Kitty'); await closeSettings(page);
       const saved = await page.evaluate(()=>window.pinote.loadState());
       assert.equal(saved.kittyTabTitle,'{tag}{title}'); assert.equal(saved.kittyStartPrompt,'Check scope\nthen wait');
       assert.equal(await readFile(shared,'utf8').catch(()=>null),before,'Saving Electron-only values leaves the file shared with Pi untouched');
@@ -1147,11 +1164,11 @@ try {
     // The base folder stays set through the editor's tag-creation checks below.
     const tagBase=join(root,'editor-tag-base'); await mkdir(tagBase);
     const baseFolder=async(action)=>{
-      await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'manage-tags');
-      const manage=page.getByRole('dialog',{name:'Manage tags',exact:true});
+      await openSettingsTab(page,'tags');
+      const manage=page.locator('#settings-pane-tags');
       await manage.getByRole('button',{name:action,exact:true}).click();
       await manage.locator('.tag-sidebar .folder-path').filter({hasText:action==='Clear base folder' ? 'No base folder' : tagBase}).waitFor();
-      await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
+      await closeSettings(page);
     };
     await app.evaluate(({dialog},folder)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},tagBase);
     await baseFolder('Choose base folder for new tags');
@@ -1328,8 +1345,19 @@ try {
   // Manage tags: one searchable list/editor workflow, with real shared-backend refreshes.
   {
     const geometry = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
-    const manage = page.getByRole('dialog',{name:'Manage tags',exact:true});
-    await selectNativeMenu(()=>page.getByRole('button',{name:'Menu',exact:true}).click(),'manage-tags');
+    const manage = page.locator('#settings-pane-tags');
+    // A tag's context menu opens Settings on that tag, whatever tab was used last; arrow keys move between tabs.
+    await openSettingsTab(page,'window'); await closeSettings(page);
+    await page.getByRole('button',{name:/^New-task tag:/}).click();
+    await page.getByRole('dialog',{name:'New-task tag',exact:true}).locator('.tag-choice[data-tag="Work"]').click({button:'right'});
+    await manage.getByRole('heading',{name:'Work',exact:true}).waitFor();
+    assert.equal(await page.locator('#settings-tab-tags').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowLeft');
+    assert.ok(await page.locator('#settings-tab-window[aria-selected="true"]').evaluate(n=>n===document.activeElement));
+    await page.keyboard.press('Home'); assert.equal(await manage.isVisible(),true);
+    await closeSettings(page); await page.keyboard.press('Escape');
+    await page.getByRole('dialog',{name:'New-task tag',exact:true}).waitFor({state:'detached'});
+    await openSettingsTab(page,'tags');
     await manage.getByRole('button',{name:'Create saved tag',exact:true}).click();
     const create = page.getByRole('dialog',{name:'New tag',exact:true});
     await create.getByRole('textbox',{name:'Name',exact:true}).fill('pinote');
@@ -1471,7 +1499,7 @@ try {
     await basePath.filter({hasText:'No base folder'}).waitFor();
     assert.equal((await page.evaluate(()=>window.pinote.loadState())).tagBaseFolder,undefined);
     for (const name of ['web/app','blocked','Straße','race']) call('delete_tag',{name});
-    await page.keyboard.press('Escape'); await manage.waitFor({state:'detached'});
+    await closeSettings(page);
     await app.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds),geometry);
   }
   // A Pi session saves handoff notes through the CLI on the same temporary data.
@@ -1674,10 +1702,10 @@ try {
     assert.equal(await reopened.locator('#ordinary').evaluate(node=>node.scrollTop),210);
     // Window settings: fixed start-up position and size replace the last ones; Remember last restores them.
     {
-      const settings=()=>reopened.getByRole('dialog',{name:'Window',exact:true});
+      const settings=()=>reopened.locator('#settings-pane-window');
       const group=name=>settings().getByRole('radiogroup',{name,exact:true});
-      const open=async()=>{await selectNativeMenu(()=>reopened.getByRole('button',{name:'Menu',exact:true}).click(),'window-settings');await settings().locator('input[name="window-size"]:checked').waitFor();};
-      const save=async()=>{await settings().getByRole('button',{name:'Save window settings',exact:true}).click();await settings().waitFor({state:'detached'});};
+      const open=async()=>{await openSettingsTab(reopened,'window');await settings().locator('input[name="window-size"]:checked').waitFor();};
+      const save=async()=>{await settings().getByRole('button',{name:'Save window settings',exact:true}).click();await settingsSaved(reopened,'Window');await closeSettings(reopened);};
       const bounds=()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
       const last={x:150,y:120,width:430,height:330}, original=await bounds();
       const restart=async()=>{await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),last);await reopened.waitForTimeout(350);await close();reopened=await reopen();await reopened.waitForTimeout(350);};
