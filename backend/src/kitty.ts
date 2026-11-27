@@ -27,10 +27,11 @@ export async function remote(kitty: string, address: string, ...args: string[]):
   try { return strip((await exec(kitty, ['@', '--to', address, ...args], { timeout: 5000, maxBuffer: Infinity })).stdout); }
   catch (error) { throw new NoteError(`Kitty remote control failed at ${shown(address)}: ${reason(error)}`); }
 }
+const x11Display = () => checkedEnv('DISPLAY')?.replace(/\.0$/, '');
 export function kittyAddressEnv(): { explicit?: string; display?: string } {
   const explicit = checkedEnv('KITTY_LISTEN_ON');
   // macOS Kitty does not use X11; XQuartz's DISPLAY does not identify it.
-  return explicit ? { explicit } : macos() ? {} : { display: checkedEnv('DISPLAY')?.replace(/\.0$/, '') };
+  return explicit ? { explicit } : macos() ? {} : { display: x11Display() };
 }
 // macOS has no /proc or abstract sockets, so Kitty sockets live in $TMPDIR. Only a
 // private directory guarantees that a socket path still belongs to this user when the
@@ -57,14 +58,17 @@ function macosSockets(): string[] {
   return sockets.sort(([a], [b]) => a - b).map(([, target]) => target);
 }
 export async function address(kitty: string): Promise<string | null> {
-  const { explicit, display } = kittyAddressEnv();
-  if (explicit) { await remote(kitty, explicit, 'ls'); return explicit; }
+  const { explicit } = kittyAddressEnv();
+  // Pinote may outlive the Kitty it inherited KITTY_LISTEN_ON from; then search like without it.
+  // A Kitty that answers but refuses the command is still the chosen one, so that error stands.
+  if (explicit) try { await remote(kitty, explicit, 'ls'); return explicit; } catch (error) { if (!(error as Error).message.includes(': Error: Failed to connect to ')) throw error; }
   if (macos()) {
     for (const target of macosSockets()) {
       try { await remote(kitty, target, 'ls'); return target; } catch { /* Stale or unavailable instance. */ }
     }
     return null;
   }
+  const display = x11Display(); // Read only now: a reachable explicit address does not need it.
   if (!display) return null;
   const matches = [Buffer.from('DISPLAY=' + display), Buffer.from('DISPLAY=' + display + '.0')];
   for (const pid of readdirSync('/proc')) {
