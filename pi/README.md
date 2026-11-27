@@ -101,8 +101,9 @@ These need local Kitty with remote control enabled, `kitty` on `PATH`, and
   be yours and writable by no one else. A killed Pi can leave `pinote_task`
   behind; other panes then do not pick up until that pane is closed or reused.
 - **`pinote_pr`** user variable: the selected task's most urgent current PR
-  status (`failing`, `pending`, `passing` or `merged`; unset otherwise), for a
-  custom `tab_bar.py`.
+  status, for a custom `tab_bar.py`: `failing`, `pending`, `passing`, `merged`,
+  `unknown` (no current status: not checked yet, outdated or unavailable) or
+  `closed`, in that order. Unset without a PR.
 
 Electron's **Start in Kitty…** opens a named tab with the task selected and
 prefills an empty editor with its **Start prompt**, never submitting it. The

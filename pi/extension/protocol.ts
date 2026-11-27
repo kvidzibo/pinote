@@ -16,7 +16,7 @@ const control = z.object({
 export const ViewSchema = z.object({
   version: z.literal(1), title: text, revision: z.string().min(1).max(256),
   state: StateSchema, body: text.optional(), retainOnNew: z.boolean().optional(),
-  prStatus: z.enum(['failing', 'pending', 'passing', 'merged']).optional(),
+  prStatus: z.enum(['failing', 'pending', 'passing', 'merged', 'unknown', 'closed']).optional(),
   controls: z.array(control).max(256),
   watcherDiagnostics: z.object({ logPath: z.string().min(1).max(4096), failures: z.array(z.object({
     watcherId: z.string().min(1).max(256), name: z.string().max(256), fields: z.array(z.string().max(128)).max(8), moreFields: z.number().int().nonnegative(),
