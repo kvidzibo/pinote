@@ -1,6 +1,6 @@
 {
   "name": "pinote-backend",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "private": true,
   "description": "Pinote's shared SQLite backend and note CLI",
   "license": "MIT",

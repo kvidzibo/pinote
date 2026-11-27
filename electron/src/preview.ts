@@ -33,6 +33,8 @@ async function init(): Promise<void> {
   const data = await api.load();
   if (!current) draw(data);
   await document.fonts.ready;
+  // Size the window for loaded images (a deleted one becomes a placeholder).
+  await Promise.all(Array.from(body.querySelectorAll('img'), image => image.decode().catch(() => undefined)));
   await api.ready(panel.getBoundingClientRect().height + 2);
   panel.focus();
   if (data.unread) body.querySelector('.agent')?.scrollIntoView({ block: 'start' });

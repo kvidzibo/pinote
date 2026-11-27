@@ -3,6 +3,8 @@ import { dirname, isAbsolute } from 'node:path';
 import { privateDirectory, privateFile, resolvePath, checkCancelled } from './runtime.ts';
 import { NoteError, validate_text, validate_tag, validate_folder, validate_new_folder, create_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch, validatePiSession, validateImportEntries } from './compat.ts';
 import * as schema from './schema.ts';
+import { createHash } from 'node:crypto';
+import { imageHashes, imageInfo, type ImageInfo } from './images.ts';
 export { NoteError, markdown } from './compat.ts';
 export type Id = bigint;
 export type NoteState = 'active'|'in_progress'|'done'|'removed'|'scheduled';
@@ -243,6 +245,32 @@ export class Store {
   history(note_id:Id|null=null):Row[] {
     if(note_id!==null&&!this.row('SELECT 1 FROM notes WHERE id=?',note_id)) throw new NoteError(`No note with ID ${note_id}.`);
     return note_id===null?this.query('SELECT * FROM events ORDER BY id'):this.query('SELECT * FROM events WHERE note_id=? ORDER BY id',note_id);
+  }
+  // Images live in their own table, created on first use, so earlier backends still open this schema-8 database.
+  private hasImages():boolean { return !!this.row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='images'"); }
+  /** Stores image bytes once by their SHA-256 hash. */
+  add_image(bytes:Uint8Array):ImageInfo&{hash:string;changed:boolean} {
+    const info=imageInfo(bytes), hash=createHash('sha256').update(bytes).digest('hex');
+    return this.transaction(()=>{
+      this.connection.exec('CREATE TABLE IF NOT EXISTS images (hash TEXT PRIMARY KEY NOT NULL, mime TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL, bytes BLOB NOT NULL, created_at TEXT NOT NULL)');
+      const changed=this.run('INSERT OR IGNORE INTO images(hash,mime,width,height,bytes,created_at) VALUES (?,?,?,?,?,?)',hash,info.mime,info.width,info.height,bytes,timestamp()).changes>0;
+      return {...info,hash,changed};
+    });
+  }
+  image(hash:string):{mime:string;bytes:Uint8Array}|null {
+    if(!this.hasImages()) return null;
+    const r=this.row('SELECT mime,bytes FROM images WHERE hash=?',hash); return r?{mime:r.mime,bytes:r.bytes}:null;
+  }
+  /** Deletes images that no task text (in any state) or kept draft references. History is not a reference. */
+  prune_images(keep:Iterable<string>):string[] {
+    return this.transaction(()=>{
+      if(!this.hasImages()) return [];
+      const used=new Set(keep);
+      for(const r of this.query('SELECT text FROM notes')) for(const hash of imageHashes(r.text)) used.add(hash);
+      const removed=this.query('SELECT hash FROM images ORDER BY hash').map(r=>r.hash as string).filter(hash=>!used.has(hash));
+      for(const hash of removed) this.run('DELETE FROM images WHERE hash=?',hash);
+      return removed;
+    });
   }
   import_notes(source:string,entries:[string,string,string|null][]):ImportSummary|null {
     const clean=validateImportEntries(entries);

@@ -50,8 +50,8 @@ Electron uses the Node backend and the existing task database, with no Python
 requirement or data conversion. Installing or building Electron does not change
 desktop startup or configuration. Requires Node.js 22.19+. See
 [Electron installation and limitations](docs/electron.md).
-Its add-task input and task editor style Markdown source and assist title/bullet
-newlines. Only Linux/X11/i3 is a validation target.
+Its add-task input and task editor style Markdown source, assist title/bullet
+newlines, and accept pasted images. Only Linux/X11/i3 is a validation target.
 
 ## Use
 

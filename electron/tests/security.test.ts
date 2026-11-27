@@ -249,3 +249,17 @@ test('a full draft payload reserves space for the largest escaped recovery warni
   state.edits['16'].text += 'x';
   assert.ok(!validState(state));
 });
+test('image operations accept only bounded base64 and SHA-256 hashes', () => {
+  const hash = 'a'.repeat(64);
+  assert.ok(validParams('image_add', { data: 'UklGRg==' }));
+  for (const data of ['', 'UklGRg=', 'not base64!', 'A'.repeat(Math.ceil(4 * 1024 * 1024 / 3) * 4 + 4)]) assert.ok(!validParams('image_add', { data }));
+  assert.ok(validParams('image', { hash }) && !validParams('image', { hash: hash.toUpperCase() }) && !validParams('image', { hash: '../index.html' }));
+  assert.ok(validParams('image_prune', { keep: [hash] }) && !validParams('image_prune', { keep: ['x'] }));
+  assert.ok(validEnvelope('image', { protocol: 1, ok: true, result: { found: true, mime: 'image/webp', data: 'UklGRg==' } }));
+  assert.ok(validEnvelope('image', { protocol: 1, ok: true, result: { found: false } }));
+  assert.ok(!validEnvelope('image', { protocol: 1, ok: true, result: { found: true, mime: 'image/svg+xml', data: 'UklGRg==' } }));
+  assert.ok(validEnvelope('image_add', { protocol: 1, ok: true, result: { changed: true, hash, mime: 'image/png', width: 2, height: 2 } }));
+  assert.ok(!validEnvelope('image_add', { protocol: 1, ok: true, result: { changed: true, hash: 'x', mime: 'image/png', width: 2, height: 2 } }));
+  assert.ok(validEnvelope('image_prune', { protocol: 1, ok: true, result: { changed: true, removed: [hash] } }));
+  assert.ok(!validEnvelope('image_prune', { protocol: 1, ok: true, result: { changed: true, removed: ['../x'] } }));
+});

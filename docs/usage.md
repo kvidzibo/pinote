@@ -239,6 +239,11 @@ IDs, tags, scheduled times, agent fields, project selections, or history.
 - App directories and new data/log files are private to the current user.
 - SQLite transactions keep note state and history consistent; no hard-delete
   command is provided. Done and removed notes remain recoverable.
+- Images pasted in Electron are stored in `notes.db` (table `images`, created on
+  first use; older backends ignore it). The database grows by each stored image,
+  typically 50–300 KB for a screenshot. An image no task text or Electron draft uses
+  is deleted, so history may refer to deleted images. Deleted space is reused but
+  the file only shrinks after SQLite `VACUUM`.
 
 Data stays local; pinote has no network calls or telemetry. Notifications are
 sent to your desktop daemon and may also remain in Dunst's own history, so avoid

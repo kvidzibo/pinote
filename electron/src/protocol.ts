@@ -24,6 +24,10 @@ export type Operations = {
   tag_folder: { params: { name: string; folder: string | null }; result: Mutation };
   completions: { params: { ids: number[] }; result: number[] };
   kitty: { params: Target & { directory: string; tabTitle?: string; prompt?: string }; result: Mutation };
+  image_add: { params: { data: string }; result: { changed: boolean; hash: string; mime: string; width: number; height: number } };
+  // Read by the main process for pinote-app://ui/images/<hash>; not exposed to renderers.
+  image: { params: { hash: string }; result: { found: true; mime: string; data: string } | { found: false } };
+  image_prune: { params: { keep: string[] }; result: { changed: boolean; removed: string[] } };
 };
 export type Operation = keyof Operations;
 export type Result<T> = { protocol: 1; ok: true; result: T; warning?: string } | { protocol: 1; ok: false; error: { code: 'invalid' | 'conflict' | 'busy' | 'internal' | 'unknown'; message: string } };
@@ -67,7 +71,8 @@ export type UIState = {
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
-export type BackendApi = { [K in Exclude<Operation, 'handshake'>]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
+export type RendererOperation = Exclude<Operation, 'handshake' | 'image'>;
+export type BackendApi = { [K in RendererOperation]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };
 export type MenuPoint = { x: number; y: number };
 export type MenuRequest = MenuPoint & { kind: 'app' };
 export type MenuAction = 'archive' | 'scheduled' | 'manage-tags' | 'task-actions' | 'composer-settings' | 'watchers' | 'kitty' | 'window-settings' | 'drafts' | 'close';
