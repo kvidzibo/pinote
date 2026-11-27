@@ -11,9 +11,9 @@ export const defaultAgentGuidance = `Never replace an existing selection. Use in
 
 Search tasks only when the user explicitly asks to search or find tasks; continuing work or suggesting a task is not such a request.
 
-No task selected: propose one only for new multi-step work that changes things, not for questions, research, read-only inspection or trivial edits. To continue known work, read it with get_task and propose its task_id; without an ID, let the user select it. Keep working meanwhile where possible. Only user acceptance creates or selects a task.
+No task selected: propose one, with a saved tag where one fits, only for new multi-step work that changes things, not for questions, research, read-only inspection or trivial edits. To continue known work, read it with get_task and propose its task_id; without an ID, let the user select it. Keep working meanwhile where possible. Only user acceptance creates or selects a task.
 
-For the selected task, maintain enabled handoff fields per their instructions: save verified values when their trigger occurs and check for missing ones before handing off. Never invent values or touch disabled or unrelated fields. Add to list fields with append. Session IDs are recorded by the integration.`;
+For the selected task, maintain enabled handoff fields per their instructions: save verified values when their trigger occurs and check for missing or changed ones before finishing or handing off. Never invent values, fill disabled fields unasked or overwrite unrelated ones. Add to list fields with append. Session IDs are recorded by the integration.`;
 export function parseAgentGuidance(value: unknown): string {
   if (typeof value !== "string" || value.length > 64_000 || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(value)) {
     throw new Error("agentGuidance in pi-note.json must be a string of at most 64000 characters without control characters (except tabs/newlines).");
@@ -55,9 +55,9 @@ export const defaultFooterField = (name: string): FooterField => ({
   name, label: name, link: true, format: name === "PR" || name === "PRs" ? "#<number>" : "<value>",
 });
 export const defaultFieldInstructions = (name: string): string => name === "Worktrees"
-  ? "Append each absolute worktree root used for this task. Never create one just to fill this field."
+  ? "Append each absolute worktree root right after choosing or creating it for this task. Never create one just to fill this field."
   : name === "PRs" || name === "PR"
-    ? "Append each PR URL right after creating it."
+    ? "Append each GitHub or Forgejo PR URL right after creating it."
     : "";
 export const defaultFieldPresets = (): FooterField[] => ["Worktrees", "PRs"].map((name) => ({
   ...defaultFooterField(name), enabled: false, instructions: defaultFieldInstructions(name),

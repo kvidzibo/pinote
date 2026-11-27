@@ -68,7 +68,7 @@ test('native UI owns tasks/settings, rejects stale writes, and restores host sel
     assert.match(view.controls.find((c) => c.id === 'field:PRs')!.description!, /Disabled/);
     view = (await act(view, 'field:Worktrees')).view;
     assert.equal(view.controls.find((c) => c.id === 'enabled')!.value, false);
-    assert.match(String(view.controls.find((c) => c.id === 'instructions')!.value), /worktree root used for this task/);
+    assert.match(String(view.controls.find((c) => c.id === 'instructions')!.value), /right after choosing/);
     view = (await act(view, 'enabled', true)).view;
     view = (await act(view, 'instructions', 'Save the verified worktree root immediately after choosing it.\nRefresh before handoff.')).view;
     await assert.rejects(act(view, 'instructions', 'x'.repeat(4097)), /instructions/);
