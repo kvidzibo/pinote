@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 
 // Tests call the bridge as another frontend while the app writes. The bridge fails fast with `busy`
-// before running the operation, so retry it like a frontend would; other failures stay fatal.
+// when it cannot take a lock, which is safe to retry, so retry like a frontend would; other failures stay fatal.
 export const bridgeCaller = (command, args, env) => (operation, params) => {
   const deadline = Date.now() + 5000;
   for (;;) {
