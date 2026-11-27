@@ -72,7 +72,7 @@ try {
     { name:'Links', label:'Links', link:true, format:'<value>', type:'unique-list', enabled:true, instructions:'' },
     { name:'PRs', label:'PRs', link:true, format:'#<number>', type:'unique-list', enabled:true, instructions:(await saved()).footer.fields[2].instructions }] } },
     'Only the footer changes, and the unchanged preset stays out of the file');
-  assert.match((await saved()).footer.fields[2].instructions,/pull-request URL/);
+  assert.match((await saved()).footer.fields[2].instructions,/Forgejo PR URL/);
 
   // A new field, an invalid one, and the footer layout.
   const newName = dialog.getByRole('textbox',{name:'New field name',exact:true});

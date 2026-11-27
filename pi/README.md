@@ -182,7 +182,7 @@ Open **Settings → Fields → Worktrees / PRs** and turn **Enabled** on; both p
 start disabled. **Add field** creates a definition, not a task value.
 
 Each enabled field's **Agent instructions** are in the system prompt while a task is selected:
-Worktrees appends each verified worktree root, PRs appends each created PR URL.
+Worktrees appends each worktree root, PRs appends each created PR URL.
 This is model guidance, not a guaranteed hook. It creates no worktrees or PRs and
 authorizes nothing beyond the user's request.
 
