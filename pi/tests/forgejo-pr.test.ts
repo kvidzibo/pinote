@@ -293,13 +293,17 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   const pullPath = `${api}/pulls/135`;
   const statusPath = `${api}/commits/${sha}/status`;
   const requests: { path: string | undefined; token: string | undefined; accept: string | undefined }[] = [];
-  let mode: 'passing' | 'merged' | 'redirect' | 'batch' | 'stalled' = 'passing';
+  let mode: 'passing' | 'merged' | 'redirect' | 'batch' | 'stalled' | 'stalledRepository' = 'passing';
   const server = createServer((req, res) => {
     requests.push({ path: req.url, token: req.headers.authorization, accept: req.headers.accept });
     res.setHeader('Content-Type', 'application/json');
-    if (mode === 'stalled' && req.url?.startsWith(`${api}/actions/runs?`)) return;
+    const stalling = mode === 'stalled' || mode === 'stalledRepository';
+    if (mode === 'stalled' && req.url?.startsWith(`${api}/actions/runs?`) || mode === 'stalledRepository' && req.url === api) return;
     if (mode === 'stalled' && req.url === api) res.end(JSON.stringify({ has_actions: true }));
-    else if (mode === 'stalled' && req.url?.startsWith(statusPath)) res.end(JSON.stringify({ sha, total_count: 0, statuses: [] }));
+    else if (stalling && req.url?.startsWith(statusPath)) res.end(JSON.stringify({ sha, total_count: 0, statuses: [] }));
+    else if (mode === 'stalledRepository' && req.url === pullPath && requests.filter((r) => r.path === pullPath).length > 1) {
+      res.end(JSON.stringify({ state: 'closed', merged: false }));
+    }
     else if (mode === 'batch' && req.url === `${api}/pulls/137`) {
       res.end(JSON.stringify({ state: 'closed', merged: true }));
     } else if ((mode === 'redirect' && req.url === pullPath) || (mode === 'batch' && req.url === `${api}/pulls/136`)) {
@@ -377,6 +381,9 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   assert.equal(stalled.summary, 'PR #135 checks pending', 'A stalled runs lookup is no evidence and leaves time for the final read');
   assert.ok(Date.now() - started < 15_000);
   assert.equal(requests.at(-1)?.path, pullPath);
+  requests.length = 0;
+  mode = 'stalledRepository';
+  assert.equal(FieldResult.parse(await handleFieldEvent(event)).state, 'closed', 'A stalled repository lookup never hides a closed PR');
 
   requests.length = 0;
   mode = 'redirect';

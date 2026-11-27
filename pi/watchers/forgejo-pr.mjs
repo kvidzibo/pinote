@@ -123,12 +123,13 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
       checks.push({ context: check.context, status: check.status });
     }
   }
-  // Failures here matter only if the final snapshot still needs this evidence.
+  // Failures here matter only if the final snapshot still needs this evidence; their own
+  // deadlines leave time for the final read.
   let repository, runs;
   if (!checks.length && pr.mergeable && !pr.draft) {
-    repository = await request('').catch(() => null);
+    repository = await request('', 5_000).catch(() => null);
     // Actions publishes each queued job as a commit status; also look for runs that have yet to queue one.
-    // An unavailable runs API is no evidence, and its own deadline leaves time for the final read.
+    // An unavailable runs API is no evidence.
     if (repository?.has_actions === true) runs = await request(`actions/runs?head_sha=${pr.head.sha}`
       + '&status=unknown&status=waiting&status=running&status=blocked&limit=1', 5_000).catch(() => undefined);
   }
