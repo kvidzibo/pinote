@@ -3,6 +3,7 @@ import { access, constants, mkdtemp, mkdir, readdir, readFile, symlink, writeFil
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { bridgeCaller } from './bridge-call.mjs';
 
 assert.match(process.env.XAUTHORITY || '', /xvfb-run\./, 'Use Xvfb and a private D-Bus session');
 assert.ok(process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.DBUS_SESSION_BUS_ADDRESS.includes('/run/user/'));
@@ -29,13 +30,7 @@ await mkdir(env.PI_CODING_AGENT_DIR);
 await writeFile(join(env.PI_CODING_AGENT_DIR,'pi-note.json'),JSON.stringify({fieldWatchers:[{path:watcher,enabled:true}]}));
 assert.equal(spawnSync('python3',['--version'],{env}).error?.code,'ENOENT');
 const run = (command,args,options={})=>spawnSync(command,args,{env,encoding:'utf8',timeout:10000,...options});
-const call = (operation,params)=>{
-  const p=run(process.execPath,[backend],{input:JSON.stringify({protocol:1,operation,params})});
-  assert.equal(p.status,0,p.stderr); const r=JSON.parse(p.stdout);
-  // Snapshot polling can overlap the app's write. Retry only this read, never a mutation.
-  if(operation==='snapshot' && !r.ok && r.error?.code==='busy') return null;
-  assert.ok(r.ok,JSON.stringify(r)); return r.result;
-};
+const call = bridgeCaller(process.execPath,[backend],env);
 const wait = async condition => { const until=Date.now()+10000; while(!await condition()){assert.ok(Date.now()<until,'Packaged workflow timed out');await new Promise(r=>setTimeout(r,60));} };
 let wm, app; let stderr='';
 const socket=join(root,'i3.sock'); await writeFile(join(root,'i3.conf'),`font pango:monospace 9\nipc-socket ${socket}\n`);
@@ -60,7 +55,7 @@ try {
   assert.equal(run('xdotool',['mousemove','--window',windowId,'80',String(node.rect.height-55),'click','1']).status,0);
   assert.equal(run('xdotool',['type','--clearmodifiers','Packaged workflow task']).status,0);
   assert.equal(run('xdotool',['key','Return']).status,0);
-  await wait(()=>call('snapshot',{view:'active'})?.notes.some(n=>n.text==='Packaged workflow task'));
+  await wait(()=>call('snapshot',{view:'active'}).notes.some(n=>n.text==='Packaged workflow task'));
   if(run('which',['import']).status===0) { const capture=run('import',['-window',windowId,join(root,'packaged.png')]); assert.equal(capture.status,0,capture.stderr); }
   await new Promise(r=>setTimeout(r,350));
   run('xdotool',['windowfocus',windowId]);

@@ -10,6 +10,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { _electron } from 'playwright';
+import { bridgeCaller } from './bridge-call.mjs';
 
 assert.equal(process.platform, 'darwin', 'This smoke test needs macOS');
 assert.ok(process.env.CI, 'This test opens real windows; run it on a disposable session with CI=1');
@@ -24,10 +25,7 @@ for (const directory of [...Object.values(env).filter(value => value.startsWith(
 mkdirSync(join(env.HOME, '.pi/agent/bin'), { recursive: true });
 writeFileSync(join(env.HOME, '.pi/agent/bin/pi'), `#!/bin/sh\nprintf '%s\\n%s\\n' "$PWD" "$PINOTE_LAUNCH_TASK" > '${records}/'$$\nexec /bin/sleep 600\n`, { mode: 0o700 });
 const bridge = resolve('dist/pinote-backend/bridge.mjs');
-const call = (operation, params) => {
-  const run = spawnSync(process.execPath, [bridge], { env, input: JSON.stringify({ protocol: 1, operation, params }), encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr); const response = JSON.parse(run.stdout); assert.ok(response.ok, run.stdout); return response.result;
-};
+const call = bridgeCaller(process.execPath, [bridge], env);
 const task = id => call('snapshot', { view: 'active' }).notes.find(note => note.id === id);
 const until = async (check, message) => { for (let i = 0; i < 150; i++) { if (await check()) return; await sleep(100); } assert.fail(message); };
 const artifacts = process.env.RUNNER_TEMP || root;
