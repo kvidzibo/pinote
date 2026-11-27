@@ -26,7 +26,10 @@ globalThis.fetch = async (url, options) => {
   if (scenario.httpStatus) return new Response('SECRET credential', {status:scenario.httpStatus});
   if (scenario.oversize) return new Response('x'.repeat(1024 * 1024 + 1));
   if (scenario.raw !== undefined) return new Response(scenario.raw);
-  if (/\\/repos\\/owner\\/[^/]+$/.test(url)) return new Response(JSON.stringify(scenario.repository ?? {has_actions:false}));
+  if (/\\/repos\\/owner\\/[^/]+$/.test(url)) return scenario.repositoryStatus ? new Response('{}', {status:scenario.repositoryStatus})
+    : new Response(JSON.stringify(scenario.repository ?? {has_actions:false}));
+  if (/\\/actions\\/runs\\?/.test(url)) return scenario.runsStatus ? new Response('{}', {status:scenario.runsStatus})
+    : new Response(JSON.stringify(scenario.runs ?? {workflow_runs:[],total_count:0}));
   const page = /[?&]page=(\\d+)/.exec(url)?.[1];
   const body = page ? scenario.pages[Number(page)-1] ?? {statuses:null,total_count:0} : scenario.pulls[Math.min((pulls[repo] = (pulls[repo] ?? -1) + 1),scenario.pulls.length-1)];
   return new Response(JSON.stringify(body));
@@ -100,18 +103,67 @@ globalThis.fetch = async (url, options) => {
   assert.equal(unchecked.output.state, 'passing', 'A mergeable PR awaits nothing where Actions is disabled');
   assert.equal(unchecked.output.display?.color, 'success');
   assert.equal(unchecked.output.summary, 'PR #42 has no checks');
-  assert.equal(unchecked.requests.at(-1)?.url, `${base}/api/v1/repos/owner/repo`);
-  const unreported = run({ pages: [], repository: { has_actions: true } }).output;
-  assert.equal(unreported.state, 'pending', 'Enabled Actions has yet to report');
-  assert.equal(unreported.summary, 'PR #42 checks pending');
+  assert.deepEqual(unchecked.requests.slice(-2).map((r) => r.url), [`${base}/api/v1/repos/owner/repo`, `${base}/api/v1/repos/owner/repo/pulls/42`]);
+  const actions = { pages: [], repository: { has_actions: true } };
+  const unreported = run(actions);
+  assert.equal(unreported.output.state, 'pending', 'Actions may have yet to queue its runs');
+  assert.equal(unreported.output.summary, 'PR #42 awaiting checks (head aaaaaaaaaaaa)');
+  assert.deepEqual(unreported.requests.slice(-2).map((r) => r.url), [`${base}/api/v1/repos/owner/repo/actions/runs?head_sha=${pr.head.sha}`
+    + '&status=unknown&status=waiting&status=running&status=blocked&limit=1', `${base}/api/v1/repos/owner/repo/pulls/42`]);
+  for (const previousResult of [unreported.output, { ...passing.output, summary: 'PR #42 has no checks (head aaaaaaaaaaaa)' }]) {
+    const idle = run(actions, { previousResult }).output;
+    assert.equal(idle.state, 'passing', 'No run on two consecutive checks: nothing is awaited');
+    assert.equal(idle.summary, 'PR #42 has no checks (head aaaaaaaaaaaa)');
+  }
+  assert.equal(run({ ...actions, pulls: [moved] }, { previousResult: unreported.output }).output.summary,
+    'PR #42 awaiting checks (head bbbbbbbbbbbb)', 'A new head may have yet to queue its runs');
+  assert.equal(run({ ...actions, pulls: [pr, moved] }, { previousResult: unreported.output }).output.summary,
+    'PR #42 head changed; checks pending', 'A push during the runs lookup supersedes its evidence');
+  const runsThenPull = (requests: any[]) => assert.deepEqual(requests.slice(-2).map((r) => r.url.replace(/\?.*/, '')),
+    [`${base}/api/v1/repos/owner/repo/actions/runs`, `${base}/api/v1/repos/owner/repo/pulls/42`]);
+  const drafted = run({ ...actions, pulls: [pr, { ...pr, draft: true, mergeable: false }] }, { previousResult: unreported.output });
+  assert.equal(drafted.output.summary, 'PR #42 is a draft', 'Decisions use the snapshot read after the runs lookup');
+  runsThenPull(drafted.requests);
+  const closedRun = run({ ...actions, runs: { workflow_runs: [{ status: 'running' }], total_count: 1 }, pulls: [pr, { state: 'closed', merged: false }] });
+  assert.equal(closedRun.output.state, 'closed', 'A PR closed during the runs lookup is closed');
+  runsThenPull(closedRun.requests);
+  assert.equal(run({ pages: [], repositoryStatus: 500, pulls: [pr, { state: 'closed', merged: false }] }).output.state, 'closed',
+    'An unneeded repository error never hides a closed PR');
+  assert.equal(run({ pages: [], pulls: [{ ...pr, mergeable: false }, pr] }).output.summary, 'PR #42 checks pending',
+    'A PR that became mergeable during the check awaits evidence for its checks');
+  for (const scenario of [{ runs: { workflow_runs: [{ status: 'running' }], total_count: 1 } }, { runs: { workflow_runs: [], total_count: 1 } },
+    { runsStatus: 404 }, { runs: {} }]) {
+    const running = run({ ...actions, ...scenario }, { previousResult: unreported.output }).output;
+    assert.equal(running.state, 'pending', 'Active, unavailable or unrecognized runs never pass');
+    assert.equal(running.summary, 'PR #42 checks pending');
+  }
   assert.equal(run({ pages: [], repository: {} }).output.state, 'error');
-  const blocked = run({ pages: [], pulls: [{ ...pr, mergeable: false }] });
-  assert.equal(blocked.output.state, 'pending');
-  assert.ok(blocked.requests.every((r) => !r.url.endsWith('/owner/repo')), 'Only a mergeable PR without statuses reads the repository');
-  const unmergeable = run({ pulls: [{ ...pr, mergeable: false }] }).output;
-  assert.equal(unmergeable.state, 'pending');
-  assert.equal(unmergeable.display?.color, 'warning');
-  assert.equal(unmergeable.notification, undefined, 'False mergeability is not definitive conflict evidence');
+  const unmergeablePR = { ...pr, mergeable: false };
+  const checking = run({ pages: [], pulls: [unmergeablePR] });
+  assert.equal(checking.output.state, 'pending');
+  assert.equal(checking.output.summary, 'PR #42 checking mergeability (head aaaaaaaaaaaa)');
+  assert.equal(checking.output.display?.color, 'warning');
+  assert.equal(checking.output.notification, undefined, 'One false mergeability may be a merge check in progress');
+  assert.ok(checking.requests.every((r) => !r.url.endsWith('/owner/repo')), 'Only a mergeable PR without statuses reads the repository');
+  const conflict = run({ pulls: [unmergeablePR] }, { previousResult: checking.output }).output;
+  assert.equal(conflict.state, 'conflict', 'Still not mergeable on the next check');
+  assert.equal(conflict.summary, 'PR #42 not mergeable');
+  assert.equal(conflict.display?.color, 'error');
+  assert.ok(conflict.notification?.key.startsWith('forgejo-pr:'));
+  assert.equal(run({ pulls: [unmergeablePR] }, { previousResult: conflict }).output.notification?.key, conflict.notification?.key);
+  for (const previousResult of [checking.output, conflict]) {
+    const pushed = run({ pulls: [{ ...unmergeablePR, head: moved.head }], pages: [] }, { previousResult }).output;
+    assert.equal(pushed.summary, 'PR #42 checking mergeability (head bbbbbbbbbbbb)', 'A new head is checked afresh');
+  }
+  assert.equal(run({ pulls: [unmergeablePR], pages: [page([{ ...check, status: 'pending' }])] }, { previousResult: checking.output }).output.summary,
+    'PR #42 checks pending');
+  const draft = run({ pulls: [{ ...unmergeablePR, draft: true }] }, { previousResult: checking.output }).output;
+  assert.equal(draft.state, 'pending', 'A draft is never mergeable');
+  assert.equal(draft.summary, 'PR #42 is a draft');
+  assert.equal(run({ pulls: [{ ...unmergeablePR, draft: true }], pages: [page([{ ...check, status: 'failure' }])] }).output.state, 'failed');
+  const resolved = run({}, { previousResult: conflict }).output;
+  assert.equal(resolved.state, 'passing');
+  assert.equal(resolved.notification, undefined);
   for (const merged of [false, true]) {
     const terminal = { ...pr, state: 'closed', merged };
     for (const response of [terminal, { state: 'closed', merged, head: { sha: '' } }, { state: 'closed', merged, head: null }]) {
@@ -127,8 +179,8 @@ globalThis.fetch = async (url, options) => {
     }
   }
   for (const scenario of [{ fail: true }, { httpStatus: 401 }, { httpStatus: 302 }, { raw: 'SECRET not JSON' },
-    { oversize: true }, { pulls: [{}] }, { pulls: [{ ...pr, head: { sha: 'invalid' } }] },
-    { pages: [{}] }, { pages: [{ statuses: [], total_count: 1 }] }, { pages: [page([{ ...check, status: 'bogus' }])] },
+    { oversize: true }, { pulls: [{}] }, { pulls: [{ ...pr, head: { sha: 'invalid' } }] }, { pulls: [{ ...pr, draft: 'yes' }] },
+    { pages: [], repositoryStatus: 500 }, { pages: [{}] }, { pages: [{ statuses: [], total_count: 1 }] }, { pages: [page([{ ...check, status: 'bogus' }])] },
     { pages: [{ ...page([check]), sha: moved.head.sha }] }, { pages: [page([check]), page([check])] },
     { pages: Array.from({ length: 21 }, (_, i) => page([{ ...check, context: `CI ${i}` }])) }]) {
     const { output, stderr } = run(scenario);
@@ -177,6 +229,7 @@ globalThis.fetch = async (url, options) => {
     merged: { pulls: [{ state: 'closed', merged: true }] },
     closed: { pulls: [{ state: 'closed', merged: false }] },
     broken: { fail: true },
+    conflict: { pulls: [{ ...pr, mergeable: false }] },
   };
   const batchURLs = Object.keys(routes).map((repo) => `${base}/owner/${repo}/pulls/42`);
   const foreign = [
@@ -188,7 +241,11 @@ globalThis.fetch = async (url, options) => {
   const batchValue = [...batchURLs.map((url) => `- [PR](${url})`), ...foreign].join('\n');
   const batch = run({ routes }, { field: 'PRs', value: batchValue });
   assert.deepEqual(batch.output.items?.map((item) => item.url), batchURLs);
-  assert.deepEqual(batch.output.items?.map((item) => item.state), ['passing', 'failed', 'pending', 'merged', 'closed', 'error']);
+  assert.deepEqual(batch.output.items?.map((item) => item.state), ['passing', 'failed', 'pending', 'merged', 'closed', 'error', 'pending']);
+  const confirmedBatch = run({ routes }, { field: 'PRs', value: batchValue, previousResult: batch.output }).output;
+  assert.equal(confirmedBatch.items?.[6].state, 'conflict', 'Each PR is confirmed against its own previous item');
+  assert.equal(confirmedBatch.items?.[2].summary, 'PR #42 checks pending');
+  assert.match(confirmedBatch.notification?.message ?? '', /owner\/conflict\/pulls\/42: PR is not mergeable/);
   assert.deepEqual(batch.output.items?.slice(0, 5).map((item) => item.display?.color), ['success', 'error', 'warning', 'accent', 'muted']);
   assert.equal(batch.output.items?.[1].notification?.key,
     run(routes.failed, { value: batchURLs[1] }).output.notification?.key, 'Batch failure retains single-PR identity');
@@ -200,10 +257,10 @@ globalThis.fetch = async (url, options) => {
     && Object.keys(routes).some((repo) => request.url.startsWith(`${base}/api/v1/repos/owner/${repo}/`))
     && request.headers.Authorization === 'token SECRET' && request.redirect === 'error' && request.timed));
   const outage = run({ routes: { ...routes, failed: { fail: true } } },
-    { field: 'PRs', value: batchValue, previousResult: batch.output });
+    { field: 'PRs', value: batchValue, previousResult: confirmedBatch });
   assert.equal(outage.output.items?.[1].state, 'error');
   assert.equal(outage.output.items?.[1].notification?.key, batch.output.items?.[1].notification?.key);
-  assert.equal(outage.output.notification?.key, batch.output.notification?.key);
+  assert.equal(outage.output.notification?.key, confirmedBatch.notification?.key);
   assert.equal(outage.output.items?.[0].state, 'passing');
   const missingTokenURL = 'https://no-token.example/owner/repo/pulls/42';
   const missingToken = run({}, { field: 'PRs', value: `${batchURLs[0]}\n${missingTokenURL}` }, [
@@ -236,11 +293,18 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   const pullPath = `${api}/pulls/135`;
   const statusPath = `${api}/commits/${sha}/status`;
   const requests: { path: string | undefined; token: string | undefined; accept: string | undefined }[] = [];
-  let mode: 'passing' | 'merged' | 'redirect' | 'batch' = 'passing';
+  let mode: 'passing' | 'merged' | 'redirect' | 'batch' | 'stalled' | 'stalledRepository' = 'passing';
   const server = createServer((req, res) => {
     requests.push({ path: req.url, token: req.headers.authorization, accept: req.headers.accept });
     res.setHeader('Content-Type', 'application/json');
-    if (mode === 'batch' && req.url === `${api}/pulls/137`) {
+    const stalling = mode === 'stalled' || mode === 'stalledRepository';
+    if (mode === 'stalled' && req.url?.startsWith(`${api}/actions/runs?`) || mode === 'stalledRepository' && req.url === api) return;
+    if (mode === 'stalled' && req.url === api) res.end(JSON.stringify({ has_actions: true }));
+    else if (stalling && req.url?.startsWith(statusPath)) res.end(JSON.stringify({ sha, total_count: 0, statuses: [] }));
+    else if (mode === 'stalledRepository' && req.url === pullPath && requests.filter((r) => r.path === pullPath).length > 1) {
+      res.end(JSON.stringify({ state: 'closed', merged: false }));
+    }
+    else if (mode === 'batch' && req.url === `${api}/pulls/137`) {
       res.end(JSON.stringify({ state: 'closed', merged: true }));
     } else if ((mode === 'redirect' && req.url === pullPath) || (mode === 'batch' && req.url === `${api}/pulls/136`)) {
       res.writeHead(302, { Location: '/redirect-target' });
@@ -309,6 +373,17 @@ test('Forgejo loopback HTTP uses native fetch, configured API scope and token wi
   assert.equal(requests.filter((request) => request.path === `${api}/pulls/136`).length, 1);
   assert.equal(requests.filter((request) => request.path === `${api}/pulls/137`).length, 1);
   assert.equal(requests.length, 6, 'Each PR is independent; foreign scopes and redirect targets are never requested');
+
+  requests.length = 0;
+  mode = 'stalled';
+  const started = Date.now();
+  const stalled = FieldResult.parse(await handleFieldEvent(event));
+  assert.equal(stalled.summary, 'PR #135 checks pending', 'A stalled runs lookup is no evidence and leaves time for the final read');
+  assert.ok(Date.now() - started < 15_000);
+  assert.equal(requests.at(-1)?.path, pullPath);
+  requests.length = 0;
+  mode = 'stalledRepository';
+  assert.equal(FieldResult.parse(await handleFieldEvent(event)).state, 'closed', 'A stalled repository lookup never hides a closed PR');
 
   requests.length = 0;
   mode = 'redirect';

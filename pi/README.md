@@ -311,8 +311,8 @@ in a field are closed or merged; tasks are not completed. GitHub requires
 authenticated `gh` and Node on the desktop's `PATH`.
 The **Forgejo PR** watcher supports configured HTTPS instances (or numeric
 loopback HTTP) and API tokens from the desktop's environment without `gh`; it
-alerts on failed CI and styles merged/closed PRs. Ambiguous Forgejo mergeability
-remains pending, not a conflict alert. Both providers support multiple independent PRs.
+alerts on failed CI and on PRs that stay unmergeable across two consecutive checks
+(conflicts or merge check errors), and styles merged/closed PRs. Both providers support multiple independent PRs.
 Watcher execution failures appear as one terminal-only notice listing failing
 watchers and affected fields, with the log path; they never enter model context.
 See [setup, configuration, script contract and safeguards](FIELD_EVENTS.md).
