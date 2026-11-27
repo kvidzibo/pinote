@@ -23,6 +23,8 @@ export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promis
       if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) throw new Error('Invalid image');
       const mode = view();
       if (mode === 'overlay') return true;
+      // Sampled before anything is awaited: the click's window normally has focus.
+      const asked = !from.isDestroyed() && from.isFocused();
       const image = await load(hash), extension = image && extensions[image.mime];
       if (!image || !extension) throw new Error('This image was deleted or cannot be loaded.');
       if (mode === 'system') {
@@ -36,7 +38,7 @@ export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promis
       }
       close();
       if (from.isDestroyed()) return false;
-      const asked = from.isFocused(), at = from.getBounds(), area = screen.getDisplayNearestPoint({ x: Math.round(at.x + at.width / 2), y: Math.round(at.y + at.height / 2) }).workArea;
+      const at = from.getBounds(), area = screen.getDisplayNearestPoint({ x: Math.round(at.x + at.width / 2), y: Math.round(at.y + at.height / 2) }).workArea;
       const popup = new BrowserWindow({ width: 320, height: 240, parent: from, type: 'popup-menu', frame: false, resizable: false, show: false,
         skipTaskbar: true, alwaysOnTop: true, title: 'Image', backgroundColor: '#232832',
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
