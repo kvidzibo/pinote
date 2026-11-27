@@ -8,9 +8,9 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
 const TASK_VAR = 'pinote_task';
-/** Kitty user variable with the selected task's most urgent PR state, for a tab bar to show while idle. */
+/** Kitty user variable with the selected task's most urgent PR state, for a tab bar to show while idle. Unset without a PR. */
 const PR_VAR = 'pinote_pr';
-export type PRStatus = 'failing' | 'pending' | 'passing' | 'merged';
+export type PRStatus = 'failing' | 'pending' | 'passing' | 'merged' | 'unknown' | 'closed';
 type Exec = ExtensionAPI['exec'];
 type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown>; foreground_processes?: { pid?: unknown }[] };
 type Tab = { id?: unknown; is_active?: unknown; windows?: Window[] };

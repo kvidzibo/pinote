@@ -197,8 +197,8 @@ function prObservation(data: Pick<Snapshot, 'fieldStatuses'>, url: string, usabl
   return { status, result: status && observation(status) };
 }
 const PR_STATUSES = { failed: 'failing', conflict: 'failing', pending: 'pending', passing: 'passing', merged: 'merged' } as const;
-const PR_STATUS_ORDER = ['failing', 'pending', 'passing', 'merged'] as const;
-/** The selected task's most urgent current PR state; closed, unchecked, stale and failed checks are ignored. */
+const PR_STATUS_ORDER = ['failing', 'pending', 'passing', 'merged', 'unknown', 'closed'] as const;
+/** The selected task's most urgent PR state. A PR without a current one (unchecked, stale or failed check) is unknown. */
 export function prStatus(data: Pick<Snapshot, 'task' | 'fieldStatuses'>): (typeof PR_STATUS_ORDER)[number] | undefined {
   if (!data.task) return undefined;
   // Each field is checked separately, so its own 64-link limit applies.
@@ -206,7 +206,9 @@ export function prStatus(data: Pick<Snapshot, 'task' | 'fieldStatuses'>): (typeo
   const states = new Set([...urls].map((url) => {
     // Only a PR state (including closed) supersedes an older one; other watchers' summaries do not.
     const { status, result } = prObservation(data, url, (item) => item.state === 'closed' || Object.hasOwn(PR_STATUSES, item.state ?? ''));
-    return status && !status.stale && Object.hasOwn(PR_STATUSES, result?.state ?? '') ? PR_STATUSES[result!.state as keyof typeof PR_STATUSES] : undefined;
+    if (!status || status.stale) return 'unknown';
+    if (result?.state === 'closed') return 'closed';
+    return Object.hasOwn(PR_STATUSES, result?.state ?? '') ? PR_STATUSES[result!.state as keyof typeof PR_STATUSES] : 'unknown';
   }));
   return PR_STATUS_ORDER.find((state) => states.has(state));
 }
