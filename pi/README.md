@@ -100,8 +100,9 @@ starting `pi` or `/new` without a selection, selects it automatically, announces
 does not when another Pi pane in the tab already holds the task (one agent per
 task; select it there to share), or when the task is completed or archived.
 Resume and reload never pick up a task. The tab's task
-is kept in `$XDG_RUNTIME_DIR/pinote/kitty-tabs` (`$TMPDIR` on macOS) and needs
-Kitty's `KITTY_PID`. A Pi that was killed can leave its `pinote_task` behind in a
+is kept in `$XDG_RUNTIME_DIR/pinote/kitty-tabs` (`$TMPDIR` on macOS; the directory must be
+yours and writable by no one else) and needs Kitty's `KITTY_PID`. It applies only to the
+task database it was recorded for, and only to a Pi in the pane's foreground (not through tmux). A Pi that was killed can leave its `pinote_task` behind in a
 surviving pane; other panes then do not pick up until that pane is closed or reused.
 
 The same window also gets a `pinote_pr` user variable with the selected task's most

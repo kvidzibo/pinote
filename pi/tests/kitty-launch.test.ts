@@ -195,13 +195,14 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     // A Kitty tab keeps the task it was opened for: a new conversation there continues it, one agent per task.
     const tabTask = cli('agent', 'add', '--text=Continue in this Kitty tab');
     let holder: string | undefined;
+    mkdirSync(join(temp, 'run'), { mode: 0o700 });
     Object.assign(process.env, { KITTY_WINDOW_ID: '42', KITTY_LISTEN_ON: 'unix:/tmp/isolated-kitty-test', KITTY_PID: String(process.pid), XDG_RUNTIME_DIR: join(temp, 'run') });
     delete process.env.SSH_CONNECTION; delete process.env.SSH_TTY;
     exec = async (_command, args) => ({ code: 0, stderr: '', stdout: args[3] !== 'ls' ? '' : JSON.stringify([{ tabs: [
-      { id: 4, windows: [{ id: 41, user_vars: { pinote_task: String(tabTask.id) } }] },
-      { id: 5, windows: [{ id: 42, user_vars: {} }, { id: 43, user_vars: holder === undefined ? {} : { pinote_task: holder } }] }] }]) });
+      { id: 4, windows: [{ id: 41, foreground_processes: [{ pid: process.pid }], user_vars: { pinote_task: String(tabTask.id) } }] },
+      { id: 5, windows: [{ id: 42, foreground_processes: [{ pid: process.pid }], user_vars: {} }, { id: 43, user_vars: holder === undefined ? {} : { pinote_task: holder } }] }] }]) });
     await open({ task_id: tabTask.id, updated_at: tabTask.updated_at });
-    assert.equal(readFileSync(join(temp, 'run/pinote/kitty-tabs', `${process.pid}-5`), 'utf8'), String(tabTask.id));
+    assert.equal(readFileSync(join(temp, 'run/pinote/kitty-tabs', `${process.pid}-5`), 'utf8'), `${tabTask.id}\n${join(temp, 'data/pinote/notes.db')}`);
     holder = String(tabTask.id);
     assert.equal((await open(undefined)).selection().selectedId, null, 'Another Pi in the tab already holds the task');
     holder = String(keptTask.id);
@@ -212,6 +213,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     await continued.choose('Clear');
     assert.equal((await open(undefined, [], 'new')).selection().selectedId, tabTask.id, '/new continues the tab task too');
     assert.equal((await open(undefined, [{ type: 'message' }])).selection().selectedId, null, 'A resumed conversation keeps its own state');
+    assert.equal((await open('not-json')).selection().selectedId, null, 'A rejected launch handoff selects nothing');
     process.env.KITTY_WINDOW_ID = '41';
     assert.equal((await open(undefined)).selection().selectedId, null, 'Other tabs are unaffected');
 

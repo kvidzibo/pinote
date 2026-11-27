@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { uptime } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { database } from '../engine.ts';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
@@ -22,10 +24,15 @@ function pane(): { window: string; socket: string } | undefined {
 }
 
 /** Where this Kitty's tabs record the task they were named after, one file per tab. Kitty has no tab
- * variables, and a pane's own variables go with it. Private per-user storage; unavailable elsewhere. */
+ * variables, and a pane's own variables go with it. Only under a directory of ours that nobody else
+ * can write, so another user can neither plant nor redirect a record; unavailable elsewhere. */
 function tabRecords(): { dir: string; prefix: string } | undefined {
   const base = process.env.XDG_RUNTIME_DIR || (process.platform === 'darwin' ? process.env.TMPDIR : undefined), kitty = process.env.KITTY_PID;
   if (!base || !isAbsolute(base) || !kitty || !/^[1-9]\d*$/.test(kitty)) return undefined;
+  try {
+    const stat = statSync(base);
+    if (!stat.isDirectory() || stat.uid !== process.getuid?.() || stat.mode & 0o022) return undefined;
+  } catch { return undefined; }
   return { dir: join(base, 'pinote', 'kitty-tabs'), prefix: `${kitty}-` };
 }
 
@@ -71,18 +78,21 @@ export class KittyPane {
     if (result.code !== 0 || result.killed) throw new Error('Kitty remote control failed');
     return result;
   }
-  /** The tab holding this pane. */
-  private async tab(target: { window: string; socket: string }, signal?: AbortSignal): Promise<Tab | undefined> {
+  /** The tab holding this pane. `own`: only if Pi runs in the pane's foreground, as inherited Kitty
+   * variables (tmux, screen) can name a pane Pi is not in. */
+  private async tab(target: { window: string; socket: string }, signal?: AbortSignal, own = false): Promise<Tab | undefined> {
     const id = Number(target.window);
-    for (const os of JSON.parse((await this.kitty(target.socket, ['ls'], signal)).stdout) as OsWindow[])
-      for (const tab of os.tabs ?? []) if (tab.windows?.some((window) => window.id === id)) return tab;
+    for (const os of JSON.parse((await this.kitty(target.socket, ['ls'], signal)).stdout) as OsWindow[]) for (const tab of os.tabs ?? []) {
+      const self = tab.windows?.find((window) => window.id === id);
+      if (self) return !own || self.foreground_processes?.some((process_) => process_.pid === process.pid) ? tab : undefined;
+    }
   }
   /** Record that this pane's tab belongs to a task, so a later Pi in the tab can continue it. Best effort. */
   async claim(taskId: number, signal?: AbortSignal): Promise<void> {
     const target = pane(), records = tabRecords();
     if (!target || !records) return;
     try {
-      const tab = await this.tab(target, signal);
+      const tab = await this.tab(target, signal, true);
       if (!Number.isSafeInteger(tab?.id)) return;
       mkdirSync(records.dir, { recursive: true, mode: 0o700 });
       // A later Kitty can reuse a process ID and its tab IDs: drop records of Kitty instances that have exited.
@@ -90,7 +100,7 @@ export class KittyPane {
         try { process.kill(Number(name.split('-')[0]), 0); }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(records.dir, name), { force: true }); }
       }
-      writeFileSync(join(records.dir, `${records.prefix}${tab!.id}`), String(taskId));
+      writeFileSync(join(records.dir, `${records.prefix}${tab!.id}`), `${taskId}\n${database()}`); // IDs repeat across databases.
     } catch { /* The tab only loses its automatic pickup. */ }
   }
   /** The task this pane's tab belongs to, unless another pane in the tab holds it: one agent per task. */
@@ -99,10 +109,13 @@ export class KittyPane {
     if (!target || !records) return;
     try {
       if (!readdirSync(records.dir).some((name) => name.startsWith(records.prefix))) return; // No Kitty call for nothing.
-      const tab = await this.tab(target, signal);
+      const tab = await this.tab(target, signal, true);
       if (!Number.isSafeInteger(tab?.id)) return;
-      const task = readFileSync(join(records.dir, `${records.prefix}${tab!.id}`), 'utf8');
-      if (!/^[1-9]\d{0,14}$/.test(task)) return;
+      const file = join(records.dir, `${records.prefix}${tab!.id}`);
+      // After a reboot, another Kitty can have this process ID and these tab IDs.
+      if (statSync(file).mtimeMs < Date.now() - uptime() * 1000) return;
+      const [task, notes] = readFileSync(file, 'utf8').split('\n');
+      if (!/^[1-9]\d{0,14}$/.test(task) || notes !== database()) return;
       if (tab!.windows!.some((window) => window.id !== Number(target.window) && window.user_vars?.[TASK_VAR] === task)) return;
       return Number(task);
     } catch { return; }
