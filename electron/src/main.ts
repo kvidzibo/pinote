@@ -1,9 +1,9 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, protocol, screen, session, shell } from 'electron';
 import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Backend } from './backend.ts';
 import { imageHashes } from './image-refs.ts';
@@ -11,8 +11,8 @@ import { backendCommand } from './backend-command.ts';
 import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
 import { imageViewer } from './image-window.ts';
-import { IMAGE_VIEWS, TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
-import type { ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
+import { DATA_FILES, IMAGE_VIEWS, TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
+import type { DataFile, DataStats, ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, MIN_WINDOW, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -168,6 +168,17 @@ async function boot() {
   await app.whenReady();
   const watcherHost = () => import(pathToFileURL(join(bundles, 'service/watcher-host.mjs')).href);
   let watcherSaving = false;
+  // Settings → Data: main resolves every path it shows or reveals; the renderer only names a file.
+  let dataPaths: Record<DataFile, string> | undefined;
+  const dataStats = async (): Promise<DataStats> => {
+    const response = await backend.call('stats', {});
+    if (!response.ok) throw new Error(response.error.message);
+    const path = resolve((await watcherHost()).settingsPath() as string);
+    const bytes = await stat(path).then(file => file.size, (error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
+    const result = response.result as Operations['stats']['result'];
+    dataPaths = { database: result.database.path, settings: path, log: result.log.path };
+    return { ...result, settings: { path, bytes }, home: homedir() };
+  };
   // Field watchers run exactly as long as this desktop; Pi sessions read their saved results.
   watchers = (async () => {
     try {
@@ -318,7 +329,7 @@ async function boot() {
       }
     },
     backend: async (_event, op: unknown, params: unknown) => {
-      if (op === 'handshake' || op === 'image' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
+      if (op === 'handshake' || op === 'image' || op === 'stats' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };
       // The backend may create only the new tag's own folder inside the saved base folder.
       if (op === 'create_tag' && (params as { folderIfNew?: string | null }).folderIfNew != null) {
@@ -395,6 +406,11 @@ async function boot() {
       const result = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] }), folder = result.canceled ? null : result.filePaths[0] ?? null;
       if (folder !== null) approvedFolders.add(folder);
       return folder;
+    },
+    'data-stats': () => dataStats(),
+    'show-data-file': (_event, which: unknown) => {
+      if (!dataPaths || !DATA_FILES.includes(which as DataFile)) throw new Error('Invalid data file');
+      shell.showItemInFolder(dataPaths[which as DataFile]);
     },
     copy: (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 1024*1024) throw new Error('Invalid clipboard text'); clipboard.writeText(text); },
     'open-link': async (_event, url: unknown) => { if (!safeLink(url)) throw new Error('Unsupported link'); await shell.openExternal(url); },

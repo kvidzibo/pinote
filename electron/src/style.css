@@ -265,3 +265,12 @@ body.image-window { border: 0; border-radius: 0; background: #232832; cursor: zo
 .settings-tabs button.unsaved::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #c69b51; }
 .settings-pane { display: flex; flex-direction: column; gap: 8px; flex: 1 1 0; min-height: 0; max-width: none; padding: 0; overflow: auto; }
 .settings-pane > .controls:last-child { position: sticky; bottom: 0; margin-top: auto; padding-top: 6px; background: #232832; }
+/* Settings → Data: one grid, so the paths of both sections line up. */
+.data-grid { display: grid; grid-template-columns: 7em minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px; }
+.data-grid h3 { grid-column: 1 / -1; margin: 2px 0; font-size: 12px; }
+.data-grid hr { grid-column: 1 / -1; width: 100%; margin: 6px 0; border: 0; border-top: 1px solid #4b5563; }
+.data-grid button { justify-self: center; }
+.data-label, .data-size { color: #b6bfce; white-space: nowrap; }
+.data-value { grid-column: 2 / -1; line-height: 1.6; overflow-wrap: anywhere; user-select: text; }
+.data-value span { white-space: nowrap; }
+.data-path { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; background: #1c212a; border: 1px solid #4b5563; border-radius: 4px; padding: 4px 7px; user-select: text; }

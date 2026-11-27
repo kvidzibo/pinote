@@ -45,7 +45,7 @@ test('argument validation is exact for bigint IDs and bounded event cursors',()=
 });
 test('help/version/invalid input are side effect free',t=>{
   const f=fixture(t);
-  assert.equal(f.ok('--version'),'pinote 0.31.1\n');
+  assert.equal(f.ok('--version'),'pinote 0.32.0\n');
   assert.match(f.ok('--help'),/durable history/);
   for(const args of [['done','0'],['show','unexpected'],['done'],['agent','update','1']]) assert.equal(f.cli(...args).status,2);
   for(const args of [['--no-notify','add',' '],['schedule','1','2000-01-01T00:00:00Z'],['agent','add','--text','ok','--tag','\n'],['agent','update','1','--expected-updated-at','x','--set-json','{"Next":false}']]) assert.equal(f.cli(...args).status,1);

@@ -348,7 +348,7 @@ type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean
   saved: (from?: string | null, to?: string) => void; rebase?: (from: string | null, to: string) => void };
 const settingsTabs: [SettingsTab, string, (pane: Pane, tag?: string) => void][] = [
   ['tags', 'Tags', manageTags], ['actions', 'Actions', configureTaskActions], ['editor', 'Editor', configureComposer], ['fields', 'Fields', configureFields],
-  ['watchers', 'Watchers', configureWatchers], ['kitty', 'Kitty', configureKitty], ['window', 'Window', configureWindow],
+  ['watchers', 'Watchers', configureWatchers], ['kitty', 'Kitty', configureKitty], ['window', 'Window', configureWindow], ['data', 'Data', configureData],
 ];
 function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: string): void {
   const existing = layers.find(l => l.kind === 'settings'); if (existing) { existing.panel.focus(); return; }
@@ -572,6 +572,36 @@ function configureWindow(modal: Pane): void {
   }, true);
   for (const input of [...position.inputs, ...size.inputs]) input.addEventListener('input', update);
   controls(modal.panel).append(save); void load();
+}
+const formatBytes = (bytes: number) => {
+  const units = ['B', 'kB', 'MB', 'GB']; let value = bytes, unit = 0;
+  while (value >= 999.95 && unit < units.length - 1) { value /= 1000; unit++; }
+  return unit ? `${value.toFixed(1)} ${units[unit]}` : `${bytes} B`;
+};
+// Read-only: never dirty or busy, and loaded once per Settings page.
+function configureData(modal: Pane): void {
+  const grid = el('div', undefined, 'data-grid'), status = el('p', 'Loading…', 'tag-hint'); status.setAttribute('role', 'status');
+  modal.panel.append(grid, status);
+  void api.dataStats().then(stats => {
+    const short = (path: string) => path === stats.home || path.startsWith(`${stats.home}/`) ? `~${path.slice(stats.home.length)}` : path;
+    const label = (text: string) => el('span', text, 'data-label'), value = (text: string) => el('span', text, 'data-value');
+    const path = (full: string) => { const box = el('span', short(full), 'data-path'); box.title = full; return box; };
+    const size = (bytes: number | null) => el('span', bytes === null ? 'missing' : formatBytes(bytes), 'data-size');
+    // Lines break only between counts, after a separator.
+    const counts = Object.entries({ active: stats.tasks.active, 'in progress': stats.tasks.in_progress, scheduled: stats.tasks.scheduled, done: stats.tasks.done, removed: stats.tasks.removed }), tasks = value('');
+    tasks.append(...counts.flatMap(([name, count], index) => [...index ? [' '] : [], el('span', `${count} ${name}${index < counts.length - 1 ? ' ·' : ''}`)]));
+    grid.append(el('h3', 'Database'),
+      label('Location'), path(stats.database.path), button('copy', 'Copy database path', () => api.copy(stats.database.path)), button('folder', 'Show database in folder', () => api.showDataFile('database')),
+      label('Size'), value(formatBytes(stats.database.bytes)),
+      label('Tasks'), tasks,
+      label('Images'), value(`${stats.images.count} · ${formatBytes(stats.images.bytes)}`),
+      label('History'), value(`${stats.events} events`),
+      label('Modified'), value(new Date(stats.database.modified).toLocaleString()),
+      el('hr'), el('h3', 'Other files'),
+      label('Settings'), path(stats.settings.path), size(stats.settings.bytes), button('folder', 'Show settings file in folder', () => api.showDataFile('settings')),
+      label('Log'), path(stats.log.path), size(stats.log.bytes), button('folder', 'Show log in folder', () => api.showDataFile('log')));
+    status.textContent = 'Read-only. Reopen Settings to refresh.';
+  }, error => { status.className = 'warning'; status.textContent = `Could not load data: ${ipcMessage(error)}`; });
 }
 function dueLabel(task: Task): string {
   const date = task.reminder_due_at ?? task.remind_at;

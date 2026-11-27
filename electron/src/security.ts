@@ -9,6 +9,9 @@ const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 const id = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
 const str = (v: unknown, max = 16384) => typeof v === 'string' && v.length <= max;
 const nullable = (v: unknown) => v === null || str(v);
+const count = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const absolute = (v: unknown) => typeof v === 'string' && v.startsWith('/') && !/[\p{Cs}\x00]/u.test(v) && str(v);
+const exact = (v: unknown, keys: string[]): v is Record<string, unknown> => record(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 /** Base64 of at most 4 MiB, the backend's stored image limit. */
 export const MAX_IMAGE_BASE64 = Math.ceil(4 * 1024 * 1024 / 3) * 4;
 export const imageHash = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
@@ -28,7 +31,7 @@ const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || typeof v === 'string' && validKittyTabTitle(v),
     prompt: v => v === undefined || typeof v === 'string' && validKittyStartPrompt(v) },
   image_add: { data: v => base64(v) }, image: { hash: imageHash },
-  image_prune: { keep: v => Array.isArray(v) && v.length <= 10000 && v.every(imageHash) },
+  image_prune: { keep: v => Array.isArray(v) && v.length <= 10000 && v.every(imageHash) }, stats: {},
 };
 export function validParams(op: unknown, value: unknown): op is Operation {
   if (typeof op !== 'string' || !Object.hasOwn(specs, op) || !record(value)) return false;
@@ -60,7 +63,7 @@ export function validPreviewRequest(value: unknown): value is PreviewRequest {
     id(value.token) && validPreviewData(value.data) && record(value.point) && Object.keys(value.point).every(k => ['x','y'].includes(k)) &&
     validMenuRequest({ ...value.point, kind: 'app' });
 }
-export const mutating = (op: string) => !['handshake','snapshot','completions','image'].includes(op);
+export const mutating = (op: string) => !['handshake','snapshot','completions','image','stats'].includes(op);
 function validTaskActionPreferences(value: unknown, ids: readonly string[], legacy: boolean): boolean {
   const action = (v: unknown) => typeof v === 'string' && ids.includes(v);
   const uniqueList = (v: unknown, allowed: readonly string[]): v is string[] => Array.isArray(v) && v.length <= allowed.length &&
@@ -117,7 +120,14 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
   if (operation === 'image') return result.found === false ? Object.keys(result).length === 1 : result.found === true && imageMime(result.mime) && base64(result.data);
   if (operation === 'image_add') return typeof result.changed === 'boolean' && imageHash(result.hash) && imageMime(result.mime) && [result.width, result.height].every(n => typeof n === 'number' && Number.isSafeInteger(n) && n > 0);
   if (operation === 'image_prune') return typeof result.changed === 'boolean' && Array.isArray(result.removed) && result.removed.every(imageHash);
-  if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && typeof result.database === 'string' && result.database.startsWith('/') && !/[\p{Cs}\x00]/u.test(result.database) && str(result.database);
+  if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && absolute(result.database);
+  if (operation === 'stats') {
+    const { database, log, tasks, images } = result;
+    return exact(result, ['database','log','tasks','images','events']) && count(result.events) &&
+      exact(database, ['path','bytes','modified']) && absolute(database.path) && count(database.bytes) && str(database.modified,128) && !Number.isNaN(Date.parse(database.modified as string)) &&
+      exact(log, ['path','bytes']) && absolute(log.path) && (log.bytes === null || count(log.bytes)) &&
+      exact(tasks, ['active','in_progress','scheduled','done','removed']) && Object.values(tasks).every(count) && exact(images, ['count','bytes']) && count(images.count) && count(images.bytes);
+  }
   if (operation === 'snapshot') {
     return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean';
   }

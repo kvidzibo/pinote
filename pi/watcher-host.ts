@@ -4,6 +4,10 @@ import { FieldAutomation } from './field-events.ts';
 import { discoverFieldWatchers, parseFieldWatchers, validateWatcherExecutable, watcherEntries, type FieldWatcher } from './field-watchers.ts';
 import { defaultFieldInstructions, footerCatalog, parseFooterConfig, parseKittyOneTaskPerTab, parseTaskCompletion, readConfigDocument } from './footer-config.ts';
 import { fieldType } from './field-values.ts';
+import { getAgentDir } from './config-path.js';
+
+/** The settings file shared with Pi, which the desktop's settings tabs read and write. */
+export const settingsPath = () => join(getAgentDir(), 'pi-note.json');
 
 /** Run the field-watcher scheduler for as long as the hosting process (the desktop) lives.
  * Pi sessions only read the results it saves. Failure details go to watchers.log beside the

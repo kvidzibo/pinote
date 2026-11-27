@@ -26,7 +26,7 @@ function processRequest(data: Buffer | string, args: string[] = []) {
 }
 test('handshake, help and version are side-effect free', async () => {
   const r = processRequest(JSON.stringify(request('handshake'))); assert.equal(r.status, 0); assert.equal(r.stderr, '');
-  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.31.1', protocol: 1, database: paths.database } });
+  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.32.0', protocol: 1, database: paths.database } });
   for (const flag of ['--help', '--version']) assert.equal(processRequest('', [flag]).status, 0);
   assert.equal(existsSync(paths.data), false); assert.equal(existsSync(paths.state), false);
   assert.equal((await respond(request('handshake'), paths)).ok, true);
@@ -168,6 +168,25 @@ test('subprocess unicode framing, private logging, redacted conflicts', () => {
   const snap = JSON.parse(processRequest(JSON.stringify(request('snapshot', { view: 'active' }))).stdout); assert.equal(snap.result.notes[0].text, '你好 🌱\nsecond line');
   const stale = processRequest(JSON.stringify(request('edit', { id, revision: 'old', text: 'SECRET' })));
   assert.equal(JSON.parse(stale.stdout).error.code, 'conflict'); assert.equal(stale.stderr.includes('SECRET'), false); assert.equal(readFileSync(paths.log, 'utf8').includes('SECRET'), false); assert.equal(statSync(paths.log).mode & 0o777, 0o600);
+});
+test('stats reports task states, images, history and file sizes without writing', async () => {
+  const missing = processRequest(JSON.stringify(request('stats')));
+  assert.equal(JSON.parse(missing.stdout).ok, false); assert.deepEqual([existsSync(paths.database), existsSync(paths.log)], [false, false]);
+  const s = new Store(paths.database);
+  try {
+    const [, progress, scheduled, done, removed] = ['a', 'b', 'c', 'd', 'e'].map(text => s.add(text));
+    s.transition(progress, 'start'); s.schedule(scheduled, '2999-01-01T00:00:00.000000+00:00'); s.transition(done, 'done'); s.transition(removed, 'rm');
+  } finally { s.close(); }
+  const before = await call('stats');
+  assert.deepEqual(before.tasks, { active: 1, in_progress: 1, scheduled: 1, done: 1, removed: 1 });
+  assert.deepEqual([before.images, before.events, before.log], [{ count: 0, bytes: 0 }, 9, { path: paths.log, bytes: null }]);
+  assert.equal(before.database.path, paths.database); assert.ok(before.database.bytes > 0);
+  assert.equal(before.database.modified, new Date(statSync(paths.database).mtimeMs).toISOString());
+  assert.deepEqual(JSON.parse(processRequest(JSON.stringify(request('stats'))).stdout).result.log, before.log); assert.equal(existsSync(paths.log), false);
+  const image = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.from([0, 0, 0, 13]), Buffer.from('IHDR'), Buffer.from([0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0])]);
+  await call('image_add', { data: image.toString('base64') });
+  const after = await call('stats');
+  assert.deepEqual(after.images, { count: 1, bytes: image.length }); assert.deepEqual(after.tasks, before.tasks); assert.equal(after.events, 9);
 });
 test('bad config and unsupported database IDs return bounded errors', async () => {
   const dir = join(process.env.XDG_CONFIG_HOME!, 'pinote'); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'config.toml'), '[gui]\nmarkdown_preview=42\n');

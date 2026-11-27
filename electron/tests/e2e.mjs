@@ -1342,6 +1342,17 @@ try {
   await page.getByRole('dialog').getByRole('button',{name:/^Untagged \(/}).click();
   await page.getByRole('dialog').waitFor({state:'detached'});
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===tagged.id).tag,null);
+  // Settings → Data: read-only counts from the shared database; viewing them never marks the tab unsaved.
+  {
+    const data = page.locator('#settings-pane-data'), stats = call('stats',{});
+    await openSettingsTab(page,'data');
+    const location = data.locator('.data-path').first();
+    await location.filter({hasText:stats.database.path}).waitFor();
+    assert.equal(await location.getAttribute('title'),stats.database.path);
+    await data.getByText(`${stats.tasks.active} active · ${stats.tasks.in_progress} in progress ·`).waitFor();
+    assert.equal(await page.locator('#settings-tab-data').getAttribute('aria-label'),'Data');
+    await closeSettings(page);
+  }
   // Manage tags: one searchable list/editor workflow, with real shared-backend refreshes.
   {
     const geometry = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
@@ -1353,7 +1364,7 @@ try {
     await manage.getByRole('heading',{name:'Work',exact:true}).waitFor();
     assert.equal(await page.locator('#settings-tab-tags').getAttribute('aria-selected'),'true');
     await page.keyboard.press('ArrowLeft');
-    assert.ok(await page.locator('#settings-tab-window[aria-selected="true"]').evaluate(n=>n===document.activeElement));
+    assert.ok(await page.locator('#settings-tab-data[aria-selected="true"]').evaluate(n=>n===document.activeElement));
     await page.keyboard.press('Home'); assert.equal(await manage.isVisible(),true);
     await closeSettings(page); await page.keyboard.press('Escape');
     await page.getByRole('dialog',{name:'New-task tag',exact:true}).waitFor({state:'detached'});

@@ -19,14 +19,16 @@ function noteFromRow(row:Row):Note { return {tag:null,remind_at:null,reminder_du
 
 export class Store {
   public connection:DatabaseSync;
-  constructor(path:string, options:{timeout?:number}={}) {
-    privateDirectory(dirname(path)); privateFile(path);
-    this.connection=new DatabaseSync(path);
+  /** readOnly neither creates nor migrates the database: it must already be at the current schema. */
+  constructor(path:string, options:{timeout?:number;readOnly?:boolean}={}) {
+    if(!options.readOnly) { privateDirectory(dirname(path)); privateFile(path); }
+    this.connection=new DatabaseSync(path,{readOnly:options.readOnly===true});
     try {
       const timeout=options.timeout??10;
       if(!Number.isFinite(timeout)||timeout<0) throw new RangeError('timeout must be nonnegative');
       this.connection.exec(`PRAGMA busy_timeout = ${Math.min(2147483647,Math.floor(timeout*1000))}`);
       this.connection.exec('PRAGMA foreign_keys = ON');
+      if(options.readOnly&&this.row('PRAGMA user_version')!.user_version!==8n) throw new NoteError('This database is not at the current version yet.');
       if(this.row('PRAGMA user_version')!.user_version!==8n) this.transaction(()=>{
         const version=Number(this.row('PRAGMA user_version')!.user_version);
         if(version===8) return;
@@ -249,6 +251,13 @@ export class Store {
   }
   // Images live in their own table, created on first use, so earlier backends still open this schema-8 database.
   private hasImages():boolean { return !!this.row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='images'"); }
+  /** Read-only counts: tasks by state, stored images and their bytes, and history events. */
+  stats():{tasks:Record<NoteState,number>;images:{count:number;bytes:number};events:number} {
+    const tasks:Record<NoteState,number>={active:0,in_progress:0,scheduled:0,done:0,removed:0};
+    for(const r of this.query('SELECT state,COUNT(*) AS count FROM notes GROUP BY state')) if(Object.hasOwn(tasks,r.state)) tasks[r.state as NoteState]=Number(r.count);
+    const images=this.hasImages()?this.row('SELECT COUNT(*) AS count,COALESCE(SUM(LENGTH(bytes)),0) AS bytes FROM images')!:{count:0n,bytes:0n};
+    return {tasks,images:{count:Number(images.count),bytes:Number(images.bytes)},events:Number(this.row('SELECT COUNT(*) AS count FROM events')!.count)};
+  }
   /** Stores image bytes once by their SHA-256 hash. */
   add_image(bytes:Uint8Array):ImageInfo&{hash:string;changed:boolean} {
     const info=imageInfo(bytes), hash=createHash('sha256').update(bytes).digest('hex');

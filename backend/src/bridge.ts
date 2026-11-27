@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { Store, NoteError } from './store.ts';
 import { validate_tag, validate_text, validate_folder, validate_new_folder, validateAgentPatch, timestamp, type AgentNotes, type AgentValue } from './compat.ts';
 import { caseFold } from 'unicode-case-folding';
@@ -14,7 +15,7 @@ const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge 
 const conflict = (): never => { throw new BridgeError('conflict', 'This task changed elsewhere. Refresh before trying again.'); };
 export const safe_id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 const sources: Record<string, string[]> = { start: ['active'], reset: ['in_progress'], done: ['active', 'in_progress'], rm: ['active', 'in_progress'], restore: ['done', 'removed', 'scheduled'] };
-const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'], image_add: ['data'], image: ['hash'], image_prune: ['keep'] };
+const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'], image_add: ['data'], image: ['hash'], image_prune: ['keep'], stats: [] };
 // A bounded recursive-descent decoder retains numeric token types and rejects duplicate
 // keys before JSON.parse could silently erase either distinction.
 export function decode(data: Uint8Array): unknown {
@@ -121,6 +122,18 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
     try { const image = store.image(p.hash); return image ? { found: true, mime: image.mime, data: Buffer.from(image.bytes).toString('base64') } : { found: false }; }
     finally { store.close(); }
   }
+  if (op === 'stats') {
+    const file = (path: string) => { try { return statSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
+    // Files are measured before SQLite opens, which can create WAL sidecars beside the real file.
+    // Until a checkpoint the newest writes are only in the WAL; the -shm index holds no data and a reader leaves it behind.
+    const path = resolvePath(paths.database), database = file(path), wal = file(`${path}-wal`), logFile = file(paths.log);
+    if (!database) throw new NoteError('The database does not exist yet.');
+    const store = new Store(path, { timeout: 0.1, readOnly: true });
+    try {
+      return { database: { path, bytes: database.size + (wal?.size ?? 0), modified: new Date(Math.max(database.mtimeMs, wal?.size ? wal.mtimeMs : 0)).toISOString() },
+        log: { path: resolvePath(paths.log), bytes: logFile?.size ?? null }, ...store.stats() };
+    } finally { store.close(); }
+  }
   return withDisplayLock(paths, false, async () => {
     const store = new Store(paths.database, { timeout: 0.1 });
     try {
@@ -195,11 +208,12 @@ export async function main(argv = process.argv.slice(2), input?: Uint8Array): Pr
       if (op === 'snapshot' || op === 'kitty') guiConfigPath();
       // Only Kitty launches search PATH; check it before any save.
       if (op === 'kitty') { checkedEnv('PATH'); kittyAddressEnv(); }
-      configureLogging(paths, { stderr: true });
+      // stats only reports: it must not create the log it measures.
+      if (op !== 'stats') configureLogging(paths, { stderr: true });
     }
     response = await respond(request, paths);
     checkCancelled();
-    if (!response.ok && op !== 'handshake') log('warning', `Electron bridge request failed (${response.error.code}).`);
+    if (!response.ok && op !== 'handshake' && op !== 'stats') log('warning', `Electron bridge request failed (${response.error.code}).`);
   } catch (error) {
     response = failure((error as Error).name === 'AbortError'
       ? new BridgeError('unknown', 'Backend interrupted. Check saved state before retrying.') : error);
