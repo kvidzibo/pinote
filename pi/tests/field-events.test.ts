@@ -380,6 +380,9 @@ test('the tab PR status ignores newer observations without a PR state', () => {
   assert.equal(prStatus({ task, fieldStatuses: [failed, status('notes', '2026-01-02T00:00:00Z', { summary: 'Reviewed' })] }), 'failing');
   assert.equal(prStatus({ task, fieldStatuses: [failed, status('pr2', '2026-01-02T00:00:00Z', { state: 'closed' })] }), 'closed', 'A newer closed state still wins');
   assert.equal(prStatus({ task, fieldStatuses: [] }), 'unknown', 'An unchecked PR is unknown');
+  const pair: any = { id: 1, agent_notes: { PRs: `${url}\n${url}0` } };
+  const mixed = { ...failed, value: pair.agent_notes.PRs, result: { state: 'multiple', items: [{ url, state: 'closed' }, { url: `${url}0`, state: 'error' }] } };
+  assert.equal(prStatus({ task: pair, fieldStatuses: [mixed] }), 'unknown', 'An unavailable PR outranks a closed one');
   assert.equal(prStatus({ task: { id: 1, agent_notes: {} } as any, fieldStatuses: [] }), undefined, 'No PR, no status');
   const passing = Array.from({ length: 64 }, (_, index) => `https://github.com/example/repo/pull/${index + 2}`);
   const full: any = { id: 1, agent_notes: { PRs: passing.join('\n'), PR: url } };
