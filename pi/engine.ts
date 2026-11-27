@@ -183,6 +183,28 @@ function footerFeatures(meta: Record<string, unknown> | undefined) {
     footerDoubleActions: z.object({ footerDoubleActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
   };
 }
+/** The newest usable watcher observation of one PR, else the newest recorded one. */
+function prObservation(data: Snapshot, url: string): { status?: FieldStatus; result?: FieldResult | NonNullable<FieldResult['items']>[number] } {
+  const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
+    .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === url))
+    .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? ''));
+  const observation = (status: FieldStatus) => status.result.items
+    ? status.result.items.find((item) => item.url === url)
+    : parsePullRequests(status.value).length === 1 ? status.result : undefined;
+  const status = candidates.find((item) => !item.stale && observation(item) && observation(item)!.state !== 'error') ?? candidates[0];
+  return { status, result: status && observation(status) };
+}
+const PR_STATUSES = { failed: 'failing', conflict: 'failing', pending: 'pending', passing: 'passing', merged: 'merged' } as const;
+const PR_STATUS_ORDER = ['failing', 'pending', 'passing', 'merged'] as const;
+/** The selected task's most urgent current PR state; closed, unchecked, stale and failed checks are ignored. */
+function prStatus(data: Snapshot): (typeof PR_STATUS_ORDER)[number] | undefined {
+  if (!data.task) return undefined;
+  const states = new Set(parsePullRequests(pullRequestValues(data.task.agent_notes)).map((pr) => {
+    const { status, result } = prObservation(data, pr.url);
+    return status && !status.stale ? PR_STATUSES[result?.state as keyof typeof PR_STATUSES] : undefined;
+  }));
+  return PR_STATUS_ORDER.find((state) => states.has(state));
+}
 function humanStatus(state: string): string {
   return state === 'in_progress' ? 'In progress' : state === 'active' ? 'Not started' : state;
 }
@@ -321,14 +343,7 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
       if (prs.length) {
         for (const [index, pr] of prs.entries()) {
           if (room <= 0 || footer.length >= slots) break;
-          const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
-            .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === pr.url))
-            .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? ''));
-          const observation = (status: FieldStatus) => status.result.items
-            ? status.result.items.find((item) => item.url === pr.url)
-            : parsePullRequests(status.value).length === 1 ? status.result : undefined;
-          const status = candidates.find((item) => !item.stale && observation(item) && observation(item)!.state !== 'error') ?? candidates[0];
-          const result = status && observation(status);
+          const { status, result } = prObservation(data, pr.url);
           const colors = { merged: 'accent', closed: 'muted', error: 'muted', pending: 'warning', failed: 'error', conflict: 'error', passing: 'success' } as const;
           const color = status?.stale ? 'muted' : colors[result?.state as keyof typeof colors] ?? result?.display?.color ?? 'muted';
           const substitutions: Record<string, string> = { value: pr.label ?? pr.url, url: pr.url, number: pr.number };
@@ -386,7 +401,8 @@ function view(data: Snapshot, scoped = false, secondary = false, features: { foo
     return false;
   });
   if (scoped) for (const control of editable) control.revision = actionRevision(data, control);
-  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer, ...(features.watcherDiagnostics && watcherLogPath ? { watcherDiagnostics: { logPath: watcherLogPath, failures: data.watcherFailures } } : {}), ...(features.fieldEvents ? { fieldNotifications: data.fieldNotifications.map((notice) => ({ ...notice, ...(features.fieldWatchers ? { triggerWorker: true } : {}) })) } : {}) };
+  const pr = features.fieldEvents ? prStatus(data) : undefined;
+  const result = { version: 1, title, body: body.slice(0, 20_000), revision, state: boundedState(state), retainOnNew: true, controls: editable, footer, ...(pr ? { prStatus: pr } : {}), ...(features.watcherDiagnostics && watcherLogPath ? { watcherDiagnostics: { logPath: watcherLogPath, failures: data.watcherFailures } } : {}), ...(features.fieldEvents ? { fieldNotifications: data.fieldNotifications.map((notice) => ({ ...notice, ...(features.fieldWatchers ? { triggerWorker: true } : {}) })) } : {}) };
   // JSON escaping and expanded footer formats can exceed the host budget even
   // with bounded row counts. Preserve navigation/filter controls ahead of rows.
   let shortened = false;

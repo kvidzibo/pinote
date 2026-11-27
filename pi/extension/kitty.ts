@@ -4,6 +4,9 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
 /** Kitty user variable naming the task selected in a Pi pane, so a pane in the same tab can tell. */
 const TASK_VAR = 'pinote_task';
+/** Kitty user variable with the selected task's most urgent PR state, for a tab bar to show while idle. */
+const PR_VAR = 'pinote_pr';
+export type PRStatus = 'failing' | 'pending' | 'passing' | 'merged';
 type Exec = ExtensionAPI['exec'];
 type Window = { id?: unknown; is_active?: unknown; user_vars?: Record<string, unknown>; foreground_processes?: { pid?: unknown }[] };
 type OsWindow = { tabs?: { is_active?: unknown; windows?: Window[] }[] };
@@ -44,9 +47,9 @@ export async function paneCloser(exec: Exec): Promise<(() => void) | undefined> 
 /** Best-effort Kitty tab control for one Pi pane. Failures never affect task state. */
 export class KittyPane {
   private exec: Exec;
-  /** The task this pane holds, and the value Kitty last acknowledged (undefined: unknown). */
-  private wanted?: number | null;
-  private marked?: number | null;
+  /** The task and PR state this pane holds, and the values Kitty last acknowledged (undefined: unknown). */
+  private wanted?: string;
+  private marked?: string;
   private failures = 0;
   private marks = Promise.resolve();
   constructor(exec: Exec) { this.exec = exec; }
@@ -56,18 +59,19 @@ export class KittyPane {
     if (result.code !== 0 || result.killed) throw new Error('Kitty remote control failed');
     return result;
   }
-  /** Record this pane's selected task (or none), in order. A failed update is retried on later calls,
+  /** Record this pane's selected task (or none) and its PR state, in order. A failed update is retried on later calls,
    * at most three times per value, so a stale marker cannot split another pane indefinitely. */
-  mark(taskId: number | null): Promise<void> {
+  mark(taskId: number | null, pr?: PRStatus): Promise<void> {
     const target = pane();
     if (!target) return this.marks;
-    if (taskId !== this.wanted) { this.wanted = taskId; this.failures = 0; }
+    const vars = [taskId === null ? TASK_VAR : `${TASK_VAR}=${taskId}`, taskId !== null && pr ? `${PR_VAR}=${pr}` : PR_VAR].join(' ');
+    if (vars !== this.wanted) { this.wanted = vars; this.failures = 0; }
     // Compare inside the queue, after earlier writes settle.
     this.marks = this.marks.then(async () => {
       const value = this.wanted;
       if (value === undefined || value === this.marked || this.failures >= 3) return;
       try {
-        await this.kitty(target.socket, ['set-user-vars', `--match=id:${target.window}`, value === null ? TASK_VAR : `${TASK_VAR}=${value}`]);
+        await this.kitty(target.socket, ['set-user-vars', `--match=id:${target.window}`, ...value.split(' ')]);
         this.marked = value;
       } catch {
         this.marked = undefined; // A timed-out update may still apply.
@@ -76,7 +80,7 @@ export class KittyPane {
     });
     return this.marks;
   }
-  /** On exit: clear the variable if this process may have set it. */
+  /** On exit: clear the variables if this process may have set them. */
   release(): Promise<void> {
     if (this.wanted === undefined) return this.marks;
     this.failures = 0;

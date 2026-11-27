@@ -94,6 +94,12 @@ then names it. A pane that is not focused within its Kitty OS window stays put a
 the shared tab keeps its name, with a warning; select the task again after focusing it.
 Verified with Kitty 0.48.
 
+The same window also gets a `pinote_pr` user variable with the selected task's most
+urgent current PR status: `failing` (failed checks or conflicts), `pending`, `passing`
+or `merged`. It is unset without a task or a current status; closed, unavailable and
+stale results are ignored. A custom Kitty `tab_bar.py` can show it, for example as an
+icon while the agent is idle.
+
 Completion follows `onTaskComplete` (see below). With an empty editor, **Ctrl+D**
 (or your configured exit key) offers Cancel, Exit without completing, or Complete
 task and exit. **`/new`** offers Cancel, Start new session without completing, or

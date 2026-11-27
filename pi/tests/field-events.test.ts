@@ -202,6 +202,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       const links = multiple.footer!.filter((item) => item.url);
       assert.deepEqual(links.map((item) => item.url), urls, 'Legacy duplicate is displayed once');
       assert.deepEqual(links.map((item) => item.style?.color), ['success', 'error', 'warning', 'accent', 'muted', 'muted']);
+      assert.equal(multiple.prStatus, 'failing', 'The tab status shows the most urgent PR');
       assert.ok(links.every((item, index) => item.text.includes(`#${42 + index}`) && !item.style?.strikethrough));
       assert.ok(multiple.footer!.some((item) => item.text.includes('Next: Review all')), 'PRs consume only one field slot');
     }
@@ -241,6 +242,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await setMode({ ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'passing', notification: undefined } : item), notification: undefined });
     forceDue('PRs'); await automation.tick();
     assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
+    assert.equal((await view()).prStatus, 'pending', 'Closed and unavailable PRs never set the tab status');
     await setMode({ state: 'failed', notification: { key: 'new-legacy-head', message: 'Fresh legacy CI failure' }, recheckAfterSeconds: 10 });
     forceDue('PR'); await automation.tick();
     assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR' && notice.message === 'Fresh legacy CI failure'), 'An older plural passing result never suppresses a newer legacy failure');
@@ -303,6 +305,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     const edited = await view();
     assert.deepEqual(edited.footer!.filter((item) => item.url).map((item) => item.url), [urls[1], pr]);
     assert.equal(edited.footer!.find((item) => item.url === urls[1])?.style?.color, 'muted', 'Edited values never inherit stale statuses');
+    assert.equal(edited.prStatus, undefined, 'Stale statuses never set the tab status');
 
     // Valid large fields/results must not break otherwise-readable task context.
     await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR', 'PRs', 'Next']);
