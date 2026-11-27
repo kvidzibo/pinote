@@ -47,7 +47,8 @@ export async function paneCloser(exec: Exec): Promise<(() => void) | undefined> 
 /** Best-effort Kitty tab control for one Pi pane. Failures never affect task state. */
 export class KittyPane {
   private exec: Exec;
-  /** The task and PR state this pane holds, and the values Kitty last acknowledged (undefined: unknown). */
+  /** The last requested task; the task and PR state this pane holds, and the values Kitty last acknowledged (undefined: unknown). */
+  private task?: number | null;
   private wanted?: string;
   private marked?: string;
   private failures = 0;
@@ -64,6 +65,7 @@ export class KittyPane {
   mark(taskId: number | null, pr?: PRStatus): Promise<void> {
     const target = pane();
     if (!target) return this.marks;
+    this.task = taskId;
     const vars = [taskId === null ? TASK_VAR : `${TASK_VAR}=${taskId}`, taskId !== null && pr ? `${PR_VAR}=${pr}` : PR_VAR].join(' ');
     if (vars !== this.wanted) { this.wanted = vars; this.failures = 0; }
     // Compare inside the queue, after earlier writes settle.
@@ -79,6 +81,10 @@ export class KittyPane {
       }
     });
     return this.marks;
+  }
+  /** Without a current view: keep the task marker but stop showing a PR status that may be outdated. */
+  clearPR(): Promise<void> {
+    return this.task === undefined ? this.marks : this.mark(this.task);
   }
   /** On exit: clear the variables if this process may have set them. */
   release(): Promise<void> {

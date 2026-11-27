@@ -11,6 +11,7 @@ import { connectEngine } from './host.ts';
 import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../extension/protocol.ts';
+import { prStatus } from '../engine.ts';
 
 const exec = promisify(execFile);
 // This end-to-end case runs many real CLI subprocesses; allow slower CI runners.
@@ -369,4 +370,13 @@ test('idle ticks start no CLI process; a committed change is read on the next ti
     names.forEach((n, i) => { if (previous[i] === undefined) delete process.env[n]; else process.env[n] = previous[i]; });
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the tab PR status ignores newer observations without a PR state', () => {
+  const url = 'https://github.com/example/repo/pull/1';
+  const task: any = { id: 1, agent_notes: { PRs: url } };
+  const status = (watcherId: string, checkedAt: string, result: object) => ({ watcherId, field: 'PRs', value: url, result, checkedAt, stale: false });
+  const failed = status('pr', '2026-01-01T00:00:00Z', { state: 'failed' });
+  assert.equal(prStatus({ task, fieldStatuses: [failed, status('notes', '2026-01-02T00:00:00Z', { summary: 'Reviewed' })] }), 'failing');
+  assert.equal(prStatus({ task, fieldStatuses: [failed, status('pr2', '2026-01-02T00:00:00Z', { state: 'closed' })] }), undefined, 'A newer closed state still wins');
 });

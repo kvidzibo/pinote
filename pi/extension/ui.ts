@@ -43,7 +43,9 @@ export class PinoteUI {
       this.render(); this.menuChanged?.();
       // Only the interactive Pi owns its pane: child processes inherit the Kitty environment.
       const id = session.view?.state.selectedId;
-      if (this.ctx?.mode === 'tui' && session.view) void this.kitty.mark(typeof id === 'number' ? id : null, session.view.prStatus);
+      if (this.ctx?.mode !== 'tui') return;
+      if (session.view) void this.kitty.mark(typeof id === 'number' ? id : null, session.view.prStatus);
+      else void this.kitty.clearPR();
     };
   }
   /** After detach on shutdown: this pane no longer holds a task. */

@@ -183,25 +183,27 @@ function footerFeatures(meta: Record<string, unknown> | undefined) {
     footerDoubleActions: z.object({ footerDoubleActions: z.literal(true) }).safeParse(meta?.['native-ui/features']).success,
   };
 }
+type PRResult = FieldResult | NonNullable<FieldResult['items']>[number];
 /** The newest usable watcher observation of one PR, else the newest recorded one. */
-function prObservation(data: Snapshot, url: string): { status?: FieldStatus; result?: FieldResult | NonNullable<FieldResult['items']>[number] } {
+function prObservation(data: Pick<Snapshot, 'fieldStatuses'>, url: string, usable = (result: PRResult) => result.state !== 'error'): { status?: FieldStatus; result?: PRResult } {
   const candidates = ['PRs', 'PR'].flatMap((name) => data.fieldStatuses.filter((item) => item.field === name))
     .filter((item) => parsePullRequests(item.value).some((entry) => entry.url === url))
     .sort((a, b) => (b.checkedAt ?? '').localeCompare(a.checkedAt ?? ''));
   const observation = (status: FieldStatus) => status.result.items
     ? status.result.items.find((item) => item.url === url)
     : parsePullRequests(status.value).length === 1 ? status.result : undefined;
-  const status = candidates.find((item) => !item.stale && observation(item) && observation(item)!.state !== 'error') ?? candidates[0];
+  const status = candidates.find((item) => !item.stale && observation(item) && usable(observation(item)!)) ?? candidates[0];
   return { status, result: status && observation(status) };
 }
 const PR_STATUSES = { failed: 'failing', conflict: 'failing', pending: 'pending', passing: 'passing', merged: 'merged' } as const;
 const PR_STATUS_ORDER = ['failing', 'pending', 'passing', 'merged'] as const;
 /** The selected task's most urgent current PR state; closed, unchecked, stale and failed checks are ignored. */
-function prStatus(data: Snapshot): (typeof PR_STATUS_ORDER)[number] | undefined {
+export function prStatus(data: Pick<Snapshot, 'task' | 'fieldStatuses'>): (typeof PR_STATUS_ORDER)[number] | undefined {
   if (!data.task) return undefined;
   const states = new Set(parsePullRequests(pullRequestValues(data.task.agent_notes)).map((pr) => {
-    const { status, result } = prObservation(data, pr.url);
-    return status && !status.stale ? PR_STATUSES[result?.state as keyof typeof PR_STATUSES] : undefined;
+    // Only a PR state (including closed) supersedes an older one; other watchers' summaries do not.
+    const { status, result } = prObservation(data, pr.url, (item) => item.state === 'closed' || Object.hasOwn(PR_STATUSES, item.state ?? ''));
+    return status && !status.stale && Object.hasOwn(PR_STATUSES, result?.state ?? '') ? PR_STATUSES[result!.state as keyof typeof PR_STATUSES] : undefined;
   }));
   return PR_STATUS_ORDER.find((state) => states.has(state));
 }
