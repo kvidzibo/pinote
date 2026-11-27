@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { uptime } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { database } from '../engine.ts';
@@ -27,13 +27,14 @@ function pane(): { window: string; socket: string } | undefined {
  * variables, and a pane's own variables go with it. Only under a directory of ours that nobody else
  * can write, so another user can neither plant nor redirect a record; unavailable elsewhere. */
 function tabRecords(): { dir: string; prefix: string } | undefined {
-  const base = process.env.XDG_RUNTIME_DIR || (process.platform === 'darwin' ? process.env.TMPDIR : undefined), kitty = process.env.KITTY_PID;
-  if (!base || !isAbsolute(base) || !kitty || !/^[1-9]\d*$/.test(kitty)) return undefined;
+  const root = process.env.XDG_RUNTIME_DIR || (process.platform === 'darwin' ? process.env.TMPDIR : undefined), kitty = process.env.KITTY_PID;
+  if (!root || !isAbsolute(root) || !kitty || !/^[1-9]\d*$/.test(kitty)) return undefined;
   try {
-    const stat = statSync(base);
+    // Resolve symlinks and `..` once, so the directory used is the one checked.
+    const base = realpathSync(root), stat = statSync(base);
     if (!stat.isDirectory() || stat.uid !== process.getuid?.() || stat.mode & 0o022) return undefined;
+    return { dir: join(base, 'pinote', 'kitty-tabs'), prefix: `${kitty}-` };
   } catch { return undefined; }
-  return { dir: join(base, 'pinote', 'kitty-tabs'), prefix: `${kitty}-` };
 }
 
 let closing = false;

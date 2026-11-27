@@ -216,6 +216,16 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal((await open('not-json')).selection().selectedId, null, 'A rejected launch handoff selects nothing');
     process.env.KITTY_WINDOW_ID = '41';
     assert.equal((await open(undefined)).selection().selectedId, null, 'Other tabs are unaffected');
+    // A task that changes while it is picked up fails closed and leaves the ordinary task list.
+    process.env.KITTY_WINDOW_ID = '42';
+    const racing: any[] = [];
+    racing.push = (...items: any[]) => {
+      if (items[0]?.data?.state?.launch) execFileSync(process.env.PINOTE_NOTE_COMMAND!, ['--no-notify', 'done', String(tabTask.id)]);
+      return Array.prototype.push.apply(racing, items);
+    };
+    const changed = await open(undefined, racing);
+    assert.deepEqual(changed.notices, [`Pinote: this Kitty tab's task #${tabTask.id} was not selected. Use /pinote to select manually.`]);
+    assert.deepEqual([changed.selection().selectedId, changed.selection().launch], [null, undefined]);
 
     const saved = JSON.stringify(clients.map((client) => client.entries));
     assert.ok(!saved.includes('is task clear?') && !saved.includes('Clarify scope'));

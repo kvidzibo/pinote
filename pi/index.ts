@@ -91,24 +91,25 @@ export default function pinote(pi: ExtensionAPI): void {
       }
       const piSessionId = ctx.sessionManager.getSessionId(), conversation = piSessionId || randomUUID();
       await session.start(branch, conversation, carried, piSessionId || undefined);
-      let tabTask = false;
-      if (!request && (fresh || reason === 'new') && ctx.mode === 'tui' && session.view?.state.selectedId == null) {
+      let unselected: SavedState | undefined; // Set while this tab's task is being picked up.
+      if (request === undefined && (fresh || reason === 'new') && ctx.mode === 'tui' && session.view?.state.selectedId == null) {
         // A new conversation in a Kitty tab named after a task continues it, unless another Pi in the tab
         // holds that task. Opening Pi there is the consent; resume and reload never pick up. The task is
-        // offered as a launch handoff of its current revision, so it is selected the same way.
+        // offered as a launch handoff of its current revision, so it is selected the same way, without
+        // the previous conversation's suggestion: selecting would consume it there too.
         const id = await kitty.tabTask(session.signal);
         const task = id === undefined ? null : await session.tool('get_task', { task_id: id }).catch(() => null) as { updated_at?: unknown; state?: unknown } | null;
         const saved = session.snapshot();
         if (saved && typeof task?.updated_at === 'string' && (task.state === 'active' || task.state === 'in_progress')) {
-          launch = { task_id: id!, updated_at: task.updated_at }; tabTask = true;
-          await session.start(branch, conversation, { ...saved, state: { ...saved.state, screen: undefined, field: undefined, search: undefined, launch } }, piSessionId || undefined);
+          launch = { task_id: id!, updated_at: task.updated_at }; unselected = saved;
+          await session.start(branch, conversation, { ...saved, state: { ...saved.state, screen: undefined, field: undefined, search: undefined, proposal: undefined, launch } }, piSessionId || undefined);
         }
       }
-      if (launch) {
+      if (launch) try {
         const view = session.view!;
         // This control exists only for the exact GUI-displayed revision.
         if (JSON.stringify(view.state.launch) !== JSON.stringify(launch)) throw new Error('Launch handoff was not applied');
-        const control = view.controls.find((item) => item.id === `select:${launch.task_id}`);
+        const select = `select:${launch.task_id}`, control = view.controls.find((item) => item.id === select);
         if (!control) throw new Error('Launch task changed');
         await session.action(view, control); // The directory chooser's Start click granted consent.
         if (prompt?.trim() && ctx.mode === 'tui' && ctx.isIdle()) {
@@ -116,9 +117,15 @@ export default function pinote(pi: ExtensionAPI): void {
           else ctx.ui.setEditorText(prompt);
         }
         if (ctx.mode === 'tui' && session.view?.state.selectedId === launch.task_id) {
-          if (tabTask) ctx.ui.notify(`Pinote: continuing this Kitty tab's task #${launch.task_id}.`, 'info');
+          if (unselected) ctx.ui.notify(`Pinote: continuing this Kitty tab's task #${launch.task_id}.`, 'info');
           else await kitty.claim(launch.task_id, session.signal);
         }
+      } catch (error) {
+        if (!unselected) throw error;
+        // Not a GUI launch: return to the ordinary unselected view rather than keep the one-task filter.
+        ctx.ui.notify(`Pinote: this Kitty tab's task #${launch.task_id} was not selected. Use /pinote to select manually.`, 'warning');
+        launch = undefined;
+        await session.start(branch, conversation, unselected, piSessionId || undefined);
       }
       if (reason === 'new' && previous) transfers.delete(previous);
       if (reason === 'new' || (launch && session.view?.state.selectedId === launch.task_id)) await showStartupTask(pi, ctx, session);
