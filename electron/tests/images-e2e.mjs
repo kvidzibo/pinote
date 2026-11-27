@@ -69,8 +69,11 @@ try {
   console.log(`Pasted ${Math.round(screenshot.length * 3 / 4 / 1024)} KiB PNG (3200×1600), stored ${Math.round(stored.size / 1024)} KiB WebP (2560×1280)`);
   await page.screenshot({ path:join(root,'composer.png') });
   await page.keyboard.press('Enter');
-  await page.getByText('Fix the failing build',{exact:true}).waitFor();
-  const task = call('snapshot',{view:'active'}).notes.find(n => n.text.startsWith('Fix the failing build'));
+  // The composer shows the same text until the add commits: wait for the saved task, then its row.
+  const added = () => call('snapshot',{view:'active'}).notes.find(n => n.text.startsWith('Fix the failing build'));
+  await until(added, 'The task is added');
+  const task = added();
+  await page.locator(`[data-id="${task.id}"]`).getByText('Fix the failing build',{exact:true}).waitFor();
   assert.equal(task.text, `Fix the failing build\n![image](pinote:sha256-${stored.hash})`);
   assert.equal(images().length, 1, 'The submitted task keeps its image');
 
