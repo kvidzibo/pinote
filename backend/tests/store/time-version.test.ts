@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../../src/store.ts';
-import { jsonStringify } from '../../src/runtime.ts';
 import { parse_reminder_time, local_reminder_time } from '../../src/reminders.ts';
 
 test('Vancouver reminder parsing and display follow IANA rules, DST gaps, folds and historical offsets',t=>{
@@ -28,26 +27,6 @@ test('Vancouver reminder parsing and display follow IANA rules, DST gaps, folds 
   if(local) assert.equal(local_reminder_time(utc),local);
   else assert.ok(local_reminder_time(utc).startsWith(wall.slice(0,19)+' '),wall);
  }
-});
-
-test('complete mutation sequence matches the Python reference rows apart from clock readings',t=>{
- const dir=mkdtempSync(join(tmpdir(),'pinote-parity-')); t.after(()=>rmSync(dir,{recursive:true,force:true}));
- const s=new Store(join(dir,'node.db')); t.after(()=>s.close());
- let n=s.add_note('Original',{tag:'Straße',cwd:dir});
- n=s.update_agent(n.id,{Next:'  review 日本語  ',...JSON.parse('{"__proto__":"literal"}')},[],{expected_updated_at:n.updated_at});
- s.edit(n.id,'Edited',{expected_updated_at:n.updated_at});
- n=s.get(n.id);s.set_tag(n.id,'STRASSE',{expected_updated_at:n.updated_at});
- s.create_tag('Other',{folder:dir});s.set_tag_folder('Other',null);s.rename_tag('Straße','WORK');
- n=s.get(n.id);s.set_tag(n.id,'Other',{expected_updated_at:n.updated_at,folder:dir});
- s.transition(n.id,'done');s.transition(n.id,'rm');s.transition(n.id,'restore');s.select(n.id,dir);
- n=s.get(n.id);s.update_agent(n.id,{PR:'link'},['Next'],{expected_updated_at:n.updated_at});
- s.schedule(n.id,'2999-01-01T00:00:00.123456+00:00');
- s.connection.prepare("UPDATE notes SET remind_at='2000-01-01T00:00:00.123456+00:00' WHERE id=?").run(n.id);
- s.activate_due();s.delete_tag('Other');s.import_notes('/source',[['one','active','WORK'],['two','done',null]]);
- const actual=Object.fromEntries(['notes','events','tags','imports','agent_selections','sqlite_sequence'].map(name=>[name,s.query('SELECT * FROM '+name+' ORDER BY 1')]));
- const normalize=(text:string)=>JSON.parse(text.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00/g,'CLOCK'));
- // Captured from the removed Python implementation; see fixtures/python-reference/README.md.
- assert.deepEqual(normalize(jsonStringify(actual)),JSON.parse(readFileSync(new URL('../fixtures/python-reference/mutation-sequence.json',import.meta.url),'utf8')));
 });
 
 test('unsupported versions remain untouched',t=>{

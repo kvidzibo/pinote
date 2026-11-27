@@ -14,7 +14,7 @@ test('tag parents, one child level, tabs, checkbox continuations', () => {
     ['loose','active',null],['first','active','Work'],['next\ndetail','in_progress','Work'],['end','done',null],
   ]);
 });
-test('notification code-point limits, Python whitespace, markup escaping', () => {
+test('notification code-point limits, whitespace, markup escaping', () => {
   const notes = Array.from({length:12}, (_,i)=>({id:BigInt(i+1),text:'🐦'.repeat(200),state:'active' as const}));
   const body = render(notes);
   assert.ok(body.includes('🐦'.repeat(179)+'…'));

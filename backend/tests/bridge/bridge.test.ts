@@ -26,7 +26,7 @@ function processRequest(data: Buffer | string, args: string[] = []) {
 }
 test('handshake, help and version are side-effect free', async () => {
   const r = processRequest(JSON.stringify(request('handshake'))); assert.equal(r.status, 0); assert.equal(r.stderr, '');
-  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.30.0', protocol: 1, database: paths.database } });
+  assert.deepEqual(JSON.parse(r.stdout), { protocol: 1, ok: true, result: { version: '0.31.0', protocol: 1, database: paths.database } });
   for (const flag of ['--help', '--version']) assert.equal(processRequest('', [flag]).status, 0);
   assert.equal(existsSync(paths.data), false); assert.equal(existsSync(paths.state), false);
   assert.equal((await respond(request('handshake'), paths)).ok, true);
@@ -125,6 +125,11 @@ test('agent sets and removes handoff fields against the task revision', async ()
   const removed = await call('agent', { id: Number(id), revision: set.revision, fields: { Worktree: null, Notes: 'kept' } });
   assert.ok(removed.agentEvent > set.agentEvent);
   assert.deepEqual({ ...(await call('snapshot', { view: 'active' })).notes[0].agent_notes }, { Notes: 'kept', PRs: 'https://example.test/pulls/1\nhttps://example.test/pulls/2' });
+  // A list is saved and returned as a JSON array.
+  const listed = await call('agent', { id: Number(id), revision: removed.revision, fields: { PRs: ['https://example.test/pulls/1', 'https://example.test/pulls/2'] } });
+  assert.equal(listed.changed, true);
+  assert.deepEqual((await call('snapshot', { view: 'active' })).notes[0].agent_notes.PRs, ['https://example.test/pulls/1', 'https://example.test/pulls/2']);
+  for (const fields of [{ PRs: [] }, { PRs: ['a\nb'] }, { PRs: [1] }, { PRs: [null] }, { PRs: Array(257).fill('x') }]) assert.equal((await respond(request('agent', { id: Number(id), revision: listed.revision, fields }), paths)).error.code, 'invalid');
 });
 test('stale writes preserve history and create no tags; display and SQLite busy', async () => {
   const id = (await call('add', { text: 'task', tag: null })).id, old = target(id);
@@ -171,9 +176,9 @@ test('bad config and unsupported database IDs return bounded errors', async () =
   try { s.add('large'); s.connection.exec('DELETE FROM events; UPDATE notes SET id=9007199254740992'); } finally { s.close(); }
   assert.equal((await respond(request('snapshot', { view: 'active' }), paths)).error.code, 'internal');
 });
-test('snapshots match the Python reference for schema8 metadata, config and ordering', async () => {
-  // Captured from the removed Python bridge; see fixtures/python-reference/README.md.
-  const reference = (name: string) => readFileSync(new URL('../fixtures/python-reference/' + name, import.meta.url), 'utf8');
+test('snapshots match the reference for schema8 metadata, config and ordering', async () => {
+  // A frozen database and its expected snapshots; see fixtures/reference/README.md.
+  const reference = (name: string) => readFileSync(new URL('../fixtures/reference/' + name, import.meta.url), 'utf8');
   const config = join(process.env.XDG_CONFIG_HOME!, 'pinote'); mkdirSync(config, { recursive: true });
   writeFileSync(join(config, 'config.toml'), '[gui]\nmax_visible_notes=4\nmarkdown_preview=false');
   mkdirSync(paths.data, { recursive: true, mode: 0o700 });

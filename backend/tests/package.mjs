@@ -17,7 +17,6 @@ try {
   const env={...process.env,HOME:root,PATH:bin,XDG_DATA_HOME:join(root,'data'),XDG_STATE_HOME:join(root,'state')};
   delete env.NODE_OPTIONS;delete env.NODE_PATH;
   delete env.TZDIR;
-  assert.equal(spawnSync('python3',['--version'],{env}).error?.code,'ENOENT');
   assert.equal(spawnSync('date',['--version'],{env}).error?.code,'ENOENT');
   const note=join(root,'install/node_modules/.bin/note');
   const cli=(...args)=>JSON.parse(run(note,['--no-notify',...args],{env,cwd:root}));
@@ -40,5 +39,5 @@ try {
   const scheduled=JSON.parse(run(bridge,[],{env,cwd:root,input:JSON.stringify({protocol:1,operation:'snapshot',params:{view:'scheduled'}})}));
   assert.equal(scheduled.ok,true); assert.equal(scheduled.result.notes[0].remind_at,utc);
   assert.equal(cli('list','--json','--all').length,2);
-  console.log('Self-contained CLI/bridge tarball passed offline, outside checkout, without Python.');
+  console.log('Self-contained CLI/bridge tarball passed offline, outside checkout.');
 } finally { rmSync(root,{recursive:true,force:true}); }

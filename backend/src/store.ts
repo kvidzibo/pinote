@@ -1,21 +1,21 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { dirname, isAbsolute } from 'node:path';
 import { privateDirectory, privateFile, resolvePath, checkCancelled } from './runtime.ts';
-import { NoteError, validate_text, validate_tag, validate_folder, validate_new_folder, create_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, parseAgentJSON, validateAgentPatch, validatePiSession, validateImportEntries } from './compat.ts';
+import { NoteError, validate_text, validate_tag, validate_folder, validate_new_folder, create_folder, timestamp, caseFold, codepointCompare, codepointLength, agentJSON, agentTexts, validateAgentPatch, type AgentNotes, validatePiSession, validateImportEntries } from './compat.ts';
 import * as schema from './schema.ts';
 import { createHash } from 'node:crypto';
 import { imageHashes, imageInfo, type ImageInfo } from './images.ts';
 export { NoteError, markdown } from './compat.ts';
 export type Id = bigint;
 export type NoteState = 'active'|'in_progress'|'done'|'removed'|'scheduled';
-export interface Note { id:Id; text:string; state:NoteState; created_at:string; updated_at:string; tag:string|null; remind_at:string|null; reminder_due_at:string|null; archived_at:string|null; agent_notes:Record<string,string>; agent_event_id:bigint; pi_sessions:string[] }
+export interface Note { id:Id; text:string; state:NoteState; created_at:string; updated_at:string; tag:string|null; remind_at:string|null; reminder_due_at:string|null; archived_at:string|null; agent_notes:AgentNotes; agent_event_id:bigint; pi_sessions:string[] }
 export interface ImportSummary { notes:number; tags:number }
 type Row=Record<string,any>;
 type Revision={expected_updated_at:string};
 const live=(state:string)=>state==='active'||state==='in_progress';
 const missingTag='This tag no longer exists. Reopen Tags and try again.';
 const stale='This task changed elsewhere. Close and reopen the editor or tag menu, then try again.';
-function noteFromRow(row:Row):Note { return {tag:null,remind_at:null,reminder_due_at:null,archived_at:null,agent_event_id:0n,...row,agent_notes:parseAgentJSON(row.agent_notes),pi_sessions:JSON.parse(row.pi_sessions)} as Note; }
+function noteFromRow(row:Row):Note { return {tag:null,remind_at:null,reminder_due_at:null,archived_at:null,agent_event_id:0n,...row,agent_notes:JSON.parse(row.agent_notes),pi_sessions:JSON.parse(row.pi_sessions)} as Note; }
 
 export class Store {
   public connection:DatabaseSync;
@@ -184,7 +184,7 @@ export class Store {
   select(note_id:Id,cwd:string):Note {
     return this.transaction(()=>{ const note=this.get(note_id); if(!live(note.state)) throw new NoteError(`Note ${note_id} is ${note.state}; restore it first.`); if(note.state==='active') this.changeState(note_id,'start',note.state,'in_progress'); this.saveSelection(note_id,cwd); return this.get(note_id); });
   }
-  update_agent(note_id:Id,fields:Record<string,string>,remove:string[],options:Revision):Note {
+  update_agent(note_id:Id,fields:AgentNotes,remove:string[],options:Revision):Note {
     const {patch,deleted}=validateAgentPatch(fields,remove);
     return this.transaction(()=>{
       const note=this.get(note_id); if(!live(note.state)||note.updated_at!==options.expected_updated_at) throw new NoteError('This task changed elsewhere. Read it again before updating.');
@@ -214,7 +214,7 @@ export class Store {
     return {cursor,events};
   }
   private safeTask(id:bigint):void { if(id>9007199254740991n) throw new NoteError('Task ID exceeds the safe integer range.'); }
-  /** Task-level history: one event per committed action, with the handoff fields held just before it. */
+  /** Task-level history: one event per committed action, with the handoff fields held just before it. Lists are given in text form. */
   task_events(after:bigint|null=null,limit:number=256):{cursor:bigint;events:Row[]} {
     const {cursor,rows}=this.eventPage(after,limit), events:Row[]=[];
     const names:Record<string,string>={add:'created',edit:'edited',tag:'tagged',start:'started',done:'completed',rm:'removed',restore:'restored',schedule:'scheduled'};
@@ -222,17 +222,18 @@ export class Store {
       const event=names[r.action];
       if(!event||(r.action==='done'||r.action==='rm')&&r.state===r.previous_state) continue;
       this.safeTask(r.note_id);
-      events.push({id:r.id,taskId:r.note_id,event,fields:JSON.parse(r.previous_agent_notes??r.agent_notes??'{}')});
+      events.push({id:r.id,taskId:r.note_id,event,fields:agentTexts(JSON.parse(r.previous_agent_notes??r.agent_notes??'{}'))});
     }
     return {cursor,events};
   }
+  /** Field changes compared and reported in text form, so storing a text value as an equal list is no event. */
   field_events(after:bigint|null=null,limit:number=256):{cursor:bigint;events:Row[]} {
     const {cursor,rows}=this.eventPage(after,limit), events:Row[]=[];
     const actions=new Set(['agent','edit','tag','start','reset','done','rm','restore','schedule','remind']);
     for(const r of rows) {
       if(!actions.has(r.action)) continue;
-      const before:Record<string,string>=live(r.previous_state)?JSON.parse(r.previous_agent_notes):{};
-      const afterFields:Record<string,string>=live(r.state)?JSON.parse(r.agent_notes):{};
+      const before=agentTexts(live(r.previous_state)?JSON.parse(r.previous_agent_notes):{});
+      const afterFields=agentTexts(live(r.state)?JSON.parse(r.agent_notes):{});
       for(const key of [...new Set([...Object.keys(before),...Object.keys(afterFields)])].sort(codepointCompare)) {
         const had=Object.hasOwn(before,key),has=Object.hasOwn(afterFields,key);
         const previous=had?before[key]:null,value=has?afterFields[key]:null;

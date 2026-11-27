@@ -1,4 +1,4 @@
-// SQL preserved verbatim from the Python schema and migrations.
+// Schema and migrations as released: existing databases depend on this SQL staying verbatim.
 export const SCHEMA = [
   "CREATE TABLE notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    text TEXT NOT NULL,\n    state TEXT NOT NULL CHECK (state IN ('active', 'in_progress', 'done', 'removed')),\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n)",
   "CREATE TABLE events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_id INTEGER NOT NULL REFERENCES notes(id),\n    action TEXT NOT NULL CHECK (\n        action IN ('add', 'start', 'reset', 'done', 'rm', 'restore', 'import')\n    ),\n    previous_state TEXT,\n    state TEXT NOT NULL,\n    occurred_at TEXT NOT NULL\n)",

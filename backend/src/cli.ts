@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { Store, NoteError, type Note } from './store.ts';
-import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, pythonStrip } from './compat.ts';
+import { markdown as noteMarkdown, validate_tag, validate_text, validateAgentPatch, validatePiSession, validateImportEntries, timestamp, strip, type AgentNotes } from './compat.ts';
 import { parse_reminder_time, local_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, configureLogging, log, jsonStringify, withDisplayLock, checkCancelled, realpathUtf8, resolvePath, expandHome, checkProfileIdentity, checkedEnv, InputEncodingError, type Paths } from './runtime.ts';
 import * as markdown from './markdown.ts';
@@ -15,7 +15,7 @@ export function positive_id(value: string): bigint {
   // int() accepts signs, surrounding whitespace and digit separators.
   // Unicode Nd blocks are consecutive sets of ten decimal digits (some
   // mathematical alphabets place several sets directly next to one another).
-  const trimmed = pythonStrip(value);
+  const trimmed = strip(value);
   if (!/^[+-]?\p{Nd}(?:_?\p{Nd})*$/u.test(trimmed)) throw new ArgumentError('ID must be a positive integer');
   const ascii = [...trimmed.replaceAll('_', '')].map(char => {
     if (!/\p{Nd}/u.test(char)) return char;
@@ -134,7 +134,7 @@ function explicitTag(value: string): string {
 }
 const print = (value: string) => process.stdout.write(value + '\n');
 function parseAgentFields(value: string): unknown {
-  try { return JSON.parse(value); } catch { throw new NoteError('--set-json must contain a JSON object of label: Markdown pairs.'); }
+  try { return JSON.parse(value); } catch { throw new NoteError('--set-json must contain a JSON object of label: Markdown or list pairs.'); }
 }
 function validateCommand(args: Arguments): void {
   if (args.command === 'add') validate_text(args.text!.join(' '));
@@ -163,7 +163,7 @@ export function execute_agent(args: Arguments, store: Store): void {
   else if (action === 'select') note = store.select(args.id!, args.cwd!);
   else if (action === 'update') {
     const fields = parseAgentFields(args.set_json);
-    note = store.update_agent(args.id!, fields as Record<string, string>, args.remove, { expected_updated_at: args.expected_updated_at! });
+    note = store.update_agent(args.id!, fields as AgentNotes, args.remove, { expected_updated_at: args.expected_updated_at! });
   } else if (action === 'start' || action === 'done') {
     if (!store.transition(args.id!, action, { expected_states: new Set(['active', 'in_progress']), expected_updated_at: args.expected_updated_at!, allow_unchanged: action === 'start', pi_session_id: action === 'start' ? args.pi_session_id : undefined })) throw new NoteError('This task changed elsewhere. Read it again before acting.');
     note = store.get(args.id!);
@@ -174,7 +174,7 @@ export function execute_agent(args: Arguments, store: Store): void {
   } else note = store.get(args.id!);
   print(jsonStringify(agent_task(note)));
 }
-// Python repr's quote selection is visible in history output.
+// History output quotes text with whichever quote it does not contain, escaping the rest.
 function repr(value: string): string {
   const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
   let result = quote;
@@ -276,7 +276,7 @@ function help(args: Arguments): string {
     export: 'write active notes as Markdown to stdout\n  --all  include active/in-progress/done notes',
     schedule: 'schedule a reminder for a note\n  id\n  when  local time or ISO time, e.g. "2030-01-02 09:30"',
     reminders: 'list scheduled reminders',
-    agent: 'add/tag tasks and read/update agent fields (JSON, no desktop refresh)\n  {get,selected,select,start,update,done,add,tag,tags,image}\n  get ID\n  selected --cwd CWD\n  select ID --cwd CWD\n  start ID --expected-updated-at REVISION [--pi-session-id SESSION]\n  update ID --expected-updated-at REVISION [--set-json JSON] [--remove LABEL ...]\n  done ID --expected-updated-at REVISION\n  add --text TEXT [--tag TAG] [--cwd CWD]\n  tag ID --expected-updated-at REVISION (--tag TAG | --clear)\n  tags\n  image HASH',
+    agent: 'add/tag tasks and read/update agent fields (JSON, no desktop refresh)\n  {get,selected,select,start,update,done,add,tag,tags,image}\n  get ID\n  selected --cwd CWD\n  select ID --cwd CWD\n  start ID --expected-updated-at REVISION [--pi-session-id SESSION]\n  update ID --expected-updated-at REVISION [--set-json JSON] [--remove LABEL ...]  (JSON: label to Markdown text or a list of single-line strings)\n  done ID --expected-updated-at REVISION\n  add --text TEXT [--tag TAG] [--cwd CWD]\n  tag ID --expected-updated-at REVISION (--tag TAG | --clear)\n  tags\n  image HASH',
   };
   return `usage: note [--version] [--no-notify] COMMAND ...\n\nPinned desktop reminders with stable IDs and durable history.\n\nCommands:\n${[...COMMANDS].map(command => `  ${command}  ${descriptions[command].split('\n')[0]}`).join('\n')}\n\n${args.command}: ${descriptions[args.command]}\n\nOptions:\n  -h, --help  show this help message and exit\n  --version   show program's version number and exit\n  --no-notify skip automatic desktop refresh\n\nShortcuts: note lists active notes; note "some text" adds a note. Use note add "done" for text matching a command name.`;
 }

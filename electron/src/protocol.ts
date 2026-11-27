@@ -103,7 +103,7 @@ export const validKittyTabTitle = (value: string) => !!value.trim() && Array.fro
 export const DEFAULT_KITTY_START_PROMPT = 'is task clear?';
 export const validKittyStartPrompt = (value: string) => Array.from(value).length <= 4000 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f\p{Bidi_Control}\uD800-\uDFFF]/u.test(value);
 export const validTagBaseFolder = (value: string) => value.length <= 4096 && value.startsWith('/') && !/[\p{Cc}\p{Cs}]/u.test(value);
-/** The name the backend saves for a new tag (its validate_tag: Python strip, NFC, 64 code points); null if rejected. */
+/** The name the backend saves for a new tag (its validate_tag: strip, NFC, 64 code points); null if rejected. */
 export function savedTagName(tag: string): string | null {
   if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(tag)) return null;
   const name = tag.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, '').normalize('NFC');

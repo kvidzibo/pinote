@@ -17,9 +17,8 @@ npm --prefix backend run test:package
 ```
 
 Backend tests use temporary databases and
-[frozen Python-reference fixtures](../backend/tests/fixtures/python-reference/README.md)
-for migrations (schemas 0–8), a mutation sequence, a Python-written database,
-and bridge snapshots, without running Python.
+[frozen reference fixtures](../backend/tests/fixtures/reference/README.md)
+for migrations (schemas 0–8) and bridge snapshots.
 
 The Dunst test (`test:desktop`) needs `dunst`, `dunstify`, `dunstctl`,
 `dbus-send`, `dbus-daemon`, `xvfb-run`, and `xauth`. It starts a private D-Bus
@@ -103,8 +102,8 @@ xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron
 ## Architecture and integration
 
 - `backend/` is the only CLI and backend implementation: Node/TypeScript on
-  `node:sqlite`, bundled into self-contained ES modules. It keeps the schema and
-  history of the earlier Python implementation.
+  `node:sqlite`, bundled into self-contained ES modules. Its schema, migrations
+  and history format are frozen: existing databases depend on them.
 - Writers are serialized by an exclusive transaction on the empty SQLite file
   `display.lock`, which the OS releases on close or process death. CLI/bridge work
   runs in a worker thread so signals stay responsive during SQLite waits and
