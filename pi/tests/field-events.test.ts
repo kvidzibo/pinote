@@ -379,4 +379,8 @@ test('the tab PR status ignores newer observations without a PR state', () => {
   const failed = status('pr', '2026-01-01T00:00:00Z', { state: 'failed' });
   assert.equal(prStatus({ task, fieldStatuses: [failed, status('notes', '2026-01-02T00:00:00Z', { summary: 'Reviewed' })] }), 'failing');
   assert.equal(prStatus({ task, fieldStatuses: [failed, status('pr2', '2026-01-02T00:00:00Z', { state: 'closed' })] }), undefined, 'A newer closed state still wins');
+  const passing = Array.from({ length: 64 }, (_, index) => `https://github.com/example/repo/pull/${index + 2}`);
+  const full: any = { id: 1, agent_notes: { PRs: passing.join('\n'), PR: url } };
+  const batch = { watcherId: 'pr', field: 'PRs', value: full.agent_notes.PRs, result: { state: 'multiple', items: passing.map((item) => ({ url: item, state: 'passing' })) }, checkedAt: '2026-01-01T00:00:00Z', stale: false };
+  assert.equal(prStatus({ task: full, fieldStatuses: [batch, { ...failed, field: 'PR' }] }), 'failing', 'A full PRs field never hides the legacy PR');
 });

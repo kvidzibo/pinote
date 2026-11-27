@@ -36,9 +36,10 @@ export class PinoteUI {
   private session: PinoteSession;
   private completion: () => TaskCompletionAction;
   private kitty: KittyPane;
-  constructor(pi: ExtensionAPI, session: PinoteSession, completion = taskCompletion) {
+  /** Pass one KittyPane per Pi process so replacement UIs keep its marker state and update order. */
+  constructor(pi: ExtensionAPI, session: PinoteSession, completion = taskCompletion, kitty = new KittyPane((command, args, options) => pi.exec(command, args, options))) {
     this.pi = pi; this.session = session; this.completion = completion;
-    this.kitty = new KittyPane((command, args, options) => this.pi.exec(command, args, options));
+    this.kitty = kitty;
     session.onChange = () => {
       this.render(); this.menuChanged?.();
       // Only the interactive Pi owns its pane: child processes inherit the Kitty environment.
@@ -80,6 +81,7 @@ export class PinoteUI {
     if (this.ctx?.mode === 'tui') {
       this.ctx.ui.setWidget('pinote-remote', undefined);
       this.ctx.ui.setStatus('pinote-remote', undefined);
+      void this.kitty.clearPR(); // A replacement UI may never read a view.
     }
     this.ctx = undefined; this.repaint = () => {}; this.menuChanged?.();
   }

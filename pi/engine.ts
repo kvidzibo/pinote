@@ -200,9 +200,11 @@ const PR_STATUS_ORDER = ['failing', 'pending', 'passing', 'merged'] as const;
 /** The selected task's most urgent current PR state; closed, unchecked, stale and failed checks are ignored. */
 export function prStatus(data: Pick<Snapshot, 'task' | 'fieldStatuses'>): (typeof PR_STATUS_ORDER)[number] | undefined {
   if (!data.task) return undefined;
-  const states = new Set(parsePullRequests(pullRequestValues(data.task.agent_notes)).map((pr) => {
+  // Each field is checked separately, so its own 64-link limit applies.
+  const urls = new Set(['PRs', 'PR'].flatMap((name) => parsePullRequests(data.task!.agent_notes[name]).map((pr) => pr.url)));
+  const states = new Set([...urls].map((url) => {
     // Only a PR state (including closed) supersedes an older one; other watchers' summaries do not.
-    const { status, result } = prObservation(data, pr.url, (item) => item.state === 'closed' || Object.hasOwn(PR_STATUSES, item.state ?? ''));
+    const { status, result } = prObservation(data, url, (item) => item.state === 'closed' || Object.hasOwn(PR_STATUSES, item.state ?? ''));
     return status && !status.stale && Object.hasOwn(PR_STATUSES, result?.state ?? '') ? PR_STATUSES[result!.state as keyof typeof PR_STATUSES] : undefined;
   }));
   return PR_STATUS_ORDER.find((state) => states.has(state));

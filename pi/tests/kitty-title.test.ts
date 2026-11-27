@@ -146,6 +146,9 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
     session.view = { ...selected(16), prStatus: 'passing' }; calls.length = 0; session.onChange(); await settle();
     session.view = undefined; session.onChange(); await settle(); await ui.release();
     assert.deepEqual(marks(), [['pinote_task=16', 'pinote_pr=passing'], ['pinote_task=16', 'pinote_pr'], ['pinote_task', 'pinote_pr']], 'A lost view clears the PR status but keeps the task');
+    session.view = { ...selected(16), prStatus: 'passing' }; calls.length = 0; session.onChange(); await settle();
+    ui.detach(); await settle(); ui.attach(ctx); await ui.release();
+    assert.deepEqual(marks(), [['pinote_task=16', 'pinote_pr=passing'], ['pinote_task=16', 'pinote_pr'], ['pinote_task', 'pinote_pr']], 'Detaching for a replacement UI clears the PR status');
     assert.deepEqual(await select(7, selected(7)), [['ls'], ...move('Task 7'), title(7)], 'Reselecting the current task checks again');
     assert.deepEqual(await select(13, unselected, selected(13, '')), [['ls'], ...move('Task #13'), title(13, 'Task #13')], 'An empty title still moves');
     other = '8';
