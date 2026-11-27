@@ -264,12 +264,19 @@ Forgejo checks the current head's latest commit statuses across all pages, inclu
 Forgejo Actions jobs published as commit statuses. Failures trigger the owning
 worker, unchanged alerts are deduplicated, and merged/closed PRs stop polling.
 A mergeable PR with no reported statuses is passing ("has no checks") where the
-repository's Actions are disabled, and pending where they are enabled: CI has yet to
-report. An enabled repository whose workflows never run on PRs therefore stays
-pending, and external CI on a repository without Actions shows passing until its
-first status. Passing does not imply that CI ran, approvals were granted or branch protection was satisfied. Forgejo's boolean `mergeable=false`
-can also mean checking, an error or a draft, so it remains pending rather than
-triggering a potentially false conflict alert. GitHub conflict alerts are unchanged.
+repository's Actions are disabled. Where they are enabled, it is pending while an
+Actions run for the head commit is queued or running, or the runs API is unavailable,
+and passing once two consecutive checks find no run. External CI on a repository
+without Actions shows passing until its first status. Passing does not imply that CI
+ran, approvals were granted or branch protection was satisfied.
+
+Forgejo's API reports only a boolean `mergeable`: `false` means a conflict, a merge
+check in progress or an error, or a draft (WIP title). Pending statuses and drafts
+stay pending ("is a draft"). Otherwise the first `mergeable=false` is pending
+("checking mergeability"); if the next check on the same head still finds it, the PR
+is a red `conflict` ("not mergeable") with an alert, like a GitHub conflict. A new
+push restarts the confirmation. Two consecutive checks that both catch a slow merge
+check can still raise a brief false alert.
 Since pi-note 0.49.0, both PR watchers have a **Check interval (seconds)**
 parameter (`interval`, default 60), set separately for each in the desktop's
 Watchers settings. Values outside 10–86,400 use the nearest limit. Legacy `PR`

@@ -24,7 +24,8 @@ async function instances() {
 }
 
 function validatePR(pr) {
-  if (!object(pr) || !['open', 'closed'].includes(pr.state) || typeof pr.merged !== 'boolean') throw new Error('Invalid PR');
+  if (!object(pr) || !['open', 'closed'].includes(pr.state) || typeof pr.merged !== 'boolean'
+    || pr.draft !== undefined && typeof pr.draft !== 'boolean') throw new Error('Invalid PR');
   // Deleted source branches can leave terminal PRs without a resolvable head.
   if (!pr.merged && pr.state === 'open' && (typeof pr.mergeable !== 'boolean'
     || !object(pr.head) || typeof pr.head.sha !== 'string' || !sha.test(pr.head.sha))) throw new Error('Invalid PR');
@@ -46,13 +47,14 @@ export async function handleFieldEvent(event) {
     const trusted = await instances();
     const requests = parsed.filter((request) => matchRequest(request.url, trusted));
     if (!requests.length) return {};
-    return checkPRBatch(event, requests, (request, signal) => checkPR(matchRequest(request.url, trusted), signal), errorResult);
+    return checkPRBatch(event, requests, (request, signal) => checkPR(matchRequest(request.url, trusted),
+      event.previousResult?.items?.find((item) => item.url === request.url), signal), errorResult);
   }
   const raw = /^\[[^\]\r\n]*\]\(([^\s()]+)\)$/.exec(value)?.[1] ?? value;
   // Preserve legacy validation before loading configuration.
   try { instanceURL(raw); } catch { return {}; }
   const request = matchRequest(raw, await instances());
-  return request ? withInterval(event, await checkPR(request)) : {};
+  return request ? withInterval(event, await checkPR(request, event.previousResult)) : {};
 }
 
 function matchRequest(raw, trusted) {
@@ -66,7 +68,9 @@ function matchRequest(raw, trusted) {
   return { instance, owner, repo, number };
 }
 
-async function checkPR({ instance, owner, repo, number }, batchSignal) {
+// Forgejo's API reduces conflicts, merge-check errors and checking to mergeable=false, and Actions may not have
+// queued its runs yet. Only the same ambiguous observation on two consecutive checks is treated as final.
+async function checkPR({ instance, owner, repo, number }, previous, batchSignal) {
   const headers = { Accept: 'application/json' };
   if (instance.tokenEnv !== undefined) {
     const token = process.env[instance.tokenEnv];
@@ -133,16 +137,27 @@ async function checkPR({ instance, owner, repo, number }, batchSignal) {
     return { state: 'failed', summary: `${summary} checks failed`, display: { strikethrough: false, color: 'error' },
       notification: { key: `forgejo-pr:${fingerprint}`, message: 'PR checks failed' }, recheckAfterSeconds: 60 };
   }
-  // mergeable=false also means checking, errors or drafts: never invent a conflict alert.
-  let pending = !current.mergeable || checks.some((check) => check.status === 'pending');
-  if (!pending && !checks.length) {
-    // No statuses: Actions has yet to report where it is enabled; elsewhere nothing is awaited.
-    const repository = await request('');
-    if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
-    pending = repository.has_actions;
+  const pending = (text) => ({ state: 'pending', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'warning' }, recheckAfterSeconds: 60 });
+  const passing = (text) => ({ state: 'passing', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'success' }, recheckAfterSeconds: 60 });
+  if (checks.some((check) => check.status === 'pending')) return pending('checks pending');
+  if (current.draft) return pending('is a draft');
+  if (!current.mergeable) {
+    const fingerprint = createHash('sha256').update(JSON.stringify(['conflict', instance.url, owner, repo, number, pr.head.sha.toLowerCase()])).digest('hex');
+    const notification = { key: `forgejo-pr:${fingerprint}`, message: 'PR is not mergeable (conflict or merge check error)' };
+    // The alert key binds a confirmed conflict to this head; a new push is checked afresh.
+    if (previous?.notification?.key !== notification.key && previous?.summary !== `${summary} checking mergeability`) return pending('checking mergeability');
+    return { state: 'conflict', summary: `${summary} not mergeable`, display: { strikethrough: false, color: 'error' }, notification, recheckAfterSeconds: 60 };
   }
-  return { state: pending ? 'pending' : 'passing', summary: `${summary} ${pending ? 'checks pending' : checks.length ? 'checks passing' : 'has no checks'}`,
-    display: { strikethrough: false, color: pending ? 'warning' : 'success' }, recheckAfterSeconds: 60 };
+  if (checks.length) return passing('checks passing');
+  const repository = await request('');
+  if (!object(repository) || typeof repository.has_actions !== 'boolean') throw new Error('Invalid repository');
+  if (!repository.has_actions) return passing('has no checks');
+  // Actions publishes each queued job as a commit status; also look for runs that have yet to queue one.
+  // An unavailable or unrecognized runs API never lets a PR pass without checks.
+  const active = await request(`actions/runs?head_sha=${pr.head.sha}&status=unknown&status=waiting&status=running&status=blocked&limit=1`).catch(() => undefined);
+  if (!object(active) || !Array.isArray(active.workflow_runs) || active.workflow_runs.length) return pending('checks pending');
+  const confirmed = previous?.summary === `${summary} awaiting checks` || previous?.summary === `${summary} has no checks`;
+  return confirmed ? passing('has no checks') : pending('awaiting checks');
 }
 
 // import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.
