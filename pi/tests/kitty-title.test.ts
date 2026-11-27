@@ -130,7 +130,7 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
     await ui.release(); // Settle queued marks before asserting.
     return calls.filter((call) => call[0] !== 'set-user-vars');
   };
-  const marks = () => calls.filter((call) => call[0] === 'set-user-vars').map((call) => call[2]);
+  const marks = () => calls.filter((call) => call[0] === 'set-user-vars').map((call) => call.slice(2));
   const title = (id: number, name = `Task ${id}`) => ['set-tab-title', '--match=window_id:42', '--', name];
   // A tagged placeholder tab opens beside this one; this pane moves into it by ID, then the placeholder closes.
   const launch = (name: string) => ['launch', '--type=tab', '--location=after', '--match=window_id:42', '--var=pinote_placeholder=ID', `--tab-title=${name}`, 'sleep', '60'];
@@ -139,7 +139,16 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
   try {
     settings(true);
     assert.deepEqual(await select(7), [['ls'], ...move('Task 7'), title(7)]);
-    assert.deepEqual(marks(), ['pinote_task=7', 'pinote_task'], 'The pane records its task, and release clears it');
+    assert.deepEqual(marks(), [['pinote_task=7', 'pinote_pr'], ['pinote_task', 'pinote_pr']], 'The pane records its task, and release clears it');
+    await select(16, unselected, { ...selected(16), prStatus: 'failing' });
+    assert.deepEqual(marks(), [['pinote_task=16', 'pinote_pr=failing'], ['pinote_task', 'pinote_pr']], 'The pane records its PR status for the tab bar');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    session.view = { ...selected(16), prStatus: 'passing' }; calls.length = 0; session.onChange(); await settle();
+    session.view = undefined; session.onChange(); await settle(); await ui.release();
+    assert.deepEqual(marks(), [['pinote_task=16', 'pinote_pr=passing'], ['pinote_task=16', 'pinote_pr'], ['pinote_task', 'pinote_pr']], 'A lost view clears the PR status but keeps the task');
+    session.view = { ...selected(16), prStatus: 'passing' }; calls.length = 0; session.onChange(); await settle();
+    ui.detach(); await settle(); ui.attach(ctx); await ui.release();
+    assert.deepEqual(marks(), [['pinote_task=16', 'pinote_pr=passing'], ['pinote_task=16', 'pinote_pr'], ['pinote_task', 'pinote_pr']], 'Detaching for a replacement UI clears the PR status');
     assert.deepEqual(await select(7, selected(7)), [['ls'], ...move('Task 7'), title(7)], 'Reselecting the current task checks again');
     assert.deepEqual(await select(13, unselected, selected(13, '')), [['ls'], ...move('Task #13'), title(13, 'Task #13')], 'An empty title still moves');
     other = '8';
@@ -162,7 +171,7 @@ test('one task per Kitty tab moves a pane beside a tab showing another task, the
     timeouts = 3; calls.length = 0;
     for (let i = 0; i < 5; i++) { session.onChange(); await tick(); }
     await ui.release();
-    assert.deepEqual(marks(), ['pinote_task=12', 'pinote_task=12', 'pinote_task=12', 'pinote_task']);
+    assert.deepEqual(marks(), Array.from({ length: 3 }, () => ['pinote_task=12', 'pinote_pr']).concat([['pinote_task', 'pinote_pr']]));
     assert.equal(marker, undefined);
     // Release during an in-flight update still clears it afterwards.
     let open = () => {};

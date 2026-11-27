@@ -11,6 +11,7 @@ import { connectEngine } from './host.ts';
 import { FieldAutomation, runFieldHandler, type WatcherFailureLog } from '../field-events.ts';
 import { discoverFieldWatchers } from '../field-watchers.ts';
 import { ViewSchema } from '../extension/protocol.ts';
+import { prStatus } from '../engine.ts';
 
 const exec = promisify(execFile);
 // This end-to-end case runs many real CLI subprocesses; allow slower CI runners.
@@ -202,6 +203,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
       const links = multiple.footer!.filter((item) => item.url);
       assert.deepEqual(links.map((item) => item.url), urls, 'Legacy duplicate is displayed once');
       assert.deepEqual(links.map((item) => item.style?.color), ['success', 'error', 'warning', 'accent', 'muted', 'muted']);
+      assert.equal(multiple.prStatus, 'failing', 'The tab status shows the most urgent PR');
       assert.ok(links.every((item, index) => item.text.includes(`#${42 + index}`) && !item.style?.strikethrough));
       assert.ok(multiple.footer!.some((item) => item.text.includes('Next: Review all')), 'PRs consume only one field slot');
     }
@@ -241,6 +243,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     await setMode({ ...batchResult, items: batchResult.items.map((item) => item.notification ? { ...item, state: 'passing', notification: undefined } : item), notification: undefined });
     forceDue('PRs'); await automation.tick();
     assert.equal((await view()).footer!.find((item) => item.url === urls[1])?.style?.color, 'success');
+    assert.equal((await view()).prStatus, 'pending', 'Closed and unavailable PRs never set the tab status');
     await setMode({ state: 'failed', notification: { key: 'new-legacy-head', message: 'Fresh legacy CI failure' }, recheckAfterSeconds: 10 });
     forceDue('PR'); await automation.tick();
     assert.ok(automation.notices(task, 'session-a').some((notice) => notice.field === 'PR' && notice.message === 'Fresh legacy CI failure'), 'An older plural passing result never suppresses a newer legacy failure');
@@ -303,6 +306,7 @@ else {delete result.wait; console.log(JSON.stringify(result));}
     const edited = await view();
     assert.deepEqual(edited.footer!.filter((item) => item.url).map((item) => item.url), [urls[1], pr]);
     assert.equal(edited.footer!.find((item) => item.url === urls[1])?.style?.color, 'muted', 'Edited values never inherit stale statuses');
+    assert.equal(edited.prStatus, undefined, 'Stale statuses never set the tab status');
 
     // Valid large fields/results must not break otherwise-readable task context.
     await update(Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`Field${index}`, 'v'.repeat(900)])), ['PR', 'PRs', 'Next']);
@@ -366,4 +370,17 @@ test('idle ticks start no CLI process; a committed change is read on the next ti
     names.forEach((n, i) => { if (previous[i] === undefined) delete process.env[n]; else process.env[n] = previous[i]; });
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the tab PR status ignores newer observations without a PR state', () => {
+  const url = 'https://github.com/example/repo/pull/1';
+  const task: any = { id: 1, agent_notes: { PRs: url } };
+  const status = (watcherId: string, checkedAt: string, result: object) => ({ watcherId, field: 'PRs', value: url, result, checkedAt, stale: false });
+  const failed = status('pr', '2026-01-01T00:00:00Z', { state: 'failed' });
+  assert.equal(prStatus({ task, fieldStatuses: [failed, status('notes', '2026-01-02T00:00:00Z', { summary: 'Reviewed' })] }), 'failing');
+  assert.equal(prStatus({ task, fieldStatuses: [failed, status('pr2', '2026-01-02T00:00:00Z', { state: 'closed' })] }), undefined, 'A newer closed state still wins');
+  const passing = Array.from({ length: 64 }, (_, index) => `https://github.com/example/repo/pull/${index + 2}`);
+  const full: any = { id: 1, agent_notes: { PRs: passing.join('\n'), PR: url } };
+  const batch = { watcherId: 'pr', field: 'PRs', value: full.agent_notes.PRs, result: { state: 'multiple', items: passing.map((item) => ({ url: item, state: 'passing' })) }, checkedAt: '2026-01-01T00:00:00Z', stale: false };
+  assert.equal(prStatus({ task: full, fieldStatuses: [batch, { ...failed, field: 'PR' }] }), 'failing', 'A full PRs field never hides the legacy PR');
 });

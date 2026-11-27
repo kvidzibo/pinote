@@ -4,7 +4,7 @@ import { PinoteFailure } from './extension/client.ts';
 import { ENTRY_TYPE, SCOPE, PinoteSession, type SavedState } from './extension/session.ts';
 import { registerTools } from './extension/tools.ts';
 import { registerTaskEntries, PinoteUI, showStartupTask, taskCompletion } from './extension/ui.ts';
-import { paneCloser } from './extension/kitty.ts';
+import { KittyPane, paneCloser } from './extension/kitty.ts';
 import { registerExit } from './extension/exit.ts';
 import { clean, editorText } from './extension/protocol.ts';
 import { taskCompleted } from './extension/completion.ts';
@@ -17,6 +17,7 @@ const transfers: Map<string, SavedState> = ((globalThis as any)[key] ??= new Map
 
 export default function pinote(pi: ExtensionAPI): void {
   let session: PinoteSession | undefined, ui: PinoteUI | undefined;
+  const kitty = new KittyPane((command, args, options) => pi.exec(command, args, options));
   let file: string | undefined, watcherDispatchPending = false;
   let launchRequest = process.env.PINOTE_LAUNCH_TASK;
   delete process.env.PINOTE_LAUNCH_TASK; // Never inherit consent into another Pi process or /reload.
@@ -64,7 +65,7 @@ export default function pinote(pi: ExtensionAPI): void {
       session.onCompleted = (taskId, signal) => taskCompleted(pi.events, taskId, signal, () => {
         if (ctx.hasUI) ctx.ui.notify('Pinote: completion hook did not finish successfully. The task completion remains confirmed.', 'warning');
       });
-      ui = new PinoteUI(pi, session);
+      ui = new PinoteUI(pi, session, taskCompletion, kitty);
       ui.attach(ctx);
       file = ctx.sessionManager.getSessionFile();
       const branch = ctx.sessionManager.getBranch();
