@@ -130,8 +130,9 @@ process.stdout.write(response === undefined ? process.env.GH_RESPONSE : JSON.str
   assert.ok(!multiple.notification.message.includes('#7') && !multiple.notification.message.includes('#8'), 'Unavailable checks never trigger worker turns');
   assert.ok(multiple.notification.message.length <= 1000);
   assert.ok(multiple.notification.key.length <= 256);
-  const reordered = run(base, { field: 'PRs', value: value.split('\n').reverse().join('\n') }, false, responses).output;
+  const reordered = run(base, { field: 'PRs', value: value.split('\n').reverse().join('\n'), previousResult: multiple }, false, responses).output;
   assert.equal(reordered.notification.key, multiple.notification.key);
+  assert.equal(reordered.items.find((item: { url: string }) => item.url === prUrl(4)).state, 'passing', 'Each PR confirms no checks against its own earlier result');
   const unavailable = run(base, { field: 'PRs', value, previousResult: multiple }, false, { ...responses, '5': 'error' }).output;
   assert.equal(unavailable.notification.key, multiple.notification.key, 'Availability alone never changes the failure identity');
   assert.ok(!unavailable.notification.message.includes('#5'), 'Only currently actionable failures enter the message');
