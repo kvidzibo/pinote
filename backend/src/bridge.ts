@@ -4,15 +4,17 @@ import { caseFold } from 'unicode-case-folding';
 import { parse_reminder_time } from './reminders.ts';
 import { VERSION, discoverPaths, resolvePath, withDisplayLock, BusyError, jsonStringify, configureLogging, log, checkCancelled, checkProfileIdentity, checkedEnv, type Paths } from './runtime.ts';
 import { GuiConfig, ConfigError, guiConfigPath } from './config.ts';
+import { decodeImage, imageInfo, validImageHash } from './images.ts';
 import { ReminderModel, folder_available } from './model.ts';
 import { start_in_kitty, validate_directory, kittyAddressEnv, UncertainLaunch, tab_title, validate_tab_title, validate_start_prompt, DEFAULT_START_PROMPT } from './kitty.ts';
-export const PROTOCOL = 1, MAX_REQUEST = 1024 * 1024, MAX_ID = 9007199254740991;
+// Requests hold at most one base64 image (4 MiB of bytes).
+export const PROTOCOL = 1, MAX_REQUEST = 6 * 1024 * 1024, MAX_ID = 9007199254740991;
 export class BridgeError extends Error { readonly code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 const invalid = (): never => { throw new BridgeError('invalid', 'Invalid bridge request.'); };
 const conflict = (): never => { throw new BridgeError('conflict', 'This task changed elsewhere. Refresh before trying again.'); };
 export const safe_id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 const sources: Record<string, string[]> = { start: ['active'], reset: ['in_progress'], done: ['active', 'in_progress'], rm: ['active', 'in_progress'], restore: ['done', 'removed', 'scheduled'] };
-const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'] };
+const fields: Record<string, string[]> = { handshake: [], snapshot: ['view'], add: ['text', 'tag'], edit: ['id', 'revision', 'text'], transition: ['id', 'revision', 'state', 'action'], tag: ['id', 'revision', 'tag'], agent: ['id', 'revision', 'fields'], schedule: ['id', 'revision', 'when'], create_tag: ['name', 'folder'], rename_tag: ['name', 'newName'], delete_tag: ['name'], tag_folder: ['name', 'folder'], completions: ['ids'], kitty: ['id', 'revision', 'directory'], image_add: ['data'], image: ['hash'], image_prune: ['keep'] };
 // A bounded recursive-descent decoder retains numeric token types and rejects duplicate
 // keys before JSON.parse could silently erase either distinction.
 export function decode(data: Uint8Array): unknown {
@@ -67,6 +69,7 @@ export function validate(request: any): [string, Record<string, any>] {
   for (const [key, v] of Object.entries(p)) {
     if (key === 'id') { if (!safe_id(v)) invalid(); }
     else if (key === 'ids') { if (!Array.isArray(v) || v.length > 1000 || !v.every(safe_id)) invalid(); }
+    else if (key === 'keep') { if (!Array.isArray(v) || v.length > 10000 || !v.every(validImageHash)) invalid(); }
     else if (v === null && ['tag', 'folder', 'folderIfNew'].includes(key)) continue;
     // A null field value removes that field; labels and values are validated below.
     else if (key === 'fields') { if (!isObject(v) || Object.keys(v).length > 64 || !Object.values(v).every(value => value === null || typeof value === 'string' && !/[\uD800-\uDFFF]/u.test(value))) invalid(); }
@@ -78,6 +81,8 @@ export function validate(request: any): [string, Record<string, any>] {
   // Domain validation is also read-only: malformed input must not initialize
   // logging, the display lock, or SQLite, even on a fresh profile.
   if (op === 'add' || op === 'edit') validate_text(p.text);
+  if (op === 'image_add') imageInfo(decodeImage(p.data));
+  if (op === 'image' && !validImageHash(p.hash)) invalid();
   if (Object.hasOwn(p, 'tag')) validate_tag(p.tag);
   if (op === 'agent') validateAgentPatch(...agentPatch(p.fields));
   if (['create_tag', 'rename_tag', 'delete_tag', 'tag_folder'].includes(op)) {
@@ -110,6 +115,11 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
       kittyStartPrompt: DEFAULT_START_PROMPT } };
   }
   if (op === 'completions') return [...model.completed_ids(new Set(p.ids.map((id: number) => BigInt(id))))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  if (op === 'image') {
+    const store = new Store(paths.database, { timeout: 0.1 });
+    try { const image = store.image(p.hash); return image ? { found: true, mime: image.mime, data: Buffer.from(image.bytes).toString('base64') } : { found: false }; }
+    finally { store.close(); }
+  }
   return withDisplayLock(paths, false, async () => {
     const store = new Store(paths.database, { timeout: 0.1 });
     try {
@@ -117,6 +127,8 @@ export async function dispatch(op: string, p: Record<string, any>, paths: Paths)
       const target = id === undefined ? {} : { id }; const options = { expected_updated_at: p.revision };
       let changed: boolean;
       if (op === 'add') return { changed: true, id: store.add(p.text, { tag: p.tag }) };
+      if (op === 'image_add') { const { changed, hash, mime, width, height } = store.add_image(decodeImage(p.data)); return { changed, hash, mime, width, height }; }
+      if (op === 'image_prune') { const removed = store.prune_images(p.keep); return { changed: removed.length > 0, removed }; }
       if (op === 'transition') { changed = store.transition(id!, p.action, { ...options, expected_states: new Set([p.state]) }); if (!changed) conflict(); }
       else if (op === 'edit' || op === 'tag') { const [changed, revision] = op === 'edit' ? store.edit_with_revision(id!, p.text, options) : store.set_tag_with_revision(id!, p.tag, options); return { changed, ...target, revision }; }
       else if (op === 'agent') {

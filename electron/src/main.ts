@@ -11,7 +11,7 @@ import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
 import { getAgentDir } from '../../pi/config-path.js';
 import { TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
-import type { MenuAction, MenuRequest, TaskCompletionAction, WindowStartup } from './protocol.ts';
+import type { MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, agentFieldNames, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -174,10 +174,31 @@ async function boot() {
   })();
   const styleNonce = randomUUID();
   const assets = new Set(['index.html','renderer.js','preview.html','preview.js','style.css', ...readdirSync(join(__dirname, 'icons')).filter(f => /^[\w-]+\.svg$/.test(f)).map(f => `icons/${f}`)]);
+  // Stored images never change under their hash: keep recent ones in memory and drop pruned ones.
+  const images = new Map<string, { mime: string; bytes: Buffer }>(); let imageBytes = 0;
+  const loadImage = async (hash: string) => {
+    const cached = images.get(hash);
+    if (cached) { images.delete(hash); images.set(hash, cached); return cached; }
+    const response = await backend.call('image', { hash });
+    if (!response.ok || !(response.result as Operations['image']['result']).found) return null;
+    const { mime, data } = response.result as { mime: string; data: string };
+    const image = { mime, bytes: Buffer.from(data, 'base64') };
+    images.set(hash, image); imageBytes += image.bytes.length;
+    for (const [key, value] of images) { if (imageBytes <= 64 * 1024 * 1024) break; images.delete(key); imageBytes -= value.bytes.length; }
+    return image;
+  };
+  const forgetImages = (hashes?: string[]) => {
+    for (const hash of hashes ?? [...images.keys()]) { const image = images.get(hash); if (image) { images.delete(hash); imageBytes -= image.bytes.length; } }
+  };
   protocol.handle('pinote-app', async request => {
     const url = new URL(request.url);
     const path = decodeURIComponent(url.pathname).replace(/^\//,'');
-    if (request.method !== 'GET' || url.protocol !== 'pinote-app:' || url.hostname !== 'ui' || url.port !== '' || url.username || url.password || url.search || !assets.has(path)) return new Response('Not found', { status: 404 });
+    const image = /^images\/([0-9a-f]{64})$/.exec(path);
+    if (request.method !== 'GET' || url.protocol !== 'pinote-app:' || url.hostname !== 'ui' || url.port !== '' || url.username || url.password || url.search || !image && !assets.has(path)) return new Response('Not found', { status: 404 });
+    if (image) {
+      const found = await loadImage(image[1]).catch(() => null);
+      return found ? new Response(new Uint8Array(found.bytes), { headers: { 'Content-Type': found.mime, 'Content-Security-Policy': "default-src 'none'", 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' } }) : new Response('Not found', { status: 404 });
+    }
     const rawContent = await readFile(join(__dirname, path));
     const content = path === 'index.html' ? rawContent.toString().replace('PINOTE_STYLE_NONCE', styleNonce) : rawContent;
     const mime = path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
@@ -279,23 +300,26 @@ async function boot() {
       }
     },
     backend: async (_event, op: unknown, params: unknown) => {
-      if (op === 'handshake' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
+      if (op === 'handshake' || op === 'image' || !validParams(op,params)) return { protocol:1,ok:false,error:{code:'invalid',message:'Invalid operation.'} };
       if ((readonly || state.warning) && mutating(op)) return { protocol:1,ok:false,error:{code:'invalid',message:'Draft storage is read-only; repair it before saving tasks.'} };
       // The backend may create only the new tag's own folder inside the saved base folder.
       if (op === 'create_tag' && (params as { folderIfNew?: string | null }).folderIfNew != null) {
         const { name, folderIfNew } = params as { name: string; folderIfNew: string };
         if (state.tagBaseFolder === undefined || folderIfNew !== tagFolderPath(state.tagBaseFolder, name)) return { protocol:1,ok:false,error:{code:'invalid',message:'The new tag folder no longer matches the base folder. Choose the tag again.'} };
       }
+      // Pruning only deletes unused images: an uncertain outcome needs no reconciliation.
+      const journaled = mutating(op) && op !== 'image_prune';
       const work = tasks.then(async () => {
         if (mutating(op) && (readonly || state.warning)) return { protocol:1 as const,ok:false as const,error:{code:'invalid' as const,message:'Resolve the previous warning before making further changes.'} };
-        if (mutating(op)) { uncertain = true; await persist(); }
+        if (journaled) { uncertain = true; await persist(); }
         const response = await backend.call(op,params);
-        if (mutating(op)) {
+        if (op === 'image_prune') forgetImages(response.ok ? (response.result as Operations['image_prune']['result']).removed : undefined);
+        if (journaled) {
           uncertain = !response.ok && response.error.code === 'unknown';
           if (uncertain) state.warning = warning;
           await persist().catch(() => { state.warning = 'Task operation finished, but local draft state could not be saved. Check tasks before retrying.'; log('Cannot persist Electron state after task operation.'); });
         }
-        return mutating(op) && response.ok && state.warning ? { ...response, warning: state.warning } : response;
+        return journaled && response.ok && state.warning ? { ...response, warning: state.warning } : response;
       });
       tasks = work.then(() => {}, () => {});
       return work;

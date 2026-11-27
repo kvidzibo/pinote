@@ -1,6 +1,8 @@
 import { MarkdownEditor, compactTitle } from './markdown-editor';
+import { base64, convertImage } from './image-convert';
+import { imageHashes, imageRef } from './image-refs';
 import { undo, undoDepth } from '@codemirror/commands';
-import type { Task, Tag, Snapshot, UIState, View, Operations, Operation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
+import type { Task, Tag, Snapshot, UIState, View, Operations, RendererOperation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
 import type { TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
 import { fillPreview } from './preview-content';
@@ -12,8 +14,11 @@ const ordinary = $('ordinary'), pinned = $('pinned'), checklist = $('checklist')
 const composerEditor = new MarkdownEditor($('draft-host'), '', 'Add a task…', true, () => {
   if (closing || !stateLoaded) return;
   state.draft = composerEditor.value; draftVersion++; resizeComposer(); saveSoon();
-}, () => { void track(addTask()); });
+}, () => { void track(addTask()); }, file => storeImage(file));
 const composer = composerEditor.dom; composer.id = 'draft';
+// Images are pruned when deleted from the composer once it loses focus; undo works until then.
+composer.addEventListener('blur', () => { if (composerEditor.releaseImages()) pruneImages(); });
+$('draft-host').addEventListener('load', () => fitWindow(), true);
 const toolbar = $('toolbar'), notice = $('notice'), popupRoot = $('popups');
 new ResizeObserver(() => document.documentElement.style.setProperty('--notice-height', `${notice.hidden ? 0 : notice.getBoundingClientRect().height + 6}px`)).observe(notice);
 let state: UIState = initialState();
@@ -127,7 +132,32 @@ function persist(recovery = false): Promise<void> {
   persistChain = work.then(() => { draftSaveFailed = false; }, e => { draftSaveFailed = true; report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
   return work;
 }
-async function call<K extends Exclude<Operation, 'handshake'>>(name: K, params: Operations[K]['params'], drainEdit = false): Promise<Operations[K]['result'] | null> {
+// Images open editors, drafts or task text still use. Undo history counts as use while an editor is open.
+const liveEditors = new Set<MarkdownEditor>([composerEditor]);
+let imageAdds = 0, pruneQueued = false, pruning = false;
+async function storeImage(file: File): Promise<string | null> {
+  if (readonly || closing || !active) { report('Images cannot be added while saving is paused.'); return null; }
+  imageAdds++;
+  try {
+    const result = await call('image_add', { data: await base64(await convertImage(file)) });
+    return result ? imageRef(result.hash) : null;
+  } catch (e) { report(`Image not added: ${message(e)}`); return null; }
+  // The caller inserts the reference before a queued prune runs.
+  finally { imageAdds--; if (!imageAdds && pruneQueued) setTimeout(pruneImages); }
+}
+function pruneImages(): void {
+  if (readonly || closing || !active) return;
+  if (imageAdds || pruning) { pruneQueued = true; return; }
+  pruneQueued = false; pruning = true;
+  const keep = new Set(imageHashes(state.draft));
+  for (const editor of liveEditors) for (const hash of editor.imageHashes) keep.add(hash);
+  for (const draft of Object.values(state.edits)) for (const hash of imageHashes(draft.text)) keep.add(hash);
+  // Not a journaled task write: a failure only leaves unused images until the next prune.
+  void track(api.image_prune({ keep: [...keep] }).then(result => {
+    if (!result.ok && result.error.code !== 'busy') report(`Unused images were not deleted: ${result.error.message}`);
+  }, e => report(`Unused images were not deleted: ${message(e)}`))).finally(() => { pruning = false; if (pruneQueued) pruneImages(); });
+}
+async function call<K extends RendererOperation>(name: K, params: Operations[K]['params'], drainEdit = false): Promise<Operations[K]['result'] | null> {
   const write = name !== 'snapshot' && name !== 'completions';
   if (write && (readonly || (closing && !drainEdit) || !active)) { report('Read-only: writes are disabled until tasks and configuration load safely. Copy drafts to recover them.'); return null; }
   // Flush the submitted text before dispatch; debounce alone cannot protect fast failures.
@@ -183,6 +213,7 @@ async function addTask(): Promise<void> {
     const result = await call('add', { text, tag });
     if (!result) return;
     if (version === draftVersion) setComposerDraft(newComposerDraft());
+    if (composerEditor.releaseImages()) pruneImages();
     // Commit success is independent of the following read/cache operations.
     scrollToId = result.id;
     await refresh(); showSaved(result.id);
@@ -923,7 +954,8 @@ async function edit(task: Task): Promise<void> {
     retain(); check(); clearTimeout(timer);
     if (!paused) timer = setTimeout(() => { void track(save()); }, 650);
   };
-  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, changed, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && !dirty()) modal.close(); })); });
+  const editor = new MarkdownEditor(editorHost, draft.text, 'Task text', false, changed, () => { void track(retry().then(() => { if (!paused && !conflict && !readonly && !dirty()) modal.close(); })); }, file => storeImage(file));
+  liveEditors.add(editor);
   // Configured fields are offered even without a value; clearing a value removes the field.
   const savedFields = new Map(Object.entries(task.agent_notes)), draftFields = new Map(Object.entries(draft.fields ?? {}));
   const fieldInputs = new Map<string, HTMLTextAreaElement>();
@@ -1055,7 +1087,7 @@ async function edit(task: Task): Promise<void> {
   modal.close = () => {
     if (detached) return;
     detached = true; close(); clearTimeout(timer);
-    const done = track(flush().finally(() => { editor.destroy(); editFlushers.delete(flush); closedEdits.delete(task.id); }));
+    const done = track(flush().finally(() => { editor.destroy(); liveEditors.delete(editor); editFlushers.delete(flush); closedEdits.delete(task.id); pruneImages(); }));
     closedEdits.set(task.id, done);
   };
   modal.panel.append(warning, editorHost, fieldList, footer); modal.update = check; check(); fitWindow(); editor.view.focus();
@@ -1079,7 +1111,7 @@ function recoverDrafts(): void {
         report('This task is not active. Copy its private draft here, or restore the task from Archive first.');
       }), button('trash', 'Discard private draft', () => confirmAction('Discard draft?', `Discard the private text for task ${id}? No task will be changed.`, async () => {
         if (closedEdits.has(Number(id))) { report('This editor is still saving. Wait for it to finish before discarding local text.'); return; }
-        delete state.edits[id]; saveSoon(); draw();
+        delete state.edits[id]; saveSoon(); draw(); pruneImages();
       }), readonly));
       list.append(row);
     }
@@ -1664,6 +1696,8 @@ async function init(): Promise<void> {
   }
   resizeComposer(); renderToolbar();
   await refresh(); composerEditor.view.focus();
+  // Removes images left unreferenced, for example by a crash before their task was saved.
+  pruneImages();
   setInterval(() => { if (!document.hidden && !closing) void track(refresh()); }, 1000);
 }
 void track(init()).catch(e => report(message(e)));

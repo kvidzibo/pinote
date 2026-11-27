@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BackendApi, PinoteApi } from './protocol.ts';
 
-const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','agent','schedule','create_tag','rename_tag','delete_tag','tag_folder','completions','kitty'].map(operation => [operation, (params: unknown) => ipcRenderer.invoke('backend', operation, params)])) as BackendApi;
+const backend = Object.fromEntries(['snapshot','add','edit','transition','tag','agent','schedule','create_tag','rename_tag','delete_tag','tag_folder','completions','kitty','image_add','image_prune'].map(operation => [operation, (params: unknown) => ipcRenderer.invoke('backend', operation, params)])) as BackendApi;
 const api: PinoteApi = {
   ...backend,
   agentFields: () => ipcRenderer.invoke('agent-fields'),

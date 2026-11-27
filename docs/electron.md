@@ -109,6 +109,18 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   top level it removes the bullet prefix. Elsewhere Backspace deletes normally.
   **Shift+Tab**, or Tab on a non-bullet line, moves focus between controls.
   Compact row/archive titles omit a leading heading marker, not stored text.
+- **Images:** paste (**Ctrl+V**) or drop an image into the composer or task editor.
+  It is saved at once and shows as a picture on its own line; the text keeps a
+  short `![image](pinote:sha256-…)` reference. PNG, BMP and WebP become lossless
+  WebP, JPEG becomes WebP at quality 85 (dropping camera and GPS metadata), and
+  sides over 2560 px are scaled down. GIFs are kept as they are (up to 2560 px).
+  Stored images are limited to 4 MiB. Pasted text always pastes as text.
+  The picture behaves as one character: **Backspace** or **Delete** removes it.
+  **Undo** restores it while the editor stays open. The image is deleted from the
+  database when no task or draft uses it any more: after its editor closes, after
+  the composer loses focus or adds its task, and at start-up. Archived tasks keep
+  their images; task history does not, so older text may show **Image unavailable**.
+  The CLI, Dunst and Pi show the reference text.
 - **Menu → New task editor… → Start as Markdown** starts new drafts with `# `
   and live heading formatting. It defaults off, preserving the current behavior.
   Existing draft text is not rewritten; the preference survives restarts.
@@ -210,7 +222,7 @@ progress, deletion-mark, or keyboard-focus styling. Row action order is unchange
   moving the pointer or receiving updates does not move the open preview.
   Keyboard activation anchors to the focused button. **Escape**, **Close**, or
   losing focus dismisses only the preview; **Edit** returns to the checklist's
-  editor. Raw HTML and remote images are not loaded. Supported links
+  editor. Pasted images load from the database; raw HTML and remote images are not loaded. Supported links
   open externally only on explicit activation.
 - Editors and searchable tag pickers are scrollable in-window dialogs;
   task actions use inline toolbars and the bottom menu uses a native popup menu,

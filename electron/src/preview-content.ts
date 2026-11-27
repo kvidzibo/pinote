@@ -1,5 +1,6 @@
 import type { Task } from './protocol';
 import MarkdownIt from 'markdown-it';
+import { imageElement, imageSource } from './image-refs';
 type Token = { type: string; tag: string; nesting: number; content: string; children?: Token[]; attrs?: [string, string][] };
 const markdown = new MarkdownIt({ html: false, linkify: false, typographer: false });
 type PreviewOptions = { markdown: boolean; openLink: (url: string) => void };
@@ -22,7 +23,11 @@ function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions,
       if (token.type === 'inline') { tokens(token.children ?? []); continue; }
       if (token.type === 'text' || token.type === 'html_inline' || token.type === 'html_block') { top().append(document.createTextNode(token.content)); continue; }
       if (token.type === 'softbreak' || token.type === 'hardbreak') { top().append(el('br')); continue; }
-      if (token.type === 'image') { top().append(document.createTextNode(token.content || '(image)')); continue; }
+      if (token.type === 'image') {
+        // Only images stored by Pinote load; other sources (such as the web) stay text.
+        const source = imageSource(token.attrs?.find(a => a[0] === 'src')?.[1] ?? '');
+        top().append(source ? imageElement(source, token.content || 'image', 'note-image') : document.createTextNode(token.content || '(image)')); continue;
+      }
       if (token.type === 'code_inline') { top().append(el('code', token.content)); continue; }
       if (token.type === 'fence' || token.type === 'code_block') { const pre = el('pre'); pre.append(el('code', token.content)); top().append(pre); continue; }
       if (token.type === 'hr') { top().append(el('hr')); continue; }
@@ -42,7 +47,7 @@ function markdownDOM(text: string, parent: HTMLElement, options: PreviewOptions,
   const parsed = markdown.parse(text, {}) as Token[];
   // A normal literal first line is a heading in the preview, without changing saved text.
   const first = text.split('\n')[0] ?? '';
-  if (firstLineHeading && parsed[0]?.type === 'paragraph_open' && !/^\s*(?:[#>*+-]|\d+[.)])\s/.test(first)) {
+  if (firstLineHeading && parsed[0]?.type === 'paragraph_open' && !/^\s*(?:[#>*+-]|\d+[.)])\s/.test(first) && !/^\s*!\[/.test(first)) {
     const split = text.indexOf('\n'), heading = el('h1');
     parent.append(heading); stack.push(heading);
     const line = markdown.parse(first, {}) as Token[];

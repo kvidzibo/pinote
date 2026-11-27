@@ -9,6 +9,11 @@ const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 const id = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
 const str = (v: unknown, max = 16384) => typeof v === 'string' && v.length <= max;
 const nullable = (v: unknown) => v === null || str(v);
+/** Base64 of at most 4 MiB, the backend's stored image limit. */
+export const MAX_IMAGE_BASE64 = Math.ceil(4 * 1024 * 1024 / 3) * 4;
+export const imageHash = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+const base64 = (v: unknown, max = MAX_IMAGE_BASE64) => typeof v === 'string' && v.length > 0 && v.length <= max && v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v);
+const imageMime = (v: unknown) => ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(String(v));
 const agentFields = (v: unknown, removable = false) => record(v) && Object.keys(v).length <= 64 && Object.entries(v).every(([k, value]) => str(k, 256) && (removable && value === null || str(value)));
 const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   handshake: {}, snapshot: { view: v => ['active', 'archive', 'scheduled'].includes(String(v)) },
@@ -20,6 +25,8 @@ const specs: Record<Operation, Record<string, (v: unknown) => boolean>> = {
   completions: { ids: v => Array.isArray(v) && v.length <= 1000 && v.every(id) },
   kitty: { id, revision: str, directory: str, tabTitle: v => v === undefined || typeof v === 'string' && validKittyTabTitle(v),
     prompt: v => v === undefined || typeof v === 'string' && validKittyStartPrompt(v) },
+  image_add: { data: v => base64(v) }, image: { hash: imageHash },
+  image_prune: { keep: v => Array.isArray(v) && v.length <= 10000 && v.every(imageHash) },
 };
 export function validParams(op: unknown, value: unknown): op is Operation {
   if (typeof op !== 'string' || !Object.hasOwn(specs, op) || !record(value)) return false;
@@ -59,7 +66,7 @@ export function agentFieldNames(config: unknown): string[] {
   });
   return [...new Set(names.filter(name => name && [...name].length <= 64))];
 }
-export const mutating = (op: string) => !['handshake','snapshot','completions'].includes(op);
+export const mutating = (op: string) => !['handshake','snapshot','completions','image'].includes(op);
 function validTaskActionPreferences(value: unknown, ids: readonly string[], legacy: boolean): boolean {
   const action = (v: unknown) => typeof v === 'string' && ids.includes(v);
   const uniqueList = (v: unknown, allowed: readonly string[]): v is string[] => Array.isArray(v) && v.length <= allowed.length &&
@@ -112,6 +119,9 @@ export function validEnvelope(operation: Operation, value: unknown): boolean {
   const result = value.result;
   if (operation === 'completions') return Array.isArray(result) && result.every(id);
   if (!record(result)) return false;
+  if (operation === 'image') return result.found === false ? Object.keys(result).length === 1 : result.found === true && imageMime(result.mime) && base64(result.data);
+  if (operation === 'image_add') return typeof result.changed === 'boolean' && imageHash(result.hash) && imageMime(result.mime) && [result.width, result.height].every(n => typeof n === 'number' && Number.isSafeInteger(n) && n > 0);
+  if (operation === 'image_prune') return typeof result.changed === 'boolean' && Array.isArray(result.removed) && result.removed.every(imageHash);
   if (operation === 'handshake') return result.protocol === 1 && str(result.version,128) && typeof result.database === 'string' && result.database.startsWith('/') && !/[\p{Cs}\x00]/u.test(result.database) && str(result.database);
   if (operation === 'snapshot') {
     return Array.isArray(result.notes) && result.notes.every(validTask) && Array.isArray(result.tags) && result.tags.every(tag => record(tag) && str(tag.name,256) && nullable(tag.folder) && (tag.available === undefined || typeof tag.available === 'boolean')) && record(result.config) && typeof result.config.maxVisibleNotes === 'number' && Number.isSafeInteger(result.config.maxVisibleNotes) && result.config.maxVisibleNotes > 0 && typeof result.config.markdownPreview === 'boolean';
