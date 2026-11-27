@@ -73,23 +73,26 @@ const images = StateField.define<DecorationSet>({
   update: (value, tr) => tr.docChanged ? imageDecorations(tr.state.doc) : value,
   provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field))],
 });
-/** Inserts an image reference on its own line in place of a range; returns the position to continue from. */
-export function insertImage(view: EditorView, ref: string, { from, to }: { from: number; to: number } = view.state.selection.main): number {
-  const line = view.state.doc.lineAt(from), main = view.state.selection.main;
-  // An empty list item gives its line to the image and continues on the next line.
-  if (from === to && /^[ \t]*[-*+](?:[ \t]+\[[ xX]\])?[ \t]*$/.test(line.text)) {
-    const insert = `${ref}\n${line.text.trimEnd().replace(/\[[xX]\]$/, '[ ]')} `, end = line.from + insert.length;
-    const follow = main.empty && main.from === from;
-    view.dispatch({ changes: { from: line.from, to: line.to, insert }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });
-    return end;
+// An empty list item: only a bullet or task marker.
+const EMPTY_ITEM = /^[ \t]*[-*+](?:[ \t]+\[[ xX]\])?[ \t]*$/;
+type Range = { from: number; to: number };
+/** Inserts an image reference on its own line in place of a range; returns the range the next image replaces. */
+function insertImage(view: EditorView, ref: string, { from, to }: Range): Range {
+  const { state } = view, main = state.selection.main, marker = state.sliceDoc(from, to);
+  // An empty list item gives its line to the image and continues below it, before anything typed since.
+  if (from === state.doc.lineAt(from).from && EMPTY_ITEM.test(marker)) {
+    const insert = `${ref}\n${marker.trimEnd().replace(/\[[xX]\]$/, '[ ]')} `, end = from + insert.length;
+    const follow = main.empty && main.from >= from && main.from <= to;
+    view.dispatch({ changes: { from, to, insert }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });
+    return { from: from + ref.length + 1, to: end };
   }
-  const before = view.state.sliceDoc(view.state.doc.lineAt(from).from, from).trim() ? '\n' : '';
-  const after = view.state.sliceDoc(to, view.state.doc.lineAt(to).to).trim() ? '\n' : '';
+  const before = state.sliceDoc(state.doc.lineAt(from).from, from).trim() ? '\n' : '';
+  const after = state.sliceDoc(to, state.doc.lineAt(to).to).trim() ? '\n' : '';
   const end = from + before.length + ref.length;
   // The cursor follows the image unless it moved elsewhere while the image was stored.
   const follow = main.from === from && main.to === to;
   view.dispatch({ changes: { from, to, insert: before + ref + after }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });
-  return end;
+  return { from: end, to: end };
 }
 
 const style = HighlightStyle.define([
@@ -107,7 +110,7 @@ export class MarkdownEditor {
   private images = new Set<string>();
   // Pastes still being stored, and the ranges they will replace (mapped through later edits).
   private pasting = new Set<Promise<void>>();
-  private targets = new Set<{ from: number; to: number }>();
+  private targets = new Set<Range>();
   constructor(parent: HTMLElement, text: string, label: string, composer: boolean, changed: () => void, submit: () => void,
     storeImage?: (file: File) => Promise<string | null>) {
     for (const hash of imageHashes(text)) this.images.add(hash);
@@ -117,14 +120,16 @@ export class MarkdownEditor {
       if (!storeImage || !files.length || data!.getData('text/plain').trim()) return false;
       event.preventDefault();
       if (view.state.readOnly) return true;
-      const target = { from: view.state.selection.main.from, to: view.state.selection.main.to };
+      const main = view.state.selection.main, line = view.state.doc.lineAt(main.from);
+      // A cursor in an empty list item stands for the whole item.
+      const target = main.empty && EMPTY_ITEM.test(line.text) ? { from: line.from, to: line.to } : { from: main.from, to: main.to };
       this.targets.add(target);
       // Every file of the paste is accepted now; insertion keeps their order.
       const stored = files.map(file => storeImage(file));
       const work: Promise<void> = (async () => {
         for (const pending of stored) {
           const ref = await pending;
-          if (ref && !this.destroyed && !view.state.readOnly) target.from = target.to = insertImage(view, ref, target);
+          if (ref && !this.destroyed && !view.state.readOnly) Object.assign(target, insertImage(view, ref, target));
         }
       })().finally(() => { this.targets.delete(target); this.pasting.delete(work); });
       this.pasting.add(work);

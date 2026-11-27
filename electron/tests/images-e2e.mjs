@@ -183,7 +183,8 @@ try {
   assert.equal(submitted().text, `Submitted while storing\n![image](pinote:sha256-${images()[0].hash})`);
   // An image pasted into an empty bullet takes its line; the bullet continues below.
   await copy(); await composer.click(); await page.keyboard.type('# Bullets'); await page.keyboard.press('Shift+Enter');
-  await page.keyboard.press('Control+V'); await thumbnail.waitFor(); await page.keyboard.type('after');
+  // Text typed while the image is stored stays in the continued bullet.
+  await page.keyboard.press('Control+V'); await page.keyboard.type('after'); await thumbnail.waitFor();
   await page.screenshot({ path:join(root,'bullet-paste.png') });
   await page.keyboard.press('Enter');
   const bullets = () => call('snapshot',{view:'active'}).notes.find(n => n.text.startsWith('# Bullets'));
