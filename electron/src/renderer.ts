@@ -135,9 +135,9 @@ function persist(recovery = false): Promise<void> {
 }
 // Images open editors, drafts or task text still use. Undo history counts as use while an editor is open.
 const liveEditors = new Set<MarkdownEditor>([composerEditor]);
-let imageAdds = 0, pruneQueued = false, pruning = false;
+let imageAdds = 0, pruneQueued = false, pruning = false, closeRequested = false;
 async function storeImage(file: File): Promise<string | null> {
-  if (readonly || closing || !active) { report('Images cannot be added while saving is paused.'); return null; }
+  if (readonly || closing || closeRequested || !active) { report('Images cannot be added while saving is paused or Pinote is closing.'); return null; }
   imageAdds++;
   try {
     const result = await call('image_add', { data: await base64(await convertImage(file)) });
@@ -153,7 +153,9 @@ async function pruneImages(): Promise<void> {
   try {
     // Save the drafts that dropped a reference first; until then the saved draft keeps its images.
     if (statePending || draftSaveFailed) { try { await persist(); } catch { return; } }
-    if (imageAdds || readonly || closing) { pruneQueued = imageAdds > 0; return; }
+    await persistChain;
+    if (draftSaveFailed || readonly || closing) return;
+    if (imageAdds || statePending) { pruneQueued = true; return; }
     const keep = new Set(imageHashes(state.draft));
     for (const editor of liveEditors) for (const hash of editor.imageHashes) keep.add(hash);
     for (const draft of Object.values(state.edits)) for (const hash of imageHashes(draft.text)) keep.add(hash);
@@ -1671,7 +1673,6 @@ function setClosing(value: boolean): void {
   checklist.inert = $('composer').inert = popupRoot.inert = notice.inert = value;
   composerEditor.readOnly = readonly || value; updateEditors();
 }
-let closeRequested = false;
 api.onCloseRequested(() => {
   if (closing || closeRequested) return;
   closeRequested = true;

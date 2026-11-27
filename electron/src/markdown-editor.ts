@@ -145,7 +145,8 @@ export class MarkdownEditor {
         if (!update.docChanged) return;
         // Text typed over a pending paste's selection stays; the image then goes after it.
         for (const target of this.targets) {
-          const replaced = target.from < target.to && !!update.changes.touchesRange(target.from, target.to);
+          let replaced = false;
+          update.changes.iterChangedRanges((from, to) => { if (from < target.to && to > target.from) replaced = true; });
           target.from = update.changes.mapPos(replaced ? target.to : target.from, 1);
           target.to = replaced ? target.from : Math.max(target.from, update.changes.mapPos(target.to, -1));
         }
