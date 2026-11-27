@@ -206,6 +206,8 @@ try {
   // A change made elsewhere is not adopted: after a tab that read it saves, the older draft is still refused.
   await removed.check();
   await writeFile(settingsFile,`${await readFile(settingsFile,'utf8')}\n`);
+  const refused = status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true});
+  await save.click(); await refused.waitFor();
   await page.locator('#settings-tab-fields').click();
   const fields = page.locator('#settings-pane-fields'), fieldSave = fields.getByRole('button',{name:'Save field settings',exact:true});
   await fields.getByRole('textbox',{name:'New field name',exact:true}).fill('Owner'); await page.keyboard.press('Enter');
@@ -213,8 +215,8 @@ try {
   await page.locator('#settings-tab-watchers').click();
   await until(async()=>(await dialog.locator('#watcher-field-names option').evaluateAll(nodes=>nodes.map(node=>node.value))).includes('Owner'),'A field saved in Fields is suggested');
   assert.equal(await removed.isChecked(),true,'The draft survives the refreshed suggestions');
-  await save.click();
-  await status.getByText('Pi-note configuration changed while settings were open. Reopen settings before saving.',{exact:true}).waitFor();
+  assert.equal(await refused.isVisible(),true,'The refusal stays shown');
+  await save.click(); await page.waitForTimeout(300); await refused.waitFor();
   await page.keyboard.press('Escape'); await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click(); await dialog.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);
   console.log(process.env.PINOTE_E2E_KEEP ? `Watchers e2e passed; screenshots in ${root}` : 'Watchers e2e passed');

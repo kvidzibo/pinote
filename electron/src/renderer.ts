@@ -1741,7 +1741,7 @@ function configureWatchers(modal: Pane): void {
   list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Watchers');
   const footer = el('div', undefined, 'watcher-footer'), status = el('p', 'Loading watchers…', 'tag-hint'); status.setAttribute('role', 'status');
   let settings: WatcherSettings | undefined, draft: Watcher[] = [], selected: string | undefined, busy = false, note = '', error = '';
-  let refreshEditor = () => {};
+  let refreshEditor = () => {}, suggestFields = () => {};
   const empty = (value: WatcherValue | undefined) => value === undefined || value === '' || Array.isArray(value) && !value.length;
   // Rows left blank in a list are not saved.
   const entry = (w: Watcher): WatcherEntry => ({ path: w.path, enabled: w.enabled, appEvents: w.appEvents, taskEvents: w.taskEvents, fieldEvents: w.fieldEvents, fields: w.fields,
@@ -1763,10 +1763,10 @@ function configureWatchers(modal: Pane): void {
     } catch (error) { settings = undefined; draft = []; note = `Could not load watchers: ${ipcMessage(error)}`; }
     draw();
   };
-  // Fields may have changed the names suggested here; the draft is untouched.
+  // Fields may have changed the names suggested here; nothing else is redrawn or taken from that read.
   modal.rebase = (from, to) => {
     if (settings?.raw === from) settings.raw = to;
-    void api.watcherSettings().then(fresh => { if (!settings) return; settings.fieldNames = fresh.fieldNames; if (!busy) draw(); }, () => undefined);
+    void api.watcherSettings().then(fresh => { if (!settings) return; settings.fieldNames = fresh.fieldNames; suggestFields(); }, () => undefined);
   };
   const add = button('add', 'Add watcher script…', async () => {
     if (!settings || busy) return;
@@ -1853,7 +1853,7 @@ function configureWatchers(modal: Pane): void {
     return box;
   };
   const drawEditor = (w?: Watcher) => {
-    editor.replaceChildren(); refreshEditor = () => {};
+    editor.replaceChildren(); refreshEditor = suggestFields = () => {};
     if (!w) { editor.append(el('p', settings ? 'Select a watcher, or add a script with +.' : '', 'empty')); return; }
     const issue = el('p', undefined, 'watcher-problem'), toggle = el('label', undefined, 'setting-toggle'), enabled = el('input');
     enabled.type = 'checkbox'; toggle.append(enabled, el('span', 'Enabled while Pinote is open'));
@@ -1864,7 +1864,8 @@ function configureWatchers(modal: Pane): void {
     };
     const chips = el('div', undefined, 'watcher-chips'), input = el('input'), options = el('datalist');
     options.id = 'watcher-field-names'; input.setAttribute('list', options.id); input.placeholder = 'Add field…'; input.setAttribute('aria-label', 'Add field');
-    for (const name of settings?.fieldNames ?? []) if (!w.fields.includes(name)) { const option = el('option'); option.value = name; options.append(option); }
+    suggestFields = () => { options.replaceChildren(); for (const name of settings?.fieldNames ?? []) if (!w.fields.includes(name)) { const option = el('option'); option.value = name; options.append(option); } };
+    suggestFields();
     const addField = () => {
       const name = input.value.normalize('NFC').trim();
       if (!name || name.length > 128 || w.fields.length >= 64) return;
