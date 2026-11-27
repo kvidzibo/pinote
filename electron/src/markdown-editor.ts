@@ -73,11 +73,19 @@ const images = StateField.define<DecorationSet>({
   update: (value, tr) => tr.docChanged ? imageDecorations(tr.state.doc) : value,
   provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field))],
 });
-/** Inserts an image reference on its own line in place of a range; returns the position after it. */
+/** Inserts an image reference on its own line in place of a range; returns the position to continue from. */
 export function insertImage(view: EditorView, ref: string, { from, to }: { from: number; to: number } = view.state.selection.main): number {
+  const line = view.state.doc.lineAt(from), main = view.state.selection.main;
+  // An empty list item gives its line to the image and continues on the next line.
+  if (from === to && /^[ \t]*[-*+](?:[ \t]+\[[ xX]\])?[ \t]*$/.test(line.text)) {
+    const insert = `${ref}\n${line.text.trimEnd().replace(/\[[xX]\]$/, '[ ]')} `, end = line.from + insert.length;
+    const follow = main.empty && main.from === from;
+    view.dispatch({ changes: { from: line.from, to: line.to, insert }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });
+    return end;
+  }
   const before = view.state.sliceDoc(view.state.doc.lineAt(from).from, from).trim() ? '\n' : '';
   const after = view.state.sliceDoc(to, view.state.doc.lineAt(to).to).trim() ? '\n' : '';
-  const end = from + before.length + ref.length, main = view.state.selection.main;
+  const end = from + before.length + ref.length;
   // The cursor follows the image unless it moved elsewhere while the image was stored.
   const follow = main.from === from && main.to === to;
   view.dispatch({ changes: { from, to, insert: before + ref + after }, ...(follow ? { selection: { anchor: end } } : {}), scrollIntoView: follow, userEvent: 'input.paste' });

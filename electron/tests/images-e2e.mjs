@@ -181,6 +181,14 @@ try {
   await until(submitted, 'The task is added once its image is stored');
   assert.equal(images().length, 1);
   assert.equal(submitted().text, `Submitted while storing\n![image](pinote:sha256-${images()[0].hash})`);
+  // An image pasted into an empty bullet takes its line; the bullet continues below.
+  await copy(); await composer.click(); await page.keyboard.type('# Bullets'); await page.keyboard.press('Shift+Enter');
+  await page.keyboard.press('Control+V'); await thumbnail.waitFor(); await page.keyboard.type('after');
+  await page.screenshot({ path:join(root,'bullet-paste.png') });
+  await page.keyboard.press('Enter');
+  const bullets = () => call('snapshot',{view:'active'}).notes.find(n => n.text.startsWith('# Bullets'));
+  await until(bullets, 'The bullet task is added');
+  assert.equal(bullets().text, `# Bullets\n![image](pinote:sha256-${images()[0].hash})\n- after`);
 
   // Opening a missing image in the editor shows a placeholder without changing the saved reference.
   const missingText = call('snapshot',{view:'active'}).notes.find(n => n.id === missing).text;
