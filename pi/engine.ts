@@ -656,7 +656,9 @@ return {
     } else if (name === 'get_current') result = await selected(state, signal);
     else if (name === 'get_image') {
       const args = z.object({ hash: z.string().regex(/^[0-9a-f]{64}$/) }).strict().parse(input);
-      result = JSON.parse(await note(['agent', 'image', args.hash], signal));
+      // The hash is already valid, so a usage error (exit 2) means a note CLI before 0.30.0, which is otherwise still usable.
+      try { result = JSON.parse(await note(['agent', 'image', args.hash], signal)); }
+      catch (error) { if ((error as { code?: unknown }).code !== 2) throw error; result = { unsupported: true }; }
     }
     else if (name === 'fields') {
       const config = settings().config;

@@ -1,6 +1,6 @@
 import { Type, type TSchema } from 'typebox';
 import { proposalTitleOptions, proposalDescriptionOptions, proposalText } from '../proposal.ts';
-import { resizeImage, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { formatDimensionNote, resizeImage, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { PinoteSession } from './session.ts';
 
 const id = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
@@ -22,11 +22,12 @@ export const toolDefinitions = [
 
 /** Scaled down like Pi's own image reads, so a large paste still fits the model's limits. */
 async function imageContent(image: unknown): Promise<({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]> {
-  const { mime, data } = (image ?? {}) as { mime?: unknown; data?: unknown };
+  const { mime, data, unsupported } = (image ?? {}) as { mime?: unknown; data?: unknown; unsupported?: unknown };
+  if (unsupported) return [{ type: 'text', text: 'Viewing task images requires note 0.30.0+.' }];
   if (typeof mime !== 'string' || typeof data !== 'string') return [{ type: 'text', text: 'Image not found: it was deleted or never stored in this database.' }];
   const resized = await resizeImage(Buffer.from(data, 'base64'), mime);
   if (!resized) return [{ type: 'text', text: 'The image could not be prepared for viewing.' }];
-  return [{ type: 'text', text: `Task image [${resized.mimeType}, ${resized.originalWidth}×${resized.originalHeight}]` }, { type: 'image', data: resized.data, mimeType: resized.mimeType }];
+  return [{ type: 'text', text: [`Task image [${resized.mimeType}]`, formatDimensionNote(resized)].filter(Boolean).join('\n') }, { type: 'image', data: resized.data, mimeType: resized.mimeType }];
 }
 
 export function registerTools(pi: ExtensionAPI, session: () => PinoteSession): void {

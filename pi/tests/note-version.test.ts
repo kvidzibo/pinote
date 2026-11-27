@@ -40,3 +40,21 @@ console.log(args[0] === '--version' ? ${reported} : '[]');
   for (let call = 0; call < 2; call++) assert.equal((await tags()).content[0].text, '[]');
   assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n'), ['--version', '--no-notify agent tags', '--version', '--no-notify agent tags']);
 });
+
+test('a note without image support reports that and keeps working', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'pinote-version-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const command = join(dir, 'note');
+  await writeFile(command, `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args.includes('image')) { console.error('usage'); process.exit(2); }
+console.log(args[0] === '--version' ? 'pinote 0.29.0' : '[]');
+`, { mode: 0o700 });
+  Object.assign(process.env, { PINOTE_NOTE_COMMAND: command, PI_CODING_AGENT_DIR: dir, XDG_DATA_HOME: dir, XDG_STATE_HOME: dir });
+  const client = connectEngine();
+  t.after(() => client.close());
+  const call = (name: string, args: unknown) => client.callTool({ name, arguments: args, _meta: { 'native-ui/context': { conversationId: 'conversation', state: {} } } });
+  assert.deepEqual(await call('get_image', { hash: 'a'.repeat(64) }), { content: [{ type: 'text', text: '{"unsupported":true}' }] });
+  assert.equal((await call('get_image', { hash: 'nope' })).isError, true);
+  assert.equal((await call('tags', {})).content[0].text, '[]');
+});
