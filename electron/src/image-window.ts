@@ -11,10 +11,10 @@ const extensions: Record<string, string> = { 'image/webp': 'webp', 'image/gif': 
 export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promise<{ mime: string; bytes: Buffer } | null>, view: () => ImageView) {
   let current: BrowserWindow | undefined, returning = 0;
   // The system viewer reads private temporary copies, removed when Pinote quits.
-  let folder: string | undefined;
+  let folder: Promise<string> | undefined, created: string | undefined;
   const close = () => current?.destroy();
   owner.on('closed', close); owner.on('hide', close); owner.on('minimize', close); owner.on('close', close);
-  app.once('quit', () => { if (folder) try { rmSync(folder, { recursive: true, force: true }); } catch { /* Left for the system's temporary-file cleanup. */ } });
+  app.once('quit', () => { if (created) try { rmSync(created, { recursive: true, force: true }); } catch { /* Left for the system's temporary-file cleanup. */ } });
   return {
     /** True while the image window is open or focus is returning from it. */
     isOpen: () => !!current || returning > 0,
@@ -26,8 +26,9 @@ export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promis
       const image = await load(hash), extension = image && extensions[image.mime];
       if (!image || !extension) throw new Error('This image was deleted or cannot be loaded.');
       if (mode === 'system') {
-        folder ??= await mkdtemp(join(tmpdir(), 'pinote-images-'));
-        const path = join(folder, `${hash}.${extension}`);
+        // Shared by overlapping requests, so quitting removes every copy.
+        folder ??= mkdtemp(join(tmpdir(), 'pinote-images-')).then(path => created = path, error => { folder = undefined; throw error; });
+        const path = join(await folder, `${hash}.${extension}`);
         await writeFile(path, image.bytes, { mode: 0o600 });
         const error = await shell.openPath(path);
         if (error) throw new Error(`Cannot open the system image viewer: ${error}`);
@@ -49,11 +50,16 @@ export function imageViewer(owner: BrowserWindow, load: (hash: string) => Promis
       popup.on('closed', () => {
         if (current === popup) current = undefined;
         if (from.isDestroyed()) return;
-        // Focus went elsewhere: a task preview closes as it does on losing focus.
-        if (left) { if (from !== owner) from.destroy(); return; }
-        // Dismissed here: back to the asking window, after the window manager has focused one of its own choice.
+        if (from === owner) { if (!left) from.focus(); return; }
+        // Opened from a task preview, which closes once focus has left it for anything but this window.
+        const settled = () => { if (!from.isDestroyed() && !from.isFocused()) from.destroy(); };
+        // Focus went elsewhere: the preview stays only if that was the preview itself.
+        if (left) { setTimeout(settled, 100); return; }
+        // Dismissed here: the window manager focuses the checklist first, then focus returns to the preview.
         returning++;
-        setTimeout(() => { returning--; if (!from.isDestroyed()) from.focus(); }, 100);
+        const back = (focused: boolean) => { clearTimeout(timer); owner.off('focus', handBack); returning--; if (focused && !from.isDestroyed()) from.focus(); else settled(); };
+        const handBack = () => back(true), timer = setTimeout(() => back(false), 100);
+        owner.once('focus', handBack);
       });
       try {
         await popup.loadURL(`pinote-app://ui/image.html#${hash}`);

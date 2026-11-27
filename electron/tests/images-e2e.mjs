@@ -98,13 +98,24 @@ try {
   await viewer.waitForTimeout(200);
   await viewer.screenshot({ path:join(root,'image-window.png') });
   const viewerClosed = viewer.waitForEvent('close'); await viewer.keyboard.press('Escape').catch(() => {}); await viewerClosed;
-  assert.ok(await windowBounds('pinote-app://ui/preview.html'), 'The preview stays open under the image window');
+  await page.waitForTimeout(300);
+  assert.equal(await app.evaluate(({BrowserWindow}) => BrowserWindow.getFocusedWindow()?.webContents.getURL()), 'pinote-app://ui/preview.html', 'Closing the image returns to the still-open preview');
+  // Selecting the preview under the image window closes only the image.
+  const again = app.waitForEvent('window');
+  await shown.click();
+  const second = await again; await until(() => windowBounds('pinote-app://ui/image.html').then(b => b?.width === expected.width), 'The image window opens again');
+  const secondClosed = second.waitForEvent('close');
+  await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL() === 'pinote-app://ui/preview.html').focus());
+  await secondClosed; await page.waitForTimeout(300);
+  assert.ok(await windowBounds('pinote-app://ui/preview.html'), 'Selecting the preview keeps it open');
   // "This window" shows the image over the preview; Escape closes only the image.
   await page.evaluate(() => window.pinote.saveWindowSettings({}, 'overlay'));
   await shown.click();
   const overPreview = preview.getByRole('dialog',{name:'Image',exact:true});
   await overPreview.locator('img').waitFor();
   await preview.screenshot({ path:join(root,'image-overlay-preview.png') });
+  await preview.keyboard.press('Shift+Tab');
+  assert.equal(await overPreview.evaluate(node => node === document.activeElement), true, 'Tab stays on the image');
   await preview.keyboard.press('Escape');
   await overPreview.waitFor({ state:'detached' });
   assert.ok(await windowBounds('pinote-app://ui/preview.html'), 'Escape closes the image, not the preview');

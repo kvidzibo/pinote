@@ -6,7 +6,12 @@ function showOverlay(src: string, alt: string): void {
   overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-label', 'Image');
   image.src = src; image.alt = alt; image.draggable = false;
   // Capturing on the window: Escape closes only the image, not the dialog or window under it.
-  const key = (event: KeyboardEvent) => { if (event.key !== 'Escape') return; event.preventDefault(); event.stopImmediatePropagation(); close(); };
+  const key = (event: KeyboardEvent) => {
+    // Tab stays on the image: the controls under it are covered.
+    if (event.key !== 'Escape' && event.key !== 'Tab') return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (event.key === 'Escape') close();
+  };
   const close = () => { window.removeEventListener('keydown', key, true); overlay.remove(); if (prior?.isConnected) prior.focus(); };
   overlay.addEventListener('click', event => { event.stopPropagation(); close(); });
   window.addEventListener('keydown', key, true);
