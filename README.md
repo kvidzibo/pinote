@@ -2,16 +2,12 @@
 
 Pinned desktop reminders with a small `note` CLI, stable IDs, and durable history.
 Linux/i3 first, with Dunst notifications and an Electron desktop frontend for
-editing, tags, progress, scheduled reminders, and archived tasks. Electron and
-the shared CLI/backend use Node.js. Electron runs as a separate process, not a service.
-
-## See it in action
+editing, tags, progress, scheduled reminders, and archived tasks.
 
 ![Pinote Electron checklist: rows begin with Start, or an amber Complete checkmark for the two in-progress tasks, followed by tag, task title, Preview and Actions buttons; in-progress tasks sit above the add-task input and the tag, filter, collapse, move and settings toolbar.](docs/images/electron-checklist.png)
 
-*Electron on Linux/i3 with sample tasks, all tags shown, and the default row
-actions. In-progress tasks sit above the composer; the blue dot on an eye marks
-an unread agent update. [Install and controls](docs/electron.md).*
+*In-progress tasks sit above the composer; the blue dot on an eye marks an unread
+agent update.*
 
 <details>
 <summary>Inline task actions and the task editor</summary>
@@ -26,9 +22,6 @@ an unread agent update. [Install and controls](docs/electron.md).*
 
 </details>
 
-**Desktop workflow:** capture → start → edit → complete. Completed tasks remain
-recoverable from Archive.
-
 ## Install
 
 Requires **Node.js 22.19+** and npm. From a checkout:
@@ -37,25 +30,21 @@ Requires **Node.js 22.19+** and npm. From a checkout:
 npm --prefix backend ci --ignore-scripts
 npm --prefix backend run build
 ./backend/bin/note --help
-# Optional: install the built CLI on PATH:
-npm install -g ./backend
+npm install -g ./backend   # optional: put `note` on PATH
 ```
 
-Keep npm's global bin directory on `PATH`, or use `./backend/bin/note` directly.
 Dunst (`dunstify`), a graphical session, and session D-Bus are needed only for
-notifications; terminal commands work without Dunst. Installation never changes
-your shell, desktop configuration, or existing reminders.
+notifications. Installation never changes your shell, desktop configuration, or
+existing reminders.
 
-For existing installations, see the [CLI upgrade guide](docs/usage.md#upgrading-for-scheduled-reminders).
-
-### Electron desktop frontend
-
-Electron uses the Node backend and the existing task database, with no Python
-requirement or data conversion. Installing or building Electron does not change
-desktop startup or configuration. Requires Node.js 22.19+. See
-[Electron installation and limitations](docs/electron.md).
-Its add-task input and task editor style Markdown source, assist title/bullet
-newlines, and accept pasted images. Only Linux/X11/i3 is a validation target.
+- **Electron:** see [installation, controls and limitations](docs/electron.md).
+  It runs as a separate process, not a service, on the same task database. Only
+  Linux/X11/i3 is a validation target.
+- **Pi:** `pi install npm:pi-note`, then open **`/pinote`**. The
+  [pi-note extension](pi/README.md) adds task menus, footer status, suggestions
+  and handoff fields through the `note` CLI; it needs Pi 1.4.0+ and `note` on
+  `PATH`. Completing a task from Pi closes Pi by default and never runs Git
+  commands. Former HTTP-service users: follow the [migration steps](pi/README.md#migration).
 
 ## Use
 
@@ -73,70 +62,34 @@ note history 3                          # inspect retained history
 note --no-notify "GUI-only reminder"     # save without refreshing Dunst
 ```
 
-See [Electron controls](docs/electron.md#controls) for desktop actions and row
-settings, or the [CLI and data guide](docs/usage.md) for full commands, Markdown
-import/export, and scheduling rules.
-
-### Pi integration
-
-The [pi-note extension](pi/README.md) gives each Pi session native task menus,
-footer status, suggestions and fresh selected-task context. It reads and writes
-the local notes through the `note` CLI; no service, token or network listener is
-involved. Tasks, tags and Markdown handoff fields are shared with the desktop and
-other sessions, while task selection remains conversation-specific.
-
-Install it with `pi install npm:pi-note` or `pi install ./pi`, then open **`/pinote`**.
-Completing a task from Pi closes Pi by default, so a **Start in Kitty…** tab
-closes too; Electron's **Menu → Kitty…** can keep Pi open or also close its pane.
-Completion never runs Git commands.
-
-Requires Pi 1.4.0+, Node.js 22.19+ and the Node `note` CLI on PATH. Pinote
-Electron runs optional [field watchers](pi/FIELD_EVENTS.md) while it is open.
-Users of the former HTTP service should follow the
-[migration steps](pi/README.md#migration).
+See the [CLI and data guide](docs/usage.md) for all commands, Markdown
+import/export, and scheduling rules, and [Electron controls](docs/electron.md#controls)
+for desktop actions.
 
 ## Important constraints
 
 - **Reminders are not wake-up alarms.** Due tasks return while the GUI is open,
   when it next opens/resumes, or when a `note` command runs. There is no timer
   service or automatic Dunst notification. GUI changes do not refresh Dunst.
-- IDs and history are retained. Completion/deletion is recoverable; closing the
-  checklist does not complete tasks. Its first-launch filter is **Untagged**; later
-  launches restore your filter, so tagged tasks may be hidden until you change it.
+- IDs and history are retained; completion and deletion are recoverable. The
+  checklist's first-launch filter is **Untagged** and later launches restore your
+  filter, so tagged tasks may be hidden until you change it.
 - Data is saved before notification delivery. Do not repeat an add just because
   Dunst failed. Quote shell metacharacters; use `note add "done"` for reserved names.
 - Notes default to `~/.local/share/pinote/notes.db`; logs to
   `~/.local/state/pinote/app.log` (XDG overrides supported). Data stays local but
   is **not encrypted**, and desktop notifications may remain in Dunst history.
+- **Markdown exports are not backups:** they omit IDs, tags, schedules, agent
+  fields, project selections, and history. Close Electron and stop CLI writes
+  before copying `notes.db` and the `electron/` directory beside it; see
+  [backup details](docs/usage.md#data-privacy-and-backup).
+- Back up before upgrading, and update the CLI and Electron together. `note`
+  versions before 0.25.0 cannot read schema 8; see the
+  [upgrade guide](docs/usage.md#upgrading-for-scheduled-reminders).
 
-### Backups and upgrades
+## Development
 
-**Markdown exports are not backups:** they omit IDs, tags, schedules, agent fields,
-project selections, and history.
-
-Close Electron and stop CLI writes before copying `notes.db` and the `electron/`
-state directory beside it. See [backup details](docs/usage.md#data-privacy-and-backup).
-
-Back up before upgrading, and update both the CLI and Electron together.
-`note` versions before 0.25.0 cannot read schema 8. See the
-[upgrade guide](docs/usage.md#upgrading-for-scheduled-reminders).
-
-## Validation
-
-From the repository root:
-
-```sh
-npm --prefix backend ci --ignore-scripts
-npm --prefix backend run check && npm --prefix backend run build
-npm --prefix backend test
-xvfb-run -a npm --prefix backend run test:desktop
-npm --prefix pi ci --ignore-scripts && npm --prefix pi test
-```
-
-Dunst tests require the [documented desktop tools](docs/development.md) and always
-run under Xvfb with their own private D-Bus session. Tests use temporary storage.
-[Electron validation](docs/development.md#electron-frontend) includes sandboxed,
-isolated Xvfb/i3 end-to-end and packaged-app checks.
+See the [development guide](docs/development.md) for tests and architecture.
 
 ## License
 
