@@ -106,15 +106,20 @@ globalThis.fetch = async (url, options) => {
   const actions = { pages: [], repository: { has_actions: true } };
   const unreported = run(actions);
   assert.equal(unreported.output.state, 'pending', 'Actions may have yet to queue its runs');
-  assert.equal(unreported.output.summary, 'PR #42 awaiting checks');
-  assert.equal(unreported.requests.at(-1)?.url, `${base}/api/v1/repos/owner/repo/actions/runs?head_sha=${pr.head.sha}`
-    + '&status=unknown&status=waiting&status=running&status=blocked&limit=1');
-  for (const previousResult of [unreported.output, { ...passing.output, summary: 'PR #42 has no checks' }]) {
+  assert.equal(unreported.output.summary, 'PR #42 awaiting checks (head aaaaaaaaaaaa)');
+  assert.deepEqual(unreported.requests.slice(-2).map((r) => r.url), [`${base}/api/v1/repos/owner/repo/actions/runs?head_sha=${pr.head.sha}`
+    + '&status=unknown&status=waiting&status=running&status=blocked&limit=1', `${base}/api/v1/repos/owner/repo/pulls/42`]);
+  for (const previousResult of [unreported.output, { ...passing.output, summary: 'PR #42 has no checks (head aaaaaaaaaaaa)' }]) {
     const idle = run(actions, { previousResult }).output;
     assert.equal(idle.state, 'passing', 'No run on two consecutive checks: nothing is awaited');
-    assert.equal(idle.summary, 'PR #42 has no checks');
+    assert.equal(idle.summary, 'PR #42 has no checks (head aaaaaaaaaaaa)');
   }
-  for (const scenario of [{ runs: { workflow_runs: [{ status: 'running' }], total_count: 1 } }, { runsStatus: 404 }, { runs: {} }]) {
+  assert.equal(run({ ...actions, pulls: [moved] }, { previousResult: unreported.output }).output.summary,
+    'PR #42 awaiting checks (head bbbbbbbbbbbb)', 'A new head may have yet to queue its runs');
+  assert.equal(run({ ...actions, pulls: [pr, pr, moved] }, { previousResult: unreported.output }).output.summary,
+    'PR #42 head changed; checks pending', 'A push during the runs lookup supersedes its evidence');
+  for (const scenario of [{ runs: { workflow_runs: [{ status: 'running' }], total_count: 1 } }, { runs: { workflow_runs: [], total_count: 1 } },
+    { runsStatus: 404 }, { runs: {} }]) {
     const running = run({ ...actions, ...scenario }, { previousResult: unreported.output }).output;
     assert.equal(running.state, 'pending', 'Active, unavailable or unrecognized runs never pass');
     assert.equal(running.summary, 'PR #42 checks pending');
@@ -123,7 +128,7 @@ globalThis.fetch = async (url, options) => {
   const unmergeablePR = { ...pr, mergeable: false };
   const checking = run({ pages: [], pulls: [unmergeablePR] });
   assert.equal(checking.output.state, 'pending');
-  assert.equal(checking.output.summary, 'PR #42 checking mergeability');
+  assert.equal(checking.output.summary, 'PR #42 checking mergeability (head aaaaaaaaaaaa)');
   assert.equal(checking.output.display?.color, 'warning');
   assert.equal(checking.output.notification, undefined, 'One false mergeability may be a merge check in progress');
   assert.ok(checking.requests.every((r) => !r.url.endsWith('/owner/repo')), 'Only a mergeable PR without statuses reads the repository');
@@ -133,8 +138,10 @@ globalThis.fetch = async (url, options) => {
   assert.equal(conflict.display?.color, 'error');
   assert.ok(conflict.notification?.key.startsWith('forgejo-pr:'));
   assert.equal(run({ pulls: [unmergeablePR] }, { previousResult: conflict }).output.notification?.key, conflict.notification?.key);
-  const pushed = run({ pulls: [{ ...unmergeablePR, head: moved.head }], pages: [] }, { previousResult: conflict }).output;
-  assert.equal(pushed.summary, 'PR #42 checking mergeability', 'A new head is checked afresh');
+  for (const previousResult of [checking.output, conflict]) {
+    const pushed = run({ pulls: [{ ...unmergeablePR, head: moved.head }], pages: [] }, { previousResult }).output;
+    assert.equal(pushed.summary, 'PR #42 checking mergeability (head bbbbbbbbbbbb)', 'A new head is checked afresh');
+  }
   assert.equal(run({ pulls: [unmergeablePR], pages: [page([{ ...check, status: 'pending' }])] }, { previousResult: checking.output }).output.summary,
     'PR #42 checks pending');
   const draft = run({ pulls: [{ ...unmergeablePR, draft: true }] }, { previousResult: checking.output }).output;

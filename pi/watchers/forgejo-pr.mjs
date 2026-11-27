@@ -122,12 +122,14 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
       checks.push({ context: check.context, status: check.status });
     }
   }
+  const pending = (text) => ({ state: 'pending', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'warning' }, recheckAfterSeconds: 60 });
+  const passing = (text) => ({ state: 'passing', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'success' }, recheckAfterSeconds: 60 });
+  // Evidence describes the head it was collected for: a merge, close or push meanwhile supersedes it.
+  const superseded = (latest) => terminal(latest)
+    ?? (latest.head.sha.toLowerCase() !== pr.head.sha.toLowerCase() ? pending('head changed; checks pending') : undefined);
   const current = validatePR(await request(`pulls/${number}`));
-  const finished = terminal(current);
-  if (finished) return finished;
-  if (current.head.sha.toLowerCase() !== pr.head.sha.toLowerCase()) return {
-    state: 'pending', summary: `${summary} head changed; checks pending`, display: { strikethrough: false, color: 'warning' }, recheckAfterSeconds: 60,
-  };
+  const changed = superseded(current);
+  if (changed) return changed;
   const failed = checks.filter((check) => ['error', 'failure', 'warning'].includes(check.status));
   if (failed.length) {
     const fingerprint = createHash('sha256').update(JSON.stringify([
@@ -137,15 +139,15 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
     return { state: 'failed', summary: `${summary} checks failed`, display: { strikethrough: false, color: 'error' },
       notification: { key: `forgejo-pr:${fingerprint}`, message: 'PR checks failed' }, recheckAfterSeconds: 60 };
   }
-  const pending = (text) => ({ state: 'pending', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'warning' }, recheckAfterSeconds: 60 });
-  const passing = (text) => ({ state: 'passing', summary: `${summary} ${text}`, display: { strikethrough: false, color: 'success' }, recheckAfterSeconds: 60 });
+  // One-time observations name their head, so a later check confirms them only for the same commit.
+  const head = `(head ${pr.head.sha.toLowerCase().slice(0, 12)})`;
   if (checks.some((check) => check.status === 'pending')) return pending('checks pending');
   if (current.draft) return pending('is a draft');
   if (!current.mergeable) {
     const fingerprint = createHash('sha256').update(JSON.stringify(['conflict', instance.url, owner, repo, number, pr.head.sha.toLowerCase()])).digest('hex');
     const notification = { key: `forgejo-pr:${fingerprint}`, message: 'PR is not mergeable (conflict or merge check error)' };
     // The alert key binds a confirmed conflict to this head; a new push is checked afresh.
-    if (previous?.notification?.key !== notification.key && previous?.summary !== `${summary} checking mergeability`) return pending('checking mergeability');
+    if (previous?.notification?.key !== notification.key && previous?.summary !== `${summary} checking mergeability ${head}`) return pending(`checking mergeability ${head}`);
     return { state: 'conflict', summary: `${summary} not mergeable`, display: { strikethrough: false, color: 'error' }, notification, recheckAfterSeconds: 60 };
   }
   if (checks.length) return passing('checks passing');
@@ -155,9 +157,11 @@ async function checkPR({ instance, owner, repo, number }, previous, batchSignal)
   // Actions publishes each queued job as a commit status; also look for runs that have yet to queue one.
   // An unavailable or unrecognized runs API never lets a PR pass without checks.
   const active = await request(`actions/runs?head_sha=${pr.head.sha}&status=unknown&status=waiting&status=running&status=blocked&limit=1`).catch(() => undefined);
-  if (!object(active) || !Array.isArray(active.workflow_runs) || active.workflow_runs.length) return pending('checks pending');
-  const confirmed = previous?.summary === `${summary} awaiting checks` || previous?.summary === `${summary} has no checks`;
-  return confirmed ? passing('has no checks') : pending('awaiting checks');
+  if (!object(active) || !Array.isArray(active.workflow_runs) || active.workflow_runs.length || active.total_count !== 0) return pending('checks pending');
+  const latest = superseded(validatePR(await request(`pulls/${number}`)));
+  if (latest) return latest;
+  const confirmed = [`${summary} awaiting checks ${head}`, `${summary} has no checks ${head}`].includes(previous?.summary);
+  return confirmed ? passing(`has no checks ${head}`) : pending(`awaiting checks ${head}`);
 }
 
 // import.meta.main needs Node 22.18/24.2; Node runs the entry point from its real path.
