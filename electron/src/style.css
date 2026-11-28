@@ -70,7 +70,11 @@ textarea { resize: none; line-height: 1.5; }
 .move-handle { -webkit-app-region: drag; app-region: drag; cursor: move; }
 .recovery-text { width: 100%; height: 90px; }
 .filter-active { background: #35445b; border-color: #66758b; }
-.creation-tag { margin-right: auto; min-width: 0; max-width: 50%; justify-content: flex-start; }
+.creation-tag { min-width: 28px; max-width: 50%; flex-shrink: 1; justify-content: flex-start; }
+.template-control { margin-right: auto; }
+.template-control span { white-space: nowrap; }
+/* Narrow windows show the template action as an icon only. */
+@media (max-width: 380px) { .template-control span { display: none; } }
 .creation-tag span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty { padding: 13px 6px; color: #b7c0ce; text-align: center; }
 .overlay { position: fixed; inset: 0; padding: calc(var(--notice-height, 0px) + 7px) 7px 7px; display: flex; align-items: center; justify-content: center; background: #10151c99; z-index: 10; }
@@ -119,6 +123,14 @@ textarea { resize: none; line-height: 1.5; }
 .tag-folder-row .folder-path, .tag-base .folder-path { background: #1c212a; border: 1px solid #4b5563; border-radius: 4px; padding: 7px; margin: 0; user-select: text; }
 .tag-danger { border-top: 1px solid #414b5b; padding-top: 14px; }
 .manage-tags .tag-danger button { background: #3d2d35; border-color: #80545e; }
+.template-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; flex-shrink: 0; border-top: 1px solid #4b5563; padding-top: 6px; }
+.template-actions button { justify-content: flex-start; gap: 7px; padding: 4px 6px; }
+.template-form { display: flex; flex-direction: column; gap: 8px; }
+.template-form h3 { margin: 0 0 4px; }
+.template-form p:empty { display: none; }
+.template-form textarea { width: 100%; min-height: 7.5em; resize: vertical; }
+.template-form .tag-danger { margin-top: 4px; }
+.manage-tags .tag-danger .template-save { margin-left: auto; background: #303845; border-color: #4b5563; }
 @media (max-width: 600px) {
   .tag-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .tag-sidebar { border-right: 0; border-bottom: 1px solid #414b5b; padding: 0 0 10px; }

@@ -4,11 +4,11 @@ import { imageHashes, imageRef } from './image-refs';
 import { undo, undoDepth } from '@codemirror/commands';
 import type { Task, Tag, Snapshot, UIState, View, Operations, RendererOperation, Result, MenuPoint, MenuRequest, MenuAction } from './protocol';
 import { defaultTaskActions, initialState, normalizeTaskActions, TASK_ACTION_STATES } from './protocol';
-import type { SettingsTab, TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId } from './protocol';
+import type { SettingsTab, TaskActionId, TaskActionState, TaskActionPreferences, TaskRowElementId, Template } from './protocol';
 import { fillPreview } from './preview-content';
 import { openImagesOnClick } from './image-open';
 import type { FieldDefinition, FieldDisplay, FieldSettings, FieldType, FieldValue, FooterInput, FooterSettings, ImageView, KittySettings, TaskCompletionAction, WindowSettings, WindowStartup, PreviewData, Watcher, WatcherEntry, WatcherParam, WatcherSettings, WatcherValue } from './protocol';
-import { APP_EVENTS, DEFAULT_KITTY_START_PROMPT, DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, WATCHER_LIMITS, savedTagName, tagFolderPath, validKittyStartPrompt, validKittyTabTitle } from './protocol';
+import { APP_EVENTS, DEFAULT_KITTY_START_PROMPT, DEFAULT_KITTY_TAB_TITLE, FIELD_EVENTS, TASK_EVENTS, WATCHER_LIMITS, savedTagName, tagFolderPath, templateProblem, validKittyStartPrompt, validKittyTabTitle } from './protocol';
 import { fieldItems, fieldText } from '../../pi/field-values.ts';
 const api = window.pinote;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -69,7 +69,7 @@ const icons = {
   filter: 'view-filter', clear: 'view-filter-clear', all: 'edit-select-all',
   preview: 'view-reveal', unread: 'view-reveal-unread', menu: 'open-menu', settings: 'settings',
   close: 'window-close', kitty: 'utilities-terminal', schedule: 'preferences-system-notifications',
-  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo', up: 'go-up', down: 'go-down', back: 'go-previous',
+  collapse: 'view-collapse', expand: 'view-expand', move: 'move', grip: 'drag-handle', undo: 'edit-undo', up: 'go-up', down: 'go-down', back: 'go-previous', template: 'template',
 } as const;
 type Icon = keyof typeof icons;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
@@ -175,6 +175,7 @@ async function pruneImages(): Promise<void> {
     const keep = new Set(imageHashes(state.draft));
     for (const editor of liveEditors) for (const hash of editor.imageHashes) keep.add(hash);
     for (const draft of Object.values(state.edits)) for (const hash of imageHashes(draft.text)) keep.add(hash);
+    for (const template of state.templates ?? []) for (const hash of imageHashes(template.text)) keep.add(hash);
     // Not a journaled task write: a failure only leaves unused images until the next prune.
     const result = await track(api.image_prune({ keep: [...keep] }));
     if (!result.ok && result.error.code !== 'busy') report(`Unused images were not deleted: ${result.error.message}`);
@@ -285,15 +286,19 @@ function field(label: string, value = ''): { wrapper: HTMLLabelElement; input: H
   const wrapper = el('label', label), input = el('input'); input.value = value; wrapper.append(input); return { wrapper, input };
 }
 function controls(panel: HTMLElement): HTMLElement { const bar = el('div', undefined, 'controls'); panel.append(bar); return bar; }
-function confirmAction(title: string, description: string, action: () => Promise<void>): void {
+function confirmAction(title: string, description: string, action: () => Promise<void>, confirm = 'Confirm'): void {
   const modal = layer(title); modal.panel.append(el('p', description));
-  const bar = controls(modal.panel); bar.append(textButton('Cancel', modal.close), textButton('Confirm', async () => { await action(); modal.close(); }));
+  const bar = controls(modal.panel); bar.append(textButton('Cancel', modal.close), textButton(confirm, async () => { await action(); modal.close(); }));
 }
 // Keep controls mounted: polling must not steal keyboard focus or break dialog focus return.
 const tagControl = button('tag', 'New-task tag', () => tagsMenu('creation'));
 tagControl.className = 'creation-tag';
 const tagLabel = el('span'); tagControl.append(tagLabel);
 tagControl.addEventListener('contextmenu', e => { e.preventDefault(); creationTag = null; saveSoon(); renderToolbar(); });
+// An action, not a state: its label never changes.
+const templateControl = button('template', 'Insert template', () => templatesMenu());
+templateControl.className = 'template-control'; templateControl.setAttribute('aria-haspopup', 'dialog');
+templateControl.append(el('span', 'Template'), el('span', '▾', 'tag-chevron'));
 const filterControl = button('filter', 'Filter by tag', () => tagsMenu('filter'));
 const filterCount = el('span'); filterControl.append(filterCount);
 const collapseControl = button('collapse', 'Collapse checklist', async () => {
@@ -303,7 +308,7 @@ const collapseControl = button('collapse', 'Collapse checklist', async () => {
 });
 const moveControl = button('move', 'Drag to move window', () => undefined); moveControl.className = 'move-handle';
 const menuControl = button('menu', 'Menu', openMenu); menuControl.setAttribute('aria-haspopup', 'menu');
-toolbar.append(tagControl, filterControl, collapseControl, moveControl, menuControl, button('settings', 'Settings', () => openSettings()));
+toolbar.append(tagControl, templateControl, filterControl, collapseControl, moveControl, menuControl, button('settings', 'Settings', () => openSettings()));
 function renderToolbar(): void {
   tagLabel.textContent = creationTag ?? 'Untagged';
   tagControl.title = `New-task tag: ${creationTag ?? 'Untagged'}`; tagControl.setAttribute('aria-label', tagControl.title);
@@ -346,11 +351,12 @@ async function openMenu(event: MouseEvent): Promise<void> {
 // the other tabs: one holding the replaced revision takes the new one and keeps its draft, any other stays stale.
 type Pane = Pick<Layer, 'panel' | 'close' | 'update'> & { dirty: (value: boolean) => void; busy: (value: boolean) => void;
   saved: (from?: string | null, to?: string) => void; rebase?: (from: string | null, to: string) => void };
-const settingsTabs: [SettingsTab, string, (pane: Pane, tag?: string) => void][] = [
-  ['tags', 'Tags', manageTags], ['actions', 'Actions', configureTaskActions], ['editor', 'Editor', configureComposer], ['fields', 'Fields', configureFields],
+// A builder gets the item to select, or `create` for a new one, only on the tab Settings opened on.
+const settingsTabs: [SettingsTab, string, (pane: Pane, select?: string, create?: boolean) => void][] = [
+  ['tags', 'Tags', manageTags], ['templates', 'Templates', manageTemplates], ['actions', 'Actions', configureTaskActions], ['editor', 'Editor', configureComposer], ['fields', 'Fields', configureFields],
   ['watchers', 'Watchers', configureWatchers], ['kitty', 'Kitty', configureKitty], ['window', 'Window', configureWindow], ['data', 'Data', configureData],
 ];
-function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: string): void {
+function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', item?: string, create = false): void {
   const existing = layers.find(l => l.kind === 'settings'); if (existing) { existing.panel.focus(); return; }
   const page = layer('Settings', 'settings'); page.overlay.classList.add('settings-page');
   const status = el('span', undefined, 'settings-status'); status.setAttribute('role', 'status');
@@ -406,8 +412,11 @@ function openSettings(tab: SettingsTab = state.settingsTab ?? 'tags', tag?: stri
     tabs.forEach((b, at) => { b.setAttribute('aria-selected', String(at === index)); b.tabIndex = at === index ? 0 : -1; });
     panels.forEach((panel, at) => { panel.hidden = at !== index; });
     // Builders measure their content, so a pane is shown before it is built.
-    if (fresh) build(pane, tag); else fitTaskRows();
-    tabs[index].focus(); tabs[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const opening = fresh && chosen === tab;
+    if (fresh) build(pane, opening ? item : undefined, opening && create); else fitTaskRows();
+    // A new item keeps the field its builder focused.
+    if (!(opening && create && panels[index].contains(document.activeElement))) tabs[index].focus();
+    tabs[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
     if (state.settingsTab !== chosen) { state.settingsTab = chosen; saveSoon(); }
   }
   page.update = () => { for (const pane of panes.values()) pane.update?.(); };
@@ -1580,6 +1589,171 @@ function manageTags(modal: Pane, selected?: string): void {
     }
   });
   modal.update = draw; draw(); search.focus(); fitWindow();
+}
+/** Puts a template in the composer: silently over a fresh draft, otherwise after asking. Nothing is saved until submitted. */
+function insertTemplate(template: Template): void {
+  if (readonly || closing || !stateLoaded) return;
+  const apply = () => {
+    setComposerDraft(template.text);
+    const end = template.text.indexOf('\n');
+    composerEditor.view.dispatch({ selection: { anchor: end < 0 ? template.text.length : end } });
+    composerEditor.view.focus();
+  };
+  // Empty, or the fresh Markdown draft "# ".
+  if (['', '#'].includes(composerEditor.value.trim())) { apply(); return; }
+  // Focus returns to the composer whether or not the draft is replaced.
+  composer.focus();
+  confirmAction('Replace draft?', `The input already has text. Replace it with “${template.name}”?`, async () => apply(), 'Replace');
+}
+function templatesMenu(): void {
+  const menu = layer('Template', 'templates');
+  const search = el('input'); search.type = 'search'; search.placeholder = 'Search templates…'; search.setAttribute('aria-label', 'Search templates');
+  const list = el('div', undefined, 'tag-list scroll');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Templates');
+  const manage = (select?: string, create = false) => { menu.close(); openSettings('templates', select, create); };
+  const actions = el('div', undefined, 'template-actions');
+  for (const [icon, text, action] of [['add', 'New template…', () => manage(undefined, true)], ['settings', 'Manage templates…', () => manage()]] as const) {
+    const b = button(icon, text, action); b.append(el('span', text)); actions.append(b);
+  }
+  menu.panel.append(search, list, actions);
+  const draw = () => {
+    const templates = state.templates ?? [], query = search.value.trim().toLocaleLowerCase();
+    list.replaceChildren();
+    for (const template of templates) {
+      if (query && !template.name.toLocaleLowerCase().includes(query)) continue;
+      const b = button('template', template.name, () => { menu.close(); insertTemplate(template); }, readonly);
+      b.className = 'tag-choice'; b.append(el('span', template.name));
+      b.addEventListener('contextmenu', e => { e.preventDefault(); manage(template.name); });
+      list.append(b);
+    }
+    if (!list.childElementCount) list.append(el('p', templates.length ? 'No matching templates.' : 'No templates yet.', 'empty'));
+  };
+  search.addEventListener('input', draw);
+  search.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') { e.preventDefault(); const items = list.querySelectorAll<HTMLButtonElement>('button'); if (e.key === 'Enter') items[0]?.click(); else items[e.key === 'ArrowUp' ? items.length - 1 : 0]?.focus(); }
+  });
+  list.addEventListener('keydown', e => {
+    const items = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(index + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus(); }
+    else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); search.focus(); search.value += e.key; draw(); }
+    else if (e.key === 'Backspace') { e.preventDefault(); search.focus(); search.value = search.value.slice(0, -1); draw(); }
+  });
+  draw(); search.focus();
+}
+// Templates are Electron working state: a save persists the whole list, and a failed save restores it.
+function manageTemplates(modal: Pane, select?: string, create = false): void {
+  modal.panel.classList.add('manage-tags', 'templates');
+  const layout = el('div', undefined, 'tag-layout'), sidebar = el('div', undefined, 'tag-sidebar');
+  const searchBar = el('div', undefined, 'tag-search'), search = el('input');
+  search.type = 'search'; search.placeholder = 'Find template…'; search.setAttribute('aria-label', 'Find template');
+  const add = button('add', 'New template', () => leave(() => { open(null); name.input.focus(); }));
+  searchBar.append(search, add);
+  const count = el('p', undefined, 'tag-hint'), list = el('div', undefined, 'tag-list scroll');
+  list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Templates');
+  sidebar.append(searchBar, count, list);
+  const editor = el('div', undefined, 'tag-editor'), form = el('div', undefined, 'template-form');
+  const empty = el('p', 'Select a template to edit it, or add one with +.', 'empty');
+  const heading = el('h3'), name = field('Template name'), text = el('textarea'), textLabel = el('label', 'Template text');
+  name.input.spellcheck = false; text.rows = 6; text.spellcheck = false; textLabel.append(text);
+  const status = el('p', undefined, 'tag-hint'); status.setAttribute('role', 'status');
+  const danger = el('div', undefined, 'tag-danger'), explanation = el('div');
+  explanation.append(el('p', 'Delete template', 'tag-editor-label'), el('p', 'Tasks created from it stay.', 'tag-hint'));
+  const save = button('save', 'Save template', () => store()); save.classList.add('template-save');
+  const remove = button('trash', 'Delete template…', () => {
+    const target = editing; if (!target || saving || readonly) return;
+    confirmAction('Delete template?', `Delete “${target.name}”? Tasks created from it stay.`, async () => {
+      if (saving || readonly || closing || !stateLoaded) return;
+      const previous = state.templates, rest = templates().filter(t => t !== target), index = templates().indexOf(target);
+      saving = true; error = ''; update(); state.templates = rest;
+      try { await persist(); open(rest[Math.min(index, rest.length - 1)]); modal.saved(); if (!editing) add.focus(); }
+      catch (reason) { state.templates = previous; error = `Template not deleted: ${message(reason)}`; }
+      finally { saving = false; draw(); }
+    });
+  });
+  danger.append(explanation, save, remove);
+  form.append(heading, name.wrapper, textLabel, el('p', 'Prefills the new-task input. The first line should start with “#”.', 'tag-hint'), status, danger);
+  editor.append(empty, form); layout.append(sidebar, editor); modal.panel.append(layout);
+  // `editing` is the saved template in the editor, null for a new one, undefined for none.
+  let editing: Template | null | undefined, saving = false, error = '', lastDraw = '';
+  const templates = () => state.templates ?? [];
+  const dirty = () => editing !== undefined && (name.input.value !== (editing?.name ?? '') || text.value !== (editing?.text ?? ''));
+  // Unsaved edits are kept until discarded explicitly; the Settings page asks the same on leaving.
+  const leave = (next: () => void) => {
+    if (!dirty()) { next(); return; }
+    confirmAction('Discard changes?', `Unsaved changes to “${editing?.name ?? 'New template'}” will be lost.`, async () => next());
+  };
+  const open = (template: Template | null | undefined) => {
+    editing = template; name.input.value = template?.name ?? ''; text.value = template?.text ?? ''; error = ''; draw();
+    const row = list.querySelector<HTMLElement>('.chosen'); if (!row) return;
+    const box = row.getBoundingClientRect(), viewport = list.getBoundingClientRect();
+    if (box.top < viewport.top) list.scrollTop -= viewport.top - box.top;
+    else if (box.bottom > viewport.bottom) list.scrollTop += box.bottom - viewport.bottom;
+  };
+  const store = async () => {
+    if (saving || readonly || closing || !stateLoaded || editing === undefined) return;
+    const entry: Template = { name: name.input.value.trim(), text: text.value }, previous = state.templates, next = [...templates()];
+    const index = editing ? next.indexOf(editing) : -1;
+    if (index >= 0) next[index] = entry; else next.push(entry);
+    error = templateProblem(next) ?? '';
+    if (error) { update(); return; }
+    saving = true; update(); state.templates = next;
+    try { await persist(); editing = entry; name.input.value = entry.name; modal.saved(); }
+    catch (reason) { state.templates = previous; error = `Template not saved: ${message(reason)}`; }
+    finally { saving = false; draw(); }
+  };
+  const update = () => {
+    const changed = dirty();
+    modal.dirty(changed); modal.busy(saving);
+    heading.textContent = editing ? editing.name : 'New template';
+    status.textContent = error || (changed ? 'Unsaved changes.' : '');
+    status.classList.toggle('watcher-problem', !!error);
+    empty.hidden = editing !== undefined; form.hidden = !empty.hidden; explanation.hidden = remove.hidden = !editing;
+    name.input.readOnly = text.readOnly = readonly || saving;
+    save.disabled = add.disabled = remove.disabled = readonly || saving || !stateLoaded;
+    for (const b of list.querySelectorAll('button')) b.disabled = saving;
+  };
+  // Rows are rebuilt only when names or the search change, so a dialog can return focus to the row that opened it.
+  const draw = () => {
+    const all = templates(), query = search.value.trim().toLocaleLowerCase();
+    const matches = all.filter(t => t.name.toLocaleLowerCase().includes(query));
+    count.textContent = query ? `${matches.length} of ${all.length} templates` : `${all.length} template${all.length === 1 ? '' : 's'}`;
+    const key = JSON.stringify([all.map(t => t.name), query]);
+    if (key !== lastDraw) {
+      lastDraw = key;
+      const focused = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.template : undefined;
+      const top = list.scrollTop; list.replaceChildren();
+      for (const template of matches) {
+        const b = button('template', template.name, () => { if (template.name !== editing?.name) leave(() => open(templates().find(t => t.name === template.name))); });
+        b.append(el('span', template.name)); b.dataset.template = template.name; list.append(b);
+        if (focused === template.name) b.focus();
+      }
+      if (!matches.length) list.append(el('p', all.length ? 'No matching templates.' : 'No templates. Use + to add one.', 'empty'));
+      list.scrollTop = top;
+    }
+    for (const b of list.querySelectorAll<HTMLButtonElement>('button')) {
+      const chosen = b.dataset.template === editing?.name;
+      b.className = `tag-choice${chosen ? ' chosen' : ''}`; b.setAttribute('aria-pressed', String(chosen));
+    }
+    update();
+  };
+  for (const input of [name.input, text]) input.addEventListener('input', () => { error = ''; update(); });
+  form.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); save.click(); }
+  });
+  search.addEventListener('input', draw);
+  search.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); list.querySelector<HTMLButtonElement>('button')?.focus(); }
+  });
+  list.addEventListener('keydown', e => {
+    const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>('button'));
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); buttons[(index + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+    }
+  });
+  open(create ? null : templates().find(t => t.name === select) ?? templates()[0]);
+  (create ? name.input : search).focus(); fitWindow();
 }
 const FIELD_TYPES: [FieldType, string][] = [['text', 'Text'], ['list', 'List'], ['unique-list', 'Unique list']];
 /** Why Pi would reject this footer, or nothing. Pi validates again when saving. */
