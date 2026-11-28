@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { getCapabilities, getKeybindings, Image, setCapabilities } from '@earendil-works/pi-tui';
+import { getCapabilities, getKeybindings, setCapabilities } from '@earendil-works/pi-tui';
 import pinote from '../index.ts';
 import { registerTaskEntries } from '../extension/ui.ts';
 
@@ -247,29 +247,22 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
 
 test('the startup card shows stored task images inline, or a placeholder', () => {
   initTheme('dark', false);
-  let render: Function;
-  const agent = mkdtempSync(join(tmpdir(), 'pinote-card-')), agentDir = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = agent; // Not the personal image settings.
-  registerTaskEntries({ on() {}, registerEntryRenderer: (type: string, renderer: Function) => { if (type === 'pinote-startup-task') render = renderer; } } as any);
+  let render: Function, terminal: Record<string, unknown> = {};
+  registerTaskEntries({ getSettings: () => ({ terminal }), registerEntryRenderer: (type: string, renderer: Function) => { if (type === 'pinote-startup-task') render = renderer; } } as any);
   const hash = 'a'.repeat(64), missing = 'b'.repeat(64), theme = { fg: (_color: string, text: string) => text };
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
   const data = { id: 7, text: `Title\n![image](pinote:sha256-${hash})\n- after ![image](pinote:sha256-${missing})`, images: { [hash]: { mime: 'image/png', data: png } } };
   const original = getCapabilities();
   try {
     setCapabilities({ ...original, images: 'kitty' });
-    const card = render!({ data }, {}, theme);
-    assert.deepEqual(card.children.map((child: any) => child instanceof Image), [false, false, true, false]);
-    const tail = card.children[3].render(80).join('\n');
-    assert.match(tail, /after \[image\]/);
+    const card = render!({ data }, {}, theme), rows = () => card.render(80) as string[], isImageLine = (row: string) => row.startsWith('\x1b_G');
+    const shown = () => [rows().filter(isImageLine).length, rows().join('\n').match(/\[image\]/g)?.length ?? 0];
+    assert.deepEqual(shown(), [1, 1], 'A stored image is inline; a missing one keeps its placeholder');
+    assert.ok(rows().findIndex(isImageLine) < rows().findIndex((row) => row.includes('after [image]')), 'Text order is kept');
+    terminal = { showImages: false };
+    assert.deepEqual(shown(), [0, 2], 'The card on screen follows Pi\'s Show images setting');
+    terminal = {};
     setCapabilities({ ...original, images: null });
-    const plain = render!({ data }, {}, theme).children;
-    assert.equal(plain.length, 2);
-    assert.equal(plain[1].render(80).join('\n').match(/\[image\]/g)?.length, 2);
-    setCapabilities({ ...original, images: 'kitty' });
-    writeFileSync(join(agent, 'settings.json'), JSON.stringify({ terminal: { showImages: false } }));
-    assert.equal(render!({ data }, {}, theme).children.length, 2, 'Pi\'s Show images setting is followed');
-  } finally {
-    setCapabilities(original); rmSync(agent, { recursive: true, force: true });
-    if (agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = agentDir;
-  }
+    assert.deepEqual(shown(), [0, 2]);
+  } finally { setCapabilities(original); }
 });

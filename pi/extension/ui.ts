@@ -1,4 +1,4 @@
-import { getMarkdownTheme, resizeImage, SettingsManager, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { getMarkdownTheme, resizeImage, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Container, getCapabilities, Image, Markdown, Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
 import { clean, cleanMarkdown, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
@@ -323,26 +323,34 @@ export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, s
   }
 }
 export function registerTaskEntries(pi: ExtensionAPI): void {
-  let cwd = process.cwd();
-  pi.on('session_start', (_event, ctx) => { cwd = ctx.cwd; });
   pi.registerEntryRenderer<{ id: number; text: string; images?: TaskImages }>(STARTUP_TASK, (entry, _options, theme) => {
-    if (!entry.data || !Number.isSafeInteger(entry.data.id) || entry.data.id < 1 || typeof entry.data.text !== 'string') return;
-    const card = new Container(), source = cleanMarkdown(entry.data.text);
-    // Renderers are not given Pi's image settings; follow them as tool results do.
-    let inline = !!getCapabilities().images, maxWidthCells = 60;
-    try { const settings = SettingsManager.create(cwd); inline &&= settings.getShowImages(); maxWidthCells = settings.getImageWidthCells(); } catch { /* Defaults. */ }
-    card.addChild(new Text(theme.fg('accent', `Task #${entry.data.id}`), 0, 0));
-    let text = '', last = 0;
-    const flush = () => { if (text.trim()) card.addChild(new Markdown(text, 0, 0, getMarkdownTheme())); text = ''; };
-    for (const match of source.matchAll(TASK_IMAGE)) {
-      text += source.slice(last, match.index); last = match.index + match[0].length;
-      const image = entry.data.images?.[match[1]];
-      if (!inline || typeof image?.mime !== 'string' || typeof image.data !== 'string') { text += '[image]'; continue; }
-      flush();
-      card.addChild(new Image(image.data, image.mime, { fallbackColor: (value) => theme.fg('dim', value) }, { maxWidthCells }));
-    }
-    text += source.slice(last); flush();
-    return card;
+    const data = entry.data;
+    if (!data || !Number.isSafeInteger(data.id) || data.id < 1 || typeof data.text !== 'string') return;
+    const card = new Container(), source = cleanMarkdown(data.text);
+    let built: number | undefined;
+    // Renderers are not given Pi's image settings; follow them as tool results do, including later changes.
+    const build = () => {
+      let width = 0; // No inline images.
+      try {
+        const { showImages, imageWidthCells } = pi.getSettings().terminal ?? {};
+        if (getCapabilities().images && showImages !== false) width = typeof imageWidthCells === 'number' && imageWidthCells >= 1 ? Math.floor(imageWidthCells) : 60;
+      } catch { /* Placeholders. */ }
+      if (width === built) return;
+      built = width; card.clear();
+      card.addChild(new Text(theme.fg('accent', `Task #${data.id}`), 0, 0));
+      let text = '', last = 0;
+      const flush = () => { if (text.trim()) card.addChild(new Markdown(text, 0, 0, getMarkdownTheme())); text = ''; };
+      for (const match of source.matchAll(TASK_IMAGE)) {
+        text += source.slice(last, match.index); last = match.index + match[0].length;
+        const image = data.images?.[match[1]];
+        if (!width || typeof image?.mime !== 'string' || typeof image.data !== 'string') { text += '[image]'; continue; }
+        flush();
+        card.addChild(new Image(image.data, image.mime, { fallbackColor: (value) => theme.fg('dim', value) }, { maxWidthCells: width }));
+      }
+      text += source.slice(last); flush();
+    };
+    build();
+    return { render: (width: number) => { build(); return card.render(width); }, invalidate: () => card.invalidate() };
   });
   // Historical TUI-only preview entries remain readable after upgrading.
   pi.registerEntryRenderer<{ title: string; text: string }>('pinote-remote-preview', (entry, _options, theme) =>
