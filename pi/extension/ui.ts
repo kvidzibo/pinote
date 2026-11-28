@@ -1,4 +1,4 @@
-import { getMarkdownTheme, resizeImage, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { getMarkdownTheme, resizeImage, SettingsManager, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Container, getCapabilities, Image, Markdown, Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
 import { clean, cleanMarkdown, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
@@ -301,9 +301,9 @@ const STARTUP_TASK = 'pinote-startup-task';
 const TASK_IMAGE = /!\[[^\]\n]*\]\(pinote:sha256-([0-9a-f]{64})\)/g;
 type TaskImages = Record<string, { mime: string; data: string }>;
 
-export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, session: PinoteSession): Promise<void> {
-  const id = session.view?.state.selectedId;
-  if (ctx.mode !== 'tui' || typeof id !== 'number') return;
+/** Shows the task that startup selected, unless the selection has changed since. */
+export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, session: PinoteSession, id: number): Promise<void> {
+  if (ctx.mode !== 'tui' || session.view?.state.selectedId !== id) return;
   const current = session.current();
   try {
     const task = await session.tool('get_current', {}) as { id?: unknown; text?: unknown } | null;
@@ -323,9 +323,14 @@ export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, s
   }
 }
 export function registerTaskEntries(pi: ExtensionAPI): void {
+  let cwd = process.cwd();
+  pi.on('session_start', (_event, ctx) => { cwd = ctx.cwd; });
   pi.registerEntryRenderer<{ id: number; text: string; images?: TaskImages }>(STARTUP_TASK, (entry, _options, theme) => {
     if (!entry.data || !Number.isSafeInteger(entry.data.id) || entry.data.id < 1 || typeof entry.data.text !== 'string') return;
-    const card = new Container(), source = cleanMarkdown(entry.data.text), inline = getCapabilities().images;
+    const card = new Container(), source = cleanMarkdown(entry.data.text);
+    // Renderers are not given Pi's image settings; follow them as tool results do.
+    let inline = !!getCapabilities().images, maxWidthCells = 60;
+    try { const settings = SettingsManager.create(cwd); inline &&= settings.getShowImages(); maxWidthCells = settings.getImageWidthCells(); } catch { /* Defaults. */ }
     card.addChild(new Text(theme.fg('accent', `Task #${entry.data.id}`), 0, 0));
     let text = '', last = 0;
     const flush = () => { if (text.trim()) card.addChild(new Markdown(text, 0, 0, getMarkdownTheme())); text = ''; };
@@ -334,7 +339,7 @@ export function registerTaskEntries(pi: ExtensionAPI): void {
       const image = entry.data.images?.[match[1]];
       if (!inline || typeof image?.mime !== 'string' || typeof image.data !== 'string') { text += '[image]'; continue; }
       flush();
-      card.addChild(new Image(image.data, image.mime, { fallbackColor: (value) => theme.fg('dim', value) }, { maxWidthCells: 60 }));
+      card.addChild(new Image(image.data, image.mime, { fallbackColor: (value) => theme.fg('dim', value) }, { maxWidthCells }));
     }
     text += source.slice(last); flush();
     return card;

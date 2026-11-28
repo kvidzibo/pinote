@@ -248,7 +248,9 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
 test('the startup card shows stored task images inline, or a placeholder', () => {
   initTheme('dark', false);
   let render: Function;
-  registerTaskEntries({ registerEntryRenderer: (type: string, renderer: Function) => { if (type === 'pinote-startup-task') render = renderer; } } as any);
+  const agent = mkdtempSync(join(tmpdir(), 'pinote-card-')), agentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agent; // Not the personal image settings.
+  registerTaskEntries({ on() {}, registerEntryRenderer: (type: string, renderer: Function) => { if (type === 'pinote-startup-task') render = renderer; } } as any);
   const hash = 'a'.repeat(64), missing = 'b'.repeat(64), theme = { fg: (_color: string, text: string) => text };
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
   const data = { id: 7, text: `Title\n![image](pinote:sha256-${hash})\n- after ![image](pinote:sha256-${missing})`, images: { [hash]: { mime: 'image/png', data: png } } };
@@ -263,5 +265,11 @@ test('the startup card shows stored task images inline, or a placeholder', () =>
     const plain = render!({ data }, {}, theme).children;
     assert.equal(plain.length, 2);
     assert.equal(plain[1].render(80).join('\n').match(/\[image\]/g)?.length, 2);
-  } finally { setCapabilities(original); }
+    setCapabilities({ ...original, images: 'kitty' });
+    writeFileSync(join(agent, 'settings.json'), JSON.stringify({ terminal: { showImages: false } }));
+    assert.equal(render!({ data }, {}, theme).children.length, 2, 'Pi\'s Show images setting is followed');
+  } finally {
+    setCapabilities(original); rmSync(agent, { recursive: true, force: true });
+    if (agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = agentDir;
+  }
 });
