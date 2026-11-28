@@ -128,6 +128,12 @@ const selectNativeMenu = async (opener, id) => {
   await waitMenu(s=>!s.pending,'Selected native menu must close');
 };
 
+// Polls an asynchronous page check: page.waitForFunction tests its predicate synchronously, so a promise always passes.
+const untilInPage = async (page, check, arg, text) => {
+  for(let i=0;i<200;i++) { if(await page.evaluate(check,arg)) return; await page.waitForTimeout(10); }
+  assert.fail(text);
+};
+
 const selectTaskAction = async (page, id, label) => {
   await page.getByRole('button',{name:`Actions for task ${id}`,exact:true}).click();
   await page.getByRole('toolbar',{name:new RegExp(`^Actions for task ${id}:`)}).getByRole('button',{name:label,exact:true}).click();
@@ -1140,7 +1146,7 @@ try {
       await page.getByRole('dialog',{name:'Task tag',exact:true}).getByRole('button',{name:new RegExp(`^${pendingTag ?? 'Untagged'} \\(`)}).click();
       await editDialog.getByText('Not saved — retry',{exact:true}).waitFor();
       await page.keyboard.press('Escape');
-      await page.waitForFunction(async({id,tag})=>(await window.pinote.loadState()).edits[String(id)]?.pendingTag===tag,{id:added.id,tag:pendingTag});
+      await untilInPage(page,async({id,tag})=>(await window.pinote.loadState()).edits[String(id)]?.pendingTag===tag,{id:added.id,tag:pendingTag},'The pending tag must reach the saved state');
       const disk=JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8'));
       assert.equal(disk.edits[String(added.id)].pendingTag,pendingTag,'Pending tag must reach durable recovery storage');
       await page.keyboard.press('Escape');
@@ -1576,7 +1582,7 @@ try {
     assert.deepEqual(shown.owner,before.owner,'Opening a preview must not resize or move its owner');
     assert.ok(shown.popup.x < shown.content.x+click.x,'Near the right screen edge the popup must flip left');
     const openedEvent = call('snapshot',{view:'active'}).notes.find(n=>n.id===first).agent_event_id;
-    await page.waitForFunction(async ({id,event})=>(await window.pinote.loadState()).read[String(id)]===event,{id:first,event:openedEvent});
+    await untilInPage(page,async ({id,event})=>(await window.pinote.loadState()).read[String(id)]===event,{id:first,event:openedEvent},'Opening the preview must mark the agent event read');
     await preview.locator('#body').evaluate(body=>{body.scrollTop=100;});
     const scroll = await preview.locator('#body').evaluate(body=>body.scrollTop);
     assert.ok(scroll>0,'Long agent fixture must exercise preview scrolling');
@@ -1680,10 +1686,7 @@ try {
     }
   };
   // The renderer has handled the scroll and main holds the state the next close saves.
-  const scrollSaved=async()=>{
-    for(let i=0;i<200;i++) { if(await reopened.evaluate(async()=>(await window.pinote.loadState()).scroll?.ordinary===document.getElementById('ordinary').scrollTop)) return; await reopened.waitForTimeout(10); }
-    assert.fail('The scroll position must reach the saved state');
-  };
+  const scrollSaved=()=>untilInPage(reopened,async()=>(await window.pinote.loadState()).scroll?.ordinary===document.getElementById('ordinary').scrollTop,undefined,'The scroll position must reach the saved state');
   let reopened=await reopen();
   // Restore working state together, not just text: the draft must retain its tag.
   {
