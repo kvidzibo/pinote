@@ -1622,7 +1622,7 @@ try {
   await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
   // The debounced state save reaches disk before its directory is made read-only.
-  for(let i=0;i<200 && JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8').catch(()=>'{}')).draft!=='Unfinished draft preserved';i++) await page.waitForTimeout(10);
+  for(let i=0;JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8').catch(()=>'{}')).draft!=='Unfinished draft preserved';i++) { assert.ok(i<200,'The draft must reach the saved state'); await page.waitForTimeout(10); }
   // A failed close must preserve the window/draft and allow a later successful close.
   await selectTaskAction(page, added.id, 'Edit text…');
   const failedCloseEditor=page.locator('.cm-content[aria-label="Task text"]');
@@ -1673,7 +1673,11 @@ try {
   const setBounds=async b=>{
     await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),b);
     await reopened.waitForFunction(({width,height})=>innerWidth===width && innerHeight===height,b);
-    for(let i=0;i<200 && JSON.stringify(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds()))!==JSON.stringify(b);i++) await reopened.waitForTimeout(10);
+    for(let i=0;;i++) {
+      const now=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+      if(now.x===b.x && now.y===b.y && now.width===b.width && now.height===b.height) return;
+      assert.ok(i<200,`The window must take the requested bounds: ${JSON.stringify(now)}`); await reopened.waitForTimeout(10);
+    }
   };
   // The renderer has handled the scroll and main holds the state the next close saves.
   const scrollSaved=async()=>{

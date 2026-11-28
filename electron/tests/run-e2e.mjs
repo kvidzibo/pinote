@@ -25,7 +25,10 @@ const run = suite => new Promise(done => {
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => { stdout += chunk; output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
+  let finished = false;
   const finish = failure => {
+    if (finished) return; // A failed spawn emits `error`, then `close`.
+    finished = true;
     const name = suite.join(' '), seconds = ((performance.now() - started) / 1000).toFixed(1);
     // Passing suites print only their own messages; the session services' chatter is on stderr.
     process.stdout.write(failure ? `FAILED ${name} (${seconds} s, ${failure})\n${output}\n` : `ok ${name} (${seconds} s)\n${stdout}`);
