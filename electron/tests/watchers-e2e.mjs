@@ -55,10 +55,11 @@ try {
   const dialog = page.locator('#settings-pane-watchers'), list = dialog.getByRole('group',{name:'Watchers',exact:true});
   const save = dialog.getByRole('button',{name:'Save watcher settings…',exact:true}), status = dialog.getByRole('status');
   const saveAll = async () => { await save.click(); await status.getByText('Saved.',{exact:true}).waitFor(); };
-  // An automatic height fit in flight can restore the previous width: repeat until the size holds.
+  // An automatic height fit in flight can restore the previous width: repeat until the size holds
+  // across two observations 250 ms apart.
   const resize = async width => {
-    for (let stable=0; stable<2;) {
-      if (await page.evaluate(()=>innerWidth)===width) stable++;
+    for (let stable=0;;) {
+      if (await page.evaluate(()=>innerWidth)===width) { if (++stable===2) return; }
       else { stable=0; await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,640),width); }
       await new Promise(r=>setTimeout(r,250));
     }

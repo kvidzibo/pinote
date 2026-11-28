@@ -48,7 +48,11 @@ Electron E2E parts each use their own Xvfb server and D-Bus session: `--part=1`
 is lifecycle/recovery, `--part=2` the workflow checks and `--part=3` editor
 autosave. CI runs `tests/images-e2e.mjs` before part 2 and
 `tests/watchers-e2e.mjs` before part 3; the flags do not include them. Without
-`--part`, `tests/e2e.mjs` runs all three parts in one application. Type/unit
+`--part`, `tests/e2e.mjs` runs all three parts in one application. Locally,
+`npm run test:e2e` starts those servers itself and runs the three parts and the
+other suites concurrently: `E2E_SCREEN` sets the screen (default `1280x900x24`)
+and `E2E_JOBS` the number of concurrent suites (default one per CPU, at most one
+per suite). Arguments after `--` run only `tests/e2e.mjs` with them. Type/unit
 checks run in the 800×600 job and packaged-app validation in the 1280×900 job.
 Pass an unpacked app directory to `test:package` for relocation checks; CI tests
 in place because copying its root-owned SUID sandbox helper would lose ownership.
@@ -76,10 +80,11 @@ npm --prefix backend ci --ignore-scripts
 npm --prefix pi ci --ignore-scripts
 npm --prefix electron ci --ignore-scripts
 npm --prefix electron run setup
-xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c 'npm --prefix electron run check && npm --prefix electron test && npm --prefix electron run test:e2e'
-xvfb-run -a -s '-screen 0 800x600x24' dbus-run-session -- npm --prefix electron run test:e2e
+npm --prefix electron run check && npm --prefix electron test
+npm --prefix electron run test:e2e
+E2E_SCREEN=800x600x24 npm --prefix electron run test:e2e
 # Focused saved-fields/session-ID preview check; prints its /tmp screenshot path:
-xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:e2e -- --handoff-only
+npm --prefix electron run test:e2e -- --handoff-only
 npm --prefix electron run build
 npm --prefix electron run package
 xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- npm --prefix electron run test:package
