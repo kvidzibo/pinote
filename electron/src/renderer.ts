@@ -1594,9 +1594,11 @@ function manageTags(modal: Pane, selected?: string): void {
 function insertTemplate(template: Template): void {
   if (readonly || closing || !stateLoaded) return;
   const apply = () => {
-    setComposerDraft(template.text);
-    const end = template.text.indexOf('\n');
-    composerEditor.view.dispatch({ selection: { anchor: end < 0 ? template.text.length : end } });
+    // The state may have changed while the Replace dialog was open.
+    if (readonly || closing || !stateLoaded) return;
+    // The editor normalizes line endings, so the cursor comes from its document: the end of the first line.
+    setComposerDraft(template.text.replace(/\r\n?/g, '\n'));
+    composerEditor.view.dispatch({ selection: { anchor: composerEditor.view.state.doc.line(1).to } });
     composerEditor.view.focus();
   };
   // Empty, or the fresh Markdown draft "# ".
@@ -1610,12 +1612,14 @@ function templatesMenu(): void {
   const search = el('input'); search.type = 'search'; search.placeholder = 'Search templates…'; search.setAttribute('aria-label', 'Search templates');
   const list = el('div', undefined, 'tag-list scroll');
   list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Templates');
+  // Short windows scroll the list and its actions together (see style.css).
+  const body = el('div', undefined, 'template-menu');
   const manage = (select?: string, create = false) => { menu.close(); openSettings('templates', select, create); };
   const actions = el('div', undefined, 'template-actions');
   for (const [icon, text, action] of [['add', 'New template…', () => manage(undefined, true)], ['settings', 'Manage templates…', () => manage()]] as const) {
     const b = button(icon, text, action); b.append(el('span', text)); actions.append(b);
   }
-  menu.panel.append(search, list, actions);
+  body.append(list, actions); menu.panel.append(search, body);
   const draw = () => {
     const templates = state.templates ?? [], query = search.value.trim().toLocaleLowerCase();
     list.replaceChildren();
@@ -1666,9 +1670,11 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
       if (saving || readonly || closing || !stateLoaded) return;
       const previous = state.templates, rest = templates().filter(t => t !== target), index = templates().indexOf(target);
       saving = true; error = ''; update(); state.templates = rest;
-      try { await persist(); open(rest[Math.min(index, rest.length - 1)]); modal.saved(); if (!editing) add.focus(); }
+      try { await persist(); open(rest[Math.min(index, rest.length - 1)]); modal.saved(); }
       catch (reason) { state.templates = previous; error = `Template not deleted: ${message(reason)}`; }
       finally { saving = false; draw(); }
+      // Delete is hidden once none is left, so the closing dialog keeps focus on the re-enabled +.
+      if (!editing) add.focus();
     });
   });
   danger.append(explanation, save, remove);

@@ -321,10 +321,11 @@ async function boot() {
     'save-state': async (_event, value: unknown) => {
       if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);
       if (readonly || !validState(value) || value.tagBaseFolder !== undefined && !approvedFolders.has(value.tagBaseFolder)) throw new Error('Cannot save invalid or unreadable state');
-      const next = structuredClone(value), previousBase = state.tagBaseFolder; next.warning = state.warning; state = next;
-      // A base folder takes effect only once saved; the renderer keeps its previous one on failure.
+      const next = structuredClone(value), previousBase = state.tagBaseFolder, previousTemplates = state.templates; next.warning = state.warning; state = next;
+      // A base folder and templates take effect only once saved; the renderer keeps its previous ones on failure.
       try { await persist(); } catch (error) {
         if (state === next && next.tagBaseFolder !== previousBase) { if (previousBase === undefined) delete next.tagBaseFolder; else next.tagBaseFolder = previousBase; }
+        if (state === next) { if (previousTemplates === undefined) delete next.templates; else next.templates = previousTemplates; }
         throw error;
       }
     },
@@ -343,7 +344,7 @@ async function boot() {
         // Drafts last written to disk keep their images too, sampled after any write in flight.
         if (op === 'image_prune') {
           await stateWrites.catch(() => {});
-          const saved = [durableState.draft, ...Object.values(durableState.edits).map(edit => edit.text)].flatMap(imageHashes);
+          const saved = [durableState.draft, ...Object.values(durableState.edits).map(edit => edit.text), ...(durableState.templates ?? []).map(t => t.text)].flatMap(imageHashes);
           params = { keep: [...new Set([...(params as Operations['image_prune']['params']).keep, ...saved])] };
         }
         if (journaled) { uncertain = true; await persist(); }

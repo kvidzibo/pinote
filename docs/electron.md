@@ -163,8 +163,8 @@ once and shown on its own line; the text keeps a short
   to 2560 px). Stored images are limited to 4 MiB.
 - **Editing:** the picture behaves as one character: **Backspace** or **Delete**
   removes it and **Undo** restores it while the editor stays open.
-- **Deletion:** an image is deleted from the database when no task or draft uses
-  it. Archived tasks keep their images; task history does not, so older text may
+- **Deletion:** an image is deleted from the database when no task, draft or
+  template uses it. Archived tasks keep their images; task history does not, so older text may
   show **Image unavailable**.
 - **Viewing:** click a picture in a preview or expanded archive row, or
   double-click it in an editor. **Settings → Window → Open images in** chooses

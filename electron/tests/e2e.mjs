@@ -920,6 +920,14 @@ try {
       assert.ok(await composer.evaluate(n=>n===document.activeElement),'Focus returns to the composer');
     }
     assert.equal(call('snapshot',{view:'active'}).notes.some(n=>n.text.startsWith('# Bug')),false,'Templates create nothing until submitted');
+    // A hand-edited CRLF template is inserted with the editor's line endings.
+    await composer.fill('');
+    for(let i=0;i<200&&(await page.evaluate(()=>window.pinote.loadState())).draft!=='';i++) await page.waitForTimeout(10);
+    await page.evaluate(async text=>{ const state=await window.pinote.loadState(); await window.pinote.saveState({...state,templates:[{name:'Bug report',text}]}); },'# Bug:\r\n- Steps to reproduce');
+    await page.reload(); await page.waitForFunction(()=>document.querySelector('#draft')?.getAttribute('aria-readonly')==='false');
+    await page.getByRole('button',{name:'Insert template',exact:true}).click(); await page.keyboard.press('Enter');
+    await menu.waitFor({state:'detached'}); await page.keyboard.type(' crash');
+    assert.equal(await sourceValue(composer),'# Bug: crash\n- Steps to reproduce');
     // Right-click opens Settings on that template: update, then delete after confirming.
     await page.getByRole('button',{name:'Insert template',exact:true}).click();
     await menu.getByRole('button',{name:bug.name,exact:true}).click({button:'right'});
@@ -930,6 +938,8 @@ try {
     await pane.getByRole('button',{name:'Delete template…',exact:true}).click();
     await page.getByRole('dialog',{name:'Delete template?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click();
     await list.getByText('No templates. Use + to add one.',{exact:true}).waitFor();
+    await page.getByRole('dialog',{name:'Delete template?',exact:true}).waitFor({state:'detached'});
+    assert.ok(await pane.getByRole('button',{name:'New template',exact:true}).evaluate(n=>n===document.activeElement),'Deleting the last template focuses +');
     assert.deepEqual(await saved(),[]);
     await closeSettings(page); await menu.waitFor({state:'detached'});
     await composer.fill('');

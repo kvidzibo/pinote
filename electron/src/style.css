@@ -123,6 +123,9 @@ textarea { resize: none; line-height: 1.5; }
 .tag-folder-row .folder-path, .tag-base .folder-path { background: #1c212a; border: 1px solid #4b5563; border-radius: 4px; padding: 7px; margin: 0; user-select: text; }
 .tag-danger { border-top: 1px solid #414b5b; padding-top: 14px; }
 .manage-tags .tag-danger button { background: #3d2d35; border-color: #80545e; }
+.template-menu { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; }
+/* Short windows: the list does not scroll on its own, so its actions scroll with it. */
+@media (max-height: 260px) { .template-menu { gap: 4px; } .template-menu .tag-list { flex-shrink: 0; max-height: none; overflow: visible; } }
 .template-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; flex-shrink: 0; border-top: 1px solid #4b5563; padding-top: 6px; }
 .template-actions button { justify-content: flex-start; gap: 7px; padding: 4px 6px; }
 .template-form { display: flex; flex-direction: column; gap: 8px; }
