@@ -1590,6 +1590,7 @@ function manageTags(modal: Pane, selected?: string): void {
   });
   modal.update = draw; draw(); search.focus(); fitWindow();
 }
+const lf = (text: string) => text.replace(/\r\n?/g, '\n');
 /** Puts a template in the composer: silently over a fresh draft, otherwise after asking. Nothing is saved until submitted. */
 function insertTemplate(template: Template): void {
   if (readonly || closing || !stateLoaded) return;
@@ -1597,7 +1598,7 @@ function insertTemplate(template: Template): void {
     // The state may have changed while the Replace dialog was open.
     if (readonly || closing || !stateLoaded) return;
     // The editor normalizes line endings, so the cursor comes from its document: the end of the first line.
-    setComposerDraft(template.text.replace(/\r\n?/g, '\n'));
+    setComposerDraft(lf(template.text));
     composerEditor.view.dispatch({ selection: { anchor: composerEditor.view.state.doc.line(1).to } });
     composerEditor.view.focus();
   };
@@ -1671,7 +1672,7 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
       const previous = state.templates, rest = templates().filter(t => t !== target), index = templates().indexOf(target);
       saving = true; error = ''; update(); state.templates = rest;
       try { await persist(); open(rest[Math.min(index, rest.length - 1)]); modal.saved(); }
-      catch (reason) { state.templates = previous; error = `Template not deleted: ${message(reason)}`; }
+      catch (reason) { state.templates = previous; saveSoon(); error = `Template not deleted: ${message(reason)}`; }
       finally { saving = false; draw(); }
       // Delete is hidden once none is left, so the closing dialog keeps focus on the re-enabled +.
       if (!editing) add.focus();
@@ -1683,7 +1684,7 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
   // `editing` is the saved template in the editor, null for a new one, undefined for none.
   let editing: Template | null | undefined, saving = false, error = '', lastDraw = '';
   const templates = () => state.templates ?? [];
-  const dirty = () => editing !== undefined && (name.input.value !== (editing?.name ?? '') || text.value !== (editing?.text ?? ''));
+  const dirty = () => editing !== undefined && (name.input.value !== (editing?.name ?? '') || text.value !== lf(editing?.text ?? ''));
   // Unsaved edits are kept until discarded explicitly; the Settings page asks the same on leaving.
   const leave = (next: () => void) => {
     if (!dirty()) { next(); return; }
@@ -1705,7 +1706,8 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
     if (error) { update(); return; }
     saving = true; update(); state.templates = next;
     try { await persist(); editing = entry; name.input.value = entry.name; modal.saved(); }
-    catch (reason) { state.templates = previous; error = `Template not saved: ${message(reason)}`; }
+    // Another write queued meanwhile may hold the rejected list: write the restored one after it.
+    catch (reason) { state.templates = previous; saveSoon(); error = `Template not saved: ${message(reason)}`; }
     finally { saving = false; draw(); }
   };
   const update = () => {
@@ -1759,7 +1761,7 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
     }
   });
   open(create ? null : templates().find(t => t.name === select) ?? templates()[0]);
-  (create ? name.input : search).focus(); fitWindow();
+  modal.update = draw; (create ? name.input : search).focus(); fitWindow();
 }
 const FIELD_TYPES: [FieldType, string][] = [['text', 'Text'], ['list', 'List'], ['unique-list', 'Unique list']];
 /** Why Pi would reject this footer, or nothing. Pi validates again when saving. */
