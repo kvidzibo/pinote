@@ -18,7 +18,7 @@ const transfers: Map<string, SavedState> = ((globalThis as any)[key] ??= new Map
 export default function pinote(pi: ExtensionAPI): void {
   let session: PinoteSession | undefined, ui: PinoteUI | undefined;
   const kitty = new KittyPane((command, args, options) => pi.exec(command, args, options));
-  let file: string | undefined, watcherDispatchPending = false;
+  let file: string | undefined, watcherDispatchPending = false, startupTask: number | undefined;
   // Last known trusted settings: an unavailable read must not rewrite the system prompt.
   let instructions = '';
   let launchRequest = process.env.PINOTE_LAUNCH_TASK;
@@ -46,7 +46,7 @@ export default function pinote(pi: ExtensionAPI): void {
   const start = async (ctx: ExtensionContext, reason?: string, previous?: string) => {
     const request = launchRequest; launchRequest = undefined; // Never replay an uncertain start.
     ui?.detach(); await session?.stop();
-    ui = undefined; session = undefined; watcherDispatchPending = false;
+    ui = undefined; session = undefined; watcherDispatchPending = false; startupTask = undefined;
     try {
       session = new PinoteSession((saved) => pi.appendEntry(ENTRY_TYPE, saved));
       session.onFieldNotification = (notice) => {
@@ -131,7 +131,8 @@ export default function pinote(pi: ExtensionAPI): void {
         await session.start(branch, conversation, unselected, piSessionId || undefined);
       }
       if (reason === 'new' && previous) transfers.delete(previous);
-      if (reason === 'new' || (launch && session.view?.state.selectedId === launch.task_id)) await showStartupTask(pi, ctx, session);
+      const selected = session.view?.state.selectedId;
+      if (typeof selected === 'number' && (reason === 'new' || launch && selected === launch.task_id)) startupTask = selected;
     } catch (error) {
       // Fixed strings only: CLI output is never shown.
       ctx.ui.notify(error instanceof PinoteFailure ? error.message : 'Pinote unavailable or launch task changed: check the note CLI and task revision. Use /pinote to select manually; launch requests are never retried.', 'warning');
@@ -139,6 +140,12 @@ export default function pinote(pi: ExtensionAPI): void {
   };
   pi.on('session_start', (event, ctx) => start(ctx, event.reason, event.previousSessionFile));
   pi.on('session_tree', (_event, ctx) => start(ctx));
+  // Follows session_start, so the card lands below other extensions' startup output.
+  pi.on('resources_discover', async (_event, ctx) => {
+    const id = startupTask;
+    startupTask = undefined;
+    if (id !== undefined && session) await showStartupTask(pi, ctx, session, id);
+  });
   pi.on('session_shutdown', async (event) => {
     const saved = session?.snapshot();
     if (file && saved?.retainOnNew) {
