@@ -88,8 +88,8 @@ complete it. The bottom **Menu** button holds scheduled reminders, Archive (with
 restore), draft recovery and **Quit Pinote**.
 
 The cog beside it opens **Settings** in the window, with one tab per section:
-**Tags**, **Actions**, **Editor**, **Fields**, **Watchers**, **Kitty**,
-**Window** and **Data**. It reopens on the tab used last.
+**Tags**, **Templates**, **Actions**, **Editor**, **Fields**, **Watchers**,
+**Kitty**, **Window** and **Data**. It reopens on the tab used last.
 
 - Each tab saves on its own and the page stays open. Unsaved changes survive
   switching tabs; a dot marks their tab.
@@ -116,6 +116,16 @@ The cog beside it opens **Settings** in the window, with one tab per section:
   non-bullet line, moves focus.
 - **Settings → Editor → Start as Markdown** (default off) starts new drafts
   with `# `.
+- **Template**, beside the new-task tag (an icon only in narrow windows), lists
+  saved templates; searching and the keyboard work as in the tag list. Picking
+  one fills the composer and puts the cursor at the end of its first line. An
+  empty draft (or only `#`) is replaced at once; other text asks before
+  replacing. Nothing is added until you press **Enter**.
+- **Settings → Templates** adds, edits (save button or **Ctrl+S**) and deletes
+  templates: a name (up to 64 characters, unique) and text (up to 4096
+  characters). The menu's **New template…** and **Manage templates…** open it,
+  and right-clicking a template opens it there. Templates are saved with
+  Electron's working state; deleting one leaves tasks created from it.
 - The editor **autosaves after a 650 ms typing pause** and shows its status in the
   footer. **Ctrl+Enter** saves and closes. **Escape/Close** dismisses the editor
   while the pending save finishes; closing the app also drains pending edits.
@@ -153,8 +163,8 @@ once and shown on its own line; the text keeps a short
   to 2560 px). Stored images are limited to 4 MiB.
 - **Editing:** the picture behaves as one character: **Backspace** or **Delete**
   removes it and **Undo** restores it while the editor stays open.
-- **Deletion:** an image is deleted from the database when no task or draft uses
-  it. Archived tasks keep their images; task history does not, so older text may
+- **Deletion:** an image is deleted from the database when no task, draft or
+  template uses it. Archived tasks keep their images; task history does not, so older text may
   show **Image unavailable**.
 - **Viewing:** click a picture in a preview or expanded archive row, or
   double-click it in an editor. **Settings → Window → Open images in** chooses
@@ -277,7 +287,7 @@ Invalid configuration reports an error; Pinote never creates or overwrites the f
 Electron, the CLI, and Pi share `notes.db` and the display lock. Electron refreshes
 external changes and refuses stale saves.
 
-Restarting restores the new-task tag, tag filters, composer and edit drafts,
+Restarting restores the new-task tag, task templates, tag filters, composer and edit drafts,
 collapsed state, scroll positions, task-action and editor preferences, Kitty
 settings, the tag base folder, the last Settings tab, agent read cursors, and
 window position and size. Dialogs, menu search text, unsaved settings, and pending deletion marks are not kept.

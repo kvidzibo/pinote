@@ -870,6 +870,80 @@ try {
     // Keep this preference workflow's draft history out of the existing undo regression.
     await page.reload(); await page.locator('.task-row').first().waitFor();
   }
+  // Templates: created in Settings, picked from the toolbar into the composer, then updated and deleted.
+  {
+    const composer = page.getByRole('textbox',{name:'Add a task…',exact:true});
+    const pane = page.locator('#settings-pane-templates'), list = pane.getByRole('group',{name:'Templates',exact:true});
+    const name = pane.getByRole('textbox',{name:'Template name',exact:true}), text = pane.getByRole('textbox',{name:'Template text',exact:true});
+    const menu = page.getByRole('dialog',{name:'Template',exact:true}), replace = page.getByRole('dialog',{name:'Replace draft?',exact:true});
+    const saved = async () => (await page.evaluate(()=>window.pinote.loadState())).templates;
+    const bug = {name:'Bug report',text:'# Bug:\n- Steps to reproduce'};
+    assert.equal(await sourceValue(composer),'');
+    await page.getByRole('button',{name:'Insert template',exact:true}).click();
+    await menu.getByText('No templates yet.',{exact:true}).waitFor();
+    await menu.getByRole('button',{name:'New template…',exact:true}).click();
+    await pane.getByRole('heading',{name:'New template',exact:true}).waitFor();
+    assert.ok(await name.evaluate(n=>n===document.activeElement),'New template… focuses the name');
+    await name.fill(` ${bug.name} `); await text.fill(bug.text);
+    assert.equal(await page.locator('#settings-tab-templates').getAttribute('aria-label'),'Templates, unsaved changes');
+    await text.press('Control+s'); await settingsSaved(page,'Templates');
+    assert.deepEqual(await saved(),[bug],'Ctrl+S saves the trimmed name');
+    await pane.getByRole('heading',{name:bug.name,exact:true}).waitFor();
+    assert.equal(await page.locator('#settings-tab-templates').getAttribute('aria-label'),'Templates');
+    // Invalid input is reported and not saved; unsaved edits ask before another template replaces them.
+    await pane.getByRole('button',{name:'New template',exact:true}).click();
+    await name.fill('BUG REPORT'); await text.fill('# Other');
+    await pane.getByRole('button',{name:'Save template',exact:true}).click();
+    await pane.getByText('A template named “BUG REPORT” already exists.',{exact:true}).waitFor();
+    assert.deepEqual(await saved(),[bug]);
+    await list.getByRole('button',{name:bug.name,exact:true}).click();
+    await page.getByRole('dialog',{name:'Discard changes?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click();
+    await pane.getByRole('heading',{name:bug.name,exact:true}).waitFor();
+    assert.equal(await list.getByRole('button',{name:bug.name,exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await text.inputValue(),bug.text);
+    await closeSettings(page);
+    // An empty composer is prefilled silently, with the cursor at the end of the first line.
+    await page.getByRole('button',{name:'Insert template',exact:true}).click();
+    await menu.getByRole('group',{name:'Templates',exact:true}).getByRole('button',{name:bug.name,exact:true}).click();
+    await menu.waitFor({state:'detached'});
+    assert.equal(await sourceValue(composer),bug.text);
+    await page.keyboard.type(' crash');
+    assert.equal(await sourceValue(composer),'# Bug: crash\n- Steps to reproduce');
+    // Other text asks first, from the keyboard: Cancel keeps it, Replace swaps it.
+    for (const [choice, expected] of [['Cancel','# Bug: crash\n- Steps to reproduce'],['Replace',bug.text]]) {
+      await page.getByRole('button',{name:'Insert template',exact:true}).click();
+      await page.keyboard.type('bug'); await page.keyboard.press('Enter');
+      await replace.getByText('The input already has text. Replace it with “Bug report”?',{exact:true}).waitFor();
+      await replace.getByRole('button',{name:choice,exact:true}).click();
+      await replace.waitFor({state:'detached'});
+      assert.equal(await sourceValue(composer),expected);
+      assert.ok(await composer.evaluate(n=>n===document.activeElement),'Focus returns to the composer');
+    }
+    assert.equal(call('snapshot',{view:'active'}).notes.some(n=>n.text.startsWith('# Bug')),false,'Templates create nothing until submitted');
+    // A hand-edited CRLF template is inserted with the editor's line endings.
+    await composer.fill('');
+    for(let i=0;i<200&&(await page.evaluate(()=>window.pinote.loadState())).draft!=='';i++) await page.waitForTimeout(10);
+    await page.evaluate(async text=>{ const state=await window.pinote.loadState(); await window.pinote.saveState({...state,templates:[{name:'Bug report',text}]}); },'# Bug:\r\n- Steps to reproduce');
+    await page.reload(); await page.waitForFunction(()=>document.querySelector('#draft')?.getAttribute('aria-readonly')==='false');
+    await page.getByRole('button',{name:'Insert template',exact:true}).click(); await page.keyboard.press('Enter');
+    await menu.waitFor({state:'detached'}); await page.keyboard.type(' crash');
+    assert.equal(await sourceValue(composer),'# Bug: crash\n- Steps to reproduce');
+    // Right-click opens Settings on that template: update, then delete after confirming.
+    await page.getByRole('button',{name:'Insert template',exact:true}).click();
+    await menu.getByRole('button',{name:bug.name,exact:true}).click({button:'right'});
+    await pane.getByRole('heading',{name:bug.name,exact:true}).waitFor();
+    await text.fill('# Bug:\n- Expected'); await pane.getByRole('button',{name:'Save template',exact:true}).click();
+    await settingsSaved(page,'Templates');
+    assert.deepEqual(await saved(),[{...bug,text:'# Bug:\n- Expected'}]);
+    await pane.getByRole('button',{name:'Delete template…',exact:true}).click();
+    await page.getByRole('dialog',{name:'Delete template?',exact:true}).getByRole('button',{name:'Confirm',exact:true}).click();
+    await list.getByText('No templates. Use + to add one.',{exact:true}).waitFor();
+    await page.getByRole('dialog',{name:'Delete template?',exact:true}).waitFor({state:'detached'});
+    assert.ok(await pane.getByRole('button',{name:'New template',exact:true}).evaluate(n=>n===document.activeElement),'Deleting the last template focuses +');
+    assert.deepEqual(await saved(),[]);
+    await closeSettings(page); await menu.waitFor({state:'detached'});
+    await composer.fill('');
+  }
   // A real persisted start precedes a deliberately held Kitty launch.
   {
     const id = call('add',{text:'Immediate Kitty progress',tag:null}).id;

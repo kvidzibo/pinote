@@ -75,13 +75,34 @@ export function normalizeTaskActions(value?: TaskActionSettings | LegacyPerState
 }
 // fields holds unsaved agent field values by name; an empty value or list removes the field.
 export type EditDraft = { text: string; revision: string; pendingTag?: string | null; pendingTagFolder?: string | null; pendingTagFolderIfNew?: string; fields?: Record<string, FieldValue> };
-export const SETTINGS_TABS = ['tags', 'actions', 'editor', 'fields', 'watchers', 'kitty', 'window', 'data'] as const;
+export const SETTINGS_TABS = ['tags', 'templates', 'actions', 'editor', 'fields', 'watchers', 'kitty', 'window', 'data'] as const;
 export type SettingsTab = typeof SETTINGS_TABS[number];
 export type UIState = {
   draft: string; filters: string[] | null; read: Record<string, number>;
   creationTag?: string | null; collapsed?: boolean; composerStartAsMarkdown?: boolean; kittyTabTitle?: string; kittyStartPrompt?: string; tagBaseFolder?: string; settingsTab?: SettingsTab; scroll?: { ordinary: number; pinned: number };
+  templates?: Template[];
   edits: Record<string, EditDraft>; warning: string; taskActions?: TaskActionSettings | LegacyPerStateTaskActionSettings | LegacyTaskActionSettings;
 };
+/** Prefills the new-task input; kept in list (creation) order. */
+export type Template = { name: string; text: string };
+/** Template text is bounded like task text (the backend's 4096 characters). */
+export const TEMPLATE_LIMITS = { count: 100, name: 64, text: 4096 } as const;
+/** Why a template list cannot be saved, or nothing. Names are trimmed, single-line and unique ignoring case. */
+export function templateProblem(templates: readonly Template[]): string | undefined {
+  if (templates.length > TEMPLATE_LIMITS.count) return `At most ${TEMPLATE_LIMITS.count} templates can be saved.`;
+  const names = new Set<string>();
+  for (const { name, text } of templates) {
+    if (!name.trim()) return 'A template needs a name.';
+    if (name !== name.trim() || /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(name) || Array.from(name).length > TEMPLATE_LIMITS.name) return `A template name takes at most ${TEMPLATE_LIMITS.name} characters on one line.`;
+    // Lower, upper, lower approximates case folding: “Straße”, “STRASSE” and “STRAẞE” are one name.
+    const key = name.normalize('NFC').toLowerCase().toUpperCase().toLowerCase();
+    if (names.has(key)) return `A template named “${name}” already exists.`;
+    names.add(key);
+    if (!text.trim()) return `Template “${name}” needs text.`;
+    if (Array.from(text).length > TEMPLATE_LIMITS.text) return `Template text takes at most ${TEMPLATE_LIMITS.text} characters.`;
+  }
+  return undefined;
+}
 export const initialState = (): UIState => ({ draft: '', filters: [''], read: {}, edits: {}, warning: '' });
 export type RendererOperation = Exclude<Operation, 'handshake' | 'image' | 'stats'>;
 export type BackendApi = { [K in RendererOperation]: (params: Operations[K]['params']) => Promise<Result<Operations[K]['result']>> };

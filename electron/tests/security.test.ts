@@ -276,3 +276,13 @@ test('stats is a read-only operation with a validated result', () => {
     { ...result, tasks: { ...result.tasks, done: 1.5 } }, { ...result, images: { count: 1 } }, { ...result, events: undefined }, { ...result, extra: 1 }])
     assert.ok(!validEnvelope('stats', { protocol: 1, ok: true, result: bad }));
 });
+test('templates are an optional list of unique single-line names with bounded text', () => {
+  const bug = { name: 'Bug report', text: '# Bug:\n- Steps to reproduce' };
+  for (const templates of [[], [bug], [bug, { name: 'PR review', text: '# Review' }], [{ name: 'x'.repeat(64), text: '🌱'.repeat(4096) }],
+    Array.from({ length: 100 }, (_, i) => ({ name: `T${i}`, text: '#' }))]) assert.ok(validState({ ...initialState(), templates }));
+  for (const templates of [null, {}, 'Bug', [null], [{ name: 'Bug' }], [{ ...bug, tag: 'Work' }], [{ name: 1, text: '#' }],
+    [{ ...bug, name: '' }], [{ ...bug, name: ' Bug' }], [{ ...bug, name: 'Bug\nreport' }], [{ ...bug, name: 'x'.repeat(65) }],
+    [{ ...bug, text: '' }], [{ ...bug, text: ' \n' }], [{ ...bug, text: 'x'.repeat(4097) }], [bug, { ...bug, name: 'BUG REPORT' }], [{ ...bug, name: 'STRASSE' }, { ...bug, name: 'STRAẞE' }],
+    Array.from({ length: 101 }, (_, i) => ({ name: `T${i}`, text: '#' }))]) assert.ok(!validState({ ...initialState(), templates }), JSON.stringify(templates).slice(0, 80));
+  assert.ok(validState({ ...initialState(), settingsTab: 'templates' }));
+});
