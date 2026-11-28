@@ -12,7 +12,7 @@ import { processEnvironment, verifyProfilePaths } from './environment.ts';
 import { previewWindow } from './preview-window.ts';
 import { imageViewer } from './image-window.ts';
 import { DATA_FILES, IMAGE_VIEWS, TASK_COMPLETION_ACTIONS, initialState, tagFolderPath } from './protocol.ts';
-import type { DataFile, DataStats, ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, WindowStartup } from './protocol.ts';
+import type { DataFile, DataStats, ImageView, MenuAction, MenuRequest, Operations, TaskCompletionAction, Template, WindowStartup } from './protocol.ts';
 import { MAX_STATE_FILE_BYTES, MIN_WINDOW, mutating, safeLink, validMenuRequest, validParams, validState, validWindowStartup } from './security.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pinote-app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -63,13 +63,21 @@ async function atomic(path: string, content: unknown) {
   await writeFile(temp, JSON.stringify(content), { mode: 0o600 });
   await rename(temp, path);
 }
-function persist() {
+// `state.templates` is the list written last. A proposed list joins it only once written, so a write queued
+// meanwhile never carries a rejected list: every write reads the templates when it runs.
+function persist(proposal?: { templates: Template[] | undefined }) {
   const snapshot = structuredClone(state);
   if (uncertain) snapshot.warning = warning;
   stateWrites = stateWrites.catch(() => {}).then(() => {
+    const templates = proposal ? proposal.templates : state.templates;
+    if (templates === undefined) delete snapshot.templates; else snapshot.templates = structuredClone(templates);
     if (!validState(snapshot) || Buffer.byteLength(JSON.stringify(snapshot)) > MAX_STATE_FILE_BYTES) throw new Error('Draft state exceeds its storage limit');
     return atomic(join(dataDir, 'state.json'), snapshot);
-  }).then(() => { durableState = snapshot; });
+  }).then(() => {
+    durableState = snapshot;
+    if (!proposal) return;
+    if (proposal.templates === undefined) delete state.templates; else state.templates = proposal.templates;
+  });
   return stateWrites;
 }
 function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
@@ -321,11 +329,12 @@ async function boot() {
     'save-state': async (_event, value: unknown) => {
       if (state.tagBaseFolder !== undefined) approvedFolders.add(state.tagBaseFolder);
       if (readonly || !validState(value) || value.tagBaseFolder !== undefined && !approvedFolders.has(value.tagBaseFolder)) throw new Error('Cannot save invalid or unreadable state');
-      const next = structuredClone(value), previousBase = state.tagBaseFolder, previousTemplates = state.templates; next.warning = state.warning; state = next;
-      // A base folder and templates take effect only once saved; the renderer keeps its previous ones on failure.
-      try { await persist(); } catch (error) {
+      const next = structuredClone(value), previousBase = state.tagBaseFolder, templates = next.templates;
+      if (state.templates === undefined) delete next.templates; else next.templates = state.templates;
+      next.warning = state.warning; state = next;
+      // A base folder takes effect only once saved; the renderer keeps its previous one on failure.
+      try { await persist({ templates }); } catch (error) {
         if (state === next && next.tagBaseFolder !== previousBase) { if (previousBase === undefined) delete next.tagBaseFolder; else next.tagBaseFolder = previousBase; }
-        if (state === next) { if (previousTemplates === undefined) delete next.templates; else next.templates = previousTemplates; }
         throw error;
       }
     },
