@@ -114,6 +114,8 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.equal(launched.selection().launch, undefined);
     const revision = cli('agent', 'get', String(task.id)).updated_at;
     await launched.handlers.get('session_start')!({ reason: 'reload' }, launched.ctx);
+    await launched.handlers.get('resources_discover')!({ reason: 'reload' }, launched.ctx);
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(launched.selection().selectedId, task.id);
     assert.equal(cli('agent', 'get', String(task.id)).updated_at, revision);
     assert.deepEqual(launched.cards(), [card], 'Reload does not duplicate the display entry');

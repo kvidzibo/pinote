@@ -315,8 +315,9 @@ export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, s
       const resized = typeof mime === 'string' && typeof data === 'string' && await resizeImage(Buffer.from(data, 'base64'), mime, { maxWidth: 1200, maxHeight: 1200 });
       if (resized) images[hash] = { mime: resized.mimeType, data: resized.data };
     } catch { /* Placeholder. */ }
-    // Discovery handlers run in load order, each awaited: a timer appends after those of extensions loaded later.
-    setImmediate(() => { if (current()) pi.appendEntry(STARTUP_TASK, Object.keys(images).length ? { id, text, images } : { id, text }); });
+    // Discovery handlers run in load order, each awaited, and Pi signals no end: a timer appends after
+    // those of extensions loaded later, unless one of them waits for I/O.
+    setImmediate(() => { if (current() && session.view?.state.selectedId === id) pi.appendEntry(STARTUP_TASK, Object.keys(images).length ? { id, text, images } : { id, text }); });
   } catch {
     if (current()) ctx.ui.notify('Pinote: could not display the selected task text.', 'warning');
   }
