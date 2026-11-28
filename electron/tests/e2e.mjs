@@ -230,6 +230,17 @@ try {
   // CI runs these self-contained workflow checks (part 2) and the editor sequence (part 3)
   // beside the lifecycle sequence (part 1).
   if (part === undefined || part === '2') {
+  // Waits for `count` observed idle refreshes (each one renders the rows, then rewrites the toolbar count),
+  // so a check that polling keeps something spans real redraws, not an assumed sleep duration.
+  const refreshes = async count => {
+    await page.evaluate(()=>{
+      window.__e2eRefreshes=0;
+      window.__e2eRefreshObserver=new MutationObserver(()=>{window.__e2eRefreshes++;});
+      window.__e2eRefreshObserver.observe(document.querySelector('#toolbar img[src*="view-filter-symbolic"]').closest('button').querySelector('span'),{childList:true});
+    });
+    await page.waitForFunction(count=>window.__e2eRefreshes>=count,count);
+    await page.evaluate(()=>{window.__e2eRefreshObserver.disconnect();delete window.__e2eRefreshObserver;delete window.__e2eRefreshes;});
+  };
   // task393: allocation and keyboard focus with the complete benchmark dataset.
   {
     const filter = page.locator('#toolbar button').filter({has:page.locator('img[src*="view-filter-symbolic"]')});
@@ -372,7 +383,7 @@ try {
     assert.deepEqual(await placement(),before,'Starting must update the row without moving it');
     await page.locator('#draft').hover();
     await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
-    await page.waitForTimeout(1200);
+    await refreshes(1);
     assert.deepEqual(await placement(),before,'Leaving the row or losing focus must not release ordering');
     await page.screenshot({path:join(root,'task462-start-held.png')});
     const ordinaryOrder=()=>page.locator('#ordinary .task-row').evaluateAll(nodes=>nodes.map(node=>Number(node.dataset.id)));
@@ -392,7 +403,7 @@ try {
     await page.waitForFunction(id=>!document.querySelector(`[data-id="${id}"]`)?.classList.contains('progress'),first);
     assert.deepEqual(await placement(),pinnedPlacement,'Reset must update controls without moving the row');
     await row.locator('[data-row-element="start"]').waitFor();
-    await page.waitForTimeout(1200);
+    await refreshes(1);
     assert.deepEqual(await placement(),pinnedPlacement,'Polling must preserve the pending reset placement');
     await page.screenshot({path:join(root,'task462-reset-held.png')});
     await page.mouse.move(-20,-20);
@@ -430,7 +441,7 @@ try {
     await page.screenshot({path:join(root,'inline-actions.png')});
     // Unchanged polling must retain the toolbar and its focused button.
     await bar.getByRole('button',{name:'Copy note',exact:true}).focus();
-    await page.waitForTimeout(2200);
+    await refreshes(2);
     await focusReturns(bar.getByRole('button',{name:'Copy note',exact:true}));
     await page.keyboard.press('Escape'); await focusReturns(title);
     assert.deepEqual(await row.boundingBox(),rowBox);
@@ -1610,7 +1621,8 @@ try {
   assert.equal(call('snapshot',{view:'active'}).notes.find(n=>n.id===added.id).state,'in_progress','A real failed Kitty launch retains the saved start');
   await page.waitForFunction(()=>document.querySelector('#draft').getAttribute('aria-readonly')==='false');
   await page.getByRole('textbox',{name:'Add a task…',exact:true}).fill('Unfinished draft preserved');
-  await page.waitForTimeout(250);
+  // The debounced state save reaches disk before its directory is made read-only.
+  for(let i=0;i<200 && JSON.parse(await readFile(join(env.XDG_DATA_HOME,'pinote/electron/state.json'),'utf8').catch(()=>'{}')).draft!=='Unfinished draft preserved';i++) await page.waitForTimeout(10);
   // A failed close must preserve the window/draft and allow a later successful close.
   await selectTaskAction(page, added.id, 'Edit text…');
   const failedCloseEditor=page.locator('.cm-content[aria-label="Task text"]');
@@ -1657,6 +1669,17 @@ try {
   // Submit in the same event-loop turn as paste: no debounce may be required for safety.
   const reopen=async(collapsed=false)=>{app=await _electron.launch({executablePath:createRequire(import.meta.url)('electron'),args:[resolve('dist/main.cjs')],env,chromiumSandbox:true,timeout:20000});const p=await app.firstWindow();await p.locator(collapsed?'#draft':'.task-row').first().waitFor();await installNativeMenuProbe();return p;};
   const close=async()=>{const done=app.waitForEvent('close');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await done;app=undefined;};
+  // Instead of a sleep: the renderer has the new size and main reports the requested bounds.
+  const setBounds=async b=>{
+    await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),b);
+    await reopened.waitForFunction(({width,height})=>innerWidth===width && innerHeight===height,b);
+    for(let i=0;i<200 && JSON.stringify(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds()))!==JSON.stringify(b);i++) await reopened.waitForTimeout(10);
+  };
+  // The renderer has handled the scroll and main holds the state the next close saves.
+  const scrollSaved=async()=>{
+    for(let i=0;i<200;i++) { if(await reopened.evaluate(async()=>(await window.pinote.loadState()).scroll?.ordinary===document.getElementById('ordinary').scrollTop)) return; await reopened.waitForTimeout(10); }
+    assert.fail('The scroll position must reach the saved state');
+  };
   let reopened=await reopen();
   // Restore working state together, not just text: the draft must retain its tag.
   {
@@ -1669,10 +1692,9 @@ try {
     await reopened.getByRole('searchbox',{name:'Search tags',exact:true}).fill('Work');
     await reopened.getByRole('dialog',{name:'Filter by tag',exact:true}).locator('[data-tag="Work"]').click();
     await reopened.keyboard.press('Escape');
-    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:110,y:90,width:420,height:360}));
-    await reopened.waitForTimeout(350);
+    await setBounds({x:110,y:90,width:420,height:360});
     await reopened.locator('#ordinary').evaluate(node=>{node.scrollTop=420;});
-    await reopened.waitForTimeout(250);
+    await scrollSaved();
     const scroll=await reopened.locator('#ordinary').evaluate(node=>node.scrollTop);
     assert.ok(scroll>0);
     const expanded=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
@@ -1714,7 +1736,7 @@ try {
     await reopened.getByRole('button',{name:'Select all tags',exact:true}).click();
     await reopened.keyboard.press('Escape');
     await reopened.locator('#ordinary').evaluate(node=>{node.scrollTop=210;});
-    await reopened.waitForTimeout(250);
+    await scrollSaved();
     await close(); reopened=await reopen();
     assert.equal(await reopened.getByRole('button',{name:'New-task tag: Untagged',exact:true}).count(),1);
     assert.equal((await reopened.evaluate(()=>window.pinote.loadState())).filters,null);
@@ -1727,7 +1749,7 @@ try {
       const save=async()=>{await settings().getByRole('button',{name:'Save window settings',exact:true}).click();await settingsSaved(reopened,'Window');await closeSettings(reopened);};
       const bounds=()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
       const last={x:150,y:120,width:430,height:330}, original=await bounds();
-      const restart=async()=>{await app.evaluate(({BrowserWindow},b)=>BrowserWindow.getAllWindows()[0].setBounds(b),last);await reopened.waitForTimeout(350);await close();reopened=await reopen();await reopened.waitForTimeout(350);};
+      const restart=async()=>{await setBounds(last);await close();reopened=await reopen();await reopened.waitForTimeout(350);};
       await open();
       for(const name of ['Starting position','Starting size']) assert.equal(await group(name).getByRole('radio',{name:'Remember last',exact:true}).isChecked(),true);
       assert.equal(await group('Starting position').getByRole('spinbutton',{name:'X',exact:true}).isDisabled(),true);
@@ -1745,7 +1767,7 @@ try {
       await group('Starting size').getByRole('spinbutton',{name:'Height',exact:true}).fill('300');
       await reopened.screenshot({path:join(root,'window-settings.png')});
       await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({x:20,y:20,width:280,height:300}));
-      await reopened.waitForTimeout(200);
+      await reopened.waitForFunction(()=>innerWidth===280);
       assert.ok(await settings().evaluate(n=>n.scrollWidth<=n.clientWidth),'Window settings must fit narrow windows');
       await reopened.screenshot({path:join(root,'window-settings-narrow.png')});
       await save(); await restart();
