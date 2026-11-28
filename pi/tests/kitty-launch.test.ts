@@ -7,8 +7,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { getKeybindings } from '@earendil-works/pi-tui';
+import { getCapabilities, getKeybindings, Image, setCapabilities } from '@earendil-works/pi-tui';
 import pinote from '../index.ts';
+import { registerTaskEntries } from '../extension/ui.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 test('GUI launch consent selects exactly one revision, persists, and never replaces or replays', async () => {
@@ -84,6 +85,10 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
       choose: async (...values: unknown[]) => { choices.push(...values); await commands.get('pinote').handler('', ctx); } };
     clients.push(client);
     await handlers.get('session_start')!({ reason, previousSessionFile: previous?.ctx.sessionManager.getSessionFile() }, ctx);
+    // Pi emits discovery next; a handler registered later stands for another extension's startup output.
+    await handlers.get('resources_discover')!({ reason: 'startup' }, ctx);
+    entries.push({ type: 'custom', customType: 'other-startup' });
+    await new Promise((resolve) => setImmediate(resolve));
     return client;
   };
   try {
@@ -101,6 +106,7 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     assert.deepEqual(launched.notices, []);
     const card = { id: task.id, text: task.text };
     assert.deepEqual(launched.cards(), [card]);
+    assert.equal(launched.entries.at(-1).customType, 'pinote-startup-task', 'The card follows startup output of extensions loaded later');
     assert.equal(launched.editor.text, 'is task clear?');
     assert.deepEqual(launched.editor.writes, ['is task clear?']);
     assert.equal(cli('agent', 'get', String(task.id)).state, 'in_progress');
@@ -235,4 +241,25 @@ test('GUI launch consent selects exactly one revision, persists, and never repla
     Object.assign(process.env, original);
     rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test('the startup card shows stored task images inline, or a placeholder', () => {
+  initTheme('dark', false);
+  let render: Function;
+  registerTaskEntries({ registerEntryRenderer: (type: string, renderer: Function) => { if (type === 'pinote-startup-task') render = renderer; } } as any);
+  const hash = 'a'.repeat(64), missing = 'b'.repeat(64), theme = { fg: (_color: string, text: string) => text };
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
+  const data = { id: 7, text: `Title\n![image](pinote:sha256-${hash})\n- after ![image](pinote:sha256-${missing})`, images: { [hash]: { mime: 'image/png', data: png } } };
+  const original = getCapabilities();
+  try {
+    setCapabilities({ ...original, images: 'kitty' });
+    const card = render!({ data }, {}, theme);
+    assert.deepEqual(card.children.map((child: any) => child instanceof Image), [false, false, true, false]);
+    const tail = card.children[3].render(80).join('\n');
+    assert.match(tail, /after \[image\]/);
+    setCapabilities({ ...original, images: null });
+    const plain = render!({ data }, {}, theme).children;
+    assert.equal(plain.length, 2);
+    assert.equal(plain[1].render(80).join('\n').match(/\[image\]/g)?.length, 2);
+  } finally { setCapabilities(original); }
 });

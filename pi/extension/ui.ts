@@ -1,5 +1,5 @@
-import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Container, Markdown, Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
+import { getMarkdownTheme, resizeImage, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { Container, getCapabilities, Image, Markdown, Text, truncateToWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { NativeFooter } from './footer.ts';
 import { clean, cleanMarkdown, editorText, footerText, type NativeControl, type NativeView } from './protocol.ts';
 import { PinoteFailure } from './client.ts';
@@ -298,6 +298,8 @@ export class PinoteUI {
 }
 
 const STARTUP_TASK = 'pinote-startup-task';
+const TASK_IMAGE = /!\[[^\]\n]*\]\(pinote:sha256-([0-9a-f]{64})\)/g;
+type TaskImages = Record<string, { mime: string; data: string }>;
 
 export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, session: PinoteSession): Promise<void> {
   const id = session.view?.state.selectedId;
@@ -305,18 +307,35 @@ export async function showStartupTask(pi: ExtensionAPI, ctx: ExtensionContext, s
   const current = session.current();
   try {
     const task = await session.tool('get_current', {}) as { id?: unknown; text?: unknown } | null;
-    if (current() && session.view?.state.selectedId === id && task?.id === id && typeof task.text === 'string')
-      pi.appendEntry(STARTUP_TASK, { id, text: cleanMarkdown(task.text) });
+    if (!current() || session.view?.state.selectedId !== id || task?.id !== id || typeof task.text !== 'string') return;
+    const text = cleanMarkdown(task.text), images: TaskImages = {};
+    // Stored with the entry, scaled for the terminal; a missing or unreadable image keeps its placeholder.
+    for (const hash of [...new Set([...text.matchAll(TASK_IMAGE)].map((match) => match[1]))].slice(0, 8)) try {
+      const { mime, data } = (await session.tool('get_image', { hash }) ?? {}) as { mime?: unknown; data?: unknown };
+      const resized = typeof mime === 'string' && typeof data === 'string' && await resizeImage(Buffer.from(data, 'base64'), mime, { maxWidth: 1200, maxHeight: 1200 });
+      if (resized) images[hash] = { mime: resized.mimeType, data: resized.data };
+    } catch { /* Placeholder. */ }
+    // Discovery handlers run in load order, each awaited: a timer appends after those of extensions loaded later.
+    setImmediate(() => { if (current()) pi.appendEntry(STARTUP_TASK, Object.keys(images).length ? { id, text, images } : { id, text }); });
   } catch {
     if (current()) ctx.ui.notify('Pinote: could not display the selected task text.', 'warning');
   }
 }
 export function registerTaskEntries(pi: ExtensionAPI): void {
-  pi.registerEntryRenderer<{ id: number; text: string }>(STARTUP_TASK, (entry, _options, theme) => {
+  pi.registerEntryRenderer<{ id: number; text: string; images?: TaskImages }>(STARTUP_TASK, (entry, _options, theme) => {
     if (!entry.data || !Number.isSafeInteger(entry.data.id) || entry.data.id < 1 || typeof entry.data.text !== 'string') return;
-    const card = new Container();
+    const card = new Container(), source = cleanMarkdown(entry.data.text), inline = getCapabilities().images;
     card.addChild(new Text(theme.fg('accent', `Task #${entry.data.id}`), 0, 0));
-    card.addChild(new Markdown(cleanMarkdown(entry.data.text), 0, 0, getMarkdownTheme()));
+    let text = '', last = 0;
+    const flush = () => { if (text.trim()) card.addChild(new Markdown(text, 0, 0, getMarkdownTheme())); text = ''; };
+    for (const match of source.matchAll(TASK_IMAGE)) {
+      text += source.slice(last, match.index); last = match.index + match[0].length;
+      const image = entry.data.images?.[match[1]];
+      if (!inline || typeof image?.mime !== 'string' || typeof image.data !== 'string') { text += '[image]'; continue; }
+      flush();
+      card.addChild(new Image(image.data, image.mime, { fallbackColor: (value) => theme.fg('dim', value) }, { maxWidthCells: 60 }));
+    }
+    text += source.slice(last); flush();
     return card;
   });
   // Historical TUI-only preview entries remain readable after upgrading.

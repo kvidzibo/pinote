@@ -113,6 +113,10 @@ draft, never task text or tokens. Only a fresh session consumes it, and a missin
 or stale revision fails closed. See
 [Start in Kitty](../docs/electron.md#start-in-kitty).
 
+A launched or `/new`-carried task is shown in the transcript below other
+extensions' startup output, with up to eight pasted images inline; terminals
+without inline images show `[image]`. Shown images are saved in the session file.
+
 ### Sessions
 
 - Reload/resume restores the active branch's selection. Unsaved Pi sessions
