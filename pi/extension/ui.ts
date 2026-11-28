@@ -333,7 +333,7 @@ export function registerTaskEntries(pi: ExtensionAPI): void {
       let width = 0; // No inline images.
       try {
         const { showImages, imageWidthCells } = pi.getSettings().terminal ?? {};
-        if (getCapabilities().images && showImages !== false) width = typeof imageWidthCells === 'number' && imageWidthCells >= 1 ? Math.floor(imageWidthCells) : 60;
+        if (getCapabilities().images && showImages !== false) width = typeof imageWidthCells === 'number' && Number.isFinite(imageWidthCells) ? Math.max(1, Math.floor(imageWidthCells)) : 60;
       } catch { /* Placeholders. */ }
       if (width === built) return;
       built = width; card.clear();
