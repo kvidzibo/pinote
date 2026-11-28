@@ -136,11 +136,18 @@ function saveSoon(): void {
   clearTimeout(persistTimer); statePending = true;
   persistTimer = setTimeout(() => { void persist().catch(() => undefined); }, 180);
 }
-function persist(recovery = false): Promise<void> {
+// Every write carries the template list saved last, read when the write runs: a snapshot queued while a
+// template save is pending holds neither a rejected list nor a stale one. `templates` saves a new list.
+function persist(recovery = false, templates?: Template[]): Promise<void> {
   clearTimeout(persistTimer); statePending = false;
   if ((readonly && !recovery) || !stateLoaded) return Promise.resolve();
   const copy: UIState = JSON.parse(JSON.stringify({ ...state, creationTag, collapsed }));
-  const work = persistChain.then(() => api.saveState(copy));
+  const work = persistChain.then(async () => {
+    const list = templates ?? state.templates;
+    if (list) copy.templates = JSON.parse(JSON.stringify(list)); else delete copy.templates;
+    await api.saveState(copy);
+    if (templates) state.templates = templates;
+  });
   persistChain = work.then(() => { draftSaveFailed = false; }, e => { draftSaveFailed = true; report(`Draft cache could not be saved: ${message(e)}. Keep this window open or copy your draft.`); });
   return work;
 }
@@ -1669,10 +1676,10 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
     const target = editing; if (!target || saving || readonly) return;
     confirmAction('Delete template?', `Delete “${target.name}”? Tasks created from it stay.`, async () => {
       if (saving || readonly || closing || !stateLoaded) return;
-      const previous = state.templates, rest = templates().filter(t => t !== target), index = templates().indexOf(target);
-      saving = true; error = ''; update(); state.templates = rest;
-      try { await persist(); open(rest[Math.min(index, rest.length - 1)]); modal.saved(); }
-      catch (reason) { state.templates = previous; saveSoon(); error = `Template not deleted: ${message(reason)}`; }
+      const rest = templates().filter(t => t !== target), index = templates().indexOf(target);
+      saving = true; error = ''; update();
+      try { await commit(rest); open(rest[Math.min(index, rest.length - 1)]); modal.saved(); }
+      catch (reason) { error = `Template not deleted: ${message(reason)}`; }
       finally { saving = false; draw(); }
       // Delete is hidden once none is left, so the closing dialog keeps focus on the re-enabled +.
       if (!editing) add.focus();
@@ -1684,6 +1691,8 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
   // `editing` is the saved template in the editor, null for a new one, undefined for none.
   let editing: Template | null | undefined, saving = false, error = '', lastDraw = '';
   const templates = () => state.templates ?? [];
+  // The list joins the shared state only once written.
+  const commit = async (next: Template[]) => { await persist(false, next); if (state.templates !== next) throw new Error('Writes are disabled.'); };
   const dirty = () => editing !== undefined && (name.input.value !== (editing?.name ?? '') || text.value !== lf(editing?.text ?? ''));
   // Unsaved edits are kept until discarded explicitly; the Settings page asks the same on leaving.
   const leave = (next: () => void) => {
@@ -1699,15 +1708,14 @@ function manageTemplates(modal: Pane, select?: string, create = false): void {
   };
   const store = async () => {
     if (saving || readonly || closing || !stateLoaded || editing === undefined) return;
-    const entry: Template = { name: name.input.value.trim(), text: text.value }, previous = state.templates, next = [...templates()];
+    const entry: Template = { name: name.input.value.trim(), text: text.value }, next = [...templates()];
     const index = editing ? next.indexOf(editing) : -1;
     if (index >= 0) next[index] = entry; else next.push(entry);
     error = templateProblem(next) ?? '';
     if (error) { update(); return; }
-    saving = true; update(); state.templates = next;
-    try { await persist(); editing = entry; name.input.value = entry.name; modal.saved(); }
-    // Another write queued meanwhile may hold the rejected list: write the restored one after it.
-    catch (reason) { state.templates = previous; saveSoon(); error = `Template not saved: ${message(reason)}`; }
+    saving = true; update();
+    try { await commit(next); editing = entry; name.input.value = entry.name; modal.saved(); }
+    catch (reason) { error = `Template not saved: ${message(reason)}`; }
     finally { saving = false; draw(); }
   };
   const update = () => {

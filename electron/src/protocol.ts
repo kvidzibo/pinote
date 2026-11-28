@@ -94,8 +94,8 @@ export function templateProblem(templates: readonly Template[]): string | undefi
   for (const { name, text } of templates) {
     if (!name.trim()) return 'A template needs a name.';
     if (name !== name.trim() || /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(name) || Array.from(name).length > TEMPLATE_LIMITS.name) return `A template name takes at most ${TEMPLATE_LIMITS.name} characters on one line.`;
-    // Upper then lower approximates case folding: “Straße” equals “STRASSE”.
-    const key = name.normalize('NFC').toUpperCase().toLowerCase();
+    // Lower, upper, lower approximates case folding: “Straße”, “STRASSE” and “STRAẞE” are one name.
+    const key = name.normalize('NFC').toLowerCase().toUpperCase().toLowerCase();
     if (names.has(key)) return `A template named “${name}” already exists.`;
     names.add(key);
     if (!text.trim()) return `Template “${name}” needs text.`;
